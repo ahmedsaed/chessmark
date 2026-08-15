@@ -310,7 +310,7 @@ cap. Both are recorded above because they are properties of free models worth kn
 
 ---
 
-## Phase 6 — API + SSE
+## Phase 6 — API + SSE ✅ COMPLETE
 
 **Goal:** the game engine is reachable over HTTP, and a client can watch a game live.
 
@@ -322,14 +322,33 @@ cap. Both are recorded above because they are properties of free models worth kn
 5. Readiness probe checking Postgres and Redis
 
 **Exit criteria**
-- [ ] `curl -N .../events` streams events live as a worker plays a game
-- [ ] Disconnecting mid-game and reconnecting with `Last-Event-ID` delivers exactly the missed events, in order, with no gaps or duplicates
-- [ ] Two API processes both stream events produced by one worker (proves the Redis fanout)
-- [ ] p95 latency on non-LLM endpoints < 200 ms under a 50-RPS load test (NFR-01)
-- [ ] SSE delivery p95 < 500 ms after ply commit (NFR-02)
-- [ ] Every endpoint has a contract test; OpenAPI validates
+- [x] `curl -N .../events` streams events live as a worker plays a game
+- [x] Disconnecting mid-game and reconnecting with `Last-Event-ID` delivers exactly the missed events, in order, with no gaps or duplicates
+- [x] Two API processes both stream events produced by one worker (proves the Redis fanout)
+- [x] p95 latency on non-LLM endpoints < 200 ms under a 50-RPS load test (NFR-01)
+- [x] SSE delivery p95 < 500 ms after ply commit (NFR-02)
+- [x] Every endpoint has a contract test; OpenAPI validates
 
 **Covers:** UI-10, NFR-01, NFR-02, OPS-06
+
+**Notes**
+- **Subscribe before backfill.** The stream subscribes to Redis *first*, then reads missed events
+  from Postgres, then emits backfill followed by live events with anything at or below the last
+  backfilled `seq` dropped. Reversed, an event committed between the read and the subscribe is
+  lost forever and the client waits on a sequence number that never arrives. Subscribing first can
+  only produce duplicates, which are filtered; reading first produces gaps, which nothing can.
+  Verified with teeth: forcing the cursor to zero fails both reconnect tests.
+- **Reasoning is withheld while a game is live** (invariant 8). `reasoning_available` distinguishes
+  "withheld" from "absent" so a client can say *revealed after the game*, and a test confirms the
+  trace is still stored — withheld, not discarded.
+- **The latency test measures an offered rate, not simultaneity.** Firing 50 requests at once and
+  timing each from a common start makes every request report the time to drain the whole batch —
+  throughput wearing a latency costume, and it read 555 ms against a 200 ms budget. Paced at 50 RPS,
+  as NFR-01 actually specifies, all three read endpoints pass comfortably.
+- The load figures are in-process against a real database and Redis, so they are optimistic
+  relative to production — no network hop, no TLS. They exist to catch an order-of-magnitude
+  regression (an N+1, a sync call on the hot path), not a ten-millisecond drift. Phase 17 does the
+  real load test.
 
 ---
 
