@@ -168,6 +168,10 @@ class Player(Base):
     system_prompt_version: Mapped[str | None] = mapped_column(sa.Text)
     sampling: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
 
+    #: Monotonic counter backing `transcript_messages.seq`, allocated under a row lock exactly as
+    #: `games.event_seq` is. Each player has its own independent transcript.
+    transcript_seq: Mapped[int] = mapped_column(default=0, server_default="0")
+
     # --- per-player benchmark metrics ---
     illegal_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
     forfeited: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
@@ -326,6 +330,47 @@ class ToolCall(Base):
 
     __table_args__ = (
         sa.UniqueConstraint("turn_id", "sequence", name="uq_tool_calls_turn_id_sequence"),
+    )
+
+
+class TranscriptMessage(Base):
+    """One message in a player's conversation with the model. Append-only, never rewritten.
+
+    This table *is* the mechanism behind invariant 2 (ADR-0003). The transcript is rebuilt from
+    these rows at the start of every turn, so a byte-identical cacheable prefix is not something
+    the turn loop has to remember to preserve — it is a property of rows being immutable.
+
+    It duplicates content that also appears in `llm_calls` and `tool_calls`. That is deliberate:
+    those are the *record* of what happened, this is the *input* we replay, and reconstructing one
+    from the other would put an exact-serialisation requirement on the hot path.
+    """
+
+    __tablename__ = "transcript_messages"
+
+    id: Mapped[int] = bigint_pk()
+    game_id: Mapped[uuid.UUID] = mapped_column(_fk("games.id", ondelete="CASCADE"), index=True)
+    player_id: Mapped[uuid.UUID] = mapped_column(_fk("players.id", ondelete="CASCADE"), index=True)
+    turn_id: Mapped[int | None] = mapped_column(
+        sa.BigInteger, _fk("turns.id", ondelete="SET NULL"), index=True
+    )
+
+    seq: Mapped[int] = mapped_column(sa.Integer)
+    role: Mapped[str] = mapped_column(sa.Text)
+    """system | user | assistant | tool"""
+
+    content: Mapped[str | None] = mapped_column(sa.Text)
+    tool_calls: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    """Present on assistant messages that requested tools."""
+
+    tool_call_id: Mapped[str | None] = mapped_column(sa.Text)
+    name: Mapped[str | None] = mapped_column(sa.Text)
+    """Tool name, on tool-result messages."""
+
+    created_at: Mapped[dt.datetime] = created_at()
+
+    __table_args__ = (
+        sa.UniqueConstraint("player_id", "seq", name="uq_transcript_messages_player_id_seq"),
+        sa.Index("ix_transcript_messages_player_id_seq", "player_id", "seq"),
     )
 
 

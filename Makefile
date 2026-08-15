@@ -60,7 +60,13 @@ test: ## Run backend tests (database tests need `make up`; never calls a provide
 	cd $(API) && uv run pytest
 
 test-unit: ## Run only tests that need no database
-	cd $(API) && uv run pytest -m "not integration"
+	cd $(API) && uv run pytest -m "not integration and not llm"
+
+# Its own database: the suite drops and recreates the schema at session start, so a live run
+# sharing `chessmark_test` with a concurrent `make test` would clobber it mid-game.
+test-llm: ## Run the live-provider tests. Costs real requests — opt-in, never in CI
+	cd $(API) && TEST_DATABASE_URL=postgresql+asyncpg://chessmark:chessmark@localhost:5433/chessmark_llm_test \
+		uv run pytest -m llm -s -o addopts=""
 
 cov: ## Run the chess-domain coverage gate (NFR-07)
 	cd $(API) && uv run pytest tests/game --cov=chessmark.game --cov-report=term-missing --cov-fail-under=90

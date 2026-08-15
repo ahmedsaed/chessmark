@@ -24,7 +24,12 @@ Three parts:
    any number of times per turn.
 2. On a rejected `make_move`, the error result includes the **complete legal move list in SAN**, plus
    a human-readable reason, the current FEN, and the attempts remaining.
-3. After **5 failed attempts in one turn**, the agent forfeits with reason `illegal_move_forfeit`.
+3. **More than 5 failures in one turn** forfeits, with reason `illegal_move_forfeit`.
+
+   Precisely: `max_illegal_retries` is the number of failures *tolerated*. With the default of 5,
+   five illegal moves followed by a legal one is a completed turn recording
+   `illegal_attempts = 5`; a sixth failure ends the game. The tool result reports
+   `attempts_remaining`, which reaching zero means the next failure is fatal.
 
 Illegal attempts do not consume a ply. Provider errors (5xx, timeouts) are retried separately and do
 **not** count against this budget.

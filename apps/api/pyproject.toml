@@ -95,7 +95,9 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-q --strict-markers"
+# `llm` tests call a real provider and cost money, so they are opt-in: run them with
+# `make test-llm`. Everything else replays recorded fixtures.
+addopts = "-q --strict-markers -m 'not llm'"
 markers = [
     "integration: requires a live database",
     "llm: makes real LLM API calls (costs money)",

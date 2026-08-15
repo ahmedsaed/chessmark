@@ -188,7 +188,7 @@ someone checks.
 
 ---
 
-## Phase 4 — Agent runtime
+## Phase 4 — Agent runtime ✅ COMPLETE
 
 **Goal:** given a board position, an LLM agent produces a legal move — or forfeits correctly.
 
@@ -202,16 +202,34 @@ someone checks.
 7. **A scripted fake LLM** that replays a canned sequence of tool calls — the key testing primitive
 
 **Exit criteria**
-- [ ] With the fake LLM, a turn that proposes 5 illegal moves then 1 legal move commits the legal move and records `illegal_attempts = 5`
-- [ ] With the fake LLM, a turn that proposes 6 illegal moves ends the game with `illegal_move_forfeit`
-- [ ] Every illegal-move tool result contains the complete legal move list for that position
-- [ ] A turn that never calls a tool is nudged once, then forfeits `error_forfeit`
-- [ ] Two consecutive turns produce message lists where the second is a strict prefix-extension of the first (asserted byte-wise — this is what makes caching work)
-- [ ] `say` output over the length cap is rejected; the 4th `say` in one turn is rejected
-- [ ] Test coverage on `agents/` > 85%
-- [ ] **Live test:** one real cheap model plays 10 plies from the start position without a crash
+- [x] With the fake LLM, a turn that proposes 5 illegal moves then 1 legal move commits the legal move and records `illegal_attempts = 5`
+- [x] With the fake LLM, a turn that proposes 6 illegal moves ends the game with `illegal_move_forfeit`
+- [x] Every illegal-move tool result contains the complete legal move list for that position
+- [x] A turn that never calls a tool is nudged once, then forfeits `error_forfeit`
+- [x] Two consecutive turns produce message lists where the second is a strict prefix-extension of the first (asserted byte-wise — this is what makes caching work)
+- [x] `say` output over the length cap is rejected; the 4th `say` in one turn is rejected
+- [x] Test coverage on `agents/` > 85% — **96%**
+- [x] **Live test:** one real cheap model plays 10 plies from the start position without a crash
 
 **Covers:** AGENT-01 → AGENT-11, TALK-01, TALK-04, LOG-03, GAME-08, NFR-07
+
+**Notes**
+- **`max_illegal_retries` is the number of failures tolerated.** Five illegal moves followed by a
+  legal one is a completed turn recording `illegal_attempts = 5`; the sixth failure forfeits. The
+  roadmap and ADR-0002 originally disagreed on this; the roadmap's testable wording won, and
+  ADR-0002 now states it precisely.
+- **The append-only guarantee is structural, not disciplined.** Transcript messages are rows in
+  `transcript_messages`, appended under a row-locked per-player counter and rebuilt with
+  `ORDER BY seq`. There is no code path that can rewrite history, so the byte-identical cacheable
+  prefix is a property of the storage rather than something the turn loop must remember. The
+  system prompt is row 1, written exactly once per game.
+- The prefix-extension test compares **each message's serialised bytes**, not the structure — a
+  re-ordered key or a re-rendered system prompt would pass a loose check and still destroy the
+  cache hit rate.
+- Unparseable tool arguments are reported but do **not** consume the illegal-move budget: that is
+  a tool-protocol failure, not a chess failure, and the benchmark should count them separately.
+- Every tool call gets a result message even after a move is committed. Providers reject a
+  transcript with an unanswered `tool_call_id`, and a gap would corrupt every later turn.
 
 ---
 

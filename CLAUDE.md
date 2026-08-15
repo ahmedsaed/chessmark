@@ -131,18 +131,25 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–3 complete.** 261 tests, CI green.
+**Phases 0–4 complete.** 332 tests, CI green.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
 - `chessmark.db` — 13 tables, Alembic migrations, async sessions, repositories. `game_events`
   appends are gap-free under concurrency.
-- `chessmark.agents` — the LLM gateway. `LlmGateway` (injectable provider call, classified
-  retries), response normalisation across provider shapes, exact `Decimal` costing, credential
-  redaction, model-registry sync.
+- `chessmark.agents` — the LLM gateway and the agent runtime. `LlmGateway` (injectable provider
+  call, classified retries), response normalisation, exact `Decimal` costing, credential
+  redaction, registry sync, the seven tools, the append-only transcript, and `TurnRunner`.
+  96% coverage.
 
-Database tests need `make up`. Useful targets: `make test-unit` (no database), `make migration
-m="..."`, `make drift`, `make seed-models`, `make smoke-llm` (live, manual).
+`agents/scripted.py` is the workhorse for testing and for local development: it plugs in as
+`LlmGateway(completion_fn=...)` so a whole game can run with no API key, exercising the real path
+with only the provider replaced.
 
-**Next up: Phase 4 — agent runtime.** The tools, the turn loop, and the scripted fake LLM that
-does the heavy testing. See [ROADMAP.md](docs/ROADMAP.md#phase-4--agent-runtime).
+Database tests need `make up`. Useful targets: `make test-unit` (no database), `make test-llm`
+(live provider, opt-in), `make migration m="..."`, `make drift`, `make seed-models`,
+`make smoke-llm`.
+
+**Next up: Phase 5 — match orchestration.** The Redis queue, the turn worker, and
+`expected_ply` idempotency, ending in a full headless model-vs-model game.
+See [ROADMAP.md](docs/ROADMAP.md#phase-5--match-orchestration--first-milestone).
