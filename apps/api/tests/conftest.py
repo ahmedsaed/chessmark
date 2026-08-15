@@ -13,6 +13,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
@@ -165,3 +166,41 @@ def _mark_database_tests(request: pytest.FixtureRequest) -> Iterator[None]:
     if {"db", "engine", "sessionmaker", "database_url"} & set(request.fixturenames):
         request.node.add_marker(pytest.mark.integration)
     yield
+
+
+# ---------------------------------------------------------------------- redis
+
+
+DEFAULT_TEST_REDIS = "redis://localhost:6380/15"
+
+
+def _resolve_test_redis_url() -> str:
+    """A dedicated Redis database for tests.
+
+    These fixtures FLUSHDB between cases, so the index must not be the one the app uses. Index 15
+    by convention; the app defaults to 0.
+    """
+    url = os.environ.get("TEST_REDIS_URL")
+    if url:
+        return url
+
+    base = os.environ.get("REDIS_URL", DEFAULT_TEST_REDIS)
+    parts = urlsplit(base)
+    return urlunsplit(parts._replace(path="/15"))
+
+
+@pytest.fixture
+async def redis() -> AsyncIterator[Any]:
+    """A flushed Redis database."""
+    from redis.asyncio import Redis
+
+    client: Any = Redis.from_url(_resolve_test_redis_url())
+    try:
+        try:
+            await client.ping()
+        except Exception as exc:  # pragma: no cover - environment problem
+            pytest.skip(f"Redis is not reachable at {_resolve_test_redis_url()}: {exc}")
+        await client.flushdb()
+        yield client
+    finally:
+        await client.aclose()

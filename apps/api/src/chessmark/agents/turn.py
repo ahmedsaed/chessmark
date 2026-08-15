@@ -562,19 +562,11 @@ class TurnRunner:
             )
         )
 
-        if result.outcome is not None:
-            await append_event(
-                self.session,
-                game_id=self.game.id,
-                type=EventType.GAME_ENDED,
-                payload={
-                    "result": str(result.outcome.result),
-                    "termination": str(result.outcome.termination),
-                    "detail": result.outcome.detail,
-                    "winner": result.outcome.winner.value if result.outcome.winner else None,
-                },
-            )
-
+        # `game_ended` is deliberately *not* emitted here. The turn knows the referee reached a
+        # terminal state, but concluding the game — flipping its status, recording the result — is
+        # the orchestrator's job, and whoever owns that transition owns announcing it. Emitting
+        # from both produced two `game_ended` events for every game, which a spectator would
+        # render twice and a replay would show twice.
         await self.session.flush()
 
     # ------------------------------------------------------------------ helpers

@@ -135,7 +135,26 @@ def plays(moves: Iterable[str], *, per_move_tokens: int = 100) -> CompletionFn:
     return _complete
 
 
+def alternating(white_moves: Iterable[str], black_moves: Iterable[str]) -> CompletionFn:
+    """One completion function serving both sides of a game.
+
+    The worker calls the gateway once per turn without saying whose turn it is, so this decides
+    from the system prompt at the head of the transcript. Lets a whole scripted game run through
+    the real orchestration path with a single injected function.
+    """
+    white = plays(white_moves)
+    black = plays(black_moves)
+
+    async def _complete(**kwargs: Any) -> Any:
+        messages = kwargs.get("messages") or [{}]
+        system = str(messages[0].get("content", ""))
+        return await (white if "as white" in system.lower() else black)(**kwargs)
+
+    return _complete
+
+
 __all__ = [
+    "alternating",
     "plays",
     "prose",
     "raw_tool_call",

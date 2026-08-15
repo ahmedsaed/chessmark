@@ -209,7 +209,18 @@ someone checks.
 - [x] Two consecutive turns produce message lists where the second is a strict prefix-extension of the first (asserted byte-wise — this is what makes caching work)
 - [x] `say` output over the length cap is rejected; the 4th `say` in one turn is rejected
 - [x] Test coverage on `agents/` > 85% — **96%**
-- [ ] **BLOCKED —** Live test: one real cheap model plays 10 plies from the start position without a crash. Best run reached **6 clean plies with zero illegal moves** on `nemotron-nano-9b-v2:free`, then hit OpenRouter's 50-requests-per-day free-tier cap. Not a defect; needs either the daily reset or $10 of credits (which raises the limit to 1000/day).
+- [x] **Live test:** one real cheap model plays 10 plies from the start position without a crash — `nemotron-nano-9b-v2:free` played `e4 Nf6 Nf3 Nxe4 Bc4 Nxd2 Bxd2 Nc6 Bb5 Nb4`, all ten plies completed, in 12m55s
+
+**First real benchmark datapoint.** Across those ten plies the model made **5 illegal attempts**
+(0.5 per move) and recovered from every one, which is exactly the signal this project exists to
+measure. Prompt tokens grew 2,656 → 12,939 over ten plies with `cached: 0` throughout — the free
+tier does no prompt caching, so the O(n²) growth ADR-0003 predicts is plainly visible and
+currently unmitigated. That is the strongest argument yet for verifying NFR-06 on a
+caching-capable model.
+
+Two attempts before this one failed, and neither was a code defect. `gpt-oss-20b:free` spiralled
+to 34,260 reasoning tokens on a single move; the next run exhausted the 50-request free-tier daily
+cap. Both are recorded above because they are properties of free models worth knowing.
 
 **Covers:** AGENT-01 → AGENT-11, TALK-01, TALK-04, LOG-03, GAME-08, NFR-07
 

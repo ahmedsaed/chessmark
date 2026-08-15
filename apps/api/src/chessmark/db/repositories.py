@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.db.enums import EventType, GameStatus, PlayerKind
 from chessmark.db.models import Game, GameEvent, Player, Ply
-from chessmark.game import Colour, GameResult, MoveOutcome, Outcome
+from chessmark.game import Colour, GameResult, MoveOutcome, Outcome, Referee
 
 
 class GameNotFoundError(LookupError):
@@ -236,3 +236,27 @@ async def list_games(
 async def count_games_by_result(session: AsyncSession) -> dict[GameResult, int]:
     rows = await session.execute(sa.select(Game.result, sa.func.count()).group_by(Game.result))
     return {result: count for result, count in rows.all()}  # noqa: C416 - Row is not a tuple
+
+
+async def rebuild_referee(session: AsyncSession, game: Game) -> Referee:
+    """Reconstruct the live position by replaying stored plies.
+
+    Workers are stateless (ADR-0007), so every turn starts by rebuilding from Postgres rather than
+    carrying a board between jobs. Replaying also re-derives terminal state, so a game that ended
+    in checkmate rebuilds as over.
+
+    Terminations that are not moves — resignation, forfeit, adjudication — are not in the ply
+    record, so they are re-applied from the stored outcome afterwards.
+    """
+    referee = Referee(start_fen=game.start_fen, max_plies=game.max_plies)
+    for san in await load_moves_san(session, game.id):
+        referee.play(san)
+
+    if game.status is GameStatus.FINISHED and not referee.is_over and game.termination:
+        referee.adjudicate(
+            game.result,
+            game.termination_detail or "",
+            termination=game.termination,
+        )
+
+    return referee

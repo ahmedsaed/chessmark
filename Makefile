@@ -56,6 +56,12 @@ record-llm: ## Re-record LLM test fixtures (spends free-tier requests; never run
 smoke-llm: ## One real end-to-end LLM call. Manual only — the test suite never calls a provider
 	cd $(API) && uv run python ../../scripts/smoke_llm.py
 
+play: ## Play a full game and watch it. ARGS="--scripted" needs no API key
+	cd $(API) && uv run python ../../scripts/play_game.py $(ARGS)
+
+worker: ## Run a standalone turn worker
+	cd $(API) && uv run python ../../scripts/worker.py
+
 test: ## Run backend tests (database tests need `make up`; never calls a provider)
 	cd $(API) && uv run pytest
 

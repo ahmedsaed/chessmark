@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""Play a full game and watch it happen.
+
+    make play                       # two free models, live
+    make play ARGS="--scripted"     # no API key, no spend — proves the pipeline
+    make play ARGS="--white openai/gpt-oss-20b:free --black nvidia/nemotron-nano-9b-v2:free"
+
+Runs the real orchestration path — the real queue, the real worker, one transaction per turn —
+with the worker in this process so the whole game is visible in one terminal.
+`scripts/worker.py` runs the same worker standalone.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+import sys
+from decimal import Decimal
+from pathlib import Path
+from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+API_ROOT = REPO_ROOT / "apps" / "api"
+sys.path.insert(0, str(API_ROOT / "src"))
+
+import sqlalchemy as sa  # noqa: E402
+from redis.asyncio import Redis  # noqa: E402
+
+from chessmark.agents.llm import LlmGateway  # noqa: E402
+from chessmark.agents.pricing import PricingTable  # noqa: E402
+from chessmark.agents.scripted import alternating  # noqa: E402
+from chessmark.core.config import get_settings  # noqa: E402
+from chessmark.db.models import Game, GameEvent, Ply  # noqa: E402
+from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
+from chessmark.game import ChessBoard  # noqa: E402
+from chessmark.orchestration import (  # noqa: E402
+    Seat,
+    TurnQueue,
+    TurnWorker,
+    create_match,
+    start_match,
+)
+
+DIM, BOLD, OFF = "\033[2m", "\033[1m", "\033[0m"
+AMBER, CYAN, RED, GREEN = "\033[38;5;179m", "\033[38;5;73m", "\033[38;5;167m", "\033[38;5;108m"
+
+#: A short scripted game (the Scholar's Mate) so `--scripted` demonstrates the whole pipeline,
+#: including a real terminal state, with no provider and no spend.
+SCRIPTED_WHITE = ["e4", "Bc4", "Qh5", "Qxf7"]
+SCRIPTED_BLACK = ["e5", "Nc6", "Nf6"]
+
+
+def indent(text: str, prefix: str = "     ") -> str:
+    return "\n".join(f"{DIM}{prefix}{line}{OFF}" for line in text.splitlines())
+
+
+def render(event: GameEvent, board: ChessBoard) -> bool:
+    """Print one event. Returns True when the game has ended."""
+    kind = str(event.type)
+    payload: dict[str, Any] = event.payload or {}
+
+    if kind == "turn_started":
+        print(f"\n{DIM}ply {payload.get('ply')} · {payload.get('colour')} · "
+              f"{payload.get('model', '')}{OFF}")
+
+    elif kind == "thinking":
+        text = str(payload.get("reasoning", "")).replace("\n", " ").strip()
+        if text:
+            print(f"  {CYAN}▏{OFF} {DIM}{text[:150]}{'…' if len(text) > 150 else ''}{OFF}")
+
+    elif kind == "tool_called":
+        print(f"  {DIM}▸ {payload.get('tool')}(){OFF}")
+
+    elif kind == "illegal_attempt":
+        print(f"  {RED}✗ {payload.get('move')} — {str(payload.get('detail', ''))[:88]}"
+              f" (attempt {payload.get('attempt')}){OFF}")
+
+    elif kind == "move_made":
+        board.push(str(payload.get("san")))
+        print(f"  {BOLD}{AMBER}{payload.get('san')}{OFF}")
+        print(indent(board.ascii()))
+
+    elif kind == "message_sent":
+        tint = AMBER if payload.get("colour") == "white" else CYAN
+        print(f'  {tint}💬 {payload.get("content")}{OFF}')
+
+    elif kind == "game_ended":
+        print(f"\n{GREEN}══ {payload.get('result')} · {payload.get('termination')}{OFF}")
+        print(f"   {payload.get('detail')}")
+        return True
+
+    return False
+
+
+async def summarise(sessionmaker: Any, game_id: Any) -> None:
+    """Cost per ply and the cached-token ratio — the numbers Phase 5 is meant to produce."""
+    async with sessionmaker() as session:
+        game = await session.get(Game, game_id)
+        plies = list(
+            await session.scalars(
+                sa.select(Ply).where(Ply.game_id == game_id).order_by(Ply.ply_number)
+            )
+        )
+        totals = (
+            await session.execute(
+                sa.text(
+                    "SELECT COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(cached_tokens),0),"
+                    " COALESCE(SUM(completion_tokens),0), COUNT(*)"
+                    " FROM llm_calls WHERE game_id = :g"
+                ),
+                {"g": game_id},
+            )
+        ).one()
+
+    if game is None:
+        return
+
+    prompt, cached, completion, calls = totals
+    hit_rate = (cached / prompt * 100) if prompt else 0.0
+
+    print(f"\n{DIM}{'─' * 62}{OFF}")
+    print(f"  result      : {game.result}  ({game.termination})")
+    print(f"  plies       : {len(plies)}")
+    print(f"  llm calls   : {calls}")
+    print(f"  tokens      : {prompt} prompt + {completion} out")
+    print(f"  cached      : {cached}  ({hit_rate:.1f}% hit rate)")
+    print(f"  total cost  : ${game.total_cost_usd:.6f}")
+    if plies:
+        print(f"  cost / ply  : ${game.total_cost_usd / len(plies):.6f}")
+    print(f"\n  {' '.join(p.san for p in plies)}")
+
+
+async def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--white", default="nvidia/nemotron-nano-9b-v2:free")
+    parser.add_argument("--black", default="openai/gpt-oss-20b:free")
+    parser.add_argument("--scripted", action="store_true", help="no provider, no spend")
+    parser.add_argument("--max-usd", type=Decimal, default=Decimal("0.50"))
+    parser.add_argument("--max-plies", type=int, default=120)
+    parser.add_argument("--ranked", action="store_true", help="no trash talk, fixed config")
+    args = parser.parse_args()
+
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    if not args.scripted and not api_key:
+        print("OPENROUTER_API_KEY is not set (use --scripted to run without one)", file=sys.stderr)
+        return 2
+
+    white_model = "scripted/white" if args.scripted else args.white
+    black_model = "scripted/black" if args.scripted else args.black
+
+    if args.scripted:
+        gateway = LlmGateway(completion_fn=alternating(SCRIPTED_WHITE, SCRIPTED_BLACK))
+    else:
+        gateway = LlmGateway(
+            api_key=api_key,
+            pricing=PricingTable.from_seed_file(API_ROOT / "seeds" / "models.json"),
+        )
+
+    settings = get_settings()
+    redis: Redis[Any] = Redis.from_url(str(settings.redis_url))
+    queue = TurnQueue(redis)
+    await queue.ensure_group()
+    sessionmaker = get_sessionmaker()
+
+    async with sessionmaker() as session:
+        match = await create_match(
+            session,
+            white=Seat(display_name=white_model.split("/")[-1], model=white_model),
+            black=Seat(display_name=black_model.split("/")[-1], model=black_model),
+            is_ranked=args.ranked,
+            max_usd=args.max_usd,
+            max_plies=args.max_plies,
+        )
+        job = await start_match(session, queue, game_id=match.game.id)
+        await session.commit()
+        game_id = match.game.id
+
+    await queue.enqueue(job)
+
+    print(f"{BOLD}{white_model}{OFF} vs {BOLD}{black_model}{OFF}")
+    print(f"{DIM}game {game_id}{OFF}")
+
+    worker = TurnWorker(
+        sessionmaker=sessionmaker, queue=queue, gateway=gateway, redis=redis, consumer="cli"
+    )
+
+    board = ChessBoard()
+    seen = 0
+    finished = False
+
+    while not finished:
+        deliveries = await queue.consume("cli", block_ms=3000)
+        if not deliveries:
+            break
+        for delivery in deliveries:
+            await worker.process(delivery)
+
+        async with sessionmaker() as session:
+            events = list(
+                await session.scalars(
+                    sa.select(GameEvent)
+                    .where(GameEvent.game_id == game_id, GameEvent.seq > seen)
+                    .order_by(GameEvent.seq)
+                )
+            )
+        for event in events:
+            finished = render(event, board) or finished
+            seen = event.seq
+
+    await summarise(sessionmaker, game_id)
+
+    await redis.aclose()
+    await dispose_engine()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(main()))
