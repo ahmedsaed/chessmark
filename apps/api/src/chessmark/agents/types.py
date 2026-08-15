@@ -74,6 +74,10 @@ class ParsedResponse:
     usage: TokenUsage
     finish_reason: str | None
     model: str | None
+    provider: str | None = None
+    """Which OpenRouter endpoint served this. The response names the provider but not its
+    precision; `model_endpoints` is what turns the name into a quantization."""
+
     provider_cost_usd: Decimal | None = None
 
 
@@ -82,6 +86,10 @@ class Completion:
     """One completed provider round-trip, with everything needed to persist an `llm_calls` row."""
 
     model: str
+    provider: str | None
+    """The endpoint that actually served the call — recorded so a result can say what precision it
+    was played at, not merely what was asked for."""
+
     content: str | None
     reasoning: str | None
     tool_calls: list[ToolInvocation]

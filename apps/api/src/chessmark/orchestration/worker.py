@@ -31,6 +31,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from chessmark.agents.llm import LlmGateway
+from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.turn import TurnLimits, TurnResult, TurnRunner
 from chessmark.db.enums import EventType, GameStatus, TurnStatus
 from chessmark.db.models import Game, GameEvent, Player
@@ -181,6 +182,11 @@ class TurnWorker:
             colour = referee.side_to_move
             player = await self._player(session, game.id, colour)
             opponent = await self._player(session, game.id, colour.opponent)
+
+            # The gateway routes by whatever policy this *game* was created under, not by a
+            # process-wide default — otherwise changing the default would silently change what an
+            # in-flight game is being served by.
+            self.gateway.routing = ProviderRouting.from_record(game.provider_routing)
 
             runner = TurnRunner(
                 session,

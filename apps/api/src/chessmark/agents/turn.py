@@ -463,6 +463,7 @@ class TurnRunner:
                 turn_id=turn.id,
                 sequence=self._llm_sequence,
                 model_slug=self.model,
+                provider=completion.provider,
                 request=completion.request,
                 response=completion.response,
                 reasoning_text=completion.reasoning,

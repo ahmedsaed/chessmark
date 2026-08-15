@@ -131,6 +131,16 @@ def extract_provider_cost(payload: dict[str, Any]) -> Decimal | None:
     return _as_decimal(payload.get("cost"))
 
 
+def _provider_of(payload: dict[str, Any]) -> str | None:
+    """Which endpoint served the call.
+
+    OpenRouter puts the provider name at the top level of the response. It does *not* report the
+    quantization, so this name is the join key into `model_endpoints`.
+    """
+    provider = payload.get("provider")
+    return str(provider) if isinstance(provider, str) and provider.strip() else None
+
+
 def extract_tool_calls(message: dict[str, Any]) -> list[ToolInvocation]:
     raw_calls = message.get("tool_calls")
     if not isinstance(raw_calls, list):
@@ -196,5 +206,6 @@ def normalise_response(payload: dict[str, Any]) -> ParsedResponse:
         usage=extract_usage(payload),
         finish_reason=choice.get("finish_reason") or choice.get("stop_reason"),
         model=payload.get("model"),
+        provider=_provider_of(payload),
         provider_cost_usd=extract_provider_cost(payload),
     )

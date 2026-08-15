@@ -355,10 +355,15 @@ cap. Both are recorded above because they are properties of free models worth kn
 - **Reasoning is withheld while a game is live** (invariant 8). `reasoning_available` distinguishes
   "withheld" from "absent" so a client can say *revealed after the game*, and a test confirms the
   trace is still stored — withheld, not discarded.
-- **The latency test measures an offered rate, not simultaneity.** Firing 50 requests at once and
-  timing each from a common start makes every request report the time to drain the whole batch —
-  throughput wearing a latency costume, and it read 555 ms against a 200 ms budget. Paced at 50 RPS,
-  as NFR-01 actually specifies, all three read endpoints pass comfortably.
+- **The latency test was wrong twice, in different ways.** First it fired 50 requests at once and
+  timed each from a common start, so every request reported the time to drain the whole batch —
+  throughput wearing a latency costume, reading 555 ms against a 200 ms budget. Pacing at 50 RPS,
+  as NFR-01 actually specifies, fixed that. It then still failed intermittently with a *median* of
+  16–34 ms but a p95 of 500–1,280 ms. That tail was **connection-pool warm-up**: opening a Postgres
+  connection costs ~920 ms through WSL2 and Docker versus 28 ms for a warm checkout, and a
+  single-request warm-up left the pool holding one connection. The suite now warms the pool before
+  measuring. Worth recording that the first green run was luck — the criterion was ticked on an
+  unstable measurement before anyone had checked it twice.
 - The load figures are in-process against a real database and Redis, so they are optimistic
   relative to production — no network hop, no TLS. They exist to catch an order-of-magnitude
   regression (an N+1, a sync call on the hot path), not a ten-millisecond drift. Phase 17 does the

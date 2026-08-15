@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     api_port: int = 8010
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3010"])
 
+    @field_validator("allowed_quantizations", mode="before")
+    @classmethod
+    def _parse_quantizations(cls, value: Any) -> Any:
+        return cls._parse_origins(value)
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _parse_origins(cls, value: Any) -> Any:
@@ -70,6 +75,23 @@ class Settings(BaseSettings):
     max_usd_per_game: float = 1.00
     max_games_per_user_per_day: int = 20
     global_daily_usd_budget: float = 25.00
+
+    # --- Provider routing (benchmark integrity) ---
+    #: Quantizations a ranked game may be served by. Default is **8-bit and above**: a model
+    #: served at 4-bit is not the model we mean to be scoring, and a leaderboard that silently
+    #: mixes precisions measures the routing lottery as much as the model. `unknown` is excluded
+    #: too — a provider that will not declare its precision could be serving anything.
+    allowed_quantizations: list[str] = Field(
+        default_factory=lambda: ["int8", "fp8", "mxfp8", "fp16", "bf16", "fp32"]
+    )
+
+    #: Endpoints slower than this are skipped. A turn already takes minutes on a slow provider;
+    #: this stops the routing lottery from picking the worst one available.
+    min_throughput_tps: float | None = None
+
+    #: `price`, `throughput`, or `latency`. Price by default — the cheapest endpoint for a given
+    #: model at an acceptable precision is still the same model.
+    provider_sort: str = "price"
 
     # --- Match rules ---
     max_illegal_move_retries: int = 5

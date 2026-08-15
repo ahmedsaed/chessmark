@@ -40,6 +40,9 @@ SSE_P95_BUDGET_MS = 500.0
 TARGET_RPS = 50
 REQUEST_COUNT = 100
 
+#: Enough concurrent requests to force the pool to open the connections the run will need.
+WARMUP_REQUESTS = 20
+
 
 def build_app(sessionmaker: Any, redis: Any) -> FastAPI:
     """A second, independent app instance — a stand-in for another API process."""
@@ -124,8 +127,15 @@ async def test_read_endpoints_stay_within_the_latency_budget(
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        # Warm the pool and the query plans so the first request does not skew the sample.
-        await client.get(f"/games/{game.game.id}")
+        # Warm the *pool*, not just the query plans. Opening a Postgres connection costs ~900ms
+        # here (WSL2 through Docker), so a single warm-up request leaves the pool holding one
+        # connection and any brief concurrency pays 900ms to open another. Those were the tail:
+        # measured cold, checkout median was 920ms; warm, 28ms. In production the pool is warm and
+        # this cost is paid once at startup, so warming it is what makes the number mean what
+        # NFR-01 says it means.
+        await asyncio.gather(
+            *(client.get(f"/games/{game.game.id}") for _ in range(WARMUP_REQUESTS))
+        )
 
         async def timed(path: str, delay: float) -> float:
             await asyncio.sleep(delay)

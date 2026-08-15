@@ -50,17 +50,40 @@ def to_seed_entry(model: dict[str, Any]) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--all", action="store_true", help="include paid models, not just :free ones"
+        "--all", action="store_true", help="include every tool-capable model, paid ones too"
+    )
+    parser.add_argument(
+        "--max-prompt-price",
+        type=float,
+        default=None,
+        help="include paid models at or below this USD per prompt token (e.g. 1e-6 for $1/M)",
     )
     args = parser.parse_args()
 
     models = fetch_models()
     tool_capable = [m for m in models if "tools" in (m.get("supported_parameters") or [])]
 
+    free = [m for m in tool_capable if m["id"].endswith(":free")]
+
     if args.all:
         selected = tool_capable
+    elif args.max_prompt_price is not None:
+        # Free models plus paid ones under the cap. Benchmarking anything real needs paid models:
+        # the free tier is too slow and too verbose to finish a game.
+        def prompt_price(model: dict[str, Any]) -> float:
+            try:
+                return float((model.get("pricing") or {}).get("prompt") or 0.0)
+            except (TypeError, ValueError):
+                return float("inf")
+
+        affordable = [
+            m
+            for m in tool_capable
+            if not m["id"].endswith(":free") and 0 < prompt_price(m) <= args.max_prompt_price
+        ]
+        selected = free + affordable
     else:
-        selected = [m for m in tool_capable if m["id"].endswith(":free")]
+        selected = free
 
     entries = sorted(
         (to_seed_entry(m) for m in selected),

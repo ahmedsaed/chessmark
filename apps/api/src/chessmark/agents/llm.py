@@ -24,6 +24,7 @@ from typing import Any
 from chessmark.agents.normalise import normalise_response
 from chessmark.agents.pricing import PricingTable, compute_cost
 from chessmark.agents.redaction import redact
+from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.types import Completion, CostSource, LlmError
 
 CompletionFn = Callable[..., Awaitable[Any]]
@@ -151,6 +152,7 @@ class LlmGateway:
         api_key: str = "",
         base_url: str = "https://openrouter.ai/api/v1",
         pricing: PricingTable | None = None,
+        routing: ProviderRouting | None = None,
         retry: RetryPolicy | None = None,
         completion_fn: CompletionFn | None = None,
         sleep_fn: SleepFn | None = None,
@@ -159,6 +161,7 @@ class LlmGateway:
         self.api_key = api_key
         self.base_url = base_url
         self.pricing = pricing or PricingTable()
+        self.routing = routing
         self.retry = retry or RetryPolicy()
         self._complete = completion_fn or _default_completion
         self._sleep = sleep_fn or asyncio.sleep
@@ -194,7 +197,14 @@ class LlmGateway:
 
         # Ask OpenRouter to report what it actually charged, so cost comes from the provider
         # rather than from our own multiplication (invariant 4).
-        request["extra_body"] = {"usage": {"include": True}}
+        extra_body: dict[str, Any] = {"usage": {"include": True}}
+
+        # Constrain which endpoint may serve this. Without it the router is free to pick a 4-bit
+        # provider, and the model on the leaderboard is not the model that played.
+        if self.routing is not None:
+            extra_body["provider"] = self.routing.to_request()
+
+        request["extra_body"] = extra_body
 
         if extra:
             request.update(extra)
@@ -302,6 +312,7 @@ class LlmGateway:
         )
 
         return Completion(
+            provider=parsed.provider,
             model=parsed.model or model,
             content=parsed.content,
             reasoning=parsed.reasoning,

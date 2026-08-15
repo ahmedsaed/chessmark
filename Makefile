@@ -47,8 +47,11 @@ drift: ## Fail if models and migrations disagree
 seed-models: ## Load seeds/models.json into model_registry
 	cd $(API) && uv run python ../../scripts/seed_models.py
 
-refresh-models: ## Re-fetch the free tool-capable model list from OpenRouter
+refresh-models: ## Re-fetch the tool-capable model list from OpenRouter
 	python3 scripts/refresh_model_seed.py
+
+refresh-endpoints: ## Refresh which providers serve each model, and at what quantization
+	cd $(API) && uv run python ../../scripts/refresh_endpoints.py
 
 record-llm: ## Re-record LLM test fixtures (spends free-tier requests; never run by CI)
 	cd $(API) && uv run python ../../scripts/record_llm_fixtures.py

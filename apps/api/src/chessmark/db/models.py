@@ -123,6 +123,14 @@ class Game(Base):
     prompt_version: Mapped[str | None] = mapped_column(sa.Text)
     tool_schema_version: Mapped[str | None] = mapped_column(sa.Text)
 
+    #: The OpenRouter provider-routing policy this game ran under — which quantizations it would
+    #: accept, the sort, any throughput floor. Recorded because it is as much a part of a result as
+    #: the prompt version: the same model served at fp8 and at fp4 is not the same contestant, and
+    #: a leaderboard that mixes them silently measures the routing lottery (BENCH-04).
+    provider_routing: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default="{}"
+    )
+
     # --- accounting ---
     max_usd: Mapped[Decimal | None] = mapped_column(USD)
     total_cost_usd: Mapped[Decimal] = mapped_column(USD, default=Decimal(0), server_default="0")
@@ -420,6 +428,39 @@ class GameEvent(Base):
 
 
 # ============================================================================ benchmark
+
+
+class ModelEndpoint(Base):
+    """One provider serving one model, and at what precision.
+
+    OpenRouter fans a single model id out across many providers — `deepseek-v4-flash` has 18,
+    quantized anywhere from fp8 down to fp4, some declaring nothing at all. The chat response names
+    the provider but never its precision, so this is the table that turns "AtlasCloud" into "fp8"
+    and lets a finished game say what it was actually played at.
+
+    Nothing is deleted on refresh, only deactivated: a game that already ran must stay explicable
+    after a provider disappears.
+    """
+
+    __tablename__ = "model_endpoints"
+
+    id: Mapped[int] = bigint_pk()
+    model_id: Mapped[uuid.UUID] = mapped_column(
+        _fk("model_registry.id", ondelete="CASCADE"), index=True
+    )
+    provider_name: Mapped[str] = mapped_column(sa.Text, index=True)
+    quantization: Mapped[str | None] = mapped_column(sa.Text)
+    context_length: Mapped[int | None] = mapped_column(sa.Integer)
+    supports_tools: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
+    max_completion_tokens: Mapped[int | None] = mapped_column(sa.Integer)
+    is_active: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
+    refreshed_at: Mapped[dt.datetime] = updated_at()
+
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "model_id", "provider_name", name="uq_model_endpoints_model_id_provider_name"
+        ),
+    )
 
 
 class Rating(Base):
