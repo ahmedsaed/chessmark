@@ -156,9 +156,9 @@ flowchart LR
 - [x] No stored payload contains an API key — asserted over every committed fixture and over live gateway output
 - [x] A simulated 500 retries and then succeeds; a simulated 400 does not retry
 - [x] `make smoke-llm` makes one real cheap call end to end and prints tokens, cost, and latency
-- [ ] **DEFERRED —** Second call with an identical prefix reports `cached_tokens > 0`
+- [x] Second call with an identical prefix reports `cached_tokens > 0` — **verified on paid models**, see below
 
-**Covers:** LOG-01, LOG-02, AGENT-09, UI-07, NFR-06 (partial — see below)
+**Covers:** LOG-01, LOG-02, AGENT-09, UI-07, NFR-06
 
 **Notes**
 - **Testing never calls a provider.** Fixtures in `tests/fixtures/llm/` are replayed; a missing
@@ -175,16 +175,31 @@ flowchart LR
   loop on a permanent failure spends the budget several times for nothing. Provider retries are
   strictly separate from illegal-move retries — a flaky network must never affect a benchmark score.
 
-**Why the cache criterion is deferred**
+**The cache criterion — deferred through Phases 3–5, closed in Phase 5**
 
-`cached_tokens` capture, the `cache_hit_rate` metric, and cached-rate billing are all implemented
-and tested against fixtures. They cannot be *verified live* yet: OpenRouter's free tier does not
-report cached tokens, and the free models available to us do not do prompt caching at all. The
-smoke run confirms this — two calls sharing a 956-token prefix both reported `cached: 0 (0%)`.
+`cached_tokens` capture, the `cache_hit_rate` metric, and cached-rate billing were implemented and
+tested against fixtures from the start, but could not be *verified live*: OpenRouter's free tier
+does not report cached tokens, and the free models available to us do no prompt caching at all.
+Two calls sharing a 956-token prefix both reported `cached: 0 (0%)`, and the ten-ply Phase 4 game
+showed the unmitigated O(n²) prompt growth ADR-0003 predicts.
 
-Verifying NFR-06 for real needs a caching-capable model, which needs credits. Re-run
-`make smoke-llm` once that exists; no code change is expected, but the claim is unproven until
-someone checks.
+Credits and paid models closed it. An 80-ply `gemini-2.5-flash-lite` vs `deepseek-v4-flash` game
+over 186 calls:
+
+| | prompt tokens | cached | hit rate |
+| --- | --- | --- | --- |
+| `deepseek-v4-flash` | 1,745,640 | 1,489,920 | **85.4%** |
+| `gemini-2.5-flash-lite` | 683,143 | 525,414 | **76.9%** |
+| whole game | 2,428,783 | 2,015,334 | **83.0%** |
+
+**NFR-06 (>80%) is met in aggregate but not by every model.** Gemini sits below the bar because
+Google's implicit caching only engages above a minimum prefix size, so the opening plies — when the
+transcript is still short — miss entirely; the rate climbs as the game lengthens. DeepSeek's
+explicit cache clears the bar outright. The threshold is worth restating per model rather than per
+game once the leaderboard exists, since a game's number is just a token-weighted blend of two.
+
+No code changed to make this pass — the capture path was correct, it had simply never met a
+provider that caches.
 
 ---
 
@@ -321,6 +336,34 @@ cap. Both are recorded above because they are properties of free models worth kn
   and the worker both announced the ending, so every game logged two. Announcing belongs to
   whoever owns the status transition. Now covered by a regression test verified to fail without
   the fix.
+
+**First paid-model benchmark**
+
+`google/gemini-2.5-flash-lite` (White) vs `deepseek/deepseek-v4-flash` (Black), 80 plies to the ply
+cap, `1/2-1/2` — 186 LLM calls, **$0.076 total, $0.00095/ply**. A full game costs roughly three
+cents, which makes routine benchmarking affordable.
+
+| | illegal | prompt tok | cache | out tok | reasoning | cost | avg latency |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| gemini-2.5-flash-lite | 4 | 683,143 | 76.9% | 2,410 | 789 | $0.0220 | 1.7 s |
+| deepseek-v4-flash | 2 | 1,745,640 | 85.4% | 144,291 | 140,540 | $0.0542 | 16.5–29.2 s |
+
+Both finished the game, which no free model managed. The interesting split is *how* they cost
+money: DeepSeek spent 60× the output tokens (97% of it reasoning) and was ten times slower per
+call, while Gemini answered in a second and a half with almost no visible thinking — and made
+twice as many illegal moves. Cost tracked reasoning, not strength.
+
+**All six illegal attempts were `not_reachable`** — none were check-evasion or wrong-turn errors,
+which suggests board-state tracking rather than rule knowledge is the failure mode. Two of
+Gemini's four were *stale-board* errors: it tried `Nxc3` with a knight Black had captured twelve
+plies earlier, and `Kxg7` with a king on h1. One, `Rf1`, named a square its rook was already on.
+Every rejection carried the full legal move list (invariant 6, confirmed in `tool_calls.result`),
+and both models recovered from every one.
+
+The game reached the cap rather than a mate: DeepSeek won a queen and a rook and reduced White to a
+bare king, but never converted, while Gemini shuffled its king between g1/h1/h2 for twenty plies.
+**Neither model can finish a won endgame** — the clearest capability gap this run found, and an
+argument for scoring material and mate-conversion separately from legality.
 
 ---
 

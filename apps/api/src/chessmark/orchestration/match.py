@@ -100,7 +100,7 @@ async def create_match(
             colour=colour,
             kind=seat.kind,
             display_name=seat.display_name,
-            model_id=seat.model_id,
+            model_id=seat.model_id or await registry_id_for(session, seat.model),
             user_id=seat.user_id,
             persona=seat.persona,
             system_prompt_version=PROMPT_VERSION,
@@ -188,6 +188,25 @@ async def resolve_routing(
         return routing
 
     return widen_for_first_party(routing, model_slug=model_slug, endpoints=pairs)
+
+
+async def registry_id_for(session: AsyncSession, model_slug: str | None) -> uuid.UUID | None:
+    """The `model_registry` row a slug names, if we know it.
+
+    Complements `sampling["model"]` rather than replacing it: the slug is what the game *ran*, and
+    stays readable after a rename, while this FK is what aggregate queries join on. A leaderboard
+    cannot group by a JSON string, so a player left unlinked is a game the ratings cannot see.
+
+    Returns `None` for an unknown slug instead of raising — a model absent from the registry is
+    still playable, it just does not aggregate until the registry catches up.
+    """
+    if not model_slug:
+        return None
+
+    model_id: uuid.UUID | None = await session.scalar(
+        sa.select(ModelRegistry.id).where(ModelRegistry.openrouter_id == model_slug)
+    )
+    return model_id
 
 
 def model_for(player: Player) -> str:
