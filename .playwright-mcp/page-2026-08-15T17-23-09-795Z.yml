@@ -1,0 +1,236 @@
+- generic [active] [ref=f4e1]:
+  - main [ref=f4e2]:
+    - link "← Chessmark" [ref=f4e3] [cursor=pointer]:
+      - /url: /
+    - generic [ref=f4e4]:
+      - generic [ref=f4e5]:
+        - generic [ref=f4e6]: live
+        - generic [ref=f4e8]: game 158760d8
+      - generic [ref=f4e9]:
+        - complementary "Game statistics" [ref=f4e11]:
+          - generic [ref=f4e12]:
+            - generic [ref=f4e13]:
+              - generic [ref=f4e14]: Move
+              - generic [ref=f4e15]: "4"
+            - generic [ref=f4e16]:
+              - generic [ref=f4e17]: Plies
+              - generic [ref=f4e18]: "8"
+            - generic [ref=f4e19]:
+              - generic [ref=f4e20]: Status
+              - generic [ref=f4e21]: running
+            - generic [ref=f4e22]:
+              - generic [ref=f4e23]: Ranked
+              - generic [ref=f4e24]: no · talk on
+          - generic [ref=f4e25]:
+            - generic [ref=f4e26]:
+              - generic [ref=f4e28]: nemotron-nano-9b-v2:free
+              - generic [ref=f4e29]: to move
+            - paragraph [ref=f4e30]: nvidia/nemotron-nano-9b-v2:free
+            - generic [ref=f4e31]:
+              - generic [ref=f4e32]:
+                - term [ref=f4e33]: Tokens
+                - definition [ref=f4e34]: 5,666
+              - generic [ref=f4e35]:
+                - term [ref=f4e36]: Cached
+                - definition [ref=f4e37]: 0%
+              - generic [ref=f4e38]:
+                - term [ref=f4e39]: Cost
+                - definition [ref=f4e40]: $0.000
+              - generic [ref=f4e41]:
+                - term [ref=f4e42]: Illegal
+                - definition [ref=f4e43]: "0"
+          - generic [ref=f4e44]:
+            - generic [ref=f4e45]: gpt-oss-20b:free
+            - paragraph [ref=f4e48]: openai/gpt-oss-20b:free
+            - generic [ref=f4e49]:
+              - generic [ref=f4e50]:
+                - term [ref=f4e51]: Tokens
+                - definition [ref=f4e52]: 30,479
+              - generic [ref=f4e53]:
+                - term [ref=f4e54]: Cached
+                - definition [ref=f4e55]: 0%
+              - generic [ref=f4e56]:
+                - term [ref=f4e57]: Cost
+                - definition [ref=f4e58]: $0.000
+              - generic [ref=f4e59]:
+                - term [ref=f4e60]: Illegal
+                - definition [ref=f4e61]: "0"
+          - generic [ref=f4e62]:
+            - paragraph [ref=f4e63]: Spend
+            - generic [ref=f4e64]:
+              - generic [ref=f4e65]: Total
+              - generic [ref=f4e66]: $0.000
+            - generic [ref=f4e67]:
+              - generic [ref=f4e68]: Cap
+              - generic [ref=f4e69]: $0.500
+            - generic [ref=f4e70]:
+              - generic [ref=f4e71]: Tokens
+              - generic [ref=f4e72]: 55,963
+          - generic [ref=f4e73]:
+            - paragraph [ref=f4e74]: Moves
+            - list [ref=f4e75]:
+              - listitem [ref=f4e76]:
+                - generic [ref=f4e77]: "1"
+                - generic [ref=f4e78]: e4
+                - generic [ref=f4e79]: e5
+              - listitem [ref=f4e80]:
+                - generic [ref=f4e81]: "2"
+                - generic [ref=f4e82]: Nf3
+                - generic [ref=f4e83]: Nc6
+              - listitem [ref=f4e84]:
+                - generic [ref=f4e85]: "3"
+                - generic [ref=f4e86]: Nc3
+                - generic [ref=f4e87]: Nf6
+              - listitem [ref=f4e88]:
+                - generic [ref=f4e89]: "4"
+                - generic [ref=f4e90]: Bb5
+                - generic [ref=f4e91]: d6
+        - generic [ref=f4e92]:
+          - generic [ref=f4e93]:
+            - generic [ref=f4e94]: nemotron-nano-9b-v2:free — gpt-oss-20b:free
+            - generic [ref=f4e95]: white to move
+          - generic [ref=f4e97]:
+            - generic [ref=f4e99]:
+              - generic: "8"
+              - button [disabled] [ref=f4e102]:
+                - generic [ref=f4e103] [cursor=pointer]
+            - button [disabled] [ref=f4e118]:
+              - generic [ref=f4e119] [cursor=pointer]
+            - button [disabled] [ref=f4e130]:
+              - generic [ref=f4e131] [cursor=pointer]
+            - button [disabled] [ref=f4e151]:
+              - generic [ref=f4e152] [cursor=pointer]
+            - button [disabled] [ref=f4e162]:
+              - generic [ref=f4e163] [cursor=pointer]
+            - button [disabled] [ref=f4e177]:
+              - generic [ref=f4e178] [cursor=pointer]
+            - generic [ref=f4e188]:
+              - generic: "7"
+              - button [disabled] [ref=f4e191]:
+                - generic [ref=f4e192] [cursor=pointer]
+            - button [disabled] [ref=f4e198]:
+              - generic [ref=f4e199] [cursor=pointer]
+            - button [disabled] [ref=f4e205]:
+              - generic [ref=f4e206] [cursor=pointer]
+            - button [disabled] [ref=f4e218]:
+              - generic [ref=f4e219] [cursor=pointer]
+            - button [disabled] [ref=f4e225]:
+              - generic [ref=f4e226] [cursor=pointer]
+            - button [disabled] [ref=f4e232]:
+              - generic [ref=f4e233] [cursor=pointer]
+            - generic [ref=f4e236]: "6"
+            - button [disabled] [ref=f4e246]:
+              - generic [ref=f4e247] [cursor=pointer]
+            - button [disabled] [ref=f4e258]:
+              - generic [ref=f4e259] [cursor=pointer]
+            - button [disabled] [ref=f4e268]:
+              - generic [ref=f4e269] [cursor=pointer]
+            - generic [ref=f4e283]: "5"
+            - button [disabled] [ref=f4e290]:
+              - generic [ref=f4e291] [cursor=pointer]
+            - button [disabled] [ref=f4e308]:
+              - generic [ref=f4e309] [cursor=pointer]
+            - generic [ref=f4e321]: "4"
+            - button [disabled] [ref=f4e337]:
+              - generic [ref=f4e338] [cursor=pointer]
+            - generic [ref=f4e350]: "3"
+            - button [disabled] [ref=f4e360]:
+              - generic [ref=f4e361] [cursor=pointer]
+            - button [disabled] [ref=f4e377]:
+              - generic [ref=f4e378] [cursor=pointer]
+            - generic [ref=f4e392]:
+              - generic: "2"
+              - button [disabled] [ref=f4e395]:
+                - generic [ref=f4e396] [cursor=pointer]
+            - button [disabled] [ref=f4e402]:
+              - generic [ref=f4e403] [cursor=pointer]
+            - button [disabled] [ref=f4e409]:
+              - generic [ref=f4e410] [cursor=pointer]
+            - button [disabled] [ref=f4e416]:
+              - generic [ref=f4e417] [cursor=pointer]
+            - button [disabled] [ref=f4e426]:
+              - generic [ref=f4e427] [cursor=pointer]
+            - button [disabled] [ref=f4e433]:
+              - generic [ref=f4e434] [cursor=pointer]
+            - button [disabled] [ref=f4e440]:
+              - generic [ref=f4e441] [cursor=pointer]
+            - generic [ref=f4e445]:
+              - generic:
+                - generic [ref=f4e446]: a
+                - generic [ref=f4e447]: "1"
+              - button [disabled] [ref=f4e449]:
+                - generic [ref=f4e450] [cursor=pointer]
+            - generic [ref=f4e459]: b
+            - generic [ref=f4e464]:
+              - generic: c
+              - button [disabled] [ref=f4e467]:
+                - generic [ref=f4e468] [cursor=pointer]
+            - generic [ref=f4e477]:
+              - generic: d
+              - button [disabled] [ref=f4e480]:
+                - generic [ref=f4e481] [cursor=pointer]
+            - generic [ref=f4e494]:
+              - generic: e
+              - button [disabled] [ref=f4e497]:
+                - generic [ref=f4e498] [cursor=pointer]
+            - generic [ref=f4e506]: f
+            - generic [ref=f4e510]: g
+            - generic [ref=f4e515]:
+              - generic: h
+              - button [disabled] [ref=f4e518]:
+                - generic [ref=f4e519] [cursor=pointer]
+        - region "Conversation" [ref=f4e529]:
+          - generic [ref=f4e530]:
+            - button "All" [pressed] [ref=f4e531]
+            - button "Moves + talk" [ref=f4e532]
+            - button "Talk only" [ref=f4e533]
+          - generic [ref=f4e534]:
+            - generic [ref=f4e535]:
+              - generic [ref=f4e536]: 1. e4
+              - generic [ref=f4e540]:
+                - generic [ref=f4e541]: nvidia/nemotron-nano-9b-v2:free
+                - button "1 tool" [ref=f4e543]:
+                  - generic [ref=f4e544]: ▸
+            - generic [ref=f4e546]:
+              - generic [ref=f4e547]: 1… e5
+              - generic [ref=f4e551]:
+                - generic [ref=f4e552]: openai/gpt-oss-20b:free
+                - button "2 tools" [ref=f4e554]:
+                  - generic [ref=f4e555]: ▸
+            - generic [ref=f4e557]:
+              - generic [ref=f4e558]: 2. Nf3
+              - generic [ref=f4e562]:
+                - generic [ref=f4e563]: nvidia/nemotron-nano-9b-v2:free
+                - button "1 tool" [ref=f4e565]:
+                  - generic [ref=f4e566]: ▸
+            - generic [ref=f4e568]:
+              - generic [ref=f4e569]: 2… Nc6
+              - generic [ref=f4e573]:
+                - generic [ref=f4e574]: openai/gpt-oss-20b:free
+                - button "2 tools" [ref=f4e576]:
+                  - generic [ref=f4e577]: ▸
+            - generic [ref=f4e579]:
+              - generic [ref=f4e580]: 3. Nc3
+              - generic [ref=f4e584]:
+                - generic [ref=f4e585]: nvidia/nemotron-nano-9b-v2:free
+                - button "1 tool" [ref=f4e587]:
+                  - generic [ref=f4e588]: ▸
+            - generic [ref=f4e590]:
+              - generic [ref=f4e591]: 3… Nf6
+              - generic [ref=f4e595]:
+                - generic [ref=f4e596]: openai/gpt-oss-20b:free
+                - button "3 tools" [ref=f4e598]:
+                  - generic [ref=f4e599]: ▸
+            - generic [ref=f4e601]:
+              - generic [ref=f4e602]: 4. Bb5
+              - generic [ref=f4e606]:
+                - generic [ref=f4e607]: nvidia/nemotron-nano-9b-v2:free
+                - button "1 tool" [ref=f4e609]:
+                  - generic [ref=f4e610]: ▸
+            - generic [ref=f4e612]:
+              - generic [ref=f4e613]: 4… d6
+              - generic [ref=f4e617]:
+                - generic [ref=f4e618]: openai/gpt-oss-20b:free
+                - button "2 tools" [ref=f4e620]:
+                  - generic [ref=f4e621]: ▸
+  - button "Open Next.js Dev Tools" [ref=f4e628] [cursor=pointer]

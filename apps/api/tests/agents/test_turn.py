@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents.scripted import plays, prose, raw_tool_call, says, scripted, step, tool_call
 from chessmark.agents.tools import MAX_MESSAGE_LENGTH, MAX_MESSAGES_PER_TURN
 from chessmark.agents.turn import TurnLimits
-from chessmark.db.enums import TurnStatus
-from chessmark.db.models import LlmCall, Message, Ply, ToolCall, Turn
+from chessmark.db.enums import EventType, TurnStatus
+from chessmark.db.models import GameEvent, LlmCall, Message, Ply, ToolCall, Turn
 from chessmark.game import Colour, GameResult, Termination
 from tests.agents.conftest import Table, play_turn, seat
 
@@ -632,3 +632,49 @@ async def test_truncation_and_refusal_have_separate_budgets(db: AsyncSession, ta
 
     assert result.status is TurnStatus.COMPLETED
     assert result.moved
+
+
+async def test_reasoning_streams_live_in_a_model_vs_model_game(
+    db: AsyncSession, table: Table
+) -> None:
+    """Invariant 8 is about participants, not spectators. Neither model can read this stream —
+    each sees only its own transcript — so live reasoning leaks nothing and is the whole appeal."""
+    await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("make_move", move="e4"), reasoning="Control the centre.")),
+    )
+
+    events = (
+        await db.scalars(sa.select(GameEvent).where(GameEvent.type == EventType.THINKING))
+    ).all()
+
+    assert events
+    assert events[0].payload["reasoning"] == "Control the centre."
+
+
+async def test_reasoning_is_withheld_from_the_stream_when_a_human_plays(
+    db: AsyncSession, db_human_table: Table
+) -> None:
+    """A human is sitting on the page. Streaming their opponent's plan to them hands them the
+    game (HUMAN-07). The token count still goes out — it leaks nothing."""
+    await play_turn(
+        db,
+        db_human_table,
+        scripted(
+            step(
+                tool_call("make_move", move="e4"),
+                reasoning="I plan Qh5 next.",
+                reasoning_tokens=42,
+            )
+        ),
+    )
+
+    events = (
+        await db.scalars(sa.select(GameEvent).where(GameEvent.type == EventType.THINKING))
+    ).all()
+
+    assert events
+    assert "reasoning" not in events[0].payload
+    assert events[0].payload["tokens"] > 0
+    assert "Qh5" not in str(events[0].payload)

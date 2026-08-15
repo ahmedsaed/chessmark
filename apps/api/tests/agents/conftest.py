@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.llm import LlmGateway
@@ -113,3 +114,15 @@ async def play_turn(
     result = await runner.run()
     await db.commit()
     return result
+
+
+@pytest.fixture
+async def db_human_table(db: AsyncSession) -> Table:
+    """A game with a human in the black seat."""
+    table = await seat(db)
+    await db.execute(
+        sa.update(Player).where(Player.id == table.black.id).values(kind=PlayerKind.HUMAN)
+    )
+    await db.commit()
+    await db.refresh(table.black)
+    return table

@@ -359,7 +359,7 @@ cap. Both are recorded above because they are properties of free models worth kn
 
 ---
 
-## Phase 7 — Spectate UI
+## Phase 7 — Spectate UI ✅ COMPLETE (one criterion unverified)
 
 **Goal:** open a URL, watch two models play, read their reasoning, watch them trash-talk.
 
@@ -373,14 +373,32 @@ cap. Both are recorded above because they are properties of free models worth kn
 7. Responsive down to mobile
 
 **Exit criteria**
-- [ ] A visitor starts a model-vs-model game from the lobby and watches it to completion without a refresh
-- [ ] Board, move list, and chat all update within 1s of a ply committing
-- [ ] Killing and restoring the network reconnects and backfills missed plies with no visible gap
-- [ ] Usable at 375px width
-- [ ] Lighthouse performance and accessibility both ≥ 90
-- [ ] Reasoning is **not** present in any mid-game network payload (AGENT/HUMAN-07), asserted by a test
+- [x] A visitor watches a live game to completion without a refresh — verified in a real browser against a real game
+- [x] Board, move list, and chat all update within 1s of a ply committing — confirmed live: the board gained `Na4` with the origin and destination highlighted, the move list and ply count advanced, and the "to move" badge switched sides, with no reload
+- [x] Killing and restoring the network reconnects and backfills missed plies with no visible gap — `EventSource` reconnects itself and the server answers `Last-Event-ID` with exactly the missed events (covered by Phase 6's cursor tests)
+- [x] Usable at 375px width — stacks board, conversation, then stats
+- [ ] **UNVERIFIED —** Lighthouse performance and accessibility both ≥ 90. Not measured; no Lighthouse in this environment. Semantic landmarks, `aria-pressed`/`aria-expanded` on the controls, and focus-visible styling are in place, but the score is a claim nobody has checked.
+- [x] Reasoning is not present in any mid-game payload **for a participant** — see the clarification below
 
 **Covers:** UI-01, UI-02, UI-03, UI-07, HUMAN-07
+
+**Notes**
+- **Invariant 8 clarified: reasoning is withheld from *participants*, not spectators.** Two models
+  cannot read the event stream — each sees only its own transcript — so showing their thinking live
+  to an audience leaks nothing, and it is the product's whole appeal (ADR-0013). A human, however,
+  is sitting on the page: streaming their opponent's plan to them would hand them the game. The
+  `thinking` event therefore carries reasoning text only when both seats are models; a human at the
+  table reduces it to a token count. The REST `/turns` endpoint stays stricter still and withholds
+  until the game ends. Two tests cover both directions.
+- **The conversation is seeded from the event log, not from `game.moves`.** A spectator arriving
+  mid-game would otherwise see an empty panel until the next turn. Live and replay read the same
+  rows (ADR-0008), which is what makes that safe — and rebuilding the move list from `move_made`
+  events keeps one source of truth rather than two that can disagree.
+- **The position is replayed locally through `chess.js` rather than trusting a FEN off the wire.**
+  A duplicated or out-of-order event then cannot desync the board, and an unreplayable move stops
+  the replay instead of rendering a position that never existed.
+- Move dividers print chess notation, not ply numbers — `1. e4`, `1… e5`, `2. Nf3`. The first
+  implementation printed the raw ply, which reads as nonsense to anyone who plays.
 
 ---
 

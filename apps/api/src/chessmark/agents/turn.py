@@ -32,7 +32,7 @@ from chessmark.agents import prompts, transcript
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.tools import ToolDispatcher, ToolName, TurnState, tool_schemas
 from chessmark.agents.types import Completion, LlmError, ToolInvocation
-from chessmark.db.enums import EventType, ModerationStatus, TurnStatus
+from chessmark.db.enums import EventType, ModerationStatus, PlayerKind, TurnStatus
 from chessmark.db.models import Game, LlmCall, Message, Player, ToolCall, Turn
 from chessmark.db.repositories import append_event, record_ply
 from chessmark.game import Colour, MoveOutcome, Outcome, Referee, Termination
@@ -175,6 +175,12 @@ class TurnRunner:
         self._tools = tool_schemas(trash_talk_enabled=game.trash_talk_enabled)
         self._llm_sequence = 0
         self._tool_sequence = 0
+        #: True when either seat is a human. Reasoning is withheld from the event stream in
+        #: that case — the human can read the page (invariant 8, HUMAN-07).
+        self._has_human_player = PlayerKind.HUMAN in {
+            PlayerKind(player.kind),
+            PlayerKind(opponent.kind),
+        }
         self._nudged = False
         self._truncations = 0
         self._move_committed = False
@@ -253,14 +259,20 @@ class TurnRunner:
             self._accumulate(result, completion)
 
             if completion.reasoning:
+                # Invariant 8 is about *participants*, not spectators. Two models cannot read this
+                # stream — each sees only its own transcript — so showing their thinking live to an
+                # audience leaks nothing and is the whole appeal (ADR-0013). A human, however, is
+                # sitting on the page: streaming their opponent's plan to them would hand them the
+                # game. So the text is withheld whenever a human is at the table, and only the
+                # token count goes out.
                 await append_event(
                     self.session,
                     game_id=self.game.id,
                     type=EventType.THINKING,
                     payload={
                         "player_id": str(self.player.id),
-                        "reasoning": completion.reasoning,
                         "tokens": completion.usage.reasoning,
+                        **({} if self._has_human_player else {"reasoning": completion.reasoning}),
                     },
                 )
 
