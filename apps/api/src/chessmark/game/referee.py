@@ -53,6 +53,9 @@ class Termination(StrEnum):
     # Decided by the harness
     ILLEGAL_MOVE_FORFEIT = "illegal_move_forfeit"
     ERROR_FORFEIT = "error_forfeit"
+    TRUNCATED = "truncated"
+    """Ran out of output budget mid-reasoning, repeatedly, without ever acting."""
+
     TIMEOUT = "timeout"
     BUDGET_EXCEEDED = "budget_exceeded"
     CONTEXT_EXCEEDED = "context_exceeded"
@@ -67,6 +70,7 @@ FORFEIT_TERMINATIONS = frozenset(
     {
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
+        Termination.TRUNCATED,
         Termination.TIMEOUT,
         Termination.BUDGET_EXCEEDED,
         Termination.CONTEXT_EXCEEDED,

@@ -101,5 +101,14 @@ NUDGE_PROMPT = (
     "play. Call `get_legal_moves` first if you are unsure what is available."
 )
 
+#: Sent when a response was cut off by the output limit before the model could act. Distinct
+#: from NUDGE_PROMPT on purpose: the model did not decline to use its tools, it never got the
+#: chance, and telling it "you did not call a tool" would be simply untrue.
+TRUNCATED_PROMPT = (
+    "Your previous response was cut off by the output limit before you finished. You have not "
+    "moved yet. Think briefly this time, then call `make_move` — a short answer that moves is "
+    "worth more than a long one that gets truncated."
+)
+
 #: Injected into the receiving player's transcript when the opponent speaks (TALK-02).
 OPPONENT_SAID = "Your opponent says: {message}"

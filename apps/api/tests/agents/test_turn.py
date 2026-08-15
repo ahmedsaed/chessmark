@@ -551,3 +551,84 @@ async def test_a_provider_failure_does_not_forfeit_the_model(
     await db.refresh(table.white)
     assert table.white.forfeited is False
     assert table.white.illegal_attempts == 0, "provider errors are not illegal moves"
+
+
+# ====================================================================== truncation
+
+
+async def test_a_truncated_response_is_not_treated_as_a_refusal(
+    db: AsyncSession, table: Table
+) -> None:
+    """Found live. gpt-oss-20b:free spent 32,753 reasoning tokens, hit its provider's output
+    ceiling mid-thought, and was forfeited for "replying without calling a tool" — a refusal it
+    never made. It never reached the point of acting. Blaming the model for an output budget it
+    does not control puts a harness limit into the benchmark result."""
+    result = await play_turn(
+        db,
+        table,
+        scripted(
+            step(content="thinking...", finish_reason="length"),
+            step(tool_call("make_move", move="e4")),
+        ),
+    )
+
+    assert result.status is TurnStatus.COMPLETED
+    assert result.moved
+    assert not table.referee.is_over
+
+
+async def test_a_truncated_response_gets_a_prompt_that_says_so(
+    db: AsyncSession, table: Table
+) -> None:
+    """Telling a truncated model "you did not call a tool" would simply be untrue."""
+    from chessmark.agents import transcript
+
+    await play_turn(
+        db,
+        table,
+        scripted(
+            step(content="thinking...", finish_reason="length"),
+            step(tool_call("make_move", move="e4")),
+        ),
+    )
+
+    messages = await transcript.build_messages(db, table.white.id)
+    prompts_sent = [str(m.get("content", "")) for m in messages if m["role"] == "user"]
+
+    assert any("cut off by the output limit" in text for text in prompts_sent)
+    assert not any("did not call a tool" in text for text in prompts_sent)
+
+
+async def test_repeated_truncation_forfeits_under_its_own_termination(
+    db: AsyncSession, table: Table
+) -> None:
+    """Still a failure to operate, but a distinct one — the leaderboard must be able to tell
+    "wouldn't use tools" from "couldn't fit its reasoning in the output budget"."""
+    result = await play_turn(
+        db,
+        table,
+        scripted(step(content="thinking...", finish_reason="length"), repeat_last=True),
+    )
+
+    assert result.status is TurnStatus.FORFEITED
+    assert result.outcome is not None
+    assert result.outcome.termination is Termination.TRUNCATED
+    assert result.outcome.is_forfeit
+    assert "output limit" in result.outcome.detail
+
+
+async def test_truncation_and_refusal_have_separate_budgets(db: AsyncSession, table: Table) -> None:
+    """A truncation must not consume the single prose nudge, or a model that is cut off once and
+    then declines once would forfeit having only actually refused a single time."""
+    result = await play_turn(
+        db,
+        table,
+        scripted(
+            step(content="cut off", finish_reason="length"),
+            prose("I'll play e4."),
+            step(tool_call("make_move", move="e4")),
+        ),
+    )
+
+    assert result.status is TurnStatus.COMPLETED
+    assert result.moved

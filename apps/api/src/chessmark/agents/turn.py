@@ -37,6 +37,11 @@ from chessmark.db.models import Game, LlmCall, Message, Player, ToolCall, Turn
 from chessmark.db.repositories import append_event, record_ply
 from chessmark.game import Colour, MoveOutcome, Outcome, Referee, Termination
 
+#: How many truncated responses a model may produce in one turn before forfeiting. More than one
+#: because the first truncation is often a model discovering how long its own reasoning runs; a
+#: model that cannot act in three attempts, having been told each time, is genuinely stuck.
+MAX_TRUNCATIONS = 3
+
 
 @dataclass(frozen=True, slots=True)
 class TurnLimits:
@@ -171,6 +176,7 @@ class TurnRunner:
         self._llm_sequence = 0
         self._tool_sequence = 0
         self._nudged = False
+        self._truncations = 0
         self._move_committed = False
 
     # ------------------------------------------------------------------ entry point
@@ -269,7 +275,7 @@ class TurnRunner:
             )
 
             if not completion.tool_calls:
-                if await self._nudge(turn, result):
+                if await self._no_action(turn, result, completion):
                     continue
                 return
 
@@ -357,6 +363,45 @@ class TurnRunner:
             result.status = TurnStatus.COMPLETED
             return True
         return False
+
+    async def _no_action(self, turn: Turn, result: TurnResult, completion: Completion) -> bool:
+        """A response with no tool call. Returns True to try again, False to end the turn.
+
+        *Why* there was no tool call matters, and conflating the two cases would put a harness
+        limit into the benchmark as a model failure:
+
+        * ``finish_reason == "length"`` — the model was cut off mid-reasoning and never reached the
+          point of acting. Telling it "you did not call a tool" would be untrue, and forfeiting it
+          would blame the model for an output budget it does not control. Observed live:
+          gpt-oss-20b:free spent 32,753 reasoning tokens, hit its provider's output ceiling, and
+          was forfeited for a refusal it never made.
+        * anything else — the model finished its turn and chose not to act. That is the failure
+          AGENT-05 is about.
+        """
+        if completion.finish_reason == "length":
+            return await self._retry_truncated(turn, result)
+        return await self._nudge(turn, result)
+
+    async def _retry_truncated(self, turn: Turn, result: TurnResult) -> bool:
+        self._truncations += 1
+        if self._truncations > MAX_TRUNCATIONS:
+            result.status = TurnStatus.FORFEITED
+            result.outcome = self._forfeit(
+                Termination.TRUNCATED,
+                f"{self.colour.value.capitalize()} was cut off by the output limit "
+                f"{self._truncations} times without ever acting.",
+            )
+            return False
+
+        await transcript.append_message(
+            self.session,
+            player_id=self.player.id,
+            game_id=self.game.id,
+            turn_id=turn.id,
+            role="user",
+            content=prompts.TRUNCATED_PROMPT,
+        )
+        return True
 
     async def _nudge(self, turn: Turn, result: TurnResult) -> bool:
         """Tell a silent model to use its tools. Exactly one of these per turn (AGENT-05)."""

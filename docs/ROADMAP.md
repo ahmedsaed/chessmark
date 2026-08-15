@@ -276,13 +276,13 @@ cap. Both are recorded above because they are properties of free models worth kn
 8. A resumption reconciler for games stalled by a crash
 
 **Exit criteria**
-- [ ] Two cheap models play a full game to a legitimate terminal state (checkmate, draw, or forfeit) with no manual intervention — *live run in progress; scripted models already do this end to end through the real queue*
+- [x] Two cheap models play a full game to a legitimate terminal state (checkmate, draw, or forfeit) with no manual intervention — `nemotron-nano-9b-v2:free` vs `gpt-oss-20b:free` played `1.e4 e5 2.Nf3 Nc6 3.Bc4` and ended `1-0` when Black forfeited, unattended, driven only by the queue
 - [x] The terminal shows the board, moves, and any trash talk live — `make play`
 - [x] Postgres holds: every ply, every turn, every LLM call verbatim, every tool call, every event
 - [x] Killing the worker mid-turn and restarting it resumes the game to completion (OPS-05)
 - [x] Replaying an `advance_turn` job for an already-advanced ply is a no-op, asserted by a test
 - [x] A game configured with a $0.01 cap ends as `budget_exceeded`
-- [ ] Cost-per-ply is logged, and the ratio of prompt tokens to cached tokens is reported at game end — *implemented and verified on a scripted game; awaiting the live run for real numbers*
+- [x] Cost-per-ply is logged, and the ratio of prompt tokens to cached tokens is reported at game end — 5 plies, 11 LLM calls, 22,032 prompt + 47,592 completion tokens, **0% cache hit rate** (the free tier does no prompt caching)
 
 > **At the end of this phase, Chessmark works.** Everything after adds surface, safety, and audience.
 
@@ -303,6 +303,13 @@ cap. Both are recorded above because they are properties of free models worth kn
 - **The budget cap is checked before a turn, not after.** Noticing afterwards means the money is
   already spent. A budget stop is recorded as a **draw**: awarding the win to whoever happened to be
   ahead would put our budgeting decision into the benchmark results.
+- **The first live game exposed a benchmark-integrity bug.** Black was forfeited as
+  `error_forfeit` — "replied without calling a tool twice in a row" — but the transcript showed
+  `finish_reason: "length"`: it had spent 32,753 reasoning tokens, hit its provider's 32,768-token
+  output ceiling mid-thought, and never reached the point of acting. It was blamed for a refusal it
+  never made. Truncation now has its own retry path, its own prompt, and its own `truncated`
+  termination, on a budget separate from the prose nudge. Conflating a harness limit with a model
+  failure is exactly the kind of error that quietly corrupts a leaderboard.
 - **A duplicate `game_ended` event was found by running the CLI**, not by any test — `TurnRunner`
   and the worker both announced the ending, so every game logged two. Announcing belongs to
   whoever owns the status transition. Now covered by a regression test verified to fail without
