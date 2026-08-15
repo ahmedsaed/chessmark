@@ -97,7 +97,7 @@ flowchart LR
 
 ---
 
-## Phase 2 — Persistence layer
+## Phase 2 — Persistence layer ✅ COMPLETE
 
 **Goal:** a game and its complete history can be written to Postgres and read back byte-identical.
 
@@ -110,13 +110,30 @@ flowchart LR
 6. Test fixtures: an ephemeral database per test run
 
 **Exit criteria**
-- [ ] `alembic upgrade head` on an empty database creates the full schema; `downgrade base` reverses it cleanly
-- [ ] `alembic check` reports no drift between models and migrations
-- [ ] Integration test: persist a 40-ply game, reload it, and confirm the reconstructed board matches the original final FEN
-- [ ] Concurrency test: 100 concurrent `game_events` appends produce `seq` 1..100 with no gaps and no duplicates
-- [ ] Every foreign key has an index; verified by a schema-introspection test
+- [x] `alembic upgrade head` on an empty database creates the full schema; `downgrade base` reverses it cleanly
+- [x] `alembic check` reports no drift between models and migrations
+- [x] Integration test: persist a 40-ply game, reload it, and confirm the reconstructed board matches the original final FEN — the Opera Game's 33 plies, replayed from stored SAN to the exact final position
+- [x] Concurrency test: 100 concurrent `game_events` appends produce `seq` 1..100 with no gaps and no duplicates
+- [x] Every foreign key has an index; verified by a schema-introspection test
 
-**Covers:** GAME-03, LOG-04, BENCH-08, OPS-02
+**Covers:** GAME-03, GAME-09 (schema), LOG-04, BENCH-08, OPS-02
+
+**Notes**
+- 13 tables. Identity rule: anything with a public identity (users, games, players, models) gets a
+  **UUID** so URLs are not enumerable; append-only log rows get a **bigserial** because nothing
+  outside the system addresses them.
+- `game_events.seq` is allocated by `UPDATE games SET event_seq = event_seq + 1 ... RETURNING`.
+  The row lock serialises concurrent appends; the unique constraint on `(game_id, seq)` is the
+  backstop. **Verified with teeth:** swapping in a naive `MAX(seq)+1` makes the concurrency test
+  fail with duplicate-key violations, so the test genuinely proves the mechanism.
+- Money is `NUMERIC`, never float — invariant 4 says cost comes from real token counts, and a
+  float would undermine that at the storage layer.
+- Enums are stored as their *values* in `VARCHAR` with no database CHECK constraint. Python owns
+  the allowed set; adding a termination reason should not need a migration, and a stale CHECK is a
+  worse failure than a stale value.
+- The test suite builds its schema by running Alembic rather than `create_all`, so every run also
+  proves the migrations produce a usable database. It refuses to run against any database whose
+  name does not contain `test`.
 
 ---
 

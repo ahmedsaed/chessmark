@@ -19,6 +19,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | GAME-06 | Configurable start position (FEN) so themed matches and endgame tests are possible. | C |
 | GAME-07 | Hard ply cap (default 300); exceeding it adjudicates the game by engine evaluation, or a draw if no engine is configured. | M |
 | GAME-08 | Draw offers and resignation available to agents as explicit tools. | S |
+| GAME-09 | Threefold repetition and the fifty-move rule apply **automatically** (a deliberate deviation from claim-based FIDE — see Phase 1 notes), but each is a per-match configuration flag, recorded on the game so results stay comparable. Schema carries the flags from Phase 2; the referee honours them in a later phase. | S |
 
 ## 2. Agent runtime (AGENT)
 

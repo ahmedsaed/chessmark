@@ -122,11 +122,14 @@ Configured in `.mcp.json` (project-scoped):
 
 ## Current state
 
-**Phases 0 and 1 complete.** Toolchains, Docker datastores, CI, research docs, the settled design
-system, and the full chess domain — 108 tests, 99.75% coverage on `game/`, CI green.
+**Phases 0, 1 and 2 complete.** 135 tests, CI green.
 
-`chessmark.game` is done and stable: `ChessBoard` (position, views, SAN/UCI parsing with
-explanatory failures), `Referee` (terminal detection, resign/forfeit/adjudicate, ply cap),
-`IllegalMoveError` (reason, human-readable detail, full legal move list), and PGN export.
+- `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
+  human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
+- `chessmark.db` — 13 tables, Alembic migrations, async sessions, repositories. `game_events`
+  appends are gap-free under concurrency.
 
-**Next up: Phase 2 — persistence.** See [ROADMAP.md](docs/ROADMAP.md#phase-2--persistence-layer).
+Database tests need `make up` first. `make test-unit` skips them; `make migration m="..."`
+autogenerates a migration; `make drift` fails if models and migrations disagree.
+
+**Next up: Phase 3 — LLM gateway.** See [ROADMAP.md](docs/ROADMAP.md#phase-3--llm-gateway).

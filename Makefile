@@ -35,8 +35,20 @@ api: ## Run the API with reload (port 8010)
 web: ## Run the frontend (port 3010)
 	cd $(WEB) && pnpm dev
 
-test: ## Run backend tests
+migrate: ## Apply all migrations
+	cd $(API) && uv run alembic upgrade head
+
+migration: ## Autogenerate a migration: make migration m="add foo"
+	cd $(API) && uv run alembic revision --autogenerate -m "$(m)"
+
+drift: ## Fail if models and migrations disagree
+	cd $(API) && uv run alembic check
+
+test: ## Run backend tests (database tests need `make up`)
 	cd $(API) && uv run pytest
+
+test-unit: ## Run only tests that need no database
+	cd $(API) && uv run pytest -m "not integration"
 
 cov: ## Run the chess-domain coverage gate (NFR-07)
 	cd $(API) && uv run pytest tests/game --cov=chessmark.game --cov-report=term-missing --cov-fail-under=90
