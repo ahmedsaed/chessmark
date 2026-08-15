@@ -1,0 +1,160 @@
+# Requirements
+
+Every requirement has a stable ID. Roadmap phases reference these IDs; nothing gets built that
+isn't listed here, and nothing here is left unassigned to a phase.
+
+Priority: **M** = must have for public launch · **S** = should have · **C** = could have · **W** = won't have this cycle.
+
+---
+
+## 1. Game engine & rules (GAME)
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| GAME-01 | The server is the sole authority on board state. Client and model inputs are proposals, validated server-side before being applied. | M |
+| GAME-02 | Full FIDE rules via `python-chess`: castling, en passant, promotion, the 50-move rule, threefold repetition, stalemate, and insufficient material. | M |
+| GAME-03 | Every game has an immutable, ordered ply record. A game is fully reconstructible by replaying its plies from the start position. | M |
+| GAME-04 | Terminal states detected and recorded with a reason: checkmate, stalemate, threefold, 50-move, insufficient material, resignation, timeout, illegal-move forfeit, error forfeit, adjudication. | M |
+| GAME-05 | Games export as standards-compliant PGN, with Chessmark metadata in custom tags. | S |
+| GAME-06 | Configurable start position (FEN) so themed matches and endgame tests are possible. | C |
+| GAME-07 | Hard ply cap (default 300); exceeding it adjudicates the game by engine evaluation, or a draw if no engine is configured. | M |
+| GAME-08 | Draw offers and resignation available to agents as explicit tools. | S |
+
+## 2. Agent runtime (AGENT)
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| AGENT-01 | Agents act **only** through tools. No free-text move parsing, ever. | M |
+| AGENT-02 | Tool surface: `get_board`, `get_legal_moves`, `get_move_history`, `make_move`, `say`, `resign`, `offer_draw`. | M |
+| AGENT-03 | An agent's conversation history spans the entire game — every prior turn, tool call, tool result, and assistant message is replayed. | M |
+| AGENT-04 | History is append-only with a stable prefix, engineered for provider prompt caching. Cache hit rate is measured and reported. | M |
+| AGENT-05 | An illegal or malformed `make_move` returns a structured error **including the full legal move list**, and does not consume a ply. | M |
+| AGENT-06 | After `MAX_ILLEGAL_MOVE_RETRIES` (default 5) failures in a single turn, the agent forfeits with reason `illegal_move_forfeit`. | M |
+| AGENT-07 | Reasoning traces are captured when the provider exposes them, and stored verbatim alongside the turn. | M |
+| AGENT-08 | Per-turn wall-clock and token budgets. Exceeding either forfeits with reason `timeout` / `budget_exceeded`. | M |
+| AGENT-09 | Transient provider errors retry with exponential backoff and are logged. Retries do not count against the illegal-move budget. | M |
+| AGENT-10 | The system prompt is a versioned template. Every game records the template version it ran under. | M |
+| AGENT-11 | Agents may call read-only tools (`get_board`, `get_legal_moves`, `get_move_history`) any number of times per turn, up to the turn budget. | M |
+| AGENT-12 | Configurable personas / custom system prompts, flagged as non-ranked. | S |
+| AGENT-13 | Context strategy (full-history vs. windowed) is a recorded per-game parameter, enabling ablation studies. | C |
+
+## 3. Trash talk (TALK)
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| TALK-01 | `say(message)` is a standalone tool callable independently of moving, zero or many times per turn. | M |
+| TALK-02 | Opponent messages are injected into the receiving agent's history, enabling genuine back-and-forth. | M |
+| TALK-03 | Trash talk is disabled by default for ranked benchmark games, and recorded as a game flag. | M |
+| TALK-04 | Messages are length-capped and rate-limited per turn. | M |
+| TALK-05 | Model-generated messages pass a moderation check before being shown publicly; blocked messages are still stored, flagged, for research integrity. | M |
+| TALK-06 | Humans can chat back during human-vs-model games. | S |
+| TALK-07 | Spectator chat. | W |
+
+## 4. Human play (HUMAN)
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| HUMAN-01 | Authenticated users can start and play a game against a selected model, choosing colour. | M |
+| HUMAN-02 | The board rejects illegal human moves client-side for responsiveness, and the server re-validates authoritatively. | M |
+| HUMAN-03 | Human games persist across page reloads and can be resumed. | M |
+| HUMAN-04 | Optional clock; abandoned games auto-expire after a configured idle period. | S |
+| HUMAN-05 | Human results feed the same rating pool as model-vs-model games. | S |
+| HUMAN-06 | Post-game review: the model's full reasoning per move, revealed after the game ends. | S |
+| HUMAN-07 | Reasoning is never exposed mid-game — it would leak the model's plan. | M |
+
+## 5. Observability & logging (LOG)
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| LOG-01 | Every LLM call stores the verbatim request and response payloads, with secrets redacted. | M |
+| LOG-02 | Per call: model ID, provider, prompt/completion/reasoning/cached token counts, USD cost, latency, finish reason. | M |
+| LOG-03 | Every tool invocation stores arguments, result, success/failure, and duration. | M |
+| LOG-04 | Structured JSON application logs carrying `game_id`, `player_id`, `ply`, and `turn_id` for correlation. | M |
+| LOG-05 | Large raw payloads are offloaded to object storage, referenced by key, keeping the primary tables fast. | S |
+| LOG-06 | A configurable retention policy for raw payloads. | C |
+| LOG-07 | Every stored artefact is reachable from the game replay UI. | M |
+
+## 6. Benchmark & ratings (BENCH)
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| BENCH-01 | Glicko-2 ratings with rating deviation, computed from head-to-head results in periodic rating cycles. | M |
+| BENCH-02 | Public leaderboard: rating ± RD, games played, W/D/L, illegal-move rate, mean cost per game, mean latency per move. | M |
+| BENCH-03 | Only ranked games (fixed prompt version, trash talk off, no custom persona) affect ratings. | M |
+| BENCH-04 | Ranked runs are reproducible: prompt version, tool schema version, model version, and parameters are all recorded. | M |
+| BENCH-05 | Automated tournaments (round robin / Swiss) schedulable and runnable unattended. | S |
+| BENCH-06 | Stockfish annotation of every ply: centipawn loss, blunder/mistake/inaccuracy classification, accuracy %. Runs as a post-game background job, never in the live loop. | S |
+| BENCH-07 | Stockfish opponents at capped Elo, providing an absolute anchor for the rating scale. | S |
+| BENCH-08 | Schema carries nullable evaluation columns from day one so BENCH-06/07 land without migration churn. | M |
+| BENCH-09 | Public CSV/JSON export of aggregate results. | C |
+| BENCH-10 | Leaderboard states its methodology and its known limitations in plain language on the page. | M |
+
+## 7. Frontend (UI)
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| UI-01 | Live game view: board, both agents' panels, move list, chat column — updating in real time via SSE. | M |
+| UI-02 | The board is legible and pleasant on mobile. | M |
+| UI-03 | Lobby: browse live games, recent games, and start a new one. | M |
+| UI-04 | Replay view: ply-by-ply scrubber with reasoning, tool calls, and chat synced to the selected ply. | M |
+| UI-05 | Leaderboard page. | M |
+| UI-06 | Public, unauthenticated, shareable game URLs with social preview cards. | S |
+| UI-07 | Model picker showing cost, context window, and reasoning support. | M |
+| UI-08 | Cost/token dashboard, per game and aggregate. | S |
+| UI-09 | Accessible: keyboard-navigable board, ARIA move announcements, WCAG AA contrast. | S |
+| UI-10 | Reconnect gracefully — an SSE drop resyncs from a stored cursor without losing plies. | M |
+
+## 8. Auth, quotas & abuse (AUTH)
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| AUTH-01 | Clerk authentication; the FastAPI backend verifies JWTs via JWKS on every protected request. | M |
+| AUTH-02 | Watching games and viewing replays requires no account. Starting a game does. | M |
+| AUTH-03 | Per-user daily quotas on games started and USD spent. | M |
+| AUTH-04 | A per-game hard USD cap; exceeding it ends the game as `budget_exceeded`. | M |
+| AUTH-05 | A global daily USD kill switch that halts all new LLM calls when tripped. | M |
+| AUTH-06 | Rate limiting on game creation and all model-triggering endpoints. | M |
+| AUTH-07 | Server-held API keys only; keys are never sent to the client. | M |
+| AUTH-08 | An admin surface to inspect spend, cancel games, and reset quotas. | S |
+| AUTH-09 | Bring-your-own OpenRouter key to unlock expensive models. | W |
+
+## 9. Platform & operations (OPS)
+
+| ID | Requirement | Pri |
+| --- | --- | --- |
+| OPS-01 | One-command local bring-up: `make setup && make up && make dev`. | M |
+| OPS-02 | Alembic migrations; no schema change ships without one. | M |
+| OPS-03 | CI runs lint, typecheck, and tests on every push. | M |
+| OPS-04 | Containerised deploy to the VPS via Docker Compose; frontend optionally on Vercel. | M |
+| OPS-05 | Game execution survives an API restart — an interrupted game resumes or fails cleanly, never silently hangs. | M |
+| OPS-06 | Health and readiness endpoints covering database and Redis connectivity. | M |
+| OPS-07 | Error tracking (Sentry or equivalent) in production. | S |
+| OPS-08 | Automated database backups. | S |
+
+---
+
+## Non-functional requirements
+
+| ID | Requirement | Target |
+| --- | --- | --- |
+| NFR-01 | API latency, non-LLM endpoints | p95 < 200 ms |
+| NFR-02 | SSE event delivery after a ply commits | p95 < 500 ms |
+| NFR-03 | Concurrent live games | ≥ 50 without degradation |
+| NFR-04 | Concurrent spectators per game | ≥ 200 |
+| NFR-05 | Cost per ranked model-vs-model game | < $0.50 median |
+| NFR-06 | Prompt cache hit rate on turns after the first | > 80% |
+| NFR-07 | Backend test coverage on `game/` and `agents/` | > 85% |
+| NFR-08 | A partial outage must never corrupt a stored game record | zero tolerance |
+| NFR-09 | Time from `git push` to deployed | < 10 min |
+
+## Key risks
+
+| Risk | Impact | Mitigation |
+| --- | --- | --- |
+| Runaway LLM spend | Financial | Per-game cap, per-user quota, global kill switch (AUTH-04/05/06) — built in Phase 3, before any public exposure |
+| Context growth makes late-game turns very expensive | Cost, latency | Prompt caching from day one (AGENT-04); measure cost-per-ply curve and revisit if it bends badly |
+| Models emit offensive trash talk under our name | Reputational | Moderation before display, stored-but-flagged (TALK-05); trash talk off by default in ranked games |
+| Provider API instability mid-game | Broken games | Backoff + retry (AGENT-09), resumable game state (OPS-05) |
+| Leaderboard is criticised as unfair | Credibility | Versioned, reproducible ranked config (BENCH-04); publish methodology and limitations (BENCH-10) |
+| Prompt representation quietly favours some models | Validity | Treat it as an explicit experiment (VISION open question), publish the ablation |
+| Long games exceed a model's context window | Silent failure | Detect the ceiling per model, record it, and fail the game explicitly rather than truncating quietly |
