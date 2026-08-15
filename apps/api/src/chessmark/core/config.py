@@ -1,9 +1,10 @@
 """Application configuration, loaded from the environment."""
 
+import json
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +13,10 @@ class Settings(BaseSettings):
         env_file=(".env", "../../.env"),
         env_file_encoding="utf-8",
         extra="ignore",
+        # Without this, pydantic-settings JSON-decodes list fields inside the env source and
+        # raises before any validator runs — so a shell-stripped `CORS_ORIGINS` would be fatal.
+        # Turning it off lets `_parse_origins` below accept whatever form actually arrives.
+        enable_decoding=False,
     )
 
     # --- Runtime ---
@@ -24,6 +29,27 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8010
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3010"])
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _parse_origins(cls, value: Any) -> Any:
+        """Accept a JSON array or a comma-separated string.
+
+        Both `source .env` in a shell and Docker Compose's `env_file` strip the quotes from
+        `["http://x"]`, leaving invalid JSON. Rather than make the file format fragile, accept
+        whichever form arrives.
+        """
+        if not isinstance(value, str):
+            return value
+
+        text = value.strip()
+        if text.startswith("["):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                text = text[1:-1] if text.endswith("]") else text[1:]
+
+        return [origin.strip().strip("\"'") for origin in text.split(",") if origin.strip()]
 
     # --- Datastores ---
     # Kept as plain strings: both SQLAlchemy and redis-py want a str, and the

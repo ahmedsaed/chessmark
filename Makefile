@@ -44,7 +44,19 @@ migration: ## Autogenerate a migration: make migration m="add foo"
 drift: ## Fail if models and migrations disagree
 	cd $(API) && uv run alembic check
 
-test: ## Run backend tests (database tests need `make up`)
+seed-models: ## Load seeds/models.json into model_registry
+	cd $(API) && uv run python ../../scripts/seed_models.py
+
+refresh-models: ## Re-fetch the free tool-capable model list from OpenRouter
+	python3 scripts/refresh_model_seed.py
+
+record-llm: ## Re-record LLM test fixtures (spends free-tier requests; never run by CI)
+	cd $(API) && uv run python ../../scripts/record_llm_fixtures.py
+
+smoke-llm: ## One real end-to-end LLM call. Manual only — the test suite never calls a provider
+	cd $(API) && uv run python ../../scripts/smoke_llm.py
+
+test: ## Run backend tests (database tests need `make up`; never calls a provider)
 	cd $(API) && uv run pytest
 
 test-unit: ## Run only tests that need no database

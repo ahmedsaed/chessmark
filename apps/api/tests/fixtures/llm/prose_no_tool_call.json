@@ -1,0 +1,31 @@
+{
+  "name": "prose_no_tool_call",
+  "model": "synthetic/chatty-model",
+  "source": "synthetic",
+  "note": "HAND-AUTHORED. A model that answers in prose instead of calling a tool. AGENT-01 forbids parsing a move out of free text, so this must surface as a completion with no tool calls and let the turn loop nudge once, then forfeit (AGENT-05).",
+  "request": {
+    "model": "openrouter/synthetic/chatty-model",
+    "messages": [{ "role": "user", "content": "Your move." }]
+  },
+  "response": {
+    "id": "gen-synthetic-prose",
+    "model": "synthetic/chatty-model",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "finish_reason": "stop",
+        "message": {
+          "role": "assistant",
+          "content": "I'll play knight to f3, developing toward the centre."
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 480,
+      "completion_tokens": 14,
+      "total_tokens": 494,
+      "prompt_tokens_details": { "cached_tokens": 384 }
+    }
+  }
+}

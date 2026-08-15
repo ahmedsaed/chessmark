@@ -1,0 +1,139 @@
+"""Value types returned by the LLM gateway."""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from decimal import Decimal
+from enum import StrEnum
+from typing import Any
+
+
+class CostSource(StrEnum):
+    """Where a cost figure came from. Recorded so a leaderboard number can be traced."""
+
+    PROVIDER = "provider"
+    """OpenRouter reported the real charge. Authoritative — always preferred."""
+
+    COMPUTED = "computed"
+    """Derived from returned token counts and registry pricing."""
+
+    UNKNOWN = "unknown"
+    """No pricing available. Cost is zero and must not be presented as if it were real."""
+
+
+@dataclass(frozen=True, slots=True)
+class TokenUsage:
+    """Token counts as reported by the provider. Never inferred, never estimated."""
+
+    prompt: int = 0
+    completion: int = 0
+    reasoning: int = 0
+    cached: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.prompt + self.completion
+
+    @property
+    def uncached_prompt(self) -> int:
+        """Prompt tokens actually processed. Cached reads are billed differently, or not at all."""
+        return max(self.prompt - self.cached, 0)
+
+    @property
+    def cache_hit_rate(self) -> float:
+        """Fraction of the prompt served from cache. The metric behind NFR-06."""
+        return self.cached / self.prompt if self.prompt else 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class ToolInvocation:
+    """A tool call requested by the model."""
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
+    raw_arguments: str
+    """The unparsed string. Kept because a model that emits malformed JSON is a finding, not noise."""
+
+    parse_error: str | None = None
+    """Set when `raw_arguments` was not valid JSON; `arguments` is then empty."""
+
+    @property
+    def ok(self) -> bool:
+        return self.parse_error is None
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedResponse:
+    """A provider response, normalised across differing shapes."""
+
+    content: str | None
+    reasoning: str | None
+    tool_calls: list[ToolInvocation]
+    usage: TokenUsage
+    finish_reason: str | None
+    model: str | None
+    provider_cost_usd: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Completion:
+    """One completed provider round-trip, with everything needed to persist an `llm_calls` row."""
+
+    model: str
+    content: str | None
+    reasoning: str | None
+    tool_calls: list[ToolInvocation]
+    usage: TokenUsage
+    cost_usd: Decimal
+    cost_source: CostSource
+    latency_ms: int
+    finish_reason: str | None
+    request: dict[str, Any]
+    """Verbatim, redacted (LOG-01)."""
+
+    response: dict[str, Any]
+    """Verbatim, redacted."""
+
+    attempts: int = 1
+    """How many provider calls this took. >1 means transient failures were retried (AGENT-09)."""
+
+    @property
+    def has_tool_calls(self) -> bool:
+        return bool(self.tool_calls)
+
+    def tool_call(self, name: str) -> ToolInvocation | None:
+        return next((call for call in self.tool_calls if call.name == name), None)
+
+
+@dataclass(slots=True)
+class LlmError(Exception):
+    """A provider call that could not be completed."""
+
+    message: str
+    status_code: int | None = None
+    retryable: bool = False
+    attempts: int = 1
+    request: dict[str, Any] = field(default_factory=dict)
+
+    def __str__(self) -> str:
+        return f"{self.message} (status={self.status_code}, attempts={self.attempts})"
+
+
+def parse_tool_arguments(raw: str) -> tuple[dict[str, Any], str | None]:
+    """Parse a tool-call argument blob, reporting failure rather than raising.
+
+    Malformed arguments are a model failure we want to *measure*, so they travel through the
+    system as data instead of blowing up the turn.
+    """
+    if not raw or not raw.strip():
+        return {}, "empty arguments"
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        return {}, f"invalid JSON: {exc}"
+
+    if not isinstance(parsed, dict):
+        return {}, f"expected a JSON object, got {type(parsed).__name__}"
+    return parsed, None

@@ -1,0 +1,120 @@
+{
+  "model": "nvidia/nemotron-nano-9b-v2:free",
+  "name": "nvidia_reasoning_tool_call",
+  "note": "Recorded from a free OpenRouter model. Replayed by tests; never re-fetched.",
+  "recorded_at": "2026-08-15",
+  "request": {
+    "extra_body": {
+      "usage": {
+        "include": true
+      }
+    },
+    "max_tokens": 2000,
+    "messages": [
+      {
+        "content": "You are playing chess as White. Use the make_move tool to play. Do not reply in prose.",
+        "role": "system"
+      },
+      {
+        "content": "Position (FEN): rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1\nLegal moves: a3, a4, b3, b4, c3, c4, d3, d4, e3, e4, f3, f4, g3, g4, h3, h4, Na3, Nc3, Nf3, Nh3\nMake your move.",
+        "role": "user"
+      }
+    ],
+    "model": "openrouter/nvidia/nemotron-nano-9b-v2:free",
+    "timeout": 180.0,
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "function": {
+          "description": "Play a chess move in the current position.",
+          "name": "make_move",
+          "parameters": {
+            "properties": {
+              "move": {
+                "description": "The move in standard algebraic notation, e.g. e4 or Nf3.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "move"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "message": {
+          "content": null,
+          "function_call": null,
+          "provider_specific_fields": {
+            "reasoning": "Okay, the user is playing chess as White and needs to make a move. The current position is the standard starting position, as indicated by the FEN string. The legal moves provided include all possible first moves for White, which are the knight moves (like Na3, Nc3, Nf3, Nh3) and pawn moves (like e4, d4, etc.). \n\nSince the user hasn't specified a particular strategy or move, I should suggest a common opening. The most popular opening for White is 1.e4, the king's pawn opening. Alternatively, 1.d4 is another strong choice. Since the user allows any legal move, I can pick one of these.\n\nI should use the make_move tool to execute the chosen move. Let's go with e4, which is a classic and strong opening move. The function call will be make_move with the argument \"e4\".\n",
+            "reasoning_details": [
+              {
+                "format": "unknown",
+                "index": 0,
+                "text": "Okay, the user is playing chess as White and needs to make a move. The current position is the standard starting position, as indicated by the FEN string. The legal moves provided include all possible first moves for White, which are the knight moves (like Na3, Nc3, Nf3, Nh3) and pawn moves (like e4, d4, etc.). \n\nSince the user hasn't specified a particular strategy or move, I should suggest a common opening. The most popular opening for White is 1.e4, the king's pawn opening. Alternatively, 1.d4 is another strong choice. Since the user allows any legal move, I can pick one of these.\n\nI should use the make_move tool to execute the chosen move. Let's go with e4, which is a classic and strong opening move. The function call will be make_move with the argument \"e4\".\n",
+                "type": "reasoning.text"
+              }
+            ],
+            "refusal": null
+          },
+          "reasoning_content": "Okay, the user is playing chess as White and needs to make a move. The current position is the standard starting position, as indicated by the FEN string. The legal moves provided include all possible first moves for White, which are the knight moves (like Na3, Nc3, Nf3, Nh3) and pawn moves (like e4, d4, etc.). \n\nSince the user hasn't specified a particular strategy or move, I should suggest a common opening. The most popular opening for White is 1.e4, the king's pawn opening. Alternatively, 1.d4 is another strong choice. Since the user allows any legal move, I can pick one of these.\n\nI should use the make_move tool to execute the chosen move. Let's go with e4, which is a classic and strong opening move. The function call will be make_move with the argument \"e4\".\n",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"move\": \"e4\"}",
+                "name": "make_move"
+              },
+              "id": "chatcmpl-tool-9e814d24dd69bcf9",
+              "index": 0,
+              "type": "function"
+            }
+          ]
+        },
+        "provider_specific_fields": {
+          "native_finish_reason": "tool_calls"
+        }
+      }
+    ],
+    "created": 1786801397,
+    "id": "gen-1786801397-BLOBxbI4XUfo8qfbT0By",
+    "model": "nvidia/nemotron-nano-9b-v2:free",
+    "object": "chat.completion",
+    "provider": "Nvidia",
+    "service_tier": null,
+    "system_fingerprint": null,
+    "usage": {
+      "completion_tokens": 220,
+      "completion_tokens_details": {
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "reasoning_tokens": 196
+      },
+      "cost": 0,
+      "cost_details": {
+        "upstream_inference_completions_cost": 0,
+        "upstream_inference_cost": 0,
+        "upstream_inference_prompt_cost": 0
+      },
+      "is_byok": false,
+      "prompt_tokens": 381,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_write_tokens": 0,
+        "cached_tokens": 0,
+        "video_tokens": 0
+      },
+      "total_tokens": 601
+    }
+  },
+  "source": "live"
+}

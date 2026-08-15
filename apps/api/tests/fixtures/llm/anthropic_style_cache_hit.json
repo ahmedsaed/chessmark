@@ -1,0 +1,49 @@
+{
+  "name": "anthropic_style_cache_hit",
+  "model": "anthropic/claude-sonnet-4.5",
+  "source": "synthetic",
+  "note": "HAND-AUTHORED, not recorded. Anthropic reports token usage as input_tokens/output_tokens with cache_read_input_tokens at the top level of usage, reasoning as typed thinking blocks, and a stop_reason rather than a finish_reason. We cannot reach a paid model to record this, so the shape is written from the documented contract. If it ever diverges, re-record with `make record-llm` once credits exist.",
+  "request": {
+    "model": "openrouter/anthropic/claude-sonnet-4.5",
+    "messages": [{ "role": "user", "content": "Your move." }]
+  },
+  "response": {
+    "id": "gen-synthetic-anthropic",
+    "model": "anthropic/claude-sonnet-4.5",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "stop_reason": "tool_use",
+        "message": {
+          "role": "assistant",
+          "content": [
+            { "type": "text", "text": "Developing the knight." }
+          ],
+          "thinking_blocks": [
+            {
+              "type": "thinking",
+              "thinking": "Black threatens b5 next. Nf3 covers d4 and keeps Re1 available."
+            }
+          ],
+          "tool_calls": [
+            {
+              "id": "toolu_01ABC",
+              "type": "function",
+              "function": {
+                "name": "make_move",
+                "arguments": "{\"move\": \"Nf3\"}"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "input_tokens": 18402,
+      "output_tokens": 340,
+      "cache_read_input_tokens": 15462,
+      "cache_creation_input_tokens": 0
+    }
+  }
+}

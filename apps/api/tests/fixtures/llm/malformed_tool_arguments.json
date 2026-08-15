@@ -1,0 +1,40 @@
+{
+  "name": "malformed_tool_arguments",
+  "model": "synthetic/broken-model",
+  "source": "synthetic",
+  "note": "HAND-AUTHORED. A model that emits a tool call whose arguments are not valid JSON. This is a benchmark finding, not an error to swallow, so the gateway must return it as data with parse_error set rather than raising.",
+  "request": {
+    "model": "openrouter/synthetic/broken-model",
+    "messages": [{ "role": "user", "content": "Your move." }]
+  },
+  "response": {
+    "id": "gen-synthetic-malformed",
+    "model": "synthetic/broken-model",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "finish_reason": "tool_calls",
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_0",
+              "type": "function",
+              "function": {
+                "name": "make_move",
+                "arguments": "{move: Nf3"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "usage": {
+      "prompt_tokens": 512,
+      "completion_tokens": 12,
+      "total_tokens": 524
+    }
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "model": "openai/gpt-oss-20b:free",
+  "name": "openai_style_tool_call",
+  "note": "Recorded from a free OpenRouter model. Replayed by tests; never re-fetched.",
+  "recorded_at": "2026-08-15",
+  "request": {
+    "extra_body": {
+      "usage": {
+        "include": true
+      }
+    },
+    "max_tokens": 2000,
+    "messages": [
+      {
+        "content": "You are playing chess as White. Use the make_move tool to play. Do not reply in prose.",
+        "role": "system"
+      },
+      {
+        "content": "Position (FEN): rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1\nLegal moves: a3, a4, b3, b4, c3, c4, d3, d4, e3, e4, f3, f4, g3, g4, h3, h4, Na3, Nc3, Nf3, Nh3\nMake your move.",
+        "role": "user"
+      }
+    ],
+    "model": "openrouter/openai/gpt-oss-20b:free",
+    "timeout": 180.0,
+    "tool_choice": "auto",
+    "tools": [
+      {
+        "function": {
+          "description": "Play a chess move in the current position.",
+          "name": "make_move",
+          "parameters": {
+            "properties": {
+              "move": {
+                "description": "The move in standard algebraic notation, e.g. e4 or Nf3.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "move"
+            ],
+            "type": "object"
+          }
+        },
+        "type": "function"
+      }
+    ]
+  },
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "tool_calls",
+        "index": 0,
+        "message": {
+          "content": null,
+          "function_call": null,
+          "provider_specific_fields": {
+            "reasoning": "We need to play a move as White. Just output the move in SAN. No prose. Choose a move. Let's pick e4.",
+            "reasoning_details": [
+              {
+                "format": "unknown",
+                "index": 0,
+                "text": "We need to play a move as White. Just output the move in SAN. No prose. Choose a move. Let's pick e4.",
+                "type": "reasoning.text"
+              }
+            ],
+            "refusal": null
+          },
+          "reasoning_content": "We need to play a move as White. Just output the move in SAN. No prose. Choose a move. Let's pick e4.",
+          "role": "assistant",
+          "tool_calls": [
+            {
+              "function": {
+                "arguments": "{\"move\":\"e4\"}",
+                "name": "make_move"
+              },
+              "id": "call_3580D0FACF3A44E6B0F627BD",
+              "index": 0,
+              "type": "function"
+            }
+          ]
+        },
+        "provider_specific_fields": {
+          "native_finish_reason": "tool_calls"
+        }
+      }
+    ],
+    "created": 1786801390,
+    "id": "gen-1786801390-JkT7b86AYlDRerkBWzEM",
+    "model": "openai/gpt-oss-20b:free",
+    "object": "chat.completion",
+    "provider": "Darkbloom",
+    "service_tier": null,
+    "system_fingerprint": null,
+    "usage": {
+      "completion_tokens": 53,
+      "completion_tokens_details": {
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "reasoning_tokens": 28
+      },
+      "cost": 0,
+      "cost_details": {
+        "upstream_inference_completions_cost": 3.71e-06,
+        "upstream_inference_cost": 7.741e-06,
+        "upstream_inference_prompt_cost": 4.031e-06
+      },
+      "is_byok": false,
+      "prompt_tokens": 278,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "cache_creation_tokens": 0,
+        "cache_write_tokens": 0,
+        "cached_tokens": 0,
+        "video_tokens": 0
+      },
+      "total_tokens": 331
+    }
+  },
+  "source": "live"
+}

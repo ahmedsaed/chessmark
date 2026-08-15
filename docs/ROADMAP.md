@@ -137,7 +137,7 @@ flowchart LR
 
 ---
 
-## Phase 3 — LLM gateway
+## Phase 3 — LLM gateway ✅ COMPLETE (one criterion deferred, see below)
 
 **Goal:** one function call reaches any OpenRouter model and records everything about it.
 
@@ -151,14 +151,40 @@ flowchart LR
 7. Retry with exponential backoff on transient errors (AGENT-09)
 
 **Exit criteria**
-- [ ] Unit tests with recorded fixtures cover ≥3 provider response shapes (an OpenAI-style, an Anthropic-style, and one reasoning model)
-- [ ] Computed USD cost matches a hand-calculated value for a known token count, to the cent
-- [ ] No stored payload contains an API key — asserted by a test scanning saved fixtures
-- [ ] A simulated 500 retries and then succeeds; a simulated 400 does not retry
-- [ ] `make smoke-llm` makes one real cheap call end to end and prints tokens, cost, and latency
-- [ ] Second call with an identical prefix reports `cached_tokens > 0`
+- [x] Unit tests with recorded fixtures cover ≥3 provider response shapes — 2 **live recordings** (`openai/gpt-oss-20b:free`, `nvidia/nemotron-nano-9b-v2:free` with a real reasoning trace) plus 3 **hand-authored** shapes for what the free tier cannot reach: Anthropic-style usage/thinking blocks, malformed tool arguments, and a prose-only reply
+- [x] Computed USD cost matches a hand-calculated value for a known token count, to the cent — 1M prompt + 100k completion at GPT-4o rates = exactly `$3.50`
+- [x] No stored payload contains an API key — asserted over every committed fixture and over live gateway output
+- [x] A simulated 500 retries and then succeeds; a simulated 400 does not retry
+- [x] `make smoke-llm` makes one real cheap call end to end and prints tokens, cost, and latency
+- [ ] **DEFERRED —** Second call with an identical prefix reports `cached_tokens > 0`
 
-**Covers:** LOG-01, LOG-02, AGENT-09, UI-07, NFR-06
+**Covers:** LOG-01, LOG-02, AGENT-09, UI-07, NFR-06 (partial — see below)
+
+**Notes**
+- **Testing never calls a provider.** Fixtures in `tests/fixtures/llm/` are replayed; a missing
+  cassette raises rather than falling back to a live call. Recording is a deliberate, manual
+  `make record-llm`. The suite is therefore free to run, deterministic, and unaffected by
+  provider outages or rate limits.
+- Every fixture declares `source: live | synthetic`, and a test fails if a synthetic one does not
+  say `HAND-AUTHORED` in its note — a reader must never mistake a shape written from the docs for
+  a recorded one.
+- Cost has three tiers of authority: what OpenRouter says it charged, then token counts times
+  registry pricing, then zero flagged `UNKNOWN`. A missing price is visible as missing rather than
+  silently appearing free.
+- Retry classification errs toward *not* retrying: an unrecognised error is fatal, because a retry
+  loop on a permanent failure spends the budget several times for nothing. Provider retries are
+  strictly separate from illegal-move retries — a flaky network must never affect a benchmark score.
+
+**Why the cache criterion is deferred**
+
+`cached_tokens` capture, the `cache_hit_rate` metric, and cached-rate billing are all implemented
+and tested against fixtures. They cannot be *verified live* yet: OpenRouter's free tier does not
+report cached tokens, and the free models available to us do not do prompt caching at all. The
+smoke run confirms this — two calls sharing a 956-token prefix both reported `cached: 0 (0%)`.
+
+Verifying NFR-06 for real needs a caching-capable model, which needs credits. Re-run
+`make smoke-llm` once that exists; no code change is expected, but the claim is unproven until
+someone checks.
 
 ---
 
