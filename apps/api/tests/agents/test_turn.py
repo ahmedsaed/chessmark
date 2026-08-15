@@ -500,3 +500,28 @@ async def test_two_scripted_models_play_a_full_game(db: AsyncSession, table: Tab
     ).all()
     assert [p.san for p in plies] == ["f3", "e5", "g4", "Qh4#"]
     assert plies[-1].is_checkmate
+
+
+async def test_every_call_carries_a_completion_token_cap(db: AsyncSession, table: Table) -> None:
+    """Found live: a reasoning model spent 34,260 tokens on one move and never emitted a tool
+    call. The per-turn budget cannot prevent that — it is only checked between round-trips, by
+    which point the tokens are spent. Only a per-call cap bounds it."""
+    model = scripted(step(tool_call("make_move", move="e4")))
+
+    await play_turn(db, table, model, limits=TurnLimits(max_completion_tokens=1234))
+
+    request = model.calls[0]  # type: ignore[attr-defined]
+    assert request["max_tokens"] == 1234
+
+
+async def test_the_default_cap_is_applied_without_being_asked(
+    db: AsyncSession, table: Table
+) -> None:
+    model = scripted(step(tool_call("make_move", move="e4")))
+
+    await play_turn(db, table, model)
+
+    assert model.calls[0]["max_tokens"] == TurnLimits().max_completion_tokens  # type: ignore[attr-defined]
+    assert TurnLimits().max_completion_tokens < 200_000, (
+        "the cap must be tighter than the turn budget"
+    )

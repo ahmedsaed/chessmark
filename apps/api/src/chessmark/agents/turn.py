@@ -47,6 +47,17 @@ class TurnLimits:
 
     max_seconds: float = 180.0
     max_tokens: int = 200_000
+    """Total tokens across the whole turn."""
+
+    max_completion_tokens: int = 16_000
+    """Cap on a *single* response.
+
+    Without this a reasoning model can spiral: `gpt-oss-20b:free` was observed generating 34,260
+    reasoning tokens on one move and still never emitting a tool call, taking 21 minutes. The
+    per-turn budget above cannot stop that, because it is only checked between round-trips — by
+    the time it is consulted, the tokens are already spent and billed. This is the ceiling that
+    actually bounds a call.
+    """
 
 
 @dataclass(slots=True)
@@ -199,7 +210,10 @@ class TurnRunner:
 
             messages = await transcript.build_messages(self.session, self.player.id)
             completion = await self.gateway.complete(
-                model=self.model, messages=messages, tools=self._tools
+                model=self.model,
+                messages=messages,
+                tools=self._tools,
+                max_tokens=self.limits.max_completion_tokens,
             )
 
             await self._record_llm_call(turn, completion)

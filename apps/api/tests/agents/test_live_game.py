@@ -28,29 +28,36 @@ from tests.agents.conftest import Table, seat
 
 pytestmark = [pytest.mark.llm, pytest.mark.integration]
 
-MODEL = "openai/gpt-oss-20b:free"
+#: Override with CHESSMARK_LIVE_MODEL to try another. Not all free models can sustain a game:
+#: `openai/gpt-oss-20b:free` plays reasonable chess for a few plies, then spirals into tens of
+#: thousands of reasoning tokens per move and stops finishing turns.
+MODEL = os.environ.get("CHESSMARK_LIVE_MODEL", "nvidia/nemotron-nano-9b-v2:free")
 TARGET_PLIES = 10
 
 
 @pytest.fixture
-def api_key() -> str:
-    key = os.environ.get("OPENROUTER_API_KEY", "")
-    if not key:
+def requires_api_key() -> None:
+    """Skip unless a key is present — **without ever returning it**.
+
+    pytest prints the value of every fixture argument in a failure traceback, so a fixture that
+    returned the key would put it in plaintext in the terminal, in the log file, and in any CI
+    artifact the moment a test failed. It did exactly that once. The key is read inside the test
+    instead, where it stays a local of a frame pytest does not dump.
+    """
+    if not os.environ.get("OPENROUTER_API_KEY"):
         pytest.skip("OPENROUTER_API_KEY is not set")
-    return key
 
 
-#: Free models are *slow* — observed turns of 30s, 120s, and 230s on gpt-oss-20b:free, mostly
-#: spent generating reasoning tokens. The production default of 180s would forfeit those turns,
-#: which is correct behaviour for a real game but would mean this test measures provider latency
-#: instead of the turn loop. Raised here deliberately, and only here.
+#: Free models are slow, so the wall clock is raised here and only here — otherwise this test
+#: would measure provider latency rather than the turn loop. The token cap is left at the
+#: production default on purpose: unbounded reasoning is exactly the failure this test found.
 LIVE_LIMITS = TurnLimits(max_seconds=900.0)
 
 
-async def test_a_real_model_plays_ten_plies(db: AsyncSession, api_key: str) -> None:
+async def test_a_real_model_plays_ten_plies(db: AsyncSession, requires_api_key: None) -> None:
     """Exit criterion: one real cheap model plays 10 plies without a crash."""
     table: Table = await seat(db)
-    gateway = LlmGateway(api_key=api_key)
+    gateway = LlmGateway(api_key=os.environ["OPENROUTER_API_KEY"])
 
     for colour in (Colour.WHITE, Colour.BLACK):
         await ensure_system_prompt(
