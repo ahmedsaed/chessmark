@@ -40,23 +40,43 @@ from chessmark.game import Colour, MoveOutcome, Outcome, Referee, Termination
 
 @dataclass(frozen=True, slots=True)
 class TurnLimits:
-    """Per-turn ceilings (AGENT-08). Exceeding any of them forfeits the turn."""
+    """Per-turn ceilings (AGENT-08).
 
-    max_tool_iterations: int = 12
-    """LLM round-trips within one turn. A model looping on read-only tools must still terminate."""
+    **These are circuit breakers, not a budget that shapes play.** Every value is set well above
+    what a strong model legitimately needs, so a model is never made to play worse to stay inside
+    them. They exist to stop a runaway — an unbounded reasoning spiral, a tool loop that never
+    terminates — from consuming a whole game's cost in one move.
 
-    max_seconds: float = 180.0
-    max_tokens: int = 200_000
-    """Total tokens across the whole turn."""
+    Sizing them around what weak models can manage would quietly turn the benchmark into a test
+    of brevity. If a capable model is hitting one of these, the cap is wrong, not the model.
+    """
 
-    max_completion_tokens: int = 16_000
+    max_tool_iterations: int = 20
+    """LLM round-trips within one turn.
+
+    A model that reads the board, enumerates legal moves, reconsiders, and retries a rejected move
+    can legitimately use ten or more. This bounds a loop that never terminates, nothing tighter.
+    """
+
+    max_seconds: float = 600.0
+    """Wall clock. Slow is not wrong: a reasoning model taking two minutes on a critical position
+    is working, not stuck. Observed legitimate turns ran to 80s on a small free model, and
+    frontier reasoning models are slower still."""
+
+    max_tokens: int = 400_000
+    """Total tokens across the whole turn, summed over every round-trip."""
+
+    max_completion_tokens: int = 64_000
     """Cap on a *single* response.
 
-    Without this a reasoning model can spiral: `gpt-oss-20b:free` was observed generating 34,260
-    reasoning tokens on one move and still never emitting a tool call, taking 21 minutes. The
-    per-turn budget above cannot stop that, because it is only checked between round-trips — by
-    the time it is consulted, the tokens are already spent and billed. This is the ceiling that
-    actually bounds a call.
+    The per-turn budget cannot bound this: it is only checked between round-trips, so by the time
+    it is consulted the tokens are already generated and billed. Only a per-call ceiling stops a
+    spiral mid-flight.
+
+    Sized as a circuit breaker rather than an allowance. A legitimate turn was observed using
+    ~9,800 completion tokens; a spiral used 34,260 and still produced no tool call. 64,000 leaves
+    a frontier model room to think as hard as it wants about a sharp position while still
+    catching genuinely unbounded generation.
     """
 
 
@@ -191,11 +211,18 @@ class TurnRunner:
         try:
             await self._loop(turn, result, started)
         except LlmError as error:
+            # A provider failure is **our** problem, not the model's, so the game is left open.
+            # AGENT-09 says transient provider errors must not count against a model, and
+            # forfeiting here would do exactly that: a rate limit, an outage, or an exhausted
+            # daily quota would be recorded as `error_forfeit` and read on the leaderboard as the
+            # model failing to operate. Observed for real — an OpenRouter daily cap ended a turn
+            # mid-game and would have handed the opponent a win.
+            #
+            # The turn is marked FAILED and the referee is untouched. The orchestrator decides
+            # what to do about it (retry the turn, or abandon the game as `aborted`) — Phase 5.
             result.status = TurnStatus.FAILED
             result.error = str(error)
-            result.outcome = self._forfeit(
-                Termination.ERROR_FORFEIT, f"Provider call failed: {error}"
-            )
+            result.outcome = None
 
         result.latency_ms = int((time.perf_counter() - started) * 1000)
         await self._finalise(turn, result)

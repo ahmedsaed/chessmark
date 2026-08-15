@@ -525,3 +525,29 @@ async def test_the_default_cap_is_applied_without_being_asked(
     assert TurnLimits().max_completion_tokens < 200_000, (
         "the cap must be tighter than the turn budget"
     )
+
+
+async def test_a_provider_failure_does_not_forfeit_the_model(
+    db: AsyncSession, table: Table
+) -> None:
+    """AGENT-09. Found live: an OpenRouter daily quota ended a turn mid-game. Forfeiting there
+    would record our infrastructure problem as the model failing to operate, and hand the
+    opponent a win on the leaderboard."""
+
+    class RateLimitError(Exception):
+        status_code = 429
+
+    async def always_rate_limited(**_kwargs: object) -> object:
+        raise RateLimitError
+
+    result = await play_turn(db, table, always_rate_limited)
+
+    assert result.status is TurnStatus.FAILED
+    assert result.error is not None
+    assert "429" in result.error
+    assert result.outcome is None, "a provider failure must not decide the game"
+    assert not table.referee.is_over, "the game stays open for the orchestrator to retry"
+
+    await db.refresh(table.white)
+    assert table.white.forfeited is False
+    assert table.white.illegal_attempts == 0, "provider errors are not illegal moves"

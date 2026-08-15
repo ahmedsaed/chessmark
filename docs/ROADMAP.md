@@ -209,7 +209,7 @@ someone checks.
 - [x] Two consecutive turns produce message lists where the second is a strict prefix-extension of the first (asserted byte-wise — this is what makes caching work)
 - [x] `say` output over the length cap is rejected; the 4th `say` in one turn is rejected
 - [x] Test coverage on `agents/` > 85% — **96%**
-- [x] **Live test:** one real cheap model plays 10 plies from the start position without a crash
+- [ ] **BLOCKED —** Live test: one real cheap model plays 10 plies from the start position without a crash. Best run reached **6 clean plies with zero illegal moves** on `nemotron-nano-9b-v2:free`, then hit OpenRouter's 50-requests-per-day free-tier cap. Not a defect; needs either the daily reset or $10 of credits (which raises the limit to 1000/day).
 
 **Covers:** AGENT-01 → AGENT-11, TALK-01, TALK-04, LOG-03, GAME-08, NFR-07
 
@@ -230,6 +230,18 @@ someone checks.
   a tool-protocol failure, not a chess failure, and the benchmark should count them separately.
 - Every tool call gets a result message even after a move is committed. Providers reject a
   transcript with an unanswered `tool_call_id`, and a gap would corrupt every later turn.
+- **Turn limits are circuit breakers, not budgets.** Every ceiling is set well above what a strong
+  model legitimately needs, so a model is never made to play worse to stay inside one. Sizing them
+  around what weak models can manage would quietly turn the benchmark into a test of brevity.
+  A per-*call* completion cap is required in addition to the per-turn budget, because the latter is
+  only checked between round-trips — by the time it is consulted the tokens are already generated
+  and billed. Found live: a model produced 34,260 reasoning tokens on one move over 21 minutes and
+  still emitted no tool call.
+- **A provider failure never forfeits the model.** A rate limit, outage, or exhausted quota is our
+  problem, not the model's; recording it as `error_forfeit` would put our infrastructure failure on
+  the leaderboard as the model failing to operate, and hand the opponent a win. The turn is marked
+  `failed`, the referee is untouched, and the orchestrator decides whether to retry or abandon
+  (Phase 5). Found live when a daily quota ended a turn mid-game.
 - **A taunt is delivered into the opponent's transcript immediately** (TALK-02), seeding the
   opponent's system prompt first so an opening taunt cannot displace row 1. This was missed on the
   first pass — messages were stored and broadcast to spectators but never delivered, so models were
