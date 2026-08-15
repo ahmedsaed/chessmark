@@ -142,9 +142,12 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
   redaction, registry sync, the seven tools, the append-only transcript, and `TurnRunner`.
   96% coverage.
 
+- `chessmark.orchestration` — the queue, the worker, and the reconciler. Redis Streams consumer
+  group, `expected_ply` idempotency, one transaction per turn, ack-after-commit.
+
 `agents/scripted.py` is the workhorse for testing and for local development: it plugs in as
 `LlmGateway(completion_fn=...)` so a whole game can run with no API key, exercising the real path
-with only the provider replaced.
+with only the provider replaced. `make play ARGS="--scripted"` plays a complete game that way.
 
 Database tests need `make up`. Useful targets: `make test-unit` (no database), `make test-llm`
 (live provider, opt-in), `make migration m="..."`, `make drift`, `make seed-models`,

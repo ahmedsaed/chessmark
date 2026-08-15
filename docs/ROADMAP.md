@@ -276,17 +276,37 @@ cap. Both are recorded above because they are properties of free models worth kn
 8. A resumption reconciler for games stalled by a crash
 
 **Exit criteria**
-- [ ] Two cheap models play a full game to a legitimate terminal state (checkmate, draw, or forfeit) with no manual intervention
-- [ ] The terminal shows the board, moves, and any trash talk live
-- [ ] Postgres holds: every ply, every turn, every LLM call verbatim, every tool call, every event
-- [ ] Killing the worker mid-turn and restarting it resumes the game to completion (OPS-05)
-- [ ] Replaying an `advance_turn` job for an already-advanced ply is a no-op, asserted by a test
-- [ ] A game configured with a $0.01 cap ends as `budget_exceeded`
-- [ ] Cost-per-ply is logged, and the ratio of prompt tokens to cached tokens is reported at game end
+- [ ] Two cheap models play a full game to a legitimate terminal state (checkmate, draw, or forfeit) with no manual intervention — *live run in progress; scripted models already do this end to end through the real queue*
+- [x] The terminal shows the board, moves, and any trash talk live — `make play`
+- [x] Postgres holds: every ply, every turn, every LLM call verbatim, every tool call, every event
+- [x] Killing the worker mid-turn and restarting it resumes the game to completion (OPS-05)
+- [x] Replaying an `advance_turn` job for an already-advanced ply is a no-op, asserted by a test
+- [x] A game configured with a $0.01 cap ends as `budget_exceeded`
+- [ ] Cost-per-ply is logged, and the ratio of prompt tokens to cached tokens is reported at game end — *implemented and verified on a scripted game; awaiting the live run for real numbers*
 
 > **At the end of this phase, Chessmark works.** Everything after adds surface, safety, and audience.
 
 **Covers:** GAME-07, AGENT-08, AUTH-04, OPS-05, LOG-07
+
+**Notes**
+- **The queue is Redis Streams with a consumer group, not a list.** A job stays in the pending list
+  until acked, and the worker acks only *after* the turn's transaction commits — so a worker killed
+  mid-turn loses nothing, and `XAUTOCLAIM` hands the abandoned job to a live worker with no
+  external bookkeeping. A `LPUSH`/`BRPOP` list would drop any job a worker held when it died.
+- **A stale job writes nothing at all** — not a turn row, not an LLM call, not an event. Tested by
+  counting rows before and after a replay, because "no-op" that still costs a provider call is not
+  a no-op.
+- **A provider failure rolls the turn back and requeues the same ply.** By the time a call fails the
+  turn has already appended its prompt; committing that and retrying would show the model
+  "It is your move" twice with a dead exchange between. After `MAX_JOB_ATTEMPTS` the game is
+  **abandoned**, not forfeited — nobody played badly, so nobody is charged a loss.
+- **The budget cap is checked before a turn, not after.** Noticing afterwards means the money is
+  already spent. A budget stop is recorded as a **draw**: awarding the win to whoever happened to be
+  ahead would put our budgeting decision into the benchmark results.
+- **A duplicate `game_ended` event was found by running the CLI**, not by any test — `TurnRunner`
+  and the worker both announced the ending, so every game logged two. Announcing belongs to
+  whoever owns the status transition. Now covered by a regression test verified to fail without
+  the fix.
 
 ---
 

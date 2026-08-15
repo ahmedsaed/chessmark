@@ -204,3 +204,49 @@ async def redis() -> AsyncIterator[Any]:
         yield client
     finally:
         await client.aclose()
+
+
+# ---------------------------------------------------------------------- orchestration
+#
+# A queue, a worker factory, and a started game. Shared rather than package-local because both
+# the orchestration tests and the API tests drive real games through the real worker.
+
+
+@pytest.fixture
+async def queue(redis: Any) -> Any:
+    from chessmark.orchestration.queue import TurnQueue
+
+    turn_queue = TurnQueue(redis, stream="test:turns", group="test-workers")
+    await turn_queue.ensure_group()
+    return turn_queue
+
+
+@pytest.fixture
+def make_worker(sessionmaker: async_sessionmaker[AsyncSession], queue: Any, redis: Any) -> Any:
+    from chessmark.agents.llm import LlmGateway
+    from chessmark.orchestration.worker import TurnWorker
+
+    def _make(
+        completion_fn: Any,
+        *,
+        limits: Any = None,
+        consumer: str = "test-worker",
+        publish: bool = False,
+    ) -> TurnWorker:
+        return TurnWorker(
+            sessionmaker=sessionmaker,
+            queue=queue,
+            gateway=LlmGateway(completion_fn=completion_fn),
+            redis=redis if publish else None,
+            limits=limits,
+            consumer=consumer,
+        )
+
+    return _make
+
+
+@pytest.fixture
+async def game(db: AsyncSession, queue: Any) -> Any:
+    from tests.support import seat_match
+
+    return await seat_match(db, queue)
