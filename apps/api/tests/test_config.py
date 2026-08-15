@@ -39,9 +39,14 @@ def test_local_environment_is_flagged() -> None:
 
 
 def test_chessmark_uses_its_own_port_block() -> None:
-    """See ADR-0012 — 3000/8000/5432/6379 belong to other projects on this machine."""
-    settings = Settings(_env_file=None)  # type: ignore[call-arg]
+    """See ADR-0012 — 3000/8000/5432/6379 belong to other projects on the dev machine.
 
-    assert settings.api_port == 8010
-    assert "5433" in settings.database_url
-    assert "6380" in settings.redis_url
+    Asserts the declared defaults rather than a constructed instance: the environment legitimately
+    overrides these (CI points at its own Postgres), and the claim under test is what the
+    committed defaults say.
+    """
+    defaults = Settings.model_fields
+
+    assert defaults["api_port"].default == 8010
+    assert "5433" in str(defaults["database_url"].default)
+    assert "6380" in str(defaults["redis_url"].default)
