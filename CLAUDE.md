@@ -88,6 +88,11 @@ database), `llm` (costs real money — never in default CI).
 Tailwind for styling. `pnpm exec next typegen` must run before `tsc` — Next.js 16 generates the
 global route types (`LayoutProps`, `PageProps`) that app code depends on.
 
+**Design** — the system is settled: see [ADR-0013](docs/adr/0013-design-system.md). Tokens live in
+`apps/web/src/app/globals.css` as Tailwind `@theme` variables. **No component hard-codes a colour** —
+always read a token. Dark only; there is no light theme. Live game layout is stats left, board
+centre, conversation right, with finished turns folded and the live turn expanded.
+
 > ⚠️ **Next.js 16 differs from older Next.js.** `apps/web/AGENTS.md` is auto-generated and says so.
 > Before writing frontend code, read the relevant guide under
 > `apps/web/node_modules/next/dist/docs/`. Do not rely on Next.js knowledge from memory.

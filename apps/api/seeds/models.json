@@ -1,0 +1,152 @@
+[
+  {
+    "openrouter_id": "nvidia/nemotron-3.5-lightning:free",
+    "display_name": "NVIDIA: Nemotron 3.5 Lightning (free)",
+    "context_length": 1000000,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+    "display_name": "NVIDIA: Nemotron 3 Ultra (free)",
+    "context_length": 1000000,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "dots-studio/dots-3-note-preview:free",
+    "display_name": "Dots Studio: Dots3-Note Preview (free)",
+    "context_length": 512000,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "poolside/laguna-s-2.1:free",
+    "display_name": "Poolside: Laguna S 2.1 (free)",
+    "context_length": 262144,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "poolside/laguna-xs-2.1:free",
+    "display_name": "Poolside: Laguna XS 2.1 (free)",
+    "context_length": 262144,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "google/gemma-4-26b-a4b-it:free",
+    "display_name": "Google: Gemma 4 26B A4B  (free)",
+    "context_length": 262144,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "google/gemma-4-31b-it:free",
+    "display_name": "Google: Gemma 4 31B (free)",
+    "context_length": 262144,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "nvidia/nemotron-3-super-120b-a12b:free",
+    "display_name": "NVIDIA: Nemotron 3 Super (free)",
+    "context_length": 262144,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "cohere/north-mini-code:free",
+    "display_name": "Cohere: North Mini Code (free)",
+    "context_length": 256000,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "display_name": "NVIDIA: Nemotron 3 Nano Omni (free)",
+    "context_length": 256000,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "nvidia/nemotron-3-nano-30b-a3b:free",
+    "display_name": "NVIDIA: Nemotron 3 Nano 30B A3B (free)",
+    "context_length": 256000,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-oss-20b:free",
+    "display_name": "OpenAI: gpt-oss-20b (free)",
+    "context_length": 131072,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "liquid/lfm-2.5-2.6b:free",
+    "display_name": "LiquidAI: LFM2.5-2.6B (free)",
+    "context_length": 128000,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "nvidia/nemotron-nano-12b-v2-vl:free",
+    "display_name": "NVIDIA: Nemotron Nano 12B 2 VL (free)",
+    "context_length": 128000,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "nvidia/nemotron-nano-9b-v2:free",
+    "display_name": "NVIDIA: Nemotron Nano 9B V2 (free)",
+    "context_length": 128000,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  }
+]
