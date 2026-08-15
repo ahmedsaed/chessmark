@@ -25,7 +25,17 @@ from chessmark.api.schemas import (
     TurnDetail,
 )
 from chessmark.db.enums import GameStatus, ModerationStatus
-from chessmark.db.models import Game, LlmCall, Message, ModelRegistry, Player, Ply, ToolCall, Turn
+from chessmark.db.models import (
+    Game,
+    LlmCall,
+    Message,
+    ModelEndpoint,
+    ModelRegistry,
+    Player,
+    Ply,
+    ToolCall,
+    Turn,
+)
 from chessmark.db.repositories import load_events, rebuild_referee
 from chessmark.orchestration.match import Seat, create_match, start_match
 
@@ -34,6 +44,42 @@ router = APIRouter(prefix="/games", tags=["games"])
 
 async def _players(session: SessionDep, game_id: uuid.UUID) -> list[Player]:
     return list(await session.scalars(sa.select(Player).where(Player.game_id == game_id)))
+
+
+async def _served_by(
+    session: SessionDep, game_id: uuid.UUID
+) -> dict[uuid.UUID, tuple[list[str], str | None]]:
+    """Which endpoints actually served each seat, and at what precision.
+
+    The chat response names the provider; `model_endpoints` supplies the quantization. Together
+    they answer the question a leaderboard row is meaningless without — not "which model" but
+    "which model, served how".
+    """
+    rows = (
+        await session.execute(
+            sa.select(Turn.player_id, LlmCall.provider, ModelEndpoint.quantization)
+            .join(LlmCall, LlmCall.turn_id == Turn.id)
+            .join(ModelRegistry, ModelRegistry.openrouter_id == LlmCall.model_slug, isouter=True)
+            .join(
+                ModelEndpoint,
+                sa.and_(
+                    ModelEndpoint.model_id == ModelRegistry.id,
+                    ModelEndpoint.provider_name == LlmCall.provider,
+                ),
+                isouter=True,
+            )
+            .where(Turn.game_id == game_id, LlmCall.provider.is_not(None))
+            .distinct()
+        )
+    ).all()
+
+    served: dict[uuid.UUID, tuple[list[str], str | None]] = {}
+    for player_id, provider, quantization in rows:
+        providers, quant = served.get(player_id, ([], None))
+        if provider and provider not in providers:
+            providers.append(provider)
+        served[player_id] = (providers, quant or quantization)
+    return served
 
 
 def _reveal_reasoning(game: Game) -> bool:
@@ -78,6 +124,7 @@ async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
         await _players(session, game.id),
         moves=referee.board.history_san(),
         current_fen=referee.board.fen,
+        served_by=await _served_by(session, game.id),
     )
 
 

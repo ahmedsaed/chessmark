@@ -77,7 +77,6 @@ async def create_match(
     # A ranked game must never be served by whatever endpoint the router feels like. The policy
     # is stored so the result can always say what precision it was played at (BENCH-04).
     routing = routing or ProviderRouting()
-    routing = await resolve_routing(session, routing, [white.model, black.model])
 
     game = await create_game(
         session,
@@ -107,6 +106,11 @@ async def create_match(
             system_prompt_version=PROMPT_VERSION,
             sampling={"model": seat.model} if seat.model else {},
         )
+        # Resolved per seat: a widening that pins `only` to one vendor's endpoints is meaningless
+        # — and fatal — for the other seat's model.
+        players[colour].provider_routing = (
+            await resolve_routing(session, routing, seat.model)
+        ).to_record()
 
     match = Match(game=game, white=players[Colour.WHITE], black=players[Colour.BLACK])
 
@@ -157,35 +161,33 @@ async def start_match(
 async def resolve_routing(
     session: AsyncSession,
     routing: ProviderRouting,
-    model_slugs: list[str | None],
+    model_slug: str | None,
 ) -> ProviderRouting:
-    """Adjust the policy for the models actually playing.
+    """Adjust the base policy for one specific model.
 
     A closed-weight model reports `unknown` because there is nothing to disclose, so the strict
     default would make it unplayable. `widen_for_first_party` admits `unknown` only when that is
-    the sole option *and* only from the model's own vendor. If either seat needs the widening,
-    both get it — a game runs under one policy, and recording two would make the result
-    ambiguous.
+    the sole option *and* only from the model's own vendor.
+
+    Resolved **per seat**. An earlier version applied one policy to the whole game, on the
+    reasoning that two policies would make a result ambiguous. That was wrong: the widening pins
+    `only` to a vendor's endpoints, and asking Google to serve a DeepSeek model is a 404. The game
+    records the policy requested; each player records what its own model resolved to.
     """
-    for slug in model_slugs:
-        if not slug:
-            continue
+    if not model_slug:
+        return routing
 
-        model = await session.scalar(
-            sa.select(ModelRegistry).where(ModelRegistry.openrouter_id == slug)
-        )
-        if model is None:
-            continue
+    model = await session.scalar(
+        sa.select(ModelRegistry).where(ModelRegistry.openrouter_id == model_slug)
+    )
+    if model is None:
+        return routing
 
-        pairs = [(e.provider_name, e.quantization) for e in await endpoints_for(session, model.id)]
-        if not pairs:
-            continue
+    pairs = [(e.provider_name, e.quantization) for e in await endpoints_for(session, model.id)]
+    if not pairs:
+        return routing
 
-        widened = widen_for_first_party(routing, model_slug=slug, endpoints=pairs)
-        if widened is not routing:
-            routing = widened
-
-    return routing
+    return widen_for_first_party(routing, model_slug=model_slug, endpoints=pairs)
 
 
 def model_for(player: Player) -> str:

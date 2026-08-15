@@ -176,6 +176,15 @@ class Player(Base):
     system_prompt_version: Mapped[str | None] = mapped_column(sa.Text)
     sampling: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
 
+    #: The routing policy resolved for *this seat's* model. Per player, not per game: `only` names
+    #: providers, and providers are model-specific, so one game-wide list cannot serve two vendors.
+    #: Pinning Gemini to Google's endpoints and applying that same list to DeepSeek asks Google to
+    #: serve a DeepSeek model, which is a 404. `games.provider_routing` records what was requested;
+    #: this records what each model actually ran under.
+    provider_routing: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default="{}"
+    )
+
     #: Monotonic counter backing `transcript_messages.seq`, allocated under a row lock exactly as
     #: `games.event_seq` is. Each player has its own independent transcript.
     transcript_seq: Mapped[int] = mapped_column(default=0, server_default="0")

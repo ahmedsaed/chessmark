@@ -18,11 +18,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from chessmark.agents.routing import ProviderRouting, widen_for_first_party
 from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
 from chessmark.db.models import (
     Game,
     GameEvent,
     LlmCall,
+    ModelEndpoint,
     ModelRegistry,
     Player,
     Ply,
@@ -50,9 +52,49 @@ class ModelOut(Schema):
     prompt_usd_per_token: Decimal
     completion_usd_per_token: Decimal
 
+    #: Precisions this model is actually served at, across every active endpoint. Shown on the
+    #: card because "which model" is not a complete answer without it — the same id served at fp8
+    #: and at fp4 is not the same contestant.
+    quantizations: list[str] = Field(default_factory=list)
+
+    #: The subset a default-policy game would accept. Empty means the model is unplayable under
+    #: the default, which is a fact worth surfacing rather than discovering at a 404.
+    playable_quantizations: list[str] = Field(default_factory=list)
+    endpoint_count: int = 0
+
     @classmethod
-    def from_model(cls, row: ModelRegistry) -> ModelOut:
-        return cls.model_validate(row)
+    def from_model(
+        cls, row: ModelRegistry, *, endpoints: list[ModelEndpoint] | None = None
+    ) -> ModelOut:
+        endpoints = endpoints or []
+        routing = ProviderRouting()
+        offered = sorted({e.quantization or "unknown" for e in endpoints})
+        allowed = sorted({q for q in offered if routing.accepts(q)})
+
+        if not allowed:
+            # A closed-weight model reports `unknown` from its own vendor; the same widening the
+            # match uses applies here, or the card would claim Gemini is unplayable.
+            widened = widen_for_first_party(
+                routing,
+                model_slug=row.openrouter_id,
+                endpoints=[(e.provider_name, e.quantization) for e in endpoints],
+            )
+            allowed = sorted({q for q in offered if widened.accepts(q)})
+
+        return cls(
+            id=row.id,
+            openrouter_id=row.openrouter_id,
+            display_name=row.display_name,
+            provider=row.provider,
+            context_length=row.context_length,
+            supports_reasoning=row.supports_reasoning,
+            is_free=row.is_free,
+            prompt_usd_per_token=row.prompt_usd_per_token,
+            completion_usd_per_token=row.completion_usd_per_token,
+            quantizations=offered,
+            playable_quantizations=allowed,
+            endpoint_count=len(endpoints),
+        )
 
 
 # ---------------------------------------------------------------------- players
@@ -66,6 +108,13 @@ class PlayerOut(Schema):
     model: str | None = None
     persona: str | None = None
 
+    #: The routing policy this seat resolved to, and the endpoints that actually served it.
+    #: Together these answer "what precision was this game played at" — the question a leaderboard
+    #: row is meaningless without.
+    provider_routing: dict[str, Any] = Field(default_factory=dict)
+    providers_used: list[str] = Field(default_factory=list)
+    quantization: str | None = None
+
     illegal_attempts: int
     forfeited: bool
     prompt_tokens: int
@@ -75,9 +124,18 @@ class PlayerOut(Schema):
     total_cost_usd: Decimal
 
     @classmethod
-    def from_model(cls, row: Player) -> PlayerOut:
+    def from_model(
+        cls,
+        row: Player,
+        *,
+        providers_used: list[str] | None = None,
+        quantization: str | None = None,
+    ) -> PlayerOut:
         model = (row.sampling or {}).get("model")
         return cls(
+            provider_routing=row.provider_routing or {},
+            providers_used=providers_used or [],
+            quantization=quantization,
             id=row.id,
             colour=row.colour,
             kind=row.kind,
@@ -141,7 +199,13 @@ class GameSummary(Schema):
     players: list[PlayerOut] = Field(default_factory=list)
 
     @classmethod
-    def from_model(cls, game: Game, players: list[Player]) -> GameSummary:
+    def from_model(
+        cls,
+        game: Game,
+        players: list[Player],
+        *,
+        served_by: dict[uuid.UUID, tuple[list[str], str | None]] | None = None,
+    ) -> GameSummary:
         return cls(
             id=game.id,
             status=game.status,
@@ -157,7 +221,15 @@ class GameSummary(Schema):
             started_at=game.started_at,
             ended_at=game.ended_at,
             players=sorted(
-                (PlayerOut.from_model(p) for p in players), key=lambda p: p.colour.value
+                (
+                    PlayerOut.from_model(
+                        p,
+                        providers_used=(served_by or {}).get(p.id, ([], None))[0],
+                        quantization=(served_by or {}).get(p.id, ([], None))[1],
+                    )
+                    for p in players
+                ),
+                key=lambda p: p.colour.value,
             ),
         )
 
@@ -171,6 +243,7 @@ class GameDetail(GameSummary):
     max_usd: Decimal | None
     max_illegal_retries: int
     max_plies: int
+    provider_routing: dict[str, Any] = Field(default_factory=dict)
     event_seq: int
     """The highest event sequence yet emitted — a client's starting cursor for SSE."""
 
@@ -184,8 +257,9 @@ class GameDetail(GameSummary):
         *,
         moves: list[str],
         current_fen: str,
+        served_by: dict[uuid.UUID, tuple[list[str], str | None]] | None = None,
     ) -> GameDetail:
-        summary = GameSummary.from_model(game, players)
+        summary = GameSummary.from_model(game, players, served_by=served_by)
         return cls(
             **summary.model_dump(),
             start_fen=game.start_fen,
@@ -196,6 +270,7 @@ class GameDetail(GameSummary):
             max_usd=game.max_usd,
             max_illegal_retries=game.max_illegal_retries,
             max_plies=game.max_plies,
+            provider_routing=game.provider_routing or {},
             event_seq=game.event_seq,
             moves=moves,
         )

@@ -21,6 +21,14 @@ export interface Player {
   kind: "model" | "human" | "engine";
   display_name: string;
   model: string | null;
+  /**
+   * What this seat ran under, and what actually served it. "Which model" is not a complete
+   * answer: the same id at fp8 and at fp4 is not the same contestant.
+   */
+  provider_routing: Record<string, unknown>;
+  providers_used: string[];
+  quantization: string | null;
+
   illegal_attempts: number;
   forfeited: boolean;
   prompt_tokens: number;
@@ -56,6 +64,7 @@ export interface GameDetail extends GameSummary {
   max_usd: string | null;
   max_illegal_retries: number;
   max_plies: number;
+  provider_routing: Record<string, unknown>;
   /** Highest event sequence emitted so far — the stream's starting cursor. */
   event_seq: number;
   moves: string[];
@@ -71,6 +80,11 @@ export interface ModelInfo {
   is_free: boolean;
   prompt_usd_per_token: string;
   completion_usd_per_token: string;
+  /** Every precision this model is served at, across all active endpoints. */
+  quantizations: string[];
+  /** The subset a default-policy game accepts. Empty means it cannot be played. */
+  playable_quantizations: string[];
+  endpoint_count: number;
 }
 
 export type EventType =

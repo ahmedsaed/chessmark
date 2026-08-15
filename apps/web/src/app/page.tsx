@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { listGames, listModels } from "@/lib/api";
-import type { GameSummary } from "@/lib/types";
+import type { GameSummary, ModelInfo } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +9,7 @@ export default async function Home() {
   const [live, recent, models] = await Promise.all([
     listGames("running", 6),
     listGames(undefined, 12),
-    listModels(true),
+    listModels(),
   ]);
 
   const finished = recent.filter((game) => game.status !== "running").slice(0, 8);
@@ -44,10 +44,11 @@ export default async function Home() {
 
       <section className="mt-12">
         <h2 className="mb-4 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
-          Playable models · {models.length} free, tool-capable
+          Playable models · {models.length} tool-capable ·{" "}
+          {models.filter((m) => m.playable_quantizations.length === 0).length} blocked on precision
         </h2>
         <ul className="grid grid-cols-1 gap-px border border-line-soft bg-line-soft sm:grid-cols-2 lg:grid-cols-3">
-          {models.map((model) => (
+          {models.slice(0, 24).map((model) => (
             <li key={model.id} className="bg-surface px-4 py-3">
               <p className="truncate font-mono text-xs text-ink">{model.openrouter_id}</p>
               <p className="tabular mt-1 font-mono text-[10px] text-ink-faint">
@@ -57,6 +58,7 @@ export default async function Home() {
                   : ""}
                 {model.supports_reasoning ? " · reasoning" : ""}
               </p>
+              <Quantizations model={model} />
             </li>
           ))}
         </ul>
@@ -88,6 +90,55 @@ function Section({
         <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">{children}</ul>
       )}
     </section>
+  );
+}
+
+/**
+ * Which precisions a model is served at, and which of them a game will accept.
+ *
+ * On the card because it is part of the model's identity here, not a footnote: an id served at
+ * fp4 is a different contestant from the same id at fp8, and a benchmark that hides which one it
+ * measured is not saying much.
+ */
+function Quantizations({ model }: { model: ModelInfo }) {
+  if (model.quantizations.length === 0) return null;
+
+  const playable = new Set(model.playable_quantizations);
+  const blocked = model.quantizations.filter((q) => !playable.has(q));
+
+  return (
+    <p className="mt-1.5 flex flex-wrap items-center gap-1">
+      {model.quantizations.map((quantization) => {
+        const allowed = playable.has(quantization);
+        return (
+          <span
+            key={quantization}
+            title={
+              allowed
+                ? `served at ${quantization} — accepted`
+                : `served at ${quantization} — excluded from games`
+            }
+            className={`border px-1 py-px font-mono text-[9px] uppercase tracking-wider ${
+              allowed
+                ? "border-good/40 text-good"
+                : "border-bad-deep text-bad line-through decoration-bad/50"
+            }`}
+          >
+            {quantization}
+          </span>
+        );
+      })}
+      {playable.size === 0 && (
+        <span className="font-mono text-[9px] uppercase tracking-wider text-bad">
+          unplayable
+        </span>
+      )}
+      {blocked.length > 0 && playable.size > 0 && (
+        <span className="font-mono text-[9px] text-ink-faint">
+          {model.endpoint_count} endpoints
+        </span>
+      )}
+    </p>
   );
 }
 

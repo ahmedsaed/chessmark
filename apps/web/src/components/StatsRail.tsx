@@ -97,6 +97,26 @@ function PlayerCard({ player, active }: { player: Player; active: boolean }) {
         {player.model ?? player.kind}
       </p>
 
+      {/* What actually served this seat. Recorded per call, so it is a fact about this game
+          rather than a claim about the model in general. */}
+      {(player.quantization || player.providers_used.length > 0) && (
+        <p className="flex flex-wrap items-center gap-1">
+          {player.quantization && (
+            <span
+              title="precision this seat was served at"
+              className="border border-good/40 px-1 py-px font-mono text-[8.5px] uppercase tracking-wider text-good"
+            >
+              {player.quantization}
+            </span>
+          )}
+          {player.providers_used.slice(0, 2).map((name) => (
+            <span key={name} className="font-mono text-[8.5px] text-ink-faint">
+              {name}
+            </span>
+          ))}
+        </p>
+      )}
+
       <dl className="grid grid-cols-2 gap-px border border-line-soft bg-line-soft">
         <Stat label="Tokens" value={player.prompt_tokens.toLocaleString()} />
         <Stat label="Cached" value={cacheRate(player)} />
