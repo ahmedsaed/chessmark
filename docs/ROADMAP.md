@@ -61,7 +61,7 @@ flowchart LR
 - [x] `make setup && make up` brings up healthy Postgres and Redis
 - [x] `make check` passes: ruff, eslint, strict mypy, tsc, pytest
 - [x] `GET /health` returns `{"status":"ok","version":"0.1.0"}`
-- [ ] CI is green on a push to `main`
+- [x] CI is green on a push to `main`
 
 **Covers:** OPS-01, OPS-03, OPS-06
 
@@ -137,7 +137,7 @@ flowchart LR
 
 ---
 
-## Phase 3 — LLM gateway ✅ COMPLETE (one criterion deferred, see below)
+## Phase 3 — LLM gateway ✅ COMPLETE
 
 **Goal:** one function call reaches any OpenRouter model and records everything about it.
 
@@ -276,7 +276,7 @@ cap. Both are recorded above because they are properties of free models worth kn
 
 ---
 
-## Phase 5 — Match orchestration ⭐ First milestone
+## Phase 5 — Match orchestration ✅ COMPLETE ⭐ First milestone
 
 **Goal:** `make play --white=X --black=Y` runs a complete model-vs-model game to a real chess ending, headless, fully logged.
 

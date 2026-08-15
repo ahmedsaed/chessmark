@@ -131,11 +131,11 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–4 complete.** 332 tests, CI green.
+**Phases 0–7 complete.** 444 tests, CI green.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
-- `chessmark.db` — 13 tables, Alembic migrations, async sessions, repositories. `game_events`
+- `chessmark.db` — 15 tables, Alembic migrations, async sessions, repositories. `game_events`
   appends are gap-free under concurrency.
 - `chessmark.agents` — the LLM gateway and the agent runtime. `LlmGateway` (injectable provider
   call, classified retries), response normalisation, exact `Decimal` costing, credential
@@ -144,6 +144,12 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 - `chessmark.orchestration` — the queue, the worker, and the reconciler. Redis Streams consumer
   group, `expected_ply` idempotency, one transaction per turn, ack-after-commit.
+- `chessmark.api` — REST plus SSE with `Last-Event-ID` reconnect. Reasoning is withheld while a
+  game is live (invariant 8).
+- `apps/web` — the lobby and the live game page: stats left, board centre, conversation right.
+- **Provider routing** ([ADR-0014](docs/adr/0014-provider-routing-and-quantization.md)) — games
+  refuse sub-8-bit and undeclared endpoints, so a leaderboard row means one thing. Closed-weight
+  models are widened to their own vendor only. The precision that served each seat is recorded.
 
 `agents/scripted.py` is the workhorse for testing and for local development: it plugs in as
 `LlmGateway(completion_fn=...)` so a whole game can run with no API key, exercising the real path
@@ -153,6 +159,12 @@ Database tests need `make up`. Useful targets: `make test-unit` (no database), `
 (live provider, opt-in), `make migration m="..."`, `make drift`, `make seed-models`,
 `make smoke-llm`.
 
-**Next up: Phase 5 — match orchestration.** The Redis queue, the turn worker, and
-`expected_ply` idempotency, ending in a full headless model-vs-model game.
-See [ROADMAP.md](docs/ROADMAP.md#phase-5--match-orchestration--first-milestone).
+Paid models work and are cheap: an 80-ply `gemini-2.5-flash-lite` vs `deepseek-v4-flash` game cost
+**$0.076** at an 83% cache hit rate. Free models cannot finish a game — too slow, too verbose, and
+no prompt caching.
+
+**Next up: Phase 8 — replay & sharing.** See [ROADMAP.md](docs/ROADMAP.md#phase-8--replay--sharing).
+
+Two known gaps, both recorded in the roadmap rather than quietly carried: Phase 7's Lighthouse
+score is **unverified** (no Lighthouse in this environment), and NFR-06's >80% cache rate is met in
+aggregate but not by Gemini individually.
