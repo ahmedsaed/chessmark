@@ -89,11 +89,20 @@ but the spine costs too much horizontal space.
   what distinguishes the product visually, not the board.
 - The board is large enough that rank and file gutters are worth rendering.
 
+## Alignment is viewer-relative
+
+**Settled.** Bubble alignment is a function of the *viewer*, not the piece colour:
+
+- **Human vs model** — the human is always on the **right**, the model on the left, matching the
+  convention of every messaging app.
+- **Model vs model** — there is no viewer in the game, so it falls back to White left, Black right.
+
+The conversation component therefore takes `side: "self" | "opponent"` rather than
+`color: "white" | "black"`, and the caller resolves which is which from the viewer's identity.
+Board orientation follows the same rule: in a human game the viewer's own colour sits at the
+bottom, which flips the board and its rank gutter with it.
+
 ## Open
 
-- **Which side is white?** Currently White aligns left, permanently. In human-vs-model it would read
-  more naturally to put *the viewer* on the right, the way every messaging app does — making
-  alignment a function of the viewer rather than the piece colour. This changes the component API,
-  so it must be settled before Phase 7 begins.
-- **Board orientation in human games.** Standard is that your own colour sits at the bottom, which
-  flips the board and the rank gutter with it.
+- Nothing blocking. Revisit whether folding-by-default is right once real games exist and we can
+  see how a 60-move transcript actually reads.

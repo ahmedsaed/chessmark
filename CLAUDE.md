@@ -122,7 +122,11 @@ Configured in `.mcp.json` (project-scoped):
 
 ## Current state
 
-**Phase 0 complete.** Repo, toolchains, Docker datastores, CI, and all research docs exist.
-`make check` passes. There is no application code beyond a health endpoint.
+**Phases 0 and 1 complete.** Toolchains, Docker datastores, CI, research docs, the settled design
+system, and the full chess domain — 108 tests, 99.75% coverage on `game/`, CI green.
 
-**Next up: Phase 1 — chess core domain.** See [ROADMAP.md](docs/ROADMAP.md#phase-1--chess-core-domain).
+`chessmark.game` is done and stable: `ChessBoard` (position, views, SAN/UCI parsing with
+explanatory failures), `Referee` (terminal detection, resign/forfeit/adjudicate, ply cap),
+`IllegalMoveError` (reason, human-readable detail, full legal move list), and PGN export.
+
+**Next up: Phase 2 — persistence.** See [ROADMAP.md](docs/ROADMAP.md#phase-2--persistence-layer).

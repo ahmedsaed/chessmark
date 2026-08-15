@@ -38,6 +38,9 @@ web: ## Run the frontend (port 3010)
 test: ## Run backend tests
 	cd $(API) && uv run pytest
 
+cov: ## Run the chess-domain coverage gate (NFR-07)
+	cd $(API) && uv run pytest tests/game --cov=chessmark.game --cov-report=term-missing --cov-fail-under=90
+
 lint: ## Lint backend and frontend
 	cd $(API) && uv run ruff check .
 	cd $(WEB) && pnpm lint

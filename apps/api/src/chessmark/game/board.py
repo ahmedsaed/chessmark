@@ -1,0 +1,339 @@
+"""The authoritative chess position.
+
+Everything an agent can learn about the board, and the single place a move can change it.
+Models propose; `python-chess` disposes (ADR-0007 / invariant 1). This module knows nothing about
+LLMs, databases, or HTTP, and must stay that way — `tests/game/test_purity.py` enforces it.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+import chess
+
+from chessmark.game.errors import IllegalMoveError, IllegalMoveReason
+
+#: Conventional point values, used only for the material summary shown to agents.
+PIECE_VALUES: dict[chess.PieceType, int] = {
+    chess.PAWN: 1,
+    chess.KNIGHT: 3,
+    chess.BISHOP: 3,
+    chess.ROOK: 5,
+    chess.QUEEN: 9,
+}
+
+_CHECK_SUFFIXES = "+#!?"
+
+
+@dataclass(frozen=True, slots=True)
+class LegalMove:
+    """One playable move, described in both notations an agent might use."""
+
+    san: str
+    uci: str
+    is_capture: bool
+    is_check: bool
+    is_checkmate: bool
+    is_castling: bool
+    is_en_passant: bool
+    promotion: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class Material:
+    """Point-value totals. `balance` is positive when White is ahead."""
+
+    white: int
+    black: int
+    balance: int
+
+
+@dataclass(frozen=True, slots=True)
+class BoardView:
+    """A complete, agent-facing snapshot of the position.
+
+    This is what the `get_board` tool returns, so every field here is something we have decided
+    a model is entitled to know.
+    """
+
+    fen: str
+    ascii: str
+    side_to_move: str
+    fullmove_number: int
+    halfmove_clock: int
+    castling_rights: str
+    en_passant: str | None
+    in_check: bool
+    material: Material
+    legal_move_count: int
+    move_history_san: list[str] = field(default_factory=list)
+
+
+def _colour_name(colour: chess.Color) -> str:
+    return "white" if colour == chess.WHITE else "black"
+
+
+def _normalise_san(san: str) -> str:
+    """Strip check, mate, and annotation suffixes so notations compare equal."""
+    return san.rstrip(_CHECK_SUFFIXES)
+
+
+class ChessBoard:
+    """Mutable wrapper over `chess.Board` with agent-facing views and explanatory failures."""
+
+    def __init__(self, fen: str | None = None) -> None:
+        self._board = chess.Board(fen) if fen else chess.Board()
+        self._root_fen = self._board.fen()
+        self._history_san: list[str] = []
+
+    # ------------------------------------------------------------------ state
+
+    @property
+    def fen(self) -> str:
+        return self._board.fen()
+
+    @property
+    def root_fen(self) -> str:
+        """The position this board started from. Needed to replay or export the game."""
+        return self._root_fen
+
+    @property
+    def side_to_move(self) -> str:
+        return _colour_name(self._board.turn)
+
+    @property
+    def ply(self) -> int:
+        """Half-moves played on this board since it was created."""
+        return len(self._board.move_stack)
+
+    @property
+    def in_check(self) -> bool:
+        return self._board.is_check()
+
+    def history_san(self) -> list[str]:
+        return list(self._history_san)
+
+    def copy(self) -> ChessBoard:
+        clone = ChessBoard(self._root_fen)
+        clone._board = self._board.copy()
+        clone._history_san = list(self._history_san)
+        return clone
+
+    # ------------------------------------------------------------------ views
+
+    def legal_moves(self) -> list[LegalMove]:
+        """Every legal move, sorted by SAN so the list is stable across calls."""
+        moves = [self._describe(move) for move in self._board.legal_moves]
+        return sorted(moves, key=lambda m: m.san)
+
+    def legal_moves_san(self) -> list[str]:
+        return [move.san for move in self.legal_moves()]
+
+    def material(self) -> Material:
+        white = black = 0
+        for piece_type, value in PIECE_VALUES.items():
+            white += len(self._board.pieces(piece_type, chess.WHITE)) * value
+            black += len(self._board.pieces(piece_type, chess.BLACK)) * value
+        return Material(white=white, black=black, balance=white - black)
+
+    def ascii(self, *, perspective: str = "white") -> str:
+        """A labelled ASCII diagram.
+
+        Uppercase is White, lowercase is Black, `.` is empty. This goes straight into an LLM
+        prompt, so the rank and file labels are worth the extra characters.
+        """
+        ranks = range(7, -1, -1) if perspective == "white" else range(8)
+        files = range(8) if perspective == "white" else range(7, -1, -1)
+        header = "  " + " ".join(chess.FILE_NAMES[f] for f in files)
+
+        lines = [header]
+        for rank in ranks:
+            cells = []
+            for file in files:
+                piece = self._board.piece_at(chess.square(file, rank))
+                cells.append(piece.symbol() if piece else ".")
+            label = str(rank + 1)
+            lines.append(f"{label} {' '.join(cells)} {label}")
+        lines.append(header)
+        return "\n".join(lines)
+
+    def view(self, *, perspective: str | None = None) -> BoardView:
+        board = self._board
+        ep = board.ep_square
+        fen = board.fen()
+        return BoardView(
+            fen=fen,
+            ascii=self.ascii(perspective=perspective or self.side_to_move),
+            side_to_move=self.side_to_move,
+            fullmove_number=board.fullmove_number,
+            halfmove_clock=board.halfmove_clock,
+            castling_rights=fen.split()[2],
+            en_passant=chess.square_name(ep) if ep is not None else None,
+            in_check=board.is_check(),
+            material=self.material(),
+            legal_move_count=board.legal_moves.count(),
+            move_history_san=self.history_san(),
+        )
+
+    # ------------------------------------------------------------------ moves
+
+    def parse(self, text: str) -> chess.Move:
+        """Resolve SAN or UCI to a legal move, or raise an explanatory error."""
+        cleaned = text.strip()
+        if not cleaned:
+            raise self._reject(text, IllegalMoveReason.INVALID_NOTATION, "no move was supplied")
+
+        well_formed_san = False
+        try:
+            return self._board.parse_san(cleaned)
+        except chess.AmbiguousMoveError:
+            raise self._reject(
+                cleaned,
+                IllegalMoveReason.AMBIGUOUS,
+                f"{cleaned!r} is ambiguous — more than one piece can play it. "
+                "Disambiguate by file or rank, for example Nbd2 or R1e2.",
+            ) from None
+        except chess.IllegalMoveError:
+            well_formed_san = True
+        except chess.InvalidMoveError:
+            pass
+
+        try:
+            move = chess.Move.from_uci(cleaned.lower())
+        except chess.InvalidMoveError:
+            if well_formed_san:
+                raise self._explain_san(cleaned) from None
+            raise self._reject(
+                cleaned,
+                IllegalMoveReason.INVALID_NOTATION,
+                f"{cleaned!r} is neither algebraic notation (e4, Nf3, O-O, exd5, e8=Q) "
+                "nor UCI notation (e2e4, g1f3, e7e8q).",
+            ) from None
+
+        if move in self._board.legal_moves:
+            return move
+        raise self._explain_move(cleaned, move)
+
+    def push(self, text: str) -> LegalMove:
+        """Validate and apply a move, returning its description."""
+        move = self.parse(text)
+        described = self._describe(move)
+        self._history_san.append(described.san)
+        self._board.push(move)
+        return described
+
+    # ------------------------------------------------------------------ rules
+
+    def is_checkmate(self) -> bool:
+        return self._board.is_checkmate()
+
+    def is_stalemate(self) -> bool:
+        return self._board.is_stalemate()
+
+    def is_insufficient_material(self) -> bool:
+        return self._board.is_insufficient_material()
+
+    def is_threefold_repetition(self) -> bool:
+        return self._board.is_repetition(3)
+
+    def is_fifty_move_rule(self) -> bool:
+        return self._board.halfmove_clock >= 100
+
+    @property
+    def raw(self) -> chess.Board:
+        """Escape hatch for PGN export and engine analysis. Treat as read-only."""
+        return self._board
+
+    # ------------------------------------------------------------------ internals
+
+    def _describe(self, move: chess.Move) -> LegalMove:
+        board = self._board
+        san = board.san(move)
+        is_capture = board.is_capture(move)
+        is_en_passant = board.is_en_passant(move)
+        is_castling = board.is_castling(move)
+
+        board.push(move)
+        try:
+            is_check = board.is_check()
+            is_checkmate = board.is_checkmate()
+        finally:
+            board.pop()
+
+        promotion = chess.piece_symbol(move.promotion).upper() if move.promotion else None
+
+        return LegalMove(
+            san=san,
+            uci=move.uci(),
+            is_capture=is_capture,
+            is_check=is_check,
+            is_checkmate=is_checkmate,
+            is_castling=is_castling,
+            is_en_passant=is_en_passant,
+            promotion=promotion,
+        )
+
+    def _reject(self, move: str, reason: IllegalMoveReason, detail: str) -> IllegalMoveError:
+        return IllegalMoveError(
+            move=move,
+            reason=reason,
+            detail=detail,
+            fen=self.fen,
+            legal_moves_san=self.legal_moves_san(),
+        )
+
+    def _explain_san(self, san: str) -> IllegalMoveError:
+        """Explain a well-formed algebraic move that isn't legal here.
+
+        The most useful case to catch is a move that is mechanically fine but leaves the king in
+        check — the model isn't confused about how the piece moves, it has missed a pin.
+        """
+        target = _normalise_san(san)
+        for pseudo in self._board.generate_pseudo_legal_moves():
+            if _normalise_san(self._board.san(pseudo)) != target:
+                continue
+            if self._board.is_into_check(pseudo):
+                return self._reject(
+                    san,
+                    IllegalMoveReason.LEAVES_KING_IN_CHECK,
+                    f"{san} would leave your king in check.",
+                )
+            break
+
+        return self._reject(
+            san,
+            IllegalMoveReason.NOT_REACHABLE,
+            f"no legal move in this position matches {san!r}.",
+        )
+
+    def _explain_move(self, text: str, move: chess.Move) -> IllegalMoveError:
+        """Explain a UCI move that parsed but isn't legal."""
+        board = self._board
+        origin = chess.square_name(move.from_square)
+        destination = chess.square_name(move.to_square)
+        piece = board.piece_at(move.from_square)
+
+        if piece is None:
+            return self._reject(text, IllegalMoveReason.NO_PIECE, f"there is no piece on {origin}.")
+
+        name = chess.piece_name(piece.piece_type)
+        if piece.color != board.turn:
+            return self._reject(
+                text,
+                IllegalMoveReason.WRONG_COLOR,
+                f"the {name} on {origin} is {_colour_name(piece.color).capitalize()}'s, "
+                f"and it is {self.side_to_move.capitalize()}'s turn.",
+            )
+
+        if move in board.generate_pseudo_legal_moves() and board.is_into_check(move):
+            return self._reject(
+                text,
+                IllegalMoveReason.LEAVES_KING_IN_CHECK,
+                f"moving the {name} from {origin} to {destination} would leave your king in check.",
+            )
+
+        return self._reject(
+            text,
+            IllegalMoveReason.NOT_REACHABLE,
+            f"the {name} on {origin} cannot move to {destination}.",
+        )

@@ -67,7 +67,7 @@ flowchart LR
 
 ---
 
-## Phase 1 — Chess core domain
+## Phase 1 — Chess core domain ✅ COMPLETE
 
 **Goal:** a complete, correct chess referee with zero knowledge of LLMs, databases, or HTTP.
 
@@ -79,13 +79,21 @@ flowchart LR
 5. Move parsing that accepts SAN or UCI and normalises both
 
 **Exit criteria**
-- [ ] Unit tests cover all of GAME-02: castling both sides, en passant, all four promotion pieces, threefold repetition, 50-move rule, stalemate, insufficient material (all four cases)
-- [ ] A known PGN of a famous game replays ply-by-ply to the correct final FEN
-- [ ] `IllegalMoveError` for every rejection carries a non-empty `legal_moves_san` and a `detail` string
-- [ ] Test coverage on `game/` > 90%
-- [ ] Module imports nothing from `db/`, `agents/`, or `api/` (enforced by an import-linter test)
+- [x] Unit tests cover all of GAME-02: castling both sides, en passant, all four promotion pieces, threefold repetition, 50-move rule, stalemate, insufficient material (all four cases)
+- [x] A known PGN of a famous game replays ply-by-ply to the correct final FEN — the Opera Game (Morphy, 1858), 33 plies to `1n1Rkb1r/p4ppp/4q3/4p1B1/4P3/8/PPP2PPP/2K5 b k - 1 17`
+- [x] `IllegalMoveError` for every rejection carries a non-empty `legal_moves_san` and a `detail` string
+- [x] Test coverage on `game/` > 90% — **99.75%**, enforced in CI via `make cov`
+- [x] Module imports nothing from `db/`, `agents/`, or `api/` — enforced by an AST test in `tests/game/test_purity.py`, which also forbids relative imports so the check cannot be sidestepped
 
 **Covers:** GAME-01, GAME-02, GAME-04, GAME-05, GAME-06, GAME-07
+
+**Notes**
+- Threefold repetition and the fifty-move rule are applied **automatically**, deviating from FIDE
+  where both are *claimable*. A benchmark cannot rely on a model noticing it may claim a draw;
+  without this, two weak models shuffle until the ply cap. Documented in `referee.py`.
+- Terminations are split into chess results and `FORFEIT_TERMINATIONS` (illegal-move, error,
+  timeout, budget, context), so the leaderboard can separate "lost at chess" from "failed to
+  operate" — the distinction the benchmark exists to measure.
 
 ---
 

@@ -66,6 +66,11 @@ jobs:
       - name: Tests
         run: uv run pytest --cov=chessmark --cov-report=term-missing
 
+      # NFR-07: the chess domain and the agent runtime carry a hard coverage floor.
+      # A gap here is a benchmark measuring the wrong thing, so it fails the build.
+      - name: Chess domain coverage gate
+        run: uv run pytest tests/game --cov=chessmark.game --cov-fail-under=90 -q
+
   web:
     name: Web (lint, types, build)
     runs-on: ubuntu-latest
