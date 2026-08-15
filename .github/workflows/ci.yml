@@ -76,9 +76,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No `version:` — the action reads apps/web/package.json's `packageManager`
-      # field, keeping one source of truth for the pnpm version.
+      # No `version:` — the pnpm version comes from `packageManager` in
+      # apps/web/package.json, the single source of truth. The action resolves
+      # package.json from the repo root, so the path must be given explicitly;
+      # the job's working-directory does not apply to it.
       - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/web/package.json
 
       - uses: actions/setup-node@v4
         with:
