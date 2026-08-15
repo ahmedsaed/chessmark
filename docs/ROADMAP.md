@@ -230,6 +230,11 @@ someone checks.
   a tool-protocol failure, not a chess failure, and the benchmark should count them separately.
 - Every tool call gets a result message even after a move is committed. Providers reject a
   transcript with an unanswered `tool_call_id`, and a gap would corrupt every later turn.
+- **A taunt is delivered into the opponent's transcript immediately** (TALK-02), seeding the
+  opponent's system prompt first so an opening taunt cannot displace row 1. This was missed on the
+  first pass — messages were stored and broadcast to spectators but never delivered, so models were
+  talking into a void. The tests only checked the sender. Caught in review; now covered by tests
+  verified to fail without the delivery call.
 
 ---
 

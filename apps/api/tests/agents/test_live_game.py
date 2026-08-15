@@ -71,6 +71,7 @@ async def test_a_real_model_plays_ten_plies(db: AsyncSession, api_key: str) -> N
             referee=table.referee,
             game=table.game,
             player=table.player(colour),
+            opponent=table.player(colour.opponent),
             model=MODEL,
             limits=LIVE_LIMITS,
         )

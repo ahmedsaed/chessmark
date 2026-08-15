@@ -114,6 +114,7 @@ class TurnRunner:
         referee: Referee,
         game: Game,
         player: Player,
+        opponent: Player,
         model: str,
         limits: TurnLimits | None = None,
     ) -> None:
@@ -122,6 +123,7 @@ class TurnRunner:
         self.referee = referee
         self.game = game
         self.player = player
+        self.opponent = opponent
         self.model = model
         self.limits = limits or TurnLimits()
 
@@ -443,6 +445,36 @@ class TurnRunner:
                 "colour": self.colour.value,
                 "content": message,
             },
+        )
+        await self._deliver_to_opponent(message)
+
+    async def _deliver_to_opponent(self, message: str) -> None:
+        """Put the message into the opponent's transcript (TALK-02).
+
+        Without this, `say` broadcasts into a void — models would talk *at* spectators and never
+        to each other, which is the entire reason ADR-0009 chose a standalone tool over a comment
+        field on `make_move`.
+
+        Delivered immediately rather than gathered at the start of the opponent's next turn, so it
+        lands in the natural place: after whatever the opponent last did, before its next turn
+        prompt. Appending to a transcript that is not currently being read is safe — every
+        transcript is append-only, and the opponent rebuilds from `seq` when its turn comes.
+
+        The opponent's system prompt is seeded first if it has not played yet, so an opening taunt
+        cannot end up as row 1, ahead of the prompt that heads the cached prefix.
+        """
+        await ensure_system_prompt(
+            self.session,
+            game=self.game,
+            player=self.opponent,
+            opponent_name=self.player.display_name,
+        )
+        await transcript.append_message(
+            self.session,
+            player_id=self.opponent.id,
+            game_id=self.game.id,
+            role="user",
+            content=prompts.OPPONENT_SAID.format(message=message),
         )
 
     async def _finalise(self, turn: Turn, result: TurnResult) -> None:

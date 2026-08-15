@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents import prompts, transcript
-from chessmark.agents.scripted import plays, scripted, step, tool_call
+from chessmark.agents.scripted import plays, says, scripted, step, tool_call
 from chessmark.db.models import TranscriptMessage
 from chessmark.game import Colour
 from tests.agents.conftest import Table, play_turn, seat
@@ -282,3 +282,141 @@ async def test_a_ranked_game_says_talking_is_disabled(db: AsyncSession) -> None:
 
     system = (await transcript.build_messages(db, ranked.white.id))[0]
     assert "ranked" in str(system["content"]).lower()
+
+
+# ====================================================================== hearing each other
+
+
+async def test_the_opponent_receives_what_was_said(db: AsyncSession, table: Table) -> None:
+    """TALK-02. Without delivery, `say` broadcasts into a void and no exchange is possible."""
+    await play_turn(
+        db,
+        table,
+        scripted(says("Your opening is a museum piece.", tool_call("make_move", move="e4"))),
+        colour=Colour.WHITE,
+    )
+
+    black = await transcript.build_messages(db, table.black.id)
+    heard = [m for m in black if "Your opponent says" in str(m.get("content", ""))]
+
+    assert len(heard) == 1
+    assert "museum piece" in str(heard[0]["content"])
+    assert heard[0]["role"] == "user"
+
+
+async def test_a_speaker_does_not_hear_itself(db: AsyncSession, table: Table) -> None:
+    await play_turn(
+        db,
+        table,
+        scripted(says("Watch this.", tool_call("make_move", move="e4"))),
+        colour=Colour.WHITE,
+    )
+
+    white = await transcript.build_messages(db, table.white.id)
+    assert not [m for m in white if "Your opponent says" in str(m.get("content", ""))]
+
+
+async def test_models_can_hold_a_conversation(db: AsyncSession, table: Table) -> None:
+    """The point of a standalone `say` tool (ADR-0009): a genuine back-and-forth."""
+    await play_turn(
+        db,
+        table,
+        scripted(says("I open strong.", tool_call("make_move", move="e4"))),
+        colour=Colour.WHITE,
+    )
+    await play_turn(
+        db,
+        table,
+        scripted(says("You open predictably.", tool_call("make_move", move="e5"))),
+        colour=Colour.BLACK,
+    )
+    await play_turn(
+        db,
+        table,
+        scripted(says("Predictable wins games.", tool_call("make_move", move="Nf3"))),
+        colour=Colour.WHITE,
+    )
+
+    white = await transcript.build_messages(db, table.white.id)
+    black = await transcript.build_messages(db, table.black.id)
+
+    assert "You open predictably." in str(white)
+    assert "I open strong." in str(black)
+    assert "Predictable wins games." in str(black)
+
+
+async def test_a_taunt_arrives_before_the_opponents_next_turn_prompt(
+    db: AsyncSession, table: Table
+) -> None:
+    """Ordering matters: the model must read the taunt as part of the turn it responds to."""
+    await play_turn(
+        db,
+        table,
+        scripted(says("Beat that.", tool_call("make_move", move="e4"))),
+        colour=Colour.WHITE,
+    )
+    await play_turn(db, table, plays(["e5"]), colour=Colour.BLACK)
+
+    black = await transcript.build_messages(db, table.black.id)
+    contents = [str(m.get("content", "")) for m in black]
+
+    heard_at = next(i for i, c in enumerate(contents) if "Beat that." in c)
+    prompted_at = next(i for i, c in enumerate(contents) if "Ply 2" in c)
+
+    assert heard_at < prompted_at
+
+
+async def test_an_opening_taunt_does_not_displace_the_system_prompt(
+    db: AsyncSession, table: Table
+) -> None:
+    """Black has never played, so its transcript is empty — the taunt must not become row 1."""
+    await play_turn(
+        db,
+        table,
+        scripted(says("First blood.", tool_call("make_move", move="e4"))),
+        colour=Colour.WHITE,
+    )
+
+    black = await transcript.build_messages(db, table.black.id)
+
+    assert black[0]["role"] == "system"
+    assert "playing a game of chess as black" in str(black[0]["content"]).lower()
+    assert "First blood." in str(black[1]["content"])
+
+
+async def test_delivery_preserves_the_prefix_property(db: AsyncSession, table: Table) -> None:
+    """Appending to an idle transcript must not disturb what the opponent already saw."""
+    black = plays(["e5", "Nc6"])
+
+    await play_turn(db, table, plays(["e4"]), colour=Colour.WHITE)
+    await play_turn(db, table, black, colour=Colour.BLACK)
+    before = _serialise(await transcript.build_messages(db, table.black.id))
+
+    await play_turn(
+        db,
+        table,
+        scripted(says("Still losing.", tool_call("make_move", move="Nf3"))),
+        colour=Colour.WHITE,
+    )
+    await play_turn(db, table, black, colour=Colour.BLACK)
+    after = _serialise(await transcript.build_messages(db, table.black.id))
+
+    assert after[: len(before)] == before
+    assert any("Still losing." in message for message in after)
+
+
+async def test_nothing_is_delivered_in_a_ranked_game(db: AsyncSession) -> None:
+    ranked = await seat(db, trash_talk_enabled=False)
+
+    await play_turn(
+        db,
+        ranked,
+        scripted(
+            step(tool_call("say", message="trash")),
+            step(tool_call("make_move", move="e4")),
+        ),
+        colour=Colour.WHITE,
+    )
+
+    black = await transcript.build_messages(db, ranked.black.id)
+    assert not [m for m in black if "Your opponent says" in str(m.get("content", ""))]

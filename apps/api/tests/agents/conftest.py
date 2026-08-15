@@ -94,6 +94,7 @@ async def play_turn(
 ) -> TurnResult:
     """Run one whole turn with a scripted model, exactly as the worker will."""
     player = table.player(colour)
+    opponent = table.player(colour.opponent)
 
     await ensure_system_prompt(
         db, game=table.game, player=player, opponent_name=table.opponent_name(colour)
@@ -105,6 +106,7 @@ async def play_turn(
         referee=table.referee,
         game=table.game,
         player=player,
+        opponent=opponent,
         model=model,
         limits=limits,
     )
