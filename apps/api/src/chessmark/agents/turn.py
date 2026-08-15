@@ -248,11 +248,16 @@ class TurnRunner:
                 return
 
             messages = await transcript.build_messages(self.session, self.player.id)
+            # The call gets whatever is left of the turn's wall clock, never more. Checking
+            # the budget only between round-trips cannot bound a single slow call: one 18-minute
+            # call sailed past a 600-second turn limit because nothing was watching while it ran.
+            remaining = self.limits.max_seconds - (time.perf_counter() - started)
             completion = await self.gateway.complete(
                 model=self.model,
                 messages=messages,
                 tools=self._tools,
                 max_tokens=self.limits.max_completion_tokens,
+                deadline_seconds=max(remaining, 1.0),
             )
 
             await self._record_llm_call(turn, completion)

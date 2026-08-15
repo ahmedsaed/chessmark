@@ -302,3 +302,48 @@ def test_backoff_jitter_stays_within_bounds() -> None:
 
     assert all(1.0 <= delay <= 1.25 for delay in delays)
     assert len(set(delays)) > 1, "jitter should actually vary"
+
+
+# ------------------------------------------------------------------ deadlines
+
+
+async def test_a_call_that_overruns_the_deadline_is_cut_off() -> None:
+    """Found live: one call generated for 1,093 seconds against a 180-second setting. The timeout
+    was passed to the provider library and simply not honoured. A deadline only the callee
+    enforces is not a deadline."""
+    import asyncio
+
+    async def never_returns(**_kwargs: Any) -> Any:
+        await asyncio.sleep(30)
+
+    with pytest.raises(LlmError) as caught:
+        await gateway(completion_fn=never_returns).complete(
+            model="x/y", messages=[], deadline_seconds=0.05
+        )
+
+    assert "exceeded" in str(caught.value)
+
+
+async def test_an_overrun_is_not_retried() -> None:
+    """A call that ran to the deadline was producing tokens the whole time, not stalled. Retrying
+    spends the same wall clock to reach the same place."""
+    import asyncio
+
+    calls = {"n": 0}
+
+    async def slow(**_kwargs: Any) -> Any:
+        calls["n"] += 1
+        await asyncio.sleep(30)
+
+    with pytest.raises(LlmError) as caught:
+        await gateway(completion_fn=slow).complete(model="x/y", messages=[], deadline_seconds=0.05)
+
+    assert calls["n"] == 1
+    assert not caught.value.retryable
+
+
+async def test_a_call_inside_the_deadline_is_untouched() -> None:
+    result = await gateway(completion_fn=replay("openai_style_tool_call")).complete(
+        model="openai/gpt-oss-20b:free", messages=[], deadline_seconds=30
+    )
+    assert result.has_tool_calls

@@ -48,9 +48,20 @@ RETRYABLE_EXCEPTION_NAMES = frozenset(
     }
 )
 
+
+class ProviderDeadlineError(TimeoutError):
+    """Our own deadline expired while a call was still generating.
+
+    Distinct from a network timeout, and deliberately *not* retryable. A call that ran to the
+    deadline was producing tokens the whole time — it was not stalled — so trying again just
+    spends the same wall clock to reach the same place.
+    """
+
+
 #: Never retried: the same request will fail the same way, and each attempt costs money.
 FATAL_EXCEPTION_NAMES = frozenset(
     {
+        "ProviderDeadlineError",
         "AuthenticationError",
         "BadRequestError",
         "ContentPolicyViolationError",
@@ -199,6 +210,7 @@ class LlmGateway:
         temperature: float | None = None,
         max_tokens: int | None = None,
         extra: dict[str, Any] | None = None,
+        deadline_seconds: float | None = None,
     ) -> Completion:
         """Make one logical call, retrying transient failures.
 
@@ -223,12 +235,24 @@ class LlmGateway:
         if self.base_url:
             call_kwargs["api_base"] = self.base_url
 
+        deadline = deadline_seconds if deadline_seconds is not None else self.timeout
         last_error: BaseException | None = None
 
         for attempt in range(1, self.retry.max_attempts + 1):
             started = time.perf_counter()
             try:
-                raw = await self._complete(**call_kwargs)
+                # Enforced here rather than trusted to the provider library. `timeout` is passed
+                # in the request too, but it was observed not to bind: a single call ran for 1,093
+                # seconds against a 180-second setting, generating the whole time. A deadline that
+                # only the callee honours is not a deadline.
+                raw = await asyncio.wait_for(self._complete(**call_kwargs), timeout=deadline)
+            except TimeoutError as error:
+                raise LlmError(
+                    message=f"provider call exceeded {deadline:.0f}s",
+                    retryable=False,
+                    attempts=attempt,
+                    request=redacted_request,
+                ) from error
             except Exception as error:
                 last_error = error
                 if not is_retryable(error) or attempt == self.retry.max_attempts:

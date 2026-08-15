@@ -310,6 +310,13 @@ cap. Both are recorded above because they are properties of free models worth kn
   never made. Truncation now has its own retry path, its own prompt, and its own `truncated`
   termination, on a budget separate from the prose nudge. Conflating a harness limit with a model
   failure is exactly the kind of error that quietly corrupts a leaderboard.
+- **A per-call deadline is required in addition to the per-turn wall clock.** The turn budget is
+  only checked between round-trips, so a single slow call runs to completion regardless: one call
+  generated for **1,093 seconds** against a 180-second setting and blew a 600-second turn limit.
+  The `timeout` was being passed to LiteLLM and simply not honoured — a deadline only the callee
+  enforces is not a deadline. It is now imposed with `asyncio.wait_for`, and the value handed down
+  is whatever remains of the turn's clock, so a call can never outlive its turn. Overruns are not
+  retried: a call that ran to the deadline was producing tokens the whole time, not stalled.
 - **A duplicate `game_ended` event was found by running the CLI**, not by any test — `TurnRunner`
   and the worker both announced the ending, so every game logged two. Announcing belongs to
   whoever owns the status transition. Now covered by a regression test verified to fail without
