@@ -32,11 +32,14 @@ from chessmark.agents.registry import (  # noqa: E402
     sync_endpoints,
 )
 from chessmark.agents.routing import DEFAULT_QUANTIZATIONS  # noqa: E402
+from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.session import dispose_engine, session_scope  # noqa: E402
 
 
 async def main() -> int:
-    key = os.environ.get("OPENROUTER_API_KEY", "")
+    # Same fallback as `play_game.py`: the key lives in `.env` for everyone working here, and
+    # reading only `os.environ` silently degrades to unauthenticated requests.
+    key = os.environ.get("OPENROUTER_API_KEY") or get_settings().openrouter_api_key
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     totals: Counter[str] = Counter()
 

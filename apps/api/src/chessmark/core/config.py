@@ -108,6 +108,19 @@ class Settings(BaseSettings):
 
     # --- Match rules ---
     max_illegal_move_retries: int = 5
+
+    #: The ply cap is a **cost** bound, not a rules bound. Chessmark applies threefold repetition
+    #: and the fifty-move rule automatically, so every game terminates on its own; nothing here is
+    #: needed to guarantee that. What the cap prevents is a pathological game spending money for
+    #: hours.
+    #:
+    #: 300 plies (150 moves) covers essentially every real game — an average master game is about
+    #: 40 moves, and the longest competitive game on record is 269. Setting it near the median
+    #: instead makes the harness, rather than chess, decide half the results: the first paid
+    #: benchmark ran at 80 and ended `ply_cap` with one side a queen and rook up.
+    #:
+    #: Per-game USD is the bound that should actually bind. Both `ply_cap` and `budget_exceeded`
+    #: are non-results and belong outside the ratings (Phase 12).
     max_moves_per_game: int = 300
 
     @property

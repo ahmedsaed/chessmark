@@ -30,6 +30,7 @@ from redis.asyncio import Redis  # noqa: E402
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
 from chessmark.agents.scripted import step, tool_call  # noqa: E402
+from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.models import Game, GameEvent, Ply  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
@@ -200,13 +201,20 @@ async def main() -> int:
     parser.add_argument("--black", default="openai/gpt-oss-20b:free")
     parser.add_argument("--scripted", action="store_true", help="no provider, no spend")
     parser.add_argument("--max-usd", type=Decimal, default=Decimal("0.50"))
-    parser.add_argument("--max-plies", type=int, default=120)
+    parser.add_argument("--max-plies", type=int, default=300)
     parser.add_argument("--ranked", action="store_true", help="no trash talk, fixed config")
     args = parser.parse_args()
 
-    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    # Environment first, then `.env` via settings — the file is where the key actually lives for
+    # everyone working on this project, and reading only `os.environ` meant `make play` refused to
+    # start while every other entry point found the key.
+    api_key = os.environ.get("OPENROUTER_API_KEY") or get_settings().openrouter_api_key
     if not args.scripted and not api_key:
-        print("OPENROUTER_API_KEY is not set (use --scripted to run without one)", file=sys.stderr)
+        print(
+            "OPENROUTER_API_KEY is not set in the environment or .env "
+            "(use --scripted to run without one)",
+            file=sys.stderr,
+        )
         return 2
 
     white_model = "scripted/white" if args.scripted else args.white
@@ -244,8 +252,27 @@ async def main() -> int:
     print(f"{BOLD}{white_model}{OFF} vs {BOLD}{black_model}{OFF}")
     print(f"{DIM}game {game_id}{OFF}")
 
+    # The CLI is the path that actually spends money on this project, so it gets the same global
+    # kill switch the API and worker tiers have (ADR-0011, layer 1). Without it `make play` was the
+    # one way to blow through the daily budget — the exact hole the layer exists to close.
+    budget = GlobalBudget(redis, daily_limit_usd=Decimal(str(settings.global_daily_usd_budget)))
+    spent = await budget.spent_today()
+    if await budget.tripped():
+        print(
+            f"{BOLD}Daily budget reached{OFF} — ${spent:.4f} of "
+            f"${budget.limit_usd:.2f} spent today. Resets at UTC midnight.",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"{DIM}budget: ${spent:.4f} of ${budget.limit_usd:.2f} used today{OFF}")
+
     worker = TurnWorker(
-        sessionmaker=sessionmaker, queue=queue, gateway=gateway, redis=redis, consumer="cli"
+        sessionmaker=sessionmaker,
+        queue=queue,
+        gateway=gateway,
+        redis=redis,
+        consumer="cli",
+        budget=budget,
     )
 
     board = ChessBoard()

@@ -30,8 +30,28 @@
     "enabled": true
   },
   {
+    "openrouter_id": "thinkingmachines/inkling-small:free",
+    "display_name": "Thinking Machines: Inkling Small (free)",
+    "context_length": 262144,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
     "openrouter_id": "poolside/laguna-s-2.1:free",
     "display_name": "Poolside: Laguna S 2.1 (free)",
+    "context_length": 262144,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "thinkingmachines/inkling:free",
+    "display_name": "Thinking Machines: Inkling (free)",
     "context_length": 262144,
     "prompt_usd_per_token": 0.0,
     "completion_usd_per_token": 0.0,
@@ -90,6 +110,16 @@
     "enabled": true
   },
   {
+    "openrouter_id": "z-ai/glm-5.2:free",
+    "display_name": "Z.ai: GLM 5.2 (free)",
+    "context_length": 256000,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
     "openrouter_id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
     "display_name": "NVIDIA: Nemotron 3 Nano Omni (free)",
     "context_length": 256000,
@@ -103,26 +133,6 @@
     "openrouter_id": "nvidia/nemotron-3-nano-30b-a3b:free",
     "display_name": "NVIDIA: Nemotron 3 Nano 30B A3B (free)",
     "context_length": 256000,
-    "prompt_usd_per_token": 0.0,
-    "completion_usd_per_token": 0.0,
-    "supports_reasoning": true,
-    "is_free": true,
-    "enabled": true
-  },
-  {
-    "openrouter_id": "openai/gpt-oss-20b:free",
-    "display_name": "OpenAI: gpt-oss-20b (free)",
-    "context_length": 131072,
-    "prompt_usd_per_token": 0.0,
-    "completion_usd_per_token": 0.0,
-    "supports_reasoning": true,
-    "is_free": true,
-    "enabled": true
-  },
-  {
-    "openrouter_id": "liquid/lfm-2.5-2.6b:free",
-    "display_name": "LiquidAI: LFM2.5-2.6B (free)",
-    "context_length": 128000,
     "prompt_usd_per_token": 0.0,
     "completion_usd_per_token": 0.0,
     "supports_reasoning": true,
@@ -150,6 +160,36 @@
     "enabled": true
   },
   {
+    "openrouter_id": "liquid/lfm-2.5-2.6b:free",
+    "display_name": "LiquidAI: LFM2.5-2.6B (free)",
+    "context_length": 65536,
+    "prompt_usd_per_token": 0.0,
+    "completion_usd_per_token": 0.0,
+    "supports_reasoning": true,
+    "is_free": true,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "~deepseek/deepseek-v4-flash-latest",
+    "display_name": "DeepSeek V4 Flash Latest",
+    "context_length": 1310720,
+    "prompt_usd_per_token": 6.5e-08,
+    "completion_usd_per_token": 1.8e-07,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "deepseek/deepseek-v4-flash-0731",
+    "display_name": "DeepSeek: DeepSeek V4 Flash 0731",
+    "context_length": 1310720,
+    "prompt_usd_per_token": 8e-08,
+    "completion_usd_per_token": 1.8e-07,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "meta-llama/llama-4-scout",
     "display_name": "Meta: Llama 4 Scout",
     "context_length": 1310720,
@@ -163,8 +203,8 @@
     "openrouter_id": "openai/gpt-5.6-luna-pro",
     "display_name": "OpenAI: GPT-5.6 Luna Pro",
     "context_length": 1050000,
-    "prompt_usd_per_token": 1e-07,
-    "completion_usd_per_token": 6e-07,
+    "prompt_usd_per_token": 2e-07,
+    "completion_usd_per_token": 1.2e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -183,8 +223,8 @@
     "openrouter_id": "openai/gpt-5.6-luna",
     "display_name": "OpenAI: GPT-5.6 Luna",
     "context_length": 1050000,
-    "prompt_usd_per_token": 1e-07,
-    "completion_usd_per_token": 6e-07,
+    "prompt_usd_per_token": 2e-07,
+    "completion_usd_per_token": 1.2e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -195,6 +235,56 @@
     "context_length": 1050000,
     "prompt_usd_per_token": 1e-07,
     "completion_usd_per_token": 6e-07,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-5.6-terra-pro:batch",
+    "display_name": "OpenAI: GPT-5.6 Terra Pro (batch)",
+    "context_length": 1050000,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 6e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-5.6-terra:batch",
+    "display_name": "OpenAI: GPT-5.6 Terra (batch)",
+    "context_length": 1050000,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 6e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-5.6-sol-pro:batch",
+    "display_name": "OpenAI: GPT-5.6 Sol Pro (batch)",
+    "context_length": 1050000,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-5.6-sol:batch",
+    "display_name": "OpenAI: GPT-5.6 Sol (batch)",
+    "context_length": 1050000,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "xiaomi/mimo-v2.5-pro",
+    "display_name": "Xiaomi: MiMo-V2.5-Pro",
+    "context_length": 1050000,
+    "prompt_usd_per_token": 4.35e-07,
+    "completion_usd_per_token": 8.7e-07,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -220,6 +310,36 @@
     "enabled": true
   },
   {
+    "openrouter_id": "meta/muse-spark-1.2-contributor",
+    "display_name": "Meta: Muse Spark 1.2 Contributor",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 1e-07,
+    "completion_usd_per_token": 2e-07,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "deepseek/deepseek-v4-flash-vision-exp",
+    "display_name": "DeepSeek: DeepSeek V4 Flash Vision Exp",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 2.2e-07,
+    "completion_usd_per_token": 6.6e-07,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "google/gemini-3.7-flash",
+    "display_name": "Google: Gemini 3.7 Flash",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 3.75e-07,
+    "completion_usd_per_token": 1.875e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "google/gemini-3.7-flash:batch",
     "display_name": "Google: Gemini 3.7 Flash (batch)",
     "context_length": 1048576,
@@ -230,21 +350,11 @@
     "enabled": true
   },
   {
-    "openrouter_id": "~deepseek/deepseek-v4-flash-latest",
-    "display_name": "DeepSeek V4 Flash Latest",
+    "openrouter_id": "thinkingmachines/inkling-small",
+    "display_name": "Thinking Machines: Inkling Small",
     "context_length": 1048576,
-    "prompt_usd_per_token": 6.75e-08,
-    "completion_usd_per_token": 1.35e-07,
-    "supports_reasoning": true,
-    "is_free": false,
-    "enabled": true
-  },
-  {
-    "openrouter_id": "deepseek/deepseek-v4-flash-0731",
-    "display_name": "DeepSeek: DeepSeek V4 Flash 0731",
-    "context_length": 1048576,
-    "prompt_usd_per_token": 1.4e-07,
-    "completion_usd_per_token": 2.8e-07,
+    "prompt_usd_per_token": 4.5e-07,
+    "completion_usd_per_token": 1.2e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -255,6 +365,26 @@
     "context_length": 1048576,
     "prompt_usd_per_token": 9e-08,
     "completion_usd_per_token": 1.8e-07,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "google/gemini-3.6-flash",
+    "display_name": "Google: Gemini 3.6 Flash",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 7.5e-07,
+    "completion_usd_per_token": 3.75e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "google/gemini-3.6-flash:batch",
+    "display_name": "Google: Gemini 3.6 Flash (batch)",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 3.75e-07,
+    "completion_usd_per_token": 1.875e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -280,11 +410,41 @@
     "enabled": true
   },
   {
+    "openrouter_id": "thinkingmachines/inkling",
+    "display_name": "Thinking Machines: Inkling",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 9.5e-07,
+    "completion_usd_per_token": 4.05e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "z-ai/glm-5.2",
+    "display_name": "Z.ai: GLM 5.2",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 9.66e-07,
+    "completion_usd_per_token": 3.036e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "minimax/minimax-m3",
     "display_name": "MiniMax: MiniMax M3",
     "context_length": 1048576,
     "prompt_usd_per_token": 3e-07,
     "completion_usd_per_token": 1.2e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "google/gemini-3.5-flash:batch",
+    "display_name": "Google: Gemini 3.5 Flash (batch)",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 7.5e-07,
+    "completion_usd_per_token": 4.5e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -310,11 +470,31 @@
     "enabled": true
   },
   {
+    "openrouter_id": "~google/gemini-flash-latest",
+    "display_name": "Google Gemini Flash Latest",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 3.75e-07,
+    "completion_usd_per_token": 1.875e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "deepseek/deepseek-v4-pro",
+    "display_name": "DeepSeek: DeepSeek V4 Pro 0423",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 4.13772e-07,
+    "completion_usd_per_token": 8.27544e-07,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "deepseek/deepseek-v4-flash",
     "display_name": "DeepSeek: DeepSeek V4 Flash 0423",
     "context_length": 1048576,
-    "prompt_usd_per_token": 6.426e-08,
-    "completion_usd_per_token": 1.2852e-07,
+    "prompt_usd_per_token": 6.006e-08,
+    "completion_usd_per_token": 1.2012e-07,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -325,6 +505,26 @@
     "context_length": 1048576,
     "prompt_usd_per_token": 2.5e-07,
     "completion_usd_per_token": 1.5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "google/gemini-3.1-pro-preview:batch",
+    "display_name": "Google: Gemini 3.1 Pro Preview (batch)",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 6e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "google/gemini-3-flash-preview",
+    "display_name": "Google: Gemini 3 Flash Preview",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 5e-07,
+    "completion_usd_per_token": 3e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -380,11 +580,41 @@
     "enabled": true
   },
   {
+    "openrouter_id": "google/gemini-2.5-pro:batch",
+    "display_name": "Google: Gemini 2.5 Pro (batch)",
+    "context_length": 1048576,
+    "prompt_usd_per_token": 6.25e-07,
+    "completion_usd_per_token": 5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "meta-llama/llama-4-maverick",
     "display_name": "Meta: Llama 4 Maverick",
     "context_length": 1048576,
     "prompt_usd_per_token": 2e-07,
     "completion_usd_per_token": 8e-07,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-4.1:batch",
+    "display_name": "OpenAI: GPT-4.1 (batch)",
+    "context_length": 1047576,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 4e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-4.1-mini",
+    "display_name": "OpenAI: GPT-4.1 Mini",
+    "context_length": 1047576,
+    "prompt_usd_per_token": 4e-07,
+    "completion_usd_per_token": 1.6e-06,
     "supports_reasoning": false,
     "is_free": false,
     "enabled": true
@@ -420,11 +650,21 @@
     "enabled": true
   },
   {
-    "openrouter_id": "nvidia/nemotron-3.5-lightning",
-    "display_name": "NVIDIA: Nemotron 3.5 Lightning",
+    "openrouter_id": "thedrummer/unslopnemo-12b",
+    "display_name": "TheDrummer: UnslopNemo 12B",
+    "context_length": 1024000,
+    "prompt_usd_per_token": 4e-07,
+    "completion_usd_per_token": 4e-07,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "qwen/qwen3.8-27b",
+    "display_name": "Qwen: Qwen3.8 27B",
     "context_length": 1000000,
-    "prompt_usd_per_token": 1e-07,
-    "completion_usd_per_token": 2.5e-07,
+    "prompt_usd_per_token": 4.5e-07,
+    "completion_usd_per_token": 3.2e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -435,6 +675,26 @@
     "context_length": 1000000,
     "prompt_usd_per_token": 3e-08,
     "completion_usd_per_token": 1.3e-07,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "anthropic/claude-sonnet-5:batch",
+    "display_name": "Anthropic: Claude Sonnet 5 (batch)",
+    "context_length": 1000000,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "qwen/qwen3.7-plus",
+    "display_name": "Qwen: Qwen3.7 Plus",
+    "context_length": 1000000,
+    "prompt_usd_per_token": 3.2e-07,
+    "completion_usd_per_token": 1.28e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -455,6 +715,16 @@
     "context_length": 1000000,
     "prompt_usd_per_token": 1.875e-07,
     "completion_usd_per_token": 1.125e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "qwen/qwen3.6-plus",
+    "display_name": "Qwen: Qwen3.6 Plus",
+    "context_length": 1000000,
+    "prompt_usd_per_token": 3.25e-07,
+    "completion_usd_per_token": 1.95e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -500,6 +770,16 @@
     "enabled": true
   },
   {
+    "openrouter_id": "qwen/qwen3-coder-plus",
+    "display_name": "Qwen: Qwen3 Coder Plus",
+    "context_length": 1000000,
+    "prompt_usd_per_token": 6.5e-07,
+    "completion_usd_per_token": 3.25e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "qwen/qwen3-coder-flash",
     "display_name": "Qwen: Qwen3 Coder Flash",
     "context_length": 1000000,
@@ -530,6 +810,16 @@
     "enabled": true
   },
   {
+    "openrouter_id": "minimax/minimax-m1",
+    "display_name": "MiniMax: MiniMax M1",
+    "context_length": 1000000,
+    "prompt_usd_per_token": 5.5e-07,
+    "completion_usd_per_token": 2.2e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "qwen/qwen-plus",
     "display_name": "Qwen: Qwen-Plus",
     "context_length": 1000000,
@@ -550,11 +840,31 @@
     "enabled": true
   },
   {
+    "openrouter_id": "thinkingmachines/inkling:batch",
+    "display_name": "Thinking Machines: Inkling (batch)",
+    "context_length": 524288,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 4.05e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "minimax/minimax-m3:batch",
     "display_name": "MiniMax: MiniMax M3 (batch)",
     "context_length": 524288,
-    "prompt_usd_per_token": 1.5e-07,
-    "completion_usd_per_token": 6e-07,
+    "prompt_usd_per_token": 3e-07,
+    "completion_usd_per_token": 1.2e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "nvidia/nemotron-3-ultra-550b-a55b",
+    "display_name": "NVIDIA: Nemotron 3 Ultra",
+    "context_length": 512288,
+    "prompt_usd_per_token": 6e-07,
+    "completion_usd_per_token": 3.6e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -563,8 +873,18 @@
     "openrouter_id": "nvidia/nemotron-3-ultra-550b-a55b:batch",
     "display_name": "NVIDIA: Nemotron 3 Ultra (batch)",
     "context_length": 512288,
-    "prompt_usd_per_token": 3e-07,
-    "completion_usd_per_token": 1.8e-06,
+    "prompt_usd_per_token": 6e-07,
+    "completion_usd_per_token": 3.6e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "~openai/gpt-mini-latest",
+    "display_name": "OpenAI GPT Mini Latest",
+    "context_length": 400000,
+    "prompt_usd_per_token": 7.5e-07,
+    "completion_usd_per_token": 4.5e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -590,11 +910,71 @@
     "enabled": true
   },
   {
+    "openrouter_id": "openai/gpt-5.4-mini",
+    "display_name": "OpenAI: GPT-5.4 Mini",
+    "context_length": 400000,
+    "prompt_usd_per_token": 7.5e-07,
+    "completion_usd_per_token": 4.5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-5.4-mini:batch",
+    "display_name": "OpenAI: GPT-5.4 Mini (batch)",
+    "context_length": 400000,
+    "prompt_usd_per_token": 3.75e-07,
+    "completion_usd_per_token": 2.25e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-5.2:batch",
+    "display_name": "OpenAI: GPT-5.2 (batch)",
+    "context_length": 400000,
+    "prompt_usd_per_token": 8.75e-07,
+    "completion_usd_per_token": 7e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-5.1:batch",
+    "display_name": "OpenAI: GPT-5.1 (batch)",
+    "context_length": 400000,
+    "prompt_usd_per_token": 6.25e-07,
+    "completion_usd_per_token": 5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "openai/gpt-5.1-codex-mini",
     "display_name": "OpenAI: GPT-5.1-Codex-Mini",
     "context_length": 400000,
     "prompt_usd_per_token": 2.5e-07,
     "completion_usd_per_token": 2e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-5-codex:batch",
+    "display_name": "OpenAI: GPT-5 Codex (batch)",
+    "context_length": 400000,
+    "prompt_usd_per_token": 6.25e-07,
+    "completion_usd_per_token": 5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-5:batch",
+    "display_name": "OpenAI: GPT-5 (batch)",
+    "context_length": 400000,
+    "prompt_usd_per_token": 6.25e-07,
+    "completion_usd_per_token": 5e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -650,6 +1030,56 @@
     "enabled": true
   },
   {
+    "openrouter_id": "amazon/nova-pro-v1",
+    "display_name": "Amazon: Nova Pro 1.0",
+    "context_length": 300000,
+    "prompt_usd_per_token": 8e-07,
+    "completion_usd_per_token": 3.2e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "bytedance-seed/seed-2-1-turbo",
+    "display_name": "ByteDance Seed: Seed 2.1 Turbo",
+    "context_length": 262144,
+    "prompt_usd_per_token": 5e-07,
+    "completion_usd_per_token": 2.5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "bytedance-seed/seed-2.0-code",
+    "display_name": "ByteDance Seed: Seed-2.0-Code",
+    "context_length": 262144,
+    "prompt_usd_per_token": 5e-07,
+    "completion_usd_per_token": 3e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "nvidia/nemotron-3.5-lightning",
+    "display_name": "NVIDIA: Nemotron 3.5 Lightning",
+    "context_length": 262144,
+    "prompt_usd_per_token": 8e-08,
+    "completion_usd_per_token": 2e-07,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "sakana/sakana-namazu",
+    "display_name": "Sakana: Sakana Namazu",
+    "context_length": 262144,
+    "prompt_usd_per_token": 9.5e-07,
+    "completion_usd_per_token": 4e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "inclusionai/ling-3.0-flash",
     "display_name": "Ling-3.0-flash",
     "context_length": 262144,
@@ -690,6 +1120,26 @@
     "enabled": true
   },
   {
+    "openrouter_id": "moonshotai/kimi-k2.7-code",
+    "display_name": "MoonshotAI: Kimi K2.7 Code",
+    "context_length": 262144,
+    "prompt_usd_per_token": 6.7e-07,
+    "completion_usd_per_token": 3.4e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "moonshotai/kimi-k2.7-code:batch",
+    "display_name": "MoonshotAI: Kimi K2.7 Code (batch)",
+    "context_length": 262144,
+    "prompt_usd_per_token": 9.5e-07,
+    "completion_usd_per_token": 4e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "nex-agi/nex-n2-pro",
     "display_name": "Nex AGI: Nex-N2-Pro",
     "context_length": 262144,
@@ -723,8 +1173,18 @@
     "openrouter_id": "qwen/qwen3.6-35b-a3b",
     "display_name": "Qwen: Qwen3.6 35B A3B",
     "context_length": 262144,
-    "prompt_usd_per_token": 1.5e-07,
+    "prompt_usd_per_token": 1.4e-07,
     "completion_usd_per_token": 1e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "qwen/qwen3.6-27b",
+    "display_name": "Qwen: Qwen3.6 27B",
+    "context_length": 262144,
+    "prompt_usd_per_token": 6e-07,
+    "completion_usd_per_token": 3.6e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -760,11 +1220,21 @@
     "enabled": true
   },
   {
+    "openrouter_id": "moonshotai/kimi-k2.6",
+    "display_name": "MoonshotAI: Kimi K2.6",
+    "context_length": 262144,
+    "prompt_usd_per_token": 5.415e-07,
+    "completion_usd_per_token": 2.28e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "google/gemma-4-26b-a4b-it",
     "display_name": "Google: Gemma 4 26B A4B ",
     "context_length": 262144,
-    "prompt_usd_per_token": 1.2e-07,
-    "completion_usd_per_token": 4e-07,
+    "prompt_usd_per_token": 7e-08,
+    "completion_usd_per_token": 3.4e-07,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -843,8 +1313,8 @@
     "openrouter_id": "qwen/qwen3.5-35b-a3b",
     "display_name": "Qwen: Qwen3.5-35B-A3B",
     "context_length": 262144,
-    "prompt_usd_per_token": 2.25e-07,
-    "completion_usd_per_token": 1.8e-06,
+    "prompt_usd_per_token": 2.5e-07,
+    "completion_usd_per_token": 1.25e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -863,8 +1333,28 @@
     "openrouter_id": "qwen/qwen3.5-122b-a10b",
     "display_name": "Qwen: Qwen3.5-122B-A10B",
     "context_length": 262144,
-    "prompt_usd_per_token": 2.9e-07,
-    "completion_usd_per_token": 2.4e-06,
+    "prompt_usd_per_token": 2.6e-07,
+    "completion_usd_per_token": 2.08e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "qwen/qwen3.5-397b-a17b",
+    "display_name": "Qwen: Qwen3.5 397B A17B",
+    "context_length": 262144,
+    "prompt_usd_per_token": 3.9e-07,
+    "completion_usd_per_token": 2.34e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "qwen/qwen3-max-thinking",
+    "display_name": "Qwen: Qwen3 Max Thinking",
+    "context_length": 262144,
+    "prompt_usd_per_token": 7.8e-07,
+    "completion_usd_per_token": 3.9e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -885,6 +1375,16 @@
     "context_length": 262144,
     "prompt_usd_per_token": 1e-07,
     "completion_usd_per_token": 3e-07,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "moonshotai/kimi-k2.5",
+    "display_name": "MoonshotAI: Kimi K2.5",
+    "context_length": 262144,
+    "prompt_usd_per_token": 4.5e-07,
+    "completion_usd_per_token": 2.25e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -940,6 +1440,26 @@
     "enabled": true
   },
   {
+    "openrouter_id": "mistralai/mistral-large-2512",
+    "display_name": "Mistral: Mistral Large 3 2512",
+    "context_length": 262144,
+    "prompt_usd_per_token": 5e-07,
+    "completion_usd_per_token": 1.5e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "moonshotai/kimi-k2-thinking",
+    "display_name": "MoonshotAI: Kimi K2 Thinking",
+    "context_length": 262144,
+    "prompt_usd_per_token": 6e-07,
+    "completion_usd_per_token": 2.5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "qwen/qwen3-vl-8b-instruct",
     "display_name": "Qwen: Qwen3 VL 8B Instruct",
     "context_length": 262144,
@@ -973,8 +1493,18 @@
     "openrouter_id": "qwen/qwen3-vl-235b-a22b-instruct",
     "display_name": "Qwen: Qwen3 VL 235B A22B Instruct",
     "context_length": 262144,
-    "prompt_usd_per_token": 2.6e-07,
-    "completion_usd_per_token": 1.04e-06,
+    "prompt_usd_per_token": 2.1e-07,
+    "completion_usd_per_token": 1.9e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "qwen/qwen3-max",
+    "display_name": "Qwen: Qwen3 Max",
+    "context_length": 262144,
+    "prompt_usd_per_token": 7.8e-07,
+    "completion_usd_per_token": 3.9e-06,
     "supports_reasoning": false,
     "is_free": false,
     "enabled": true
@@ -995,6 +1525,16 @@
     "context_length": 262144,
     "prompt_usd_per_token": 1e-07,
     "completion_usd_per_token": 1.1e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "moonshotai/kimi-k2-0905",
+    "display_name": "MoonshotAI: Kimi K2 0905",
+    "context_length": 262144,
+    "prompt_usd_per_token": 6e-07,
+    "completion_usd_per_token": 2.5e-06,
     "supports_reasoning": false,
     "is_free": false,
     "enabled": true
@@ -1070,6 +1610,36 @@
     "enabled": true
   },
   {
+    "openrouter_id": "kwaipilot/kat-coder-pro-v2.5",
+    "display_name": "Kwaipilot: KAT-Coder-Pro V2.5",
+    "context_length": 256000,
+    "prompt_usd_per_token": 7.4e-07,
+    "completion_usd_per_token": 2.96e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "x-ai/grok-build-0.1",
+    "display_name": "SpaceXAI: Grok Build 0.1",
+    "context_length": 256000,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 2e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "relace/relace-search",
+    "display_name": "Relace: Relace Search",
+    "context_length": 256000,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 3e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "mistralai/codestral-2508",
     "display_name": "Mistral: Codestral 2508",
     "context_length": 256000,
@@ -1080,12 +1650,12 @@
     "enabled": true
   },
   {
-    "openrouter_id": "mistralai/mistral-small-3.2-24b-instruct",
-    "display_name": "Mistral: Mistral Small 3.2 24B",
-    "context_length": 256000,
-    "prompt_usd_per_token": 9.375e-08,
-    "completion_usd_per_token": 2.5e-07,
-    "supports_reasoning": false,
+    "openrouter_id": "z-ai/glm-5.1",
+    "display_name": "Z.ai: GLM 5.1",
+    "context_length": 204800,
+    "prompt_usd_per_token": 9.66e-07,
+    "completion_usd_per_token": 3.036e-06,
+    "supports_reasoning": true,
     "is_free": false,
     "enabled": true
   },
@@ -1103,8 +1673,18 @@
     "openrouter_id": "minimax/minimax-m2.5",
     "display_name": "MiniMax: MiniMax M2.5",
     "context_length": 204800,
-    "prompt_usd_per_token": 2.2e-07,
-    "completion_usd_per_token": 9e-07,
+    "prompt_usd_per_token": 2.7e-07,
+    "completion_usd_per_token": 1.08e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "z-ai/glm-5",
+    "display_name": "Z.ai: GLM 5",
+    "context_length": 204800,
+    "prompt_usd_per_token": 6e-07,
+    "completion_usd_per_token": 1.92e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -1120,6 +1700,16 @@
     "enabled": true
   },
   {
+    "openrouter_id": "z-ai/glm-4.7",
+    "display_name": "Z.ai: GLM 4.7",
+    "context_length": 204800,
+    "prompt_usd_per_token": 4e-07,
+    "completion_usd_per_token": 1.75e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "minimax/minimax-m2",
     "display_name": "MiniMax: MiniMax M2",
     "context_length": 204800,
@@ -1130,11 +1720,101 @@
     "enabled": true
   },
   {
+    "openrouter_id": "z-ai/glm-4.6",
+    "display_name": "Z.ai: GLM 4.6",
+    "context_length": 204800,
+    "prompt_usd_per_token": 5e-07,
+    "completion_usd_per_token": 2e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "z-ai/glm-4.7-flash",
     "display_name": "Z.ai: GLM 4.7 Flash",
     "context_length": 202752,
     "prompt_usd_per_token": 6e-08,
     "completion_usd_per_token": 4e-07,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "~anthropic/claude-haiku-latest",
+    "display_name": "Anthropic Claude Haiku Latest",
+    "context_length": 200000,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "anthropic/claude-haiku-4.5",
+    "display_name": "Anthropic: Claude Haiku 4.5",
+    "context_length": 200000,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "anthropic/claude-haiku-4.5:batch",
+    "display_name": "Anthropic: Claude Haiku 4.5 (batch)",
+    "context_length": 200000,
+    "prompt_usd_per_token": 5e-07,
+    "completion_usd_per_token": 2.5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/o4-mini-high:batch",
+    "display_name": "OpenAI: o4 Mini High (batch)",
+    "context_length": 200000,
+    "prompt_usd_per_token": 5.5e-07,
+    "completion_usd_per_token": 2.2e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/o3:batch",
+    "display_name": "OpenAI: o3 (batch)",
+    "context_length": 200000,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 4e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/o4-mini:batch",
+    "display_name": "OpenAI: o4 Mini (batch)",
+    "context_length": 200000,
+    "prompt_usd_per_token": 5.5e-07,
+    "completion_usd_per_token": 2.2e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/o3-mini-high:batch",
+    "display_name": "OpenAI: o3 Mini High (batch)",
+    "context_length": 200000,
+    "prompt_usd_per_token": 5.5e-07,
+    "completion_usd_per_token": 2.2e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/o3-mini:batch",
+    "display_name": "OpenAI: o3 Mini (batch)",
+    "context_length": 200000,
+    "prompt_usd_per_token": 5.5e-07,
+    "completion_usd_per_token": 2.2e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -1153,8 +1833,8 @@
     "openrouter_id": "deepseek/deepseek-v3.2",
     "display_name": "DeepSeek: DeepSeek V3.2",
     "context_length": 163840,
-    "prompt_usd_per_token": 2.69e-07,
-    "completion_usd_per_token": 4e-07,
+    "prompt_usd_per_token": 2.6e-07,
+    "completion_usd_per_token": 3.8e-07,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -1174,7 +1854,7 @@
     "display_name": "DeepSeek: DeepSeek V3.1 Terminus",
     "context_length": 163840,
     "prompt_usd_per_token": 2.7e-07,
-    "completion_usd_per_token": 9.5e-07,
+    "completion_usd_per_token": 1e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -1183,8 +1863,18 @@
     "openrouter_id": "deepseek/deepseek-chat-v3.1",
     "display_name": "DeepSeek: DeepSeek V3.1",
     "context_length": 163840,
-    "prompt_usd_per_token": 2.5e-07,
-    "completion_usd_per_token": 9.5e-07,
+    "prompt_usd_per_token": 5.5e-07,
+    "completion_usd_per_token": 1.65e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "deepseek/deepseek-r1-0528",
+    "display_name": "DeepSeek: R1 0528",
+    "context_length": 163840,
+    "prompt_usd_per_token": 5e-07,
+    "completion_usd_per_token": 2.15e-06,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -1193,8 +1883,8 @@
     "openrouter_id": "deepseek/deepseek-chat-v3-0324",
     "display_name": "DeepSeek: DeepSeek V3 0324",
     "context_length": 163840,
-    "prompt_usd_per_token": 2.7e-07,
-    "completion_usd_per_token": 1.12e-06,
+    "prompt_usd_per_token": 2.5e-07,
+    "completion_usd_per_token": 1e-06,
     "supports_reasoning": false,
     "is_free": false,
     "enabled": true
@@ -1210,12 +1900,42 @@
     "enabled": true
   },
   {
+    "openrouter_id": "meta/muse-glimmer-30b",
+    "display_name": "Meta: Muse Glimmer 30B",
+    "context_length": 131072,
+    "prompt_usd_per_token": 3.5e-07,
+    "completion_usd_per_token": 1.5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "aion-labs/aion-3.0-mini",
+    "display_name": "AionLabs: Aion-3.0-Mini",
+    "context_length": 131072,
+    "prompt_usd_per_token": 7e-07,
+    "completion_usd_per_token": 1.4e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "ibm-granite/granite-4.1-8b",
     "display_name": "IBM: Granite 4.1 8B",
     "context_length": 131072,
     "prompt_usd_per_token": 5e-08,
     "completion_usd_per_token": 1e-07,
     "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "aion-labs/aion-2.0",
+    "display_name": "AionLabs: Aion-2.0",
+    "context_length": 131072,
+    "prompt_usd_per_token": 8e-07,
+    "completion_usd_per_token": 1.6e-06,
+    "supports_reasoning": true,
     "is_free": false,
     "enabled": true
   },
@@ -1280,6 +2000,26 @@
     "enabled": true
   },
   {
+    "openrouter_id": "qwen/qwen3-vl-235b-a22b-thinking",
+    "display_name": "Qwen: Qwen3 VL 235B A22B Thinking",
+    "context_length": 131072,
+    "prompt_usd_per_token": 4e-07,
+    "completion_usd_per_token": 4e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "mistralai/mistral-medium-3.1",
+    "display_name": "Mistral: Mistral Medium 3.1",
+    "context_length": 131072,
+    "prompt_usd_per_token": 4e-07,
+    "completion_usd_per_token": 2e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "openai/gpt-oss-120b",
     "display_name": "OpenAI: gpt-oss-120b",
     "context_length": 131072,
@@ -1300,6 +2040,16 @@
     "enabled": true
   },
   {
+    "openrouter_id": "z-ai/glm-4.5",
+    "display_name": "Z.ai: GLM 4.5",
+    "context_length": 131072,
+    "prompt_usd_per_token": 6e-07,
+    "completion_usd_per_token": 2.2e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "z-ai/glm-4.5-air",
     "display_name": "Z.ai: GLM 4.5 Air",
     "context_length": 131072,
@@ -1310,11 +2060,51 @@
     "enabled": true
   },
   {
+    "openrouter_id": "moonshotai/kimi-k2",
+    "display_name": "MoonshotAI: Kimi K2 0711",
+    "context_length": 131072,
+    "prompt_usd_per_token": 5.7e-07,
+    "completion_usd_per_token": 2.3e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "mistralai/mistral-small-3.2-24b-instruct",
+    "display_name": "Mistral: Mistral Small 3.2 24B",
+    "context_length": 131072,
+    "prompt_usd_per_token": 7.5e-08,
+    "completion_usd_per_token": 2e-07,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "mistralai/mistral-medium-3",
+    "display_name": "Mistral: Mistral Medium 3",
+    "context_length": 131072,
+    "prompt_usd_per_token": 4e-07,
+    "completion_usd_per_token": 2e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "arcee-ai/virtuoso-large",
+    "display_name": "Arcee AI: Virtuoso Large",
+    "context_length": 131072,
+    "prompt_usd_per_token": 7.5e-07,
+    "completion_usd_per_token": 1.2e-06,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "qwen/qwen3-30b-a3b",
     "display_name": "Qwen: Qwen3 30B A3B",
     "context_length": 131072,
-    "prompt_usd_per_token": 1.2e-07,
-    "completion_usd_per_token": 5e-07,
+    "prompt_usd_per_token": 1.3e-07,
+    "completion_usd_per_token": 5.2e-07,
     "supports_reasoning": true,
     "is_free": false,
     "enabled": true
@@ -1350,6 +2140,16 @@
     "enabled": true
   },
   {
+    "openrouter_id": "qwen/qwen3-235b-a22b",
+    "display_name": "Qwen: Qwen3 235B A22B",
+    "context_length": 131072,
+    "prompt_usd_per_token": 4.55e-07,
+    "completion_usd_per_token": 1.82e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "google/gemma-3-12b-it",
     "display_name": "Google: Gemma 3 12B",
     "context_length": 131072,
@@ -1365,6 +2165,26 @@
     "context_length": 131072,
     "prompt_usd_per_token": 1e-07,
     "completion_usd_per_token": 3.2e-07,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "sao10k/l3.1-euryale-70b",
+    "display_name": "Sao10K: Llama 3.1 Euryale 70B v2.2",
+    "context_length": 131072,
+    "prompt_usd_per_token": 8.5e-07,
+    "completion_usd_per_token": 8.5e-07,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "meta-llama/llama-3.1-70b-instruct",
+    "display_name": "Meta: Llama 3.1 70B Instruct",
+    "context_length": 131072,
+    "prompt_usd_per_token": 4e-07,
+    "completion_usd_per_token": 4e-07,
     "supports_reasoning": false,
     "is_free": false,
     "enabled": true
@@ -1396,6 +2216,16 @@
     "prompt_usd_per_token": 2.5e-07,
     "completion_usd_per_token": 7.5e-07,
     "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-audio-mini",
+    "display_name": "OpenAI: GPT Audio Mini",
+    "context_length": 128000,
+    "prompt_usd_per_token": 6e-07,
+    "completion_usd_per_token": 2.4e-06,
+    "supports_reasoning": false,
     "is_free": false,
     "enabled": true
   },
@@ -1460,6 +2290,26 @@
     "enabled": true
   },
   {
+    "openrouter_id": "z-ai/glm-4.5v",
+    "display_name": "Z.ai: GLM 4.5V",
+    "context_length": 65536,
+    "prompt_usd_per_token": 6e-07,
+    "completion_usd_per_token": 1.8e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "deepseek/deepseek-r1",
+    "display_name": "DeepSeek: R1",
+    "context_length": 64000,
+    "prompt_usd_per_token": 7e-07,
+    "completion_usd_per_token": 2.5e-06,
+    "supports_reasoning": true,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "mistralai/mistral-saba",
     "display_name": "Mistral: Saba",
     "context_length": 32768,
@@ -1480,11 +2330,31 @@
     "enabled": true
   },
   {
+    "openrouter_id": "qwen/qwen-2.5-72b-instruct",
+    "display_name": "Qwen2.5 72B Instruct",
+    "context_length": 32768,
+    "prompt_usd_per_token": 3.6e-07,
+    "completion_usd_per_token": 4e-07,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
     "openrouter_id": "mistralai/voxtral-small-24b-2507",
     "display_name": "Mistral: Voxtral Small 24B 2507",
     "context_length": 32000,
     "prompt_usd_per_token": 1e-07,
     "completion_usd_per_token": 3e-07,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-3.5-turbo",
+    "display_name": "OpenAI: GPT-3.5 Turbo",
+    "context_length": 16385,
+    "prompt_usd_per_token": 5e-07,
+    "completion_usd_per_token": 1.5e-06,
     "supports_reasoning": false,
     "is_free": false,
     "enabled": true
@@ -1505,6 +2375,16 @@
     "context_length": 16384,
     "prompt_usd_per_token": 1e-07,
     "completion_usd_per_token": 1e-07,
+    "supports_reasoning": false,
+    "is_free": false,
+    "enabled": true
+  },
+  {
+    "openrouter_id": "openai/gpt-3.5-turbo-0613",
+    "display_name": "OpenAI: GPT-3.5 Turbo (older v0613)",
+    "context_length": 4095,
+    "prompt_usd_per_token": 1e-06,
+    "completion_usd_per_token": 2e-06,
     "supports_reasoning": false,
     "is_free": false,
     "enabled": true
