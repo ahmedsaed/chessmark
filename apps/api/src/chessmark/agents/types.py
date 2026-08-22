@@ -70,6 +70,14 @@ class ParsedResponse:
 
     content: str | None
     reasoning: str | None
+    reasoning_details: list[dict[str, Any]] | None
+    """OpenRouter's normalised reasoning blocks, verbatim.
+
+    Opaque on purpose. It carries Anthropic's signatures, Gemini's thought signatures, and
+    DeepSeek's `reasoning_content`, and several models **require** the exact sequence back on the
+    next request. Reading or reshaping it is how that breaks.
+    """
+
     tool_calls: list[ToolInvocation]
     usage: TokenUsage
     finish_reason: str | None
@@ -106,6 +114,9 @@ class Completion:
 
     attempts: int = 1
     """How many provider calls this took. >1 means transient failures were retried (AGENT-09)."""
+
+    reasoning_details: list[dict[str, Any]] | None = None
+    """Replayed verbatim on the next turn — see `ParsedResponse.reasoning_details`."""
 
     @property
     def has_tool_calls(self) -> bool:

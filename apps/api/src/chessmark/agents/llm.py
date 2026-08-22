@@ -320,6 +320,7 @@ class LlmGateway:
             model=parsed.model or model,
             content=parsed.content,
             reasoning=parsed.reasoning,
+            reasoning_details=parsed.reasoning_details,
             tool_calls=parsed.tool_calls,
             usage=parsed.usage,
             cost_usd=breakdown.total_usd,

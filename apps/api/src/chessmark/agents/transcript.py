@@ -40,6 +40,7 @@ async def append_message(
     tool_calls: list[dict[str, Any]] | None = None,
     tool_call_id: str | None = None,
     name: str | None = None,
+    reasoning_details: list[dict[str, Any]] | None = None,
     turn_id: int | None = None,
 ) -> TranscriptMessage:
     """Append one message.
@@ -67,6 +68,7 @@ async def append_message(
         tool_calls=tool_calls,
         tool_call_id=tool_call_id,
         name=name,
+        reasoning_details=reasoning_details,
     )
     session.add(message)
     await session.flush()
@@ -93,6 +95,7 @@ async def append_messages(
             tool_calls=message.get("tool_calls"),
             tool_call_id=message.get("tool_call_id"),
             name=message.get("name"),
+            reasoning_details=message.get("reasoning_details"),
         )
         for message in messages
     ]
@@ -118,6 +121,14 @@ def to_provider_message(row: TranscriptMessage) -> dict[str, Any]:
     if row.tool_calls:
         message["tool_calls"] = row.tool_calls
         message.setdefault("content", None)
+
+    # Echoed back untouched. Several models treat their own prior reasoning as part of the history
+    # they require: Gemini 3 rejects a function call missing its `thought_signature`, DeepSeek
+    # rejects a thinking-mode history missing `reasoning_content`, and OpenRouter requires the
+    # sequence be replayed exactly as it arrived. Dropping it is what made `deepseek-v4-pro` emit
+    # raw DSML markup instead of tool calls and forfeit a game.
+    if row.reasoning_details:
+        message["reasoning_details"] = row.reasoning_details
 
     return message
 
@@ -145,10 +156,18 @@ async def transcript_length(session: AsyncSession, player_id: uuid.UUID) -> int:
 
 
 def assistant_message(
-    *, content: str | None, tool_calls: list[dict[str, Any]] | None
+    *,
+    content: str | None,
+    tool_calls: list[dict[str, Any]] | None,
+    reasoning_details: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build the assistant turn to append after a provider response."""
-    return {"role": "assistant", "content": content, "tool_calls": tool_calls}
+    return {
+        "role": "assistant",
+        "content": content,
+        "tool_calls": tool_calls,
+        "reasoning_details": reasoning_details,
+    }
 
 
 def tool_result_message(*, tool_call_id: str, name: str, content: str) -> dict[str, Any]:

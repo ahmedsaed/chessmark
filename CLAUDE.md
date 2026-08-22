@@ -131,7 +131,7 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–9 complete.** 605 backend + 19 frontend tests, CI green.
+**Phases 0–9 complete.** 642 backend + 19 frontend tests, CI green.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -178,6 +178,16 @@ Paid models work and are cheap. Two benchmark games so far:
 The second is the first decisive result, and both sides played nine moves of correct Richter-Rauzer
 theory. Across two games, **every** illegal attempt has been `not_reachable` — board-state tracking,
 never rule knowledge. Free models cannot finish a game at all: too slow, too verbose, no caching.
+
+**Reasoning must be handed back, not just recorded.** Gemini 3 rejects a function call missing its
+`thought_signature`; DeepSeek rejects a thinking-mode history missing `reasoning_content`.
+OpenRouter normalises both into `reasoning_details`, which `transcript_messages` now stores and
+replays verbatim. LiteLLM files it under `provider_specific_fields`, not at the top of the message.
+
+**An endpoint can break a result without touching precision.** `deepseek-v4-pro` leaked raw DSML
+markup instead of tool calls on 9 of 63 calls via StreamLake and 0 of 40 via Baidu and DeepInfra —
+same model, same fp8. Provider is recorded per call for exactly this reason
+([ADR-0014 amendment](docs/adr/0014-provider-routing-and-quantization.md)).
 
 **The ply cap is a cost bound, not a rules bound** — threefold and the fifty-move rule are applied
 automatically, so games terminate on their own. 300 plies is the standard; 80 sat at the median of

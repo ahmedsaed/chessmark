@@ -304,6 +304,10 @@ class TurnRunner:
                 role="assistant",
                 content=completion.content,
                 tool_calls=self._serialise_tool_calls(completion),
+                # Stored so the next turn can hand it straight back. Gemini 3 rejects a function
+                # call whose `thought_signature` is missing and DeepSeek rejects a thinking-mode
+                # history without its `reasoning_content`; both travel in here.
+                reasoning_details=completion.reasoning_details,
             )
 
             if not completion.tool_calls:

@@ -73,3 +73,48 @@ recorded per call and shown on the model card and in the game's stats rail.
 - Verified in practice: an 80-ply benchmark game was served to DeepSeek by Baidu and StreamLake —
   both fp8 — with all three fp4 endpoints and all six undeclared ones excluded, while Gemini was
   served by Google under the widened policy.
+
+
+---
+
+## Amendment — 2026-08-23: precision was not the only thing an endpoint can get wrong
+
+This ADR was written about quantization, on the reasoning that an endpoint serving fp4 is not the
+model you meant to score. A later game found a second, sharper case: an endpoint that serves the
+right weights at the right precision and still returns broken output.
+
+`deepseek/deepseek-v4-pro` forfeited two games for "replying without calling a tool". It had in fact
+called tools — it emitted them as raw DSML markup inside its reasoning instead of as structured
+tool calls, which our runner correctly refused to act on. The obvious suspect was our own
+transcript, which had been dropping `reasoning_details` and so replaying a history DeepSeek's
+thinking mode considers invalid. That was a real bug and was fixed. **It was not this bug**; the
+leak continued at the same rate afterwards.
+
+Pinning the model to one endpoint at a time settled it:
+
+| provider | calls | tool calls parsed | DSML leak |
+| --- | --- | --- | --- |
+| StreamLake | 63 | 54 | **9** |
+| Baidu | 24 | 24 | 0 |
+| DeepInfra | 16 | 16 | 0 |
+
+Same model, same fp8 precision, same code, same opponent. StreamLake leaks on roughly one call in
+seven; the other two endpoints did not leak once, and both played to the ply cap without forfeiting.
+Under a shared 14% rate, zero failures in 40 calls has probability around 0.2%.
+
+**The consequence for the benchmark is the uncomfortable part.** Our default routing sorts by
+price, which is how StreamLake was chosen. Had those two games gone onto a leaderboard, they would
+have read as "deepseek-v4-pro cannot call tools reliably" — a claim about a model, produced
+entirely by an endpoint. Precision was never the only way an endpoint can change what a result
+means.
+
+Nothing about the policy changes yet, because the right response is not obvious: pinning every
+model to one blessed endpoint trades one bias for another, and excluding an endpoint on one
+model's evidence is too little to act on. What does follow immediately:
+
+- `llm_calls.provider` is already recorded per call, so every existing result can be re-attributed.
+  That was worth having and is now load-bearing rather than merely tidy.
+- **A ranked result should not be produced by a single endpoint without saying so.** Whatever
+  Phase 12 does about ratings, endpoint has to be visible next to the number.
+- A harness-caused forfeit — `error_forfeit` from malformed tool calls — deserves separating from a
+  model genuinely refusing to act, in the same way truncation was separated from refusal in Phase 5.

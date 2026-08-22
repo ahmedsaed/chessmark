@@ -62,6 +62,28 @@ def _first_str(source: dict[str, Any], keys: tuple[str, ...]) -> str | None:
     return None
 
 
+def extract_reasoning_details(message: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """OpenRouter's `reasoning_details`, untouched.
+
+    Deliberately not parsed. The blocks carry provider signatures — Gemini 3 refuses a function
+    call whose `thought_signature` is missing, DeepSeek refuses a thinking-mode history without
+    `reasoning_content` — and OpenRouter requires the sequence be replayed exactly as it came:
+    "you cannot rearrange or modify the sequence". So this copies and returns.
+    """
+    # Two places, because LiteLLM does not pass OpenRouter's response through untouched: it
+    # re-normalises into OpenAI's shape and files anything non-standard under
+    # `provider_specific_fields`. Reading only the top level finds nothing on a real call, which is
+    # exactly how the first version of this shipped as a silent no-op.
+    details = message.get("reasoning_details")
+    if not isinstance(details, list) or not details:
+        extra = message.get("provider_specific_fields")
+        details = extra.get("reasoning_details") if isinstance(extra, dict) else None
+
+    if not isinstance(details, list) or not details:
+        return None
+    return [block for block in details if isinstance(block, dict)] or None
+
+
 def extract_reasoning(message: dict[str, Any]) -> str | None:
     """Pull the reasoning trace out of a message, wherever the provider put it (AGENT-07)."""
     direct = _first_str(message, REASONING_KEYS)
@@ -202,6 +224,7 @@ def normalise_response(payload: dict[str, Any]) -> ParsedResponse:
     return ParsedResponse(
         content=content,
         reasoning=extract_reasoning(message),
+        reasoning_details=extract_reasoning_details(message),
         tool_calls=extract_tool_calls(message),
         usage=extract_usage(payload),
         finish_reason=choice.get("finish_reason") or choice.get("stop_reason"),

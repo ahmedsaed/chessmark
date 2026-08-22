@@ -379,6 +379,14 @@ class TranscriptMessage(Base):
     tool_calls: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
     """Present on assistant messages that requested tools."""
 
+    reasoning_details: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    """OpenRouter's normalised reasoning blocks, replayed verbatim on later turns.
+
+    Not decoration. Gemini 3 refuses a function call whose `thought_signature` is missing, and
+    DeepSeek refuses a thinking-mode history without `reasoning_content`; both arrive here. Storing
+    them is what makes the replayed transcript a history those models will accept.
+    """
+
     tool_call_id: Mapped[str | None] = mapped_column(sa.Text)
     name: Mapped[str | None] = mapped_column(sa.Text)
     """Tool name, on tool-result messages."""

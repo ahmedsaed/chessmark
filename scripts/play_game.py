@@ -29,6 +29,7 @@ from redis.asyncio import Redis  # noqa: E402
 
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
+from chessmark.agents.routing import DEFAULT_QUANTIZATIONS, ProviderRouting  # noqa: E402
 from chessmark.agents.scripted import step, tool_call  # noqa: E402
 from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
@@ -203,6 +204,15 @@ async def main() -> int:
     parser.add_argument("--max-usd", type=Decimal, default=Decimal("0.50"))
     parser.add_argument("--max-plies", type=int, default=300)
     parser.add_argument("--ranked", action="store_true", help="no trash talk, fixed config")
+    parser.add_argument(
+        "--provider",
+        default=None,
+        help=(
+            "Pin both seats to one OpenRouter endpoint, e.g. 'Baidu'. For telling a model's fault "
+            "apart from a provider's: the same model served by two endpoints should fail the same "
+            "way, and when it does not, the endpoint is the variable."
+        ),
+    )
     args = parser.parse_args()
 
     # Environment first, then `.env` via settings — the file is where the key actually lives for
@@ -235,6 +245,12 @@ async def main() -> int:
     sessionmaker = get_sessionmaker()
 
     async with sessionmaker() as session:
+        routing = (
+            ProviderRouting(only=(args.provider,), quantizations=DEFAULT_QUANTIZATIONS)
+            if args.provider
+            else None
+        )
+
         match = await create_match(
             session,
             white=Seat(display_name=white_model.split("/")[-1], model=white_model),
@@ -242,6 +258,7 @@ async def main() -> int:
             is_ranked=args.ranked,
             max_usd=args.max_usd,
             max_plies=args.max_plies,
+            routing=routing,
         )
         job = await start_match(session, queue, game_id=match.game.id)
         await session.commit()
