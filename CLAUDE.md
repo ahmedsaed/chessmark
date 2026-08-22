@@ -131,7 +131,7 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–7 complete.** 444 tests, CI green.
+**Phases 0–8 complete.** 460 backend + 19 frontend tests, CI green.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -146,7 +146,10 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
   group, `expected_ply` idempotency, one transaction per turn, ack-after-commit.
 - `chessmark.api` — REST plus SSE with `Last-Event-ID` reconnect. Reasoning is withheld while a
   game is live (invariant 8).
-- `apps/web` — the lobby and the live game page: stats left, board centre, conversation right.
+- `apps/web` — the lobby, the live game page (stats left, board centre, conversation right), and
+  the replay: a finished game is scrubbable ply by ply, with the raw provider payloads behind every
+  turn one click away. Replay truncates the event log and reuses the live view's fold, so the two
+  cannot drift ([ADR-0008](docs/adr/0008-game-events-log.md)).
 - **Provider routing** ([ADR-0014](docs/adr/0014-provider-routing-and-quantization.md)) — games
   refuse sub-8-bit and undeclared endpoints, so a leaderboard row means one thing. Closed-weight
   models are widened to their own vendor only. The precision that served each seat is recorded.
@@ -163,8 +166,13 @@ Paid models work and are cheap: an 80-ply `gemini-2.5-flash-lite` vs `deepseek-v
 **$0.076** at an 83% cache hit rate. Free models cannot finish a game — too slow, too verbose, and
 no prompt caching.
 
-**Next up: Phase 8 — replay & sharing.** See [ROADMAP.md](docs/ROADMAP.md#phase-8--replay--sharing).
+**Next up: Phase 9 — auth, quotas & cost control.** The hard gate before anything is public.
+See [ROADMAP.md](docs/ROADMAP.md#phase-9--auth-quotas--cost-control).
 
-Two known gaps, both recorded in the roadmap rather than quietly carried: Phase 7's Lighthouse
-score is **unverified** (no Lighthouse in this environment), and NFR-06's >80% cache rate is met in
-aggregate but not by Gemini individually.
+Frontend logic in `apps/web/src/lib` is unit-tested with `vitest` (`make test-web`); components
+are still covered by Playwright rather than a jsdom stack.
+
+Three known gaps, all recorded in the roadmap rather than quietly carried: Phase 7's Lighthouse
+score is **unverified** (no Lighthouse in this environment), NFR-06's >80% cache rate is met in
+aggregate but not by Gemini individually, and Phase 8's PGN is verified against `chess.js` but
+**not against Lichess or SCID themselves**.

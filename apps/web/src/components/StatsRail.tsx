@@ -23,10 +23,16 @@ export function StatsRail({
   game,
   toMove,
   moves,
+  activePly,
+  onSeek,
 }: {
   game: GameDetail;
   toMove: "white" | "black" | null;
   moves: string[];
+  /** Replay only: the ply on the board, highlighted in the move list. */
+  activePly?: number;
+  /** Replay only: makes the move list a way to navigate, which is what people reach for first. */
+  onSeek?: (ply: number) => void;
 }) {
   const white = game.players.find((p) => p.colour === "white");
   const black = game.players.find((p) => p.colour === "black");
@@ -60,13 +66,43 @@ export function StatsRail({
           {Array.from({ length: Math.ceil(moves.length / 2) }, (_, index) => (
             <li key={index} className="contents">
               <span className="text-ink-faint">{index + 1}</span>
-              <span className="text-ink">{moves[index * 2] ?? ""}</span>
-              <span className="text-ink">{moves[index * 2 + 1] ?? ""}</span>
+              <Move san={moves[index * 2]} ply={index * 2 + 1} active={activePly} onSeek={onSeek} />
+              <Move san={moves[index * 2 + 1]} ply={index * 2 + 2} active={activePly} onSeek={onSeek} />
             </li>
           ))}
         </ol>
       </div>
     </aside>
+  );
+}
+
+function Move({
+  san,
+  ply,
+  active,
+  onSeek,
+}: {
+  san: string | undefined;
+  ply: number;
+  active?: number;
+  onSeek?: (ply: number) => void;
+}) {
+  if (!san) return <span />;
+
+  const isActive = active === ply;
+  const tone = isActive ? "bg-accent-deep text-accent" : "text-ink";
+
+  if (!onSeek) return <span className={tone}>{san}</span>;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSeek(ply)}
+      aria-current={isActive ? "true" : undefined}
+      className={`text-left transition-colors hover:text-accent ${tone}`}
+    >
+      {san}
+    </button>
   );
 }
 

@@ -11,7 +11,8 @@ import uuid
 from typing import Annotated, Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Path, Query, status
+from fastapi.responses import PlainTextResponse
 
 from chessmark.api.deps import GameDep, QueueDep, SessionDep
 from chessmark.api.schemas import (
@@ -22,6 +23,7 @@ from chessmark.api.schemas import (
     GameSummary,
     MessageOut,
     PlyOut,
+    RawCallOut,
     TurnDetail,
 )
 from chessmark.db.enums import GameStatus, ModerationStatus
@@ -37,6 +39,8 @@ from chessmark.db.models import (
     Turn,
 )
 from chessmark.db.repositories import load_events, rebuild_referee
+from chessmark.game import Colour
+from chessmark.game.pgn import PgnMetadata, to_pgn
 from chessmark.orchestration.match import Seat, create_match, start_match
 
 router = APIRouter(prefix="/games", tags=["games"])
@@ -208,6 +212,106 @@ async def get_event_log(
     """
     events = await load_events(session, game.id, after_seq=after_seq, limit=limit)
     return [EventOut.from_model(event) for event in events]
+
+
+# ---------------------------------------------------------------------- artefacts
+
+
+def _display(players: list[Player], colour: Colour) -> str:
+    for player in players:
+        if player.colour is colour:
+            return player.display_name
+    return str(colour)
+
+
+def _illegal(players: list[Player], colour: Colour) -> int | None:
+    for player in players:
+        if player.colour is colour:
+            return player.illegal_attempts
+    return None
+
+
+@router.get(
+    "/{game_id}/pgn",
+    response_class=PlainTextResponse,
+    responses={200: {"content": {"application/x-chess-pgn": {}}}},
+)
+async def get_pgn(session: SessionDep, game: GameDep) -> PlainTextResponse:
+    """The game as PGN (GAME-05).
+
+    Exported from the ply record via the referee rather than from a stored string, so the file can
+    never disagree with the position the server considers authoritative. An unfinished game
+    exports with a `*` result, which is legal PGN — there is no reason to refuse it.
+
+    Served as a download with a filename, because the point of this endpoint is that someone opens
+    the result in Lichess or SCID.
+    """
+    referee = await rebuild_referee(session, game)
+    players = await _players(session, game.id)
+
+    pgn = to_pgn(
+        referee,
+        PgnMetadata(
+            white=_display(players, Colour.WHITE),
+            black=_display(players, Colour.BLACK),
+            game_id=str(game.id),
+            date=(game.started_at or game.created_at).strftime("%Y.%m.%d"),
+            ranked=game.is_ranked,
+            prompt_version=game.prompt_version,
+            tool_schema_version=game.tool_schema_version,
+            white_illegal_attempts=_illegal(players, Colour.WHITE),
+            black_illegal_attempts=_illegal(players, Colour.BLACK),
+        ),
+    )
+
+    return PlainTextResponse(
+        pgn,
+        media_type="application/x-chess-pgn",
+        headers={
+            "content-disposition": f'attachment; filename="chessmark-{game.id}.pgn"',
+        },
+    )
+
+
+@router.get("/{game_id}/turns/{turn_id}/raw", response_model=list[RawCallOut])
+async def get_raw_calls(
+    session: SessionDep,
+    game: GameDep,
+    turn_id: Annotated[int, Path(description="Turn id, from /turns")],
+) -> list[RawCallOut]:
+    """The verbatim request and response behind one turn (LOG-01, LOG-07).
+
+    This is the bottom of the audit trail: every number on a game page is derived from these
+    payloads, and a benchmark whose figures cannot be traced to what the provider actually
+    returned is asking to be taken on faith. Secrets are redacted at write time, not here — a key
+    that reached the database is already leaked (see `agents/redaction.py`).
+
+    **Withheld while the game is live** (invariant 8). The raw response carries the reasoning
+    trace, so serving it mid-game would route around the very rule `/turns` enforces.
+    """
+    if not _reveal_reasoning(game):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Raw transcripts are available once the game has ended.",
+        )
+
+    # Scoped to the game in the query rather than checked afterwards, so a turn id from another
+    # game reads as absent instead of leaking whether it exists.
+    calls = list(
+        await session.scalars(
+            sa.select(LlmCall)
+            .join(Turn, Turn.id == LlmCall.turn_id)
+            .where(Turn.game_id == game.id, LlmCall.turn_id == turn_id)
+            .order_by(LlmCall.sequence)
+        )
+    )
+    if not calls:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No turn {turn_id} in game {game.id}",
+        )
+
+    return [RawCallOut.from_model(call) for call in calls]
 
 
 # ---------------------------------------------------------------------- creation

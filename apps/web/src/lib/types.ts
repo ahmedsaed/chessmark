@@ -120,3 +120,48 @@ export interface TurnView {
   /** True until the move lands — the live turn stays expanded (ADR-0013). */
   live: boolean;
 }
+
+/** A turn as `/games/{id}/turns` returns it. Replay needs the id to fetch raw payloads. */
+export interface TurnSummary {
+  id: number;
+  player_id: string;
+  ply_number: number | null;
+  status: string;
+  illegal_attempts: number;
+  tool_call_count: number;
+  llm_call_count: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  reasoning_tokens: number;
+  cached_tokens: number;
+  cost_usd: string;
+  latency_ms: number | null;
+  error: string | null;
+  reasoning_available: boolean;
+}
+
+/**
+ * One LLM call exactly as it crossed the wire (LOG-01).
+ *
+ * `request` and `response` are unshaped provider payloads, so they are typed as unknown rather
+ * than modelled — the moment this file claims to know their structure, it is lying about a
+ * provider somewhere.
+ */
+export interface RawCall {
+  id: number;
+  sequence: number;
+  model_slug: string;
+  provider: string | null;
+  request: Record<string, unknown>;
+  response: Record<string, unknown> | null;
+  reasoning_text: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  reasoning_tokens: number;
+  cached_tokens: number;
+  cost_usd: string;
+  latency_ms: number | null;
+  finish_reason: string | null;
+  error: string | null;
+  created_at: string;
+}

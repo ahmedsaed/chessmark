@@ -5,7 +5,13 @@
  * game page reads fresh data on every request without asking.
  */
 
-import type { GameDetail, GameEvent, GameSummary, ModelInfo } from "@/lib/types";
+import type {
+  GameDetail,
+  GameEvent,
+  GameSummary,
+  ModelInfo,
+  TurnSummary,
+} from "@/lib/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
 
@@ -75,6 +81,21 @@ export function listModels(freeOnly = false): Promise<ModelInfo[]> {
  */
 export function listEvents(id: string, limit = 5000): Promise<GameEvent[]> {
   return getOrEmpty<GameEvent>(`/games/${id}/events?limit=${limit}`);
+}
+
+/**
+ * Every turn of a game, with its per-turn token and cost totals.
+ *
+ * Replay needs this alongside the event log: events say what happened, turns say which database
+ * row it happened in — which is what makes the raw payloads reachable (LOG-07).
+ */
+export function listTurns(id: string): Promise<TurnSummary[]> {
+  return getOrEmpty<TurnSummary>(`/games/${id}/turns`);
+}
+
+/** The PGN download URL. Handed to the browser as a link so the file arrives with its filename. */
+export function pgnUrl(id: string): string {
+  return `${API_URL}/games/${id}/pgn`;
 }
 
 export const apiUrl = API_URL;

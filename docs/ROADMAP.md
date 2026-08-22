@@ -457,7 +457,7 @@ argument for scoring material and mate-conversion separately from legality.
 
 ---
 
-## Phase 8 — Replay & sharing
+## Phase 8 — Replay & sharing ✅ COMPLETE (one criterion partially verified, LOG-05 deferred)
 
 **Goal:** any finished game is a permanent, shareable, scrubbable artefact.
 
@@ -467,15 +467,61 @@ argument for scoring material and mate-conversion separately from legality.
 3. A raw transcript inspector showing verbatim LLM request/response per turn
 4. PGN download
 5. Public share URLs with OpenGraph preview cards rendering the final position
-6. Object-storage offload for large payloads (LOG-05)
+6. ~~Object-storage offload for large payloads (LOG-05)~~ — **deferred to Phase 17**, see below
 
 **Exit criteria**
-- [ ] Scrubbing to ply N shows exactly the board, reasoning, tool calls, and messages as of ply N
-- [ ] The exported PGN opens correctly in Lichess and in SCID
-- [ ] A share link works logged-out and renders a correct social preview
-- [ ] Every leaderboard-relevant number on a game page links to the raw artefact that produced it (LOG-07)
+- [x] Scrubbing to ply N shows exactly the board, reasoning, tool calls, and messages as of ply N — asserted as a property over every ply, including that ply N never leaks ply N+1's reasoning or taunt
+- [x] **PARTIAL —** The exported PGN opens correctly in Lichess and in SCID — verified against `chess.js`, an independent parser; **Lichess and SCID themselves are untested** (neither runs in this environment)
+- [x] A share link works logged-out and renders a correct social preview — all read paths are unauthenticated (AUTH-02); the card renders the real final position
+- [x] Every leaderboard-relevant number on a game page links to the raw artefact that produced it (LOG-07) — `GET /games/{id}/turns/{turn_id}/raw`, reachable from each turn in the conversation
 
-**Covers:** GAME-05, UI-04, UI-06, LOG-05, LOG-07, HUMAN-06
+**Covers:** GAME-05, UI-04, UI-06, LOG-07, HUMAN-06 *(LOG-05 deferred)*
+
+**Notes**
+
+- **Replay has no state machine of its own.** It truncates the event list and hands it to the same
+  `foldEvents` the live view uses (ADR-0008), so ply N reproduces exactly what a spectator saw the
+  instant ply N landed. A separate replay reducer would be a second implementation of the same
+  rules, free to drift, and the drift would be invisible until someone compared a replay against a
+  recording. The strongest test in the suite asserts precisely that equivalence, ply by ply.
+- **The final ply carries the tail of the log.** Truncating at the last `move_made` looked right
+  and silently erased every ending — `game_ended`, and any turn that forfeited or timed out
+  without producing a move. Those are often the most interesting turns in the game.
+- **Ply 0 shows an empty conversation.** The first model's reasoning happens *before* ply 1 lands,
+  so attaching it to ply 0 would put a plan on screen before the position it reasons about.
+- **The raw endpoint is refused while a game is live.** The raw response carries the reasoning
+  trace, so an open raw endpoint would route straight around the rule `/turns` enforces
+  (invariant 8). Tested by removing the guard: the reasoning appears.
+- **A turn id is scoped to its game in the query, not checked afterwards**, so an id from another
+  game reads as absent rather than confirming it exists.
+- **Events carry no turn id**, so the inspector bridges ply → turn via `/turns`. Matching on
+  `ply_number` rather than adding a field to `turn_started` keeps every game already recorded
+  inspectable — including the paid benchmark, which predates this page.
+- **Satori's `flex-wrap` will not lay out a fixed-size grid.** The first OG card came out as
+  ragged columns overflowing the image; eight explicit rows fixed it. The pieces are a 2.9 KB
+  six-glyph subset of DejaVu Sans vendored in `apps/web/assets/` — Satori cannot see system fonts,
+  and only the *filled* glyphs are subset because a white outline on a light square is invisible.
+- **The frontend has unit tests now** (`vitest`, `apps/web/src/lib`). Phase 8's headline criterion
+  is a property of a pure function, and a property deserves an assertion rather than a
+  click-through. Scoped to `src/lib`; component rendering stays with Playwright.
+
+**Why LOG-05 is deferred**
+
+Object-storage offload is an operational concern with no user-visible effect, and it needs a
+bucket and credentials this project does not yet have. Payloads are large but not alarming — the
+80-ply benchmark's biggest single response is a few kilobytes, and its whole `llm_calls` table is
+comfortably inside Postgres. Moving them out now would add a failure mode to the audit trail
+(a payload that 404s from a bucket is worse than one that is merely big) in exchange for nothing
+a reader would notice. It belongs with the rest of the production storage work in **Phase 17**.
+
+**What is genuinely unverified**
+
+The PGN was checked against `chess.js` — a third implementation, independent of the `python-chess`
+that wrote the file — and it re-derived the server's `current_fen` exactly, halfmove clock and move
+number included. That rules out a file that only round-trips through its own writer. It is *not*
+the same as opening the file in Lichess and SCID, which the criterion asks for and which nobody has
+done. Importing to Lichess would also publish a game to a third party, which is a decision for the
+owner rather than a test step.
 
 ---
 

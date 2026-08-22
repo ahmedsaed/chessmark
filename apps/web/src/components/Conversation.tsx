@@ -32,7 +32,24 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: "talk", label: "Talk only" },
 ];
 
-export function Conversation({ turns }: { turns: TurnView[] }) {
+export function Conversation({
+  turns,
+  focusKey,
+  onInspect,
+  emptyMessage = "Waiting for the first turn…",
+}: {
+  turns: TurnView[];
+  /**
+   * The turn to hold open. Live play passes nothing and lets `turn.live` decide; replay passes
+   * the turn that produced the current ply, so scrubbing always lands on an open turn rather than
+   * on a row you have to click before it says anything.
+   */
+  focusKey?: string | null;
+  /** Opens the raw payloads behind a turn. Absent while a game is live — the API refuses them. */
+  onInspect?: (turn: TurnView) => void;
+  /** Replay's ply 0 is a starting position, not a game waiting to begin. */
+  emptyMessage?: string;
+}) {
   const [filter, setFilter] = useState<Filter>("all");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const bottom = useRef<HTMLDivElement>(null);
@@ -80,7 +97,7 @@ export function Conversation({ turns }: { turns: TurnView[] }) {
 
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
         {visible.length === 0 && (
-          <p className="font-mono text-xs text-ink-faint">Waiting for the first turn…</p>
+          <p className="font-mono text-xs text-ink-faint">{emptyMessage}</p>
         )}
 
         {visible.map((turn) => (
@@ -88,8 +105,9 @@ export function Conversation({ turns }: { turns: TurnView[] }) {
             key={turn.key}
             turn={turn}
             filter={filter}
-            open={turn.live || expanded.has(turn.key)}
+            open={turn.live || turn.key === focusKey || expanded.has(turn.key)}
             onToggle={() => toggle(turn.key)}
+            onInspect={onInspect && (() => onInspect(turn))}
           />
         ))}
         <div ref={bottom} />
@@ -103,11 +121,13 @@ function Turn({
   filter,
   open,
   onToggle,
+  onInspect,
 }: {
   turn: TurnView;
   filter: Filter;
   open: boolean;
   onToggle: () => void;
+  onInspect?: () => void;
 }) {
   const mine = turn.colour === "white";
   const align = mine ? "items-start" : "items-end";
@@ -160,6 +180,17 @@ function Turn({
               {turn.tools.length} tool{turn.tools.length === 1 ? "" : "s"}
             </span>
             {turn.illegal.length > 0 && <span>· {turn.illegal.length} illegal</span>}
+          </button>
+        )}
+
+        {/* Every number on this page traces to a payload; this is the link (LOG-07). */}
+        {onInspect && open && filter !== "talk" && (
+          <button
+            type="button"
+            onClick={onInspect}
+            className="inline-flex items-center gap-1 border border-machine-deep bg-surface px-2 py-0.5 font-mono text-[9px] uppercase tracking-[0.1em] text-machine transition-colors hover:border-machine hover:text-ink-dim"
+          >
+            raw transcript
           </button>
         )}
 

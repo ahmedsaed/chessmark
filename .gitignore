@@ -44,3 +44,6 @@ logs/
 
 # --- Claude Code ---
 .claude/settings.local.json
+
+# Playwright MCP scratch output — screenshots and snapshots from manual verification
+.playwright-mcp/

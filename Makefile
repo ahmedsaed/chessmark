@@ -65,8 +65,13 @@ play: ## Play a full game and watch it. ARGS="--scripted" needs no API key
 worker: ## Run a standalone turn worker
 	cd $(API) && uv run python ../../scripts/worker.py
 
-test: ## Run backend tests (database tests need `make up`; never calls a provider)
+test: test-api test-web ## Run every test (database tests need `make up`; never calls a provider)
+
+test-api: ## Run backend tests
 	cd $(API) && uv run pytest
+
+test-web: ## Run frontend unit tests (pure logic in src/lib)
+	cd $(WEB) && pnpm test
 
 test-unit: ## Run only tests that need no database
 	cd $(API) && uv run pytest -m "not integration and not llm"

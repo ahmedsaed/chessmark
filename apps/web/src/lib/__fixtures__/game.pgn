@@ -1,0 +1,23 @@
+[Event "Chessmark"]
+[Site "chessmark.com"]
+[Date "2026.08.15"]
+[Round "-"]
+[White "gemini-2.5-flash-lite"]
+[Black "deepseek-v4-flash"]
+[Result "1/2-1/2"]
+[ChessmarkGameId "5a3601b4-b647-46f5-8130-641bdf392847"]
+[ChessmarkRanked "false"]
+[ChessmarkPromptVersion "v1"]
+[ChessmarkToolSchemaVersion "v1"]
+[ChessmarkWhiteIllegalAttempts "4"]
+[ChessmarkBlackIllegalAttempts "2"]
+[Termination "ply_cap"]
+[ChessmarkTerminationDetail "Draw — the 80-ply cap was reached."]
+
+1. e4 e5 2. Bc4 Nc6 3. Nc3 Nf6 4. Nf3 Bb4 5. O-O Bxc3 6. Qe2 d5 7. d4 exd4 8.
+exd5+ Be6 9. d6 O-O 10. Bd5 Bxb2 11. Qd3 Bxa1 12. Qxd4 Qe7 13. h4 Nxd5 14. g4
+Ne3 15. h5 Nxd4 16. g5 Nc4 17. h6 Nxf3+ 18. Kg2 Qxg5+ 19. Bxg5 Nxg5 20. Rg1
+Nxd6 21. Kh1 Nh3 22. Rxg7+ Bxg7 23. f4 Nxf4 24. Kh2 Bxh6 25. Kg1 Ne4 26. Kh1
+Nf2+ 27. Kg1 c5 28. Kh2 Bxa2 29. Kg1 Ng4 30. Kh1 Ng2 31. Kg1 f5 32. Kh1 Be3 33.
+Kxg2 Rae8 34. Kf1 Nh2+ 35. Ke1 Nf3+ 36. Ke2 Nd4+ 37. Kd1 Bd2 38. Kxd2 c4 39.
+Kc1 Nxc2 40. Kb2 Re1 1/2-1/2

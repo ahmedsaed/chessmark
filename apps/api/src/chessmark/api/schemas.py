@@ -357,6 +357,36 @@ class LlmCallOut(Schema):
         )
 
 
+class RawCallOut(Schema):
+    """One LLM call, verbatim (LOG-01).
+
+    `request` and `response` are the payloads exactly as they crossed the wire, minus redacted
+    credentials. Nothing here is reshaped or summarised: the whole value of this endpoint is that
+    a sceptical reader can check a cost or a token count against what the provider actually said.
+    """
+
+    id: int
+    sequence: int
+    model_slug: str
+    provider: str | None
+    request: dict[str, Any]
+    response: dict[str, Any] | None
+    reasoning_text: str | None
+    prompt_tokens: int
+    completion_tokens: int
+    reasoning_tokens: int
+    cached_tokens: int
+    cost_usd: Decimal
+    latency_ms: int | None
+    finish_reason: str | None
+    error: str | None
+    created_at: dt.datetime
+
+    @classmethod
+    def from_model(cls, row: LlmCall) -> RawCallOut:
+        return cls.model_validate(row)
+
+
 class TurnDetail(Schema):
     id: int
     player_id: uuid.UUID
