@@ -177,3 +177,49 @@ def test_widening_never_admits_four_bit() -> None:
 
     assert not widened.accepts("fp4")
     assert "Sail Research" not in widened.only
+
+
+# ====================================================================== the pin must survive storage
+
+
+def test_a_pinned_policy_round_trips_without_regaining_a_filter() -> None:
+    """The bug that abandoned a live game at ply 0.
+
+    `to_request()` omits `quantizations` when empty, because OpenRouter reads an absent field as
+    "no filter". So a pinned seat stored no key — and `from_record` helpfully substituted the fp8+
+    default. `only=["Google AI Studio"]` plus a filter excluding `unknown` matches nothing, and the
+    game died with a 404 while its *stored* record looked perfectly correct.
+    """
+    pinned = ProviderRouting(only=("Google AI Studio",), quantizations=())
+
+    restored = ProviderRouting.from_record(pinned.to_record())
+
+    assert restored.only == ("Google AI Studio",)
+    assert restored.quantizations == ()
+    assert restored.accepts("unknown"), "the pinned endpoint must not be excluded by a filter"
+    assert "quantizations" not in restored.to_request(), (
+        "an empty filter must stay absent from the request, or OpenRouter applies it"
+    )
+
+
+def test_a_record_written_before_the_key_was_emitted_is_still_read_as_pinned() -> None:
+    """Games created between ADR-0015 and this fix stored `only` and no `quantizations`."""
+    legacy_pin = {"only": ["Alibaba"], "sort": "price", "allow_fallbacks": True}
+
+    restored = ProviderRouting.from_record(legacy_pin)
+
+    assert restored.only == ("Alibaba",)
+    assert restored.quantizations == ()
+    assert restored.accepts("unknown")
+
+
+def test_a_record_from_before_routing_existed_still_gets_the_safe_default() -> None:
+    """The case the old behaviour was protecting, which is why it was written that way."""
+    assert ProviderRouting.from_record({}).quantizations == DEFAULT_QUANTIZATIONS
+    assert ProviderRouting.from_record(None).quantizations == DEFAULT_QUANTIZATIONS
+
+
+def test_an_explicit_filter_still_round_trips() -> None:
+    explicit = ProviderRouting(quantizations=("fp4",))
+
+    assert ProviderRouting.from_record(explicit.to_record()).quantizations == ("fp4",)

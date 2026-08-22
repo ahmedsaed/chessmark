@@ -72,17 +72,47 @@ class ProviderRouting:
         return body
 
     def to_record(self) -> dict[str, Any]:
-        """The form stored on the game, so a result can always say what it ran under."""
-        return self.to_request()
+        """The form stored on the game, so a result can always say what it ran under.
+
+        Always carries `quantizations`, even empty — unlike `to_request()`, which omits the key
+        because OpenRouter reads an absent field as "no filter". A record has to distinguish
+        *deliberately cleared* from *never set*, and an omitted key cannot.
+        """
+        return {**self.to_request(), "quantizations": list(self.quantizations)}
 
     @classmethod
     def from_record(cls, record: dict[str, Any] | None) -> ProviderRouting:
+        """Read back a stored policy.
+
+        Three cases, and conflating the first two cost a game:
+
+        * `quantizations` present, even empty — honour it exactly. An empty list means the seat is
+          pinned to one endpoint and the endpoint *is* the constraint (ADR-0015).
+        * absent, but `only` is set — also pinned, by a record written before `to_record` began
+          emitting the key. Same treatment.
+        * absent entirely — a game from before routing existed. Fall back to the safe default
+          rather than reading as unconstrained.
+
+        The bug this fixes: `to_request()` omits an empty `quantizations`, so a pinned seat stored
+        no key, and this method helpfully re-added the fp8+ filter. `only=[Google AI Studio]` plus a
+        filter that excludes `unknown` matches nothing, and the game was abandoned at ply 0 with a
+        404 — with the *stored* record looking perfectly correct.
+        """
         record = record or {}
+        only = tuple(record.get("only") or ())
+
+        if "quantizations" in record:
+            quantizations = tuple(record["quantizations"] or ())
+        elif only:
+            quantizations = ()
+        else:
+            quantizations = DEFAULT_QUANTIZATIONS
+
         return cls(
-            quantizations=tuple(record.get("quantizations") or DEFAULT_QUANTIZATIONS),
+            quantizations=quantizations,
             sort=record.get("sort"),
             min_throughput_tps=record.get("preferred_min_throughput"),
-            only=tuple(record.get("only") or ()),
+            only=only,
             ignore=tuple(record.get("ignore") or ()),
             allow_fallbacks=bool(record.get("allow_fallbacks", True)),
         )
