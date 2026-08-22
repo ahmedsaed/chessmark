@@ -155,8 +155,18 @@ PrincipalDep = Annotated[Principal, Depends(get_principal)]
 
 
 async def get_current_user(session: SessionDep, principal: PrincipalDep) -> User:
-    """The `users` row for the caller, created on first sight (see `db/users.py`)."""
-    return await user_for(session, principal)
+    """The `users` row for the caller, created on first sight (see `db/users.py`).
+
+    **Committed here, not left to the endpoint.** Without this the upsert is rolled back when the
+    session closes, and a caller is silently re-provisioned on every request — which is exactly what
+    happened: `/me` returned 200 with a correct quota readout while `users` stayed empty, because
+    the only endpoint that committed was game creation. Whether this person exists is not
+    contingent on the rest of the request succeeding.
+    """
+    user = await user_for(session, principal)
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]

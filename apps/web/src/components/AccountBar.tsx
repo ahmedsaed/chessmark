@@ -11,7 +11,7 @@
  * Renders nothing when Clerk is not configured, which is how the project runs locally.
  */
 
-import { SignInButton, SignedIn, SignedOut, UserButton, useAuth } from "@clerk/nextjs";
+import { Show, SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
 
 import { clerkEnabled } from "@/components/AuthProvider";
@@ -54,7 +54,9 @@ function Bar({ apiUrl }: { apiUrl: string }) {
 
   return (
     <span className="ml-auto flex items-center gap-3">
-      <SignedOut>
+      {/* `Show` replaced `SignedIn`/`SignedOut` in @clerk/nextjs Core 3 — the older components are
+          still exported and throw at render time, so the swap is not optional. */}
+      <Show when="signed-out">
         <SignInButton mode="modal">
           <button
             type="button"
@@ -63,11 +65,19 @@ function Bar({ apiUrl }: { apiUrl: string }) {
             sign in
           </button>
         </SignInButton>
-      </SignedOut>
+        <SignUpButton mode="modal">
+          <button
+            type="button"
+            className="border border-accent-deep bg-accent px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim"
+          >
+            sign up
+          </button>
+        </SignUpButton>
+      </Show>
 
-      <SignedIn>
-        {/* `me` is only rendered inside `SignedIn`, so a stale readout from a previous session
-            cannot be shown — which is why signing out needs no cleanup here. */}
+      <Show when="signed-in">
+        {/* `me` is only rendered while signed in, so a stale readout from a previous session
+            cannot appear — which is why signing out needs no cleanup here. */}
         {me && (
           <span
             className="tabular font-mono text-[10px] text-ink-faint"
@@ -78,7 +88,7 @@ function Bar({ apiUrl }: { apiUrl: string }) {
           </span>
         )}
         <UserButton />
-      </SignedIn>
+      </Show>
     </span>
   );
 }

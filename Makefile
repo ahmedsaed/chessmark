@@ -97,6 +97,12 @@ typecheck: ## Typecheck backend and frontend
 	cd $(API) && uv run mypy src
 	cd $(WEB) && pnpm exec next typegen && pnpm typecheck
 
+sync-clerk-env: ## Copy Clerk keys from apps/web/.env.local into the root .env the API reads
+	python3 scripts/sync_clerk_env.py
+
+verify-clerk: ## Check the Clerk configuration against the real instance (AUTH-01)
+	cd $(API) && uv run python ../../scripts/verify_clerk.py
+
 bundle-secrets: ## Assert no API key reached the built client bundle (AUTH-07)
 	cd $(WEB) && pnpm build
 	python3 scripts/check_bundle_secrets.py

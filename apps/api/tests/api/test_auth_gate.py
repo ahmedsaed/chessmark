@@ -308,3 +308,33 @@ async def test_me_reports_the_remaining_allowance(
     assert body["games_started_today"] == 0
     assert body["games_remaining_today"] == 20
     assert body["is_admin"] is False
+
+
+async def test_a_read_only_request_still_provisions_the_user(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Provisioning must not depend on the endpoint happening to commit.
+
+    The bug this pins: `/me` returned 200 with a correct quota readout while `users` stayed empty,
+    because the upsert was rolled back when the session closed. It looked fine from the browser and
+    persisted nothing. Game creation masked it — that endpoint commits, so it flushed the pending
+    insert as a side effect.
+    """
+    response = await client.get("/me", headers=as_user("user_read_only"))
+    assert response.status_code == 200
+
+    # A different session, so this reads committed state rather than the request's own transaction.
+    db.expunge_all()
+    stored = await db.scalar(sa.select(User).where(User.clerk_user_id == "user_read_only"))
+    assert stored is not None, "a signed-in read did not persist the user"
+
+
+async def test_a_returning_user_is_not_duplicated(client: AsyncClient, db: AsyncSession) -> None:
+    """The upsert runs on every authenticated request, so it must be idempotent."""
+    header = as_user("user_returning")
+    for _ in range(3):
+        assert (await client.get("/me", headers=header)).status_code == 200
+
+    db.expunge_all()
+    rows = (await db.scalars(sa.select(User).where(User.clerk_user_id == "user_returning"))).all()
+    assert len(rows) == 1
