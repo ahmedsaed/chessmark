@@ -87,6 +87,7 @@ cov: ## Run the chess-domain coverage gate (NFR-07)
 
 lint: ## Lint backend and frontend
 	cd $(API) && uv run ruff check .
+	cd $(API) && uv run ruff format --check .
 	cd $(WEB) && pnpm lint
 
 fmt: ## Format backend and frontend

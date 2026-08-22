@@ -242,9 +242,7 @@ async def test_a_turn_from_another_game_is_not_reachable(
     assert response.status_code == 404
 
 
-async def test_an_unknown_turn_is_a_404(
-    client: AsyncClient, game: Fixture, make_worker
-) -> None:
+async def test_an_unknown_turn_is_a_404(client: AsyncClient, game: Fixture, make_worker) -> None:
     await _resign(game, make_worker)
 
     assert (await client.get(f"/games/{game.game.id}/turns/999999/raw")).status_code == 404

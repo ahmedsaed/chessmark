@@ -82,9 +82,7 @@ async def test_an_explicit_model_id_wins_over_the_slug(db: AsyncSession) -> None
 
     match = await create_match(
         db,
-        white=Seat(
-            display_name="pinned", model=registered.openrouter_id, model_id=other.id
-        ),
+        white=Seat(display_name="pinned", model=registered.openrouter_id, model_id=other.id),
         black=Seat(display_name="black", model=registered.openrouter_id),
     )
 
