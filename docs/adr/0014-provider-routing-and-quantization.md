@@ -118,3 +118,33 @@ model's evidence is too little to act on. What does follow immediately:
   Phase 12 does about ratings, endpoint has to be visible next to the number.
 - A harness-caused forfeit — `error_forfeit` from malformed tool calls — deserves separating from a
   model genuinely refusing to act, in the same way truncation was separated from refusal in Phase 5.
+
+
+### Correction — 2026-08-23: the attribution above was too confident
+
+The amendment concluded, from 9 leaks in 63 StreamLake calls against 0 in 40 across Baidu and
+DeepInfra, that the DSML leak was the endpoint's fault. A later game leaked on **Alibaba**, which
+that reasoning had not sampled at all:
+
+| provider | calls | leaks | rate |
+| --- | --- | --- | --- |
+| StreamLake | 90 | 15 | 16.7% |
+| Alibaba | 37 | 9 | 24.3% |
+| Baidu | 24 | 0 | 0% |
+| DeepInfra | 16 | 0 | 0% |
+
+Two endpoints leak and two do not, so "the provider is at fault" is no longer supportable as
+stated. The defensible version is narrower: **the model produces output that some endpoints parse
+and others do not.** Whether Baidu and DeepInfra are genuinely clean or merely under-sampled is
+unresolved — at a 20% rate, 24 and 16 calls would be expected to show around 5 and 3 leaks, so the
+zeros are suggestive but not proof of immunity.
+
+What does not change is the handling. Whoever is at fault, a model that emitted a tool call which
+arrived as prose did not refuse to act, and forfeiting it publishes a claim its opponent did not
+earn. ADR-0015 abandons the game either way, and that classification fired unrehearsed on the game
+that produced these numbers: the turn was requeued, the model was not forfeited, and the game
+carried on.
+
+The lesson for the benchmark is about sample size rather than blame. Forty calls across two
+endpoints looked decisive and was not. A claim of the form "endpoint X is unreliable" needs more
+evidence than a claim of the form "these two results are not comparable".
