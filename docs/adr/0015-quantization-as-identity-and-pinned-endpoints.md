@@ -80,3 +80,27 @@ ranked play.
   `model_endpoints` records what the numbers were when the choice was made.
 - Every game before this ADR was played under an unpinned policy. Those results stay in the record
   and stay excluded from ratings; they measure a blend, and the blend is not reproducible.
+
+
+## Addendum — what the interface says
+
+The API and UI were still speaking the filter's vocabulary: `playable_quantizations`, a count of
+models "blocked on precision". Both are gone.
+
+- **`GET /models` returns `contestants`**, one per precision, each naming the endpoint that would
+  actually be pinned and its uptime. The lobby reads *Contestants · 240 models · 365 entrants*, and
+  a model with three precisions shows three rows rather than one row with two of them struck out.
+- **`GET /games/{id}` reports `pinned_provider` per seat**, next to `providers_used`. They should be
+  the same single name; when they are not, the seat is badged **MIXED ENDPOINTS** in red. The first
+  paid benchmark now carries that badge, which is the right outcome — it says on its own page that
+  it is not a clean measurement.
+- **`POST /games` accepts `white_quantization` / `black_quantization`.** Asking for a precision
+  nothing serves is a `400`, never a silent substitution: seating a different precision would
+  measure a different contestant with no way for the caller to know.
+
+**One field was deliberately not published.** OpenRouter's `supports_implicit_caching` is stored on
+`model_endpoints` as a record of what the API said, and it does not predict behaviour — it reads
+`false` for endpoints measured here at 91-94% cache hit rate (Azure/gpt-5.4-mini,
+Baidu/deepseek-v4-flash, StreamLake/kimi-k2.5) and `true` for the one measured at 28%
+(Google/gemini-3.7-flash). It was on the model card for about ten minutes before that comparison was
+run. An interface element that is wrong more often than right is worse than an absent one.

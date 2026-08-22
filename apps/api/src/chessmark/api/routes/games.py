@@ -15,6 +15,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import PlainTextResponse
 
+from chessmark.agents.registry import NoEndpointError
 from chessmark.api.deps import (
     BudgetDep,
     CurrentUser,
@@ -409,17 +410,31 @@ async def create_game_endpoint(
     ceiling = Decimal(str(settings.max_usd_per_game))
     max_usd = min(request.max_usd, ceiling) if request.max_usd else ceiling
 
-    match = await create_match(
-        session,
-        white=Seat(display_name=known[request.white].display_name, model=request.white),
-        black=Seat(display_name=known[request.black].display_name, model=request.black),
-        is_ranked=request.is_ranked,
-        trash_talk_enabled=request.trash_talk_enabled,
-        max_usd=max_usd,
-        max_plies=request.max_plies,
-        created_by_user_id=user.id,
-        **kwargs,
-    )
+    try:
+        match = await create_match(
+            session,
+            white=Seat(
+                display_name=known[request.white].display_name,
+                model=request.white,
+                quantization=request.white_quantization,
+            ),
+            black=Seat(
+                display_name=known[request.black].display_name,
+                model=request.black,
+                quantization=request.black_quantization,
+            ),
+            is_ranked=request.is_ranked,
+            trash_talk_enabled=request.trash_talk_enabled,
+            max_usd=max_usd,
+            max_plies=request.max_plies,
+            created_by_user_id=user.id,
+            **kwargs,
+        )
+    except NoEndpointError as error:
+        # The caller named a precision nobody serves. That is a bad request, not a server fault —
+        # and seating them at a different precision would quietly measure another contestant.
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
     job = await start_match(session, queue, game_id=match.game.id)
     await session.commit()
 

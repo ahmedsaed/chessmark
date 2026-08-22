@@ -8,9 +8,10 @@
  * or a tripped daily budget all arrive here as a sentence rather than a status code, which is the
  * whole reason those errors carry prose and a reset time.
  *
- * Models are limited to the ones a game would actually accept. A model served only at 4-bit or by
- * an endpoint that will not declare its precision is offered nowhere, because picking it would
- * produce a 404 several seconds later with no explanation (ADR-0014).
+ * You pick a **contestant**, not a model: `model@fp4` and `model@fp8` are different entrants and
+ * are ranked apart (ADR-0015). The precision picker exists because that distinction is the point,
+ * and the endpoint is shown because it is pinned for the whole game and turned out to change
+ * results as much as precision does.
  */
 
 import { useAuth } from "@clerk/nextjs";
@@ -34,7 +35,7 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
   const playable = useMemo(
     () =>
       models
-        .filter((model) => model.playable_quantizations.length > 0)
+        .filter((model) => model.contestants.length > 0)
         .sort((a, b) => a.openrouter_id.localeCompare(b.openrouter_id)),
     [models],
   );
@@ -45,6 +46,8 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
   const [black, setBlack] = useState(
     () => (playable.some((m) => m.openrouter_id === DEFAULT_BLACK) ? DEFAULT_BLACK : ""),
   );
+  const [whiteQuant, setWhiteQuant] = useState<string>("");
+  const [blackQuant, setBlackQuant] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,7 +63,14 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           "content-type": "application/json",
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ white, black, max_plies: 300 }),
+        body: JSON.stringify({
+          white,
+          black,
+          // Omitted means "the healthiest endpoint at whatever precision", which is then recorded.
+          white_quantization: whiteQuant || null,
+          black_quantization: blackQuant || null,
+          max_plies: 300,
+        }),
       });
 
       if (!response.ok) {
@@ -89,9 +99,29 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
       </h2>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr_auto]">
-        <Picker label="White" value={white} onChange={setWhite} models={playable} />
+        <Picker
+          label="White"
+          value={white}
+          onChange={(next) => {
+            setWhite(next);
+            setWhiteQuant("");
+          }}
+          models={playable}
+          quantization={whiteQuant}
+          onQuantizationChange={setWhiteQuant}
+        />
         <span className="self-center text-center font-mono text-[11px] text-ink-faint">vs</span>
-        <Picker label="Black" value={black} onChange={setBlack} models={playable} />
+        <Picker
+          label="Black"
+          value={black}
+          onChange={(next) => {
+            setBlack(next);
+            setBlackQuant("");
+          }}
+          models={playable}
+          quantization={blackQuant}
+          onQuantizationChange={setBlackQuant}
+        />
 
         <button
           type="button"
@@ -117,13 +147,20 @@ function Picker({
   value,
   onChange,
   models,
+  quantization,
+  onQuantizationChange,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   models: ModelInfo[];
+  quantization: string;
+  onQuantizationChange: (value: string) => void;
 }) {
   const chosen = models.find((model) => model.openrouter_id === value);
+  const entrants = chosen?.contestants ?? [];
+  // Empty means "let the server pick the healthiest", which is the sane default and is recorded.
+  const entrant = entrants.find((c) => c.quantization === quantization) ?? entrants[0];
 
   return (
     <label className="flex min-w-0 flex-col gap-1">
@@ -142,11 +179,37 @@ function Picker({
           </option>
         ))}
       </select>
-      {chosen && (
+
+      {entrants.length > 1 && (
+        <span className="flex flex-wrap items-center gap-1">
+          {entrants.map((option) => {
+            const active = option.quantization === (quantization || entrants[0].quantization);
+            return (
+              <button
+                key={option.quantization}
+                type="button"
+                onClick={() => onQuantizationChange(option.quantization)}
+                aria-pressed={active}
+                title={`${option.provider}, uptime ${option.uptime_1d?.toFixed(1) ?? "?"}% — a separate entrant`}
+                className={`border px-1.5 py-px font-mono text-[9px] uppercase tracking-wider transition-colors ${
+                  active
+                    ? "border-accent bg-accent text-on-accent"
+                    : "border-line text-ink-faint hover:text-ink-dim"
+                }`}
+              >
+                {option.quantization}
+              </button>
+            );
+          })}
+        </span>
+      )}
+
+      {chosen && entrant && (
         <span className="tabular font-mono text-[9.5px] text-ink-faint">
           in {usdPerMillion(chosen.prompt_usd_per_token)} · out{" "}
           {usdPerMillion(chosen.completion_usd_per_token)} ·{" "}
-          <span className="text-good">{chosen.playable_quantizations.join(", ")}</span>
+          <span className="text-good">{entrant.provider}</span>
+          {entrant.uptime_1d !== null && ` ${entrant.uptime_1d.toFixed(1)}%`}
         </span>
       )}
     </label>

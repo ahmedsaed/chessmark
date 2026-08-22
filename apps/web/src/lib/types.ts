@@ -26,6 +26,10 @@ export interface Player {
    * answer: the same id at fp8 and at fp4 is not the same contestant.
    */
   provider_routing: Record<string, unknown>;
+  /** The endpoint chosen before the game started. */
+  pinned_provider: string | null;
+  /** What actually served it. Should be exactly `[pinned_provider]` — more than one means the
+   *  pin did not hold and the result measures a blend of endpoints. */
   providers_used: string[];
   quantization: string | null;
 
@@ -80,10 +84,26 @@ export interface ModelInfo {
   is_free: boolean;
   prompt_usd_per_token: string;
   completion_usd_per_token: string;
-  /** Every precision this model is served at, across all active endpoints. */
+  /** Every precision this model is served at. `contestants` is the useful shape. */
   quantizations: string[];
-  /** The subset a default-policy game accepts. Empty means it cannot be played. */
-  playable_quantizations: string[];
+  /** One entry per precision that can be played, healthiest endpoint first (ADR-0015). */
+  contestants: Contestant[];
+  endpoint_count: number;
+  /** Points at different weights over time, so it can never be ranked. */
+  is_floating_alias: boolean;
+}
+
+/**
+ * One precision a model can be played at, and the endpoint that would serve it.
+ *
+ * A contestant, not a capability: `model@fp4` and `model@fp8` are different entrants and are
+ * ranked apart (ADR-0015).
+ */
+export interface Contestant {
+  quantization: string;
+  provider: string;
+  uptime_1d: number | null;
+  /** How many endpoints serve this precision. One means an outage takes the contestant with it. */
   endpoint_count: number;
 }
 

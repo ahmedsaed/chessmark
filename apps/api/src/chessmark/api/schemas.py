@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from chessmark.agents.routing import ProviderRouting, widen_for_first_party
+from chessmark.agents.registry import is_floating_alias
 from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
 from chessmark.db.models import (
     Game,
@@ -41,6 +41,30 @@ class Schema(BaseModel):
 # ---------------------------------------------------------------------- models
 
 
+class ContestantOut(Schema):
+    """One precision a model can be played at, and the endpoint that would serve it.
+
+    Deliberately does **not** carry OpenRouter's `supports_implicit_caching`. That flag is stored
+    on `model_endpoints` as a record of what the API said, but it does not predict behaviour: it
+    reads `false` for endpoints we have measured at 91-94% cache hit rate (Azure/gpt-5.4-mini,
+    Baidu/deepseek-v4-flash, StreamLake/kimi-k2.5) and `true` for the one measured at 28%
+    (Google/gemini-3.7-flash). Publishing it would mislead more often than it informed.
+
+    A contestant, not a capability (ADR-0015). `model@fp4` and `model@fp8` are different entrants
+    and are ranked apart, so each gets its own row here rather than the model carrying a list of
+    "allowed" precisions — which was filter vocabulary for a policy that no longer exists.
+    """
+
+    quantization: str
+    provider: str
+    """The endpoint a match would pin for this contestant, chosen by uptime."""
+
+    uptime_1d: float | None = None
+
+    endpoint_count: int = 1
+    """How many endpoints serve this precision. One means an outage takes the contestant with it."""
+
+
 class ModelOut(Schema):
     id: uuid.UUID
     openrouter_id: str
@@ -52,34 +76,49 @@ class ModelOut(Schema):
     prompt_usd_per_token: Decimal
     completion_usd_per_token: Decimal
 
-    #: Precisions this model is actually served at, across every active endpoint. Shown on the
-    #: card because "which model" is not a complete answer without it — the same id served at fp8
-    #: and at fp4 is not the same contestant.
+    #: Every precision this model is served at. Kept for continuity; `contestants` is the useful
+    #: shape now, because it says *which endpoint* each precision would actually run on.
     quantizations: list[str] = Field(default_factory=list)
 
-    #: The subset a default-policy game would accept. Empty means the model is unplayable under
-    #: the default, which is a fact worth surfacing rather than discovering at a 404.
-    playable_quantizations: list[str] = Field(default_factory=list)
+    #: One entry per precision that can be played, healthiest endpoint first (ADR-0015).
+    contestants: list[ContestantOut] = Field(default_factory=list)
     endpoint_count: int = 0
+
+    #: Floating aliases point at different weights over time, so a rating across one rates nothing.
+    is_floating_alias: bool = False
 
     @classmethod
     def from_model(
         cls, row: ModelRegistry, *, endpoints: list[ModelEndpoint] | None = None
     ) -> ModelOut:
         endpoints = endpoints or []
-        routing = ProviderRouting()
-        offered = sorted({e.quantization or "unknown" for e in endpoints})
-        allowed = sorted({q for q in offered if routing.accepts(q)})
+        playable = [e for e in endpoints if e.is_active and e.supports_tools]
 
-        if not allowed:
-            # A closed-weight model reports `unknown` from its own vendor; the same widening the
-            # match uses applies here, or the card would claim Gemini is unplayable.
-            widened = widen_for_first_party(
-                routing,
-                model_slug=row.openrouter_id,
-                endpoints=[(e.provider_name, e.quantization) for e in endpoints],
+        by_precision: dict[str, list[ModelEndpoint]] = {}
+        for endpoint in playable:
+            by_precision.setdefault(endpoint.quantization or "unknown", []).append(endpoint)
+
+        contestants = []
+        for quantization, group in by_precision.items():
+            # Same order the match uses, so the card names the endpoint a game would really pin.
+            best = sorted(
+                group,
+                key=lambda e: (
+                    -(e.uptime_1d if e.uptime_1d is not None else (e.uptime_30m or -1.0)),
+                    -(e.throughput or -1.0),
+                    e.provider_name,
+                ),
+            )[0]
+            contestants.append(
+                ContestantOut(
+                    quantization=quantization,
+                    provider=best.provider_name,
+                    uptime_1d=best.uptime_1d,
+                    endpoint_count=len(group),
+                )
             )
-            allowed = sorted({q for q in offered if widened.accepts(q)})
+
+        contestants.sort(key=lambda c: (-(c.uptime_1d or -1.0), c.quantization))
 
         return cls(
             id=row.id,
@@ -91,9 +130,10 @@ class ModelOut(Schema):
             is_free=row.is_free,
             prompt_usd_per_token=row.prompt_usd_per_token,
             completion_usd_per_token=row.completion_usd_per_token,
-            quantizations=offered,
-            playable_quantizations=allowed,
+            quantizations=sorted(by_precision),
+            contestants=contestants,
             endpoint_count=len(endpoints),
+            is_floating_alias=is_floating_alias(row.openrouter_id),
         )
 
 
@@ -108,12 +148,24 @@ class PlayerOut(Schema):
     model: str | None = None
     persona: str | None = None
 
-    #: The routing policy this seat resolved to, and the endpoints that actually served it.
-    #: Together these answer "what precision was this game played at" — the question a leaderboard
-    #: row is meaningless without.
+    #: What this seat ran on. `pinned_provider` is the endpoint chosen before the game started
+    #: (ADR-0015); `providers_used` is what actually served it. **They should be the same single
+    #: name** — a mismatch, or more than one entry, means the pin did not hold and the result
+    #: measures a blend. That happened before pinning existed: one 80-ply game was served by two
+    #: endpoints and its numbers cannot be reproduced.
     provider_routing: dict[str, Any] = Field(default_factory=dict)
+    pinned_provider: str | None = None
     providers_used: list[str] = Field(default_factory=list)
     quantization: str | None = None
+
+    @property
+    def endpoint_held(self) -> bool:
+        """False when more than one endpoint served this seat, or none matched the pin."""
+        if not self.providers_used:
+            return True
+        if len(self.providers_used) > 1:
+            return False
+        return self.pinned_provider in (None, self.providers_used[0])
 
     illegal_attempts: int
     forfeited: bool
@@ -132,8 +184,10 @@ class PlayerOut(Schema):
         quantization: str | None = None,
     ) -> PlayerOut:
         model = (row.sampling or {}).get("model")
+        only = (row.provider_routing or {}).get("only") or []
         return cls(
             provider_routing=row.provider_routing or {},
+            pinned_provider=str(only[0]) if only else None,
             providers_used=providers_used or [],
             quantization=quantization,
             id=row.id,
@@ -279,12 +333,22 @@ class GameDetail(GameSummary):
 class CreateGameRequest(BaseModel):
     """Start a model-vs-model game.
 
-    Unauthenticated until Phase 9, which is a hard gate before any public deploy — this endpoint
-    spends money and has no quota behind it yet (ADR-0011).
+    Requires an account: this is the only endpoint that spends money (AUTH-02), and it is behind
+    the four budget layers of ADR-0011.
     """
 
     white: str = Field(description="OpenRouter model id for White")
     black: str = Field(description="OpenRouter model id for Black")
+
+    white_quantization: str | None = Field(
+        default=None,
+        description=(
+            "Precision for White. Part of the contestant's identity, not a filter — 'fp4' seats a "
+            "different entrant from 'fp8' (ADR-0015). Omit to take the healthiest endpoint at "
+            "whatever precision, which is then recorded."
+        ),
+    )
+    black_quantization: str | None = Field(default=None, description="Precision for Black.")
     is_ranked: bool = False
     trash_talk_enabled: bool = True
     max_usd: Decimal | None = Field(default=Decimal("0.50"), ge=0)

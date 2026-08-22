@@ -97,25 +97,7 @@ function PlayerCard({ player, active }: { player: Player; active: boolean }) {
         {player.model ?? player.kind}
       </p>
 
-      {/* What actually served this seat. Recorded per call, so it is a fact about this game
-          rather than a claim about the model in general. */}
-      {(player.quantization || player.providers_used.length > 0) && (
-        <p className="flex flex-wrap items-center gap-1">
-          {player.quantization && (
-            <span
-              title="precision this seat was served at"
-              className="border border-good/40 px-1 py-px font-mono text-[8.5px] uppercase tracking-wider text-good"
-            >
-              {player.quantization}
-            </span>
-          )}
-          {player.providers_used.slice(0, 2).map((name) => (
-            <span key={name} className="font-mono text-[8.5px] text-ink-faint">
-              {name}
-            </span>
-          ))}
-        </p>
-      )}
+      <Endpoint player={player} />
 
       <dl className="grid grid-cols-2 gap-px border border-line-soft bg-line-soft">
         <Stat label="Tokens" value={player.prompt_tokens.toLocaleString()} />
@@ -128,6 +110,52 @@ function PlayerCard({ player, active }: { player: Player; active: boolean }) {
         />
       </dl>
     </div>
+  );
+}
+
+/**
+ * Which endpoint served this seat, and whether the pin held.
+ *
+ * Both halves matter. `pinned_provider` is what was chosen before the game began; `providers_used`
+ * is what actually answered. They should be the same single name — and before pinning existed they
+ * were not: one 80-ply game was served by two different endpoints, so its numbers describe a blend
+ * that cannot be reproduced (ADR-0015). A drift warning is louder than a footnote because a reader
+ * comparing two rows deserves to know one of them is not a clean measurement.
+ */
+function Endpoint({ player }: { player: Player }) {
+  const used = player.providers_used;
+  const pinned = player.pinned_provider;
+  const drifted = used.length > 1 || (pinned !== null && used.length === 1 && used[0] !== pinned);
+
+  if (!pinned && used.length === 0 && !player.quantization) return null;
+
+  return (
+    <p className="flex flex-wrap items-center gap-1">
+      {player.quantization && (
+        <span
+          title="the precision this seat played at — its own leaderboard entry"
+          className="border border-good/40 px-1 py-px font-mono text-[8.5px] uppercase tracking-wider text-good"
+        >
+          {player.quantization}
+        </span>
+      )}
+
+      <span
+        className="font-mono text-[8.5px] text-ink-faint"
+        title={pinned ? "endpoint pinned before the game started" : "endpoint that served this seat"}
+      >
+        {used.length > 0 ? used.join(" + ") : pinned}
+      </span>
+
+      {drifted && (
+        <span
+          title={`Pinned to ${pinned ?? "nothing"} but served by ${used.join(", ")}. This result mixes endpoints and is not reproducible.`}
+          className="border border-bad-deep px-1 py-px font-mono text-[8.5px] uppercase tracking-wider text-bad"
+        >
+          mixed endpoints
+        </span>
+      )}
+    </p>
   );
 }
 

@@ -51,8 +51,8 @@ export default async function Home() {
 
       <section className="mt-12">
         <h2 className="mb-4 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
-          Playable models · {models.length} tool-capable ·{" "}
-          {models.filter((m) => m.playable_quantizations.length === 0).length} blocked on precision
+          Contestants · {models.length} models ·{" "}
+          {models.reduce((total, m) => total + m.contestants.length, 0)} entrants
         </h2>
         <ul className="grid grid-cols-1 gap-px border border-line-soft bg-line-soft sm:grid-cols-2 lg:grid-cols-3">
           {models.slice(0, 24).map((model) => (
@@ -64,8 +64,9 @@ export default async function Home() {
                   ? ` · ${Math.round(model.context_length / 1000)}k ctx`
                   : ""}
                 {model.supports_reasoning ? " · reasoning" : ""}
+                {model.is_floating_alias ? " · unrankable" : ""}
               </p>
-              <Quantizations model={model} />
+              <Contestants model={model} />
             </li>
           ))}
         </ul>
@@ -101,51 +102,54 @@ function Section({
 }
 
 /**
- * Which precisions a model is served at, and which of them a game will accept.
+ * A model's contestants: one per precision, each naming the endpoint that would serve it.
  *
- * On the card because it is part of the model's identity here, not a footnote: an id served at
- * fp4 is a different contestant from the same id at fp8, and a benchmark that hides which one it
- * measured is not saying much.
+ * This used to show which precisions were *allowed*, because the policy was a filter. It is not
+ * one any more — `model@fp4` and `model@fp8` are separate entrants, ranked apart (ADR-0015) — so
+ * the card lists entrants rather than permissions, and names the endpoint, because the endpoint
+ * turned out to change results as much as the precision does.
  */
-function Quantizations({ model }: { model: ModelInfo }) {
-  if (model.quantizations.length === 0) return null;
-
-  const playable = new Set(model.playable_quantizations);
-  const blocked = model.quantizations.filter((q) => !playable.has(q));
+function Contestants({ model }: { model: ModelInfo }) {
+  if (model.contestants.length === 0) {
+    return (
+      <p className="mt-1.5 font-mono text-[9px] uppercase tracking-wider text-ink-faint">
+        no tool-capable endpoint
+      </p>
+    );
+  }
 
   return (
-    <p className="mt-1.5 flex flex-wrap items-center gap-1">
-      {model.quantizations.map((quantization) => {
-        const allowed = playable.has(quantization);
-        return (
+    <ul className="mt-1.5 flex flex-col gap-1">
+      {model.contestants.map((entrant) => (
+        <li
+          key={entrant.quantization}
+          className="flex flex-wrap items-center gap-1.5 font-mono text-[9px]"
+        >
           <span
-            key={quantization}
-            title={
-              allowed
-                ? `served at ${quantization} — accepted`
-                : `served at ${quantization} — excluded from games`
-            }
-            className={`border px-1 py-px font-mono text-[9px] uppercase tracking-wider ${
-              allowed
-                ? "border-good/40 text-good"
-                : "border-bad-deep text-bad line-through decoration-bad/50"
-            }`}
+            title={`played at ${entrant.quantization} — its own leaderboard entry`}
+            className="border border-good/40 px-1 py-px uppercase tracking-wider text-good"
           >
-            {quantization}
+            {entrant.quantization}
           </span>
-        );
-      })}
-      {playable.size === 0 && (
-        <span className="font-mono text-[9px] uppercase tracking-wider text-bad">
-          unplayable
-        </span>
-      )}
-      {blocked.length > 0 && playable.size > 0 && (
-        <span className="font-mono text-[9px] text-ink-faint">
-          {model.endpoint_count} endpoints
-        </span>
-      )}
-    </p>
+          <span className="text-ink-dim" title="the endpoint a game would pin">
+            {entrant.provider}
+          </span>
+          {entrant.uptime_1d !== null && (
+            <span
+              className="tabular text-ink-faint"
+              title="uptime over the last day — how the endpoint is chosen"
+            >
+              {entrant.uptime_1d.toFixed(1)}%
+            </span>
+          )}
+          {entrant.endpoint_count === 1 && (
+            <span title="only one endpoint serves this precision" className="text-ink-faint">
+              sole
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 
