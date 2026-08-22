@@ -189,7 +189,7 @@ def test_appending_a_turn_leaves_the_earlier_prefix_intact() -> None:
     message is byte-identical between turns."""
     turn_one = apply_cache_control(transcript(), model_slug="anthropic/claude-haiku-4.5")
     turn_two = apply_cache_control(
-        transcript() + [{"role": "user", "content": "next"}],
+        [*transcript(), {"role": "user", "content": "next"}],
         model_slug="anthropic/claude-haiku-4.5",
     )
 
