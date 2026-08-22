@@ -365,6 +365,38 @@ bare king, but never converted, while Gemini shuffled its king between g1/h1/h2 
 **Neither model can finish a won endgame** — the clearest capability gap this run found, and an
 argument for scoring material and mate-conversion separately from legality.
 
+**Second paid benchmark — the first decisive game**
+
+`google/gemini-3.7-flash` (White) vs `moonshotai/kimi-k2.5` (Black), **1-0, checkmate in 39 plies**,
+91 LLM calls, **$0.124**. Not a cap, not a forfeit — a real chess result, verified by replaying the
+move list through an independent parser to the mated position.
+
+| | illegal | prompt tok | cache | out tok | reasoning | cost | avg latency |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| gemini-3.7-flash | **0** | 162,805 | 23.9% | 862 | 282 | $0.0496 | 2.2 s |
+| kimi-k2.5 | 5 | 435,619 | 91.9% | 7,131 | 6,174 | $0.0744 | 4.4 s |
+
+**Both sides played nine moves of correct opening theory** — a Richter-Rauzer Attack
+(`1.e4 c5 2.Nf3 Nc6 3.d4 cxd4 4.Nxd4 Nf6 5.Nc3 d6 6.Bg5 e6 7.Qd2 Be7 8.O-O-O O-O 9.f4`), main line.
+The first benchmark game had nothing resembling this. Black then traded into a lost endgame, hung a
+rook on move 17, and was mated on the back rank.
+
+**Gemini improved generationally on the one number this project exists to measure**: 2.5-flash-lite
+made 4 illegal attempts across 40 moves; 3.7-flash made **none** across 20. Kimi made 5 in 20 moves,
+a worse rate than either model in the first game — the model with the stronger agentic reputation
+was the less reliable one here, which is exactly the sort of result a benchmark is for.
+
+**All five were `not_reachable` again, and three were stale-board errors** — moving a queen that had
+just been traded, a rook that had just been captured, a bishop no longer on the board. The other two
+were piece-geometry errors. Across two games and eleven illegal attempts there has still not been a
+single check-evasion or wrong-turn error: **board-state tracking is the failure mode, not rule
+knowledge.** They cluster in the endgame, after trades.
+
+**NFR-06 does not hold on short games.** This one cached at 73.4% overall, below the >80% bar,
+because Gemini's implicit cache never warmed up — 23.9% over 39 plies against 76.9% over 80. The
+threshold is only met once a transcript is long enough, which is a property of Google's caching, not
+of our transcript construction. Recorded here rather than quietly averaged away with the first game.
+
 ---
 
 ## Phase 6 — API + SSE ✅ COMPLETE

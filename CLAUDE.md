@@ -168,9 +168,20 @@ Database tests need `make up`. Useful targets: `make test-unit` (no database), `
 (live provider, opt-in), `make migration m="..."`, `make drift`, `make seed-models`,
 `make smoke-llm`.
 
-Paid models work and are cheap: an 80-ply `gemini-2.5-flash-lite` vs `deepseek-v4-flash` game cost
-**$0.076** at an 83% cache hit rate. Free models cannot finish a game — too slow, too verbose, and
-no prompt caching.
+Paid models work and are cheap. Two benchmark games so far:
+
+| | result | plies | cost | illegal | cache |
+| --- | --- | --- | --- | --- | --- |
+| gemini-2.5-flash-lite vs deepseek-v4-flash | 1/2-1/2 `ply_cap` | 80 | $0.076 | 4 / 2 | 83% |
+| gemini-3.7-flash vs kimi-k2.5 | **1-0 checkmate** | 39 | $0.124 | **0** / 5 | 73% |
+
+The second is the first decisive result, and both sides played nine moves of correct Richter-Rauzer
+theory. Across two games, **every** illegal attempt has been `not_reachable` — board-state tracking,
+never rule knowledge. Free models cannot finish a game at all: too slow, too verbose, no caching.
+
+**The ply cap is a cost bound, not a rules bound** — threefold and the fifty-move rule are applied
+automatically, so games terminate on their own. 300 plies is the standard; 80 sat at the median of
+real games and let the harness decide half the results.
 
 **Next up: Phase 10 — human vs model.** See [ROADMAP.md](docs/ROADMAP.md#phase-10--human-vs-model).
 
