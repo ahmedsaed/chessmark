@@ -392,6 +392,33 @@ were piece-geometry errors. Across two games and eleven illegal attempts there h
 single check-evasion or wrong-turn error: **board-state tracking is the failure mode, not rule
 knowledge.** They cluster in the endgame, after trades.
 
+**Prompt caching is not automatic for every provider — ADR-0003 assumed it was.**
+
+The first Claude game cost **$1.40 against its opponent's $0.11** for the same 61 plies, and burned
+its per-game cap without reaching a result. Cause: Anthropic and Alibaba cache only what an explicit
+`cache_control` breakpoint marks, and Chessmark sent none. Every Anthropic turn re-paid full price
+for the whole transcript — precisely the O(n²) cost ADR-0003 exists to avoid. It went unnoticed for
+nine phases because every model played until then happened to cache implicitly.
+
+Two breakpoints are now sent for vendors that need them: one on the system prompt, which is fixed
+for the life of a game, and one riding the end of the history so each turn extends the cached prefix.
+The moving breakpoint is the documented multi-turn pattern and does not violate invariant 2 —
+`cache_control` is metadata about a block, not content inside it, so the cached bytes are unchanged.
+
+Measured on the same matchup, before and after:
+
+| | before | after |
+| --- | --- | --- |
+| Claude cache rate | 0% | **96.9%** |
+| result | ½-½ `budget_exceeded` @ 61 plies | **0-1 resignation** @ 72 plies |
+| cost | $1.517 | **$0.442** |
+| cost per ply | $0.0249 | **$0.0061** |
+
+**Qwen is a different story and not our bug.** OpenRouter documents caching for `qwen/qwen3-max`
+and four siblings; `qwen3-max-thinking`, the model benchmarked here, is not among them. The
+breakpoints are sent and silently ignored — game 6 measured Claude at 95.0% and Qwen at 0.0% in the
+same game, through the same code.
+
 **NFR-06 does not hold on short games.** This one cached at 73.4% overall, below the >80% bar,
 because Gemini's implicit cache never warmed up — 23.9% over 39 plies against 76.9% over 80. The
 threshold is only met once a transcript is long enough, which is a property of Google's caching, not

@@ -113,20 +113,27 @@ async def test_free_only_filter(db: AsyncSession) -> None:
 
     free = await playable_models(db, free_only=True)
 
-    assert free, "the seed is all free models, so this must not be empty"
+    assert free, "the seed should carry free models for the filter to find"
     assert all(model.is_free for model in free)
     assert all(model.openrouter_id.endswith(":free") for model in free)
 
 
 @pytest.mark.integration
 async def test_pricing_table_is_built_from_the_database(db: AsyncSession) -> None:
-    """At runtime the registry is the authority; the seed file only bootstraps it."""
+    """At runtime the registry is the authority; the seed file only bootstraps it.
+
+    Asserts a property, not a named model — see the note in `test_pricing.py`.
+    """
     await sync_model_registry(db, load_seed())
     await db.commit()
 
     table = await load_pricing_table(db)
 
     assert len(table) >= 10
-    pricing = table.get("openai/gpt-oss-20b:free")
-    assert pricing is not None
-    assert pricing.is_free
+
+    free = [slug for slug in table.slugs() if slug.endswith(":free")]
+    assert free, "the registry should carry at least one free model"
+    for slug in free:
+        pricing = table.get(slug)
+        assert pricing is not None
+        assert pricing.is_free

@@ -62,6 +62,11 @@ class PricingTable:
     def get(self, model: str) -> ModelPricing | None:
         return self._pricing.get(self._normalise(model))
 
+    def slugs(self) -> list[str]:
+        """Every model in the table. Lets a test assert a property of the seed rather than name a
+        model — vendors withdraw them, and a test pinned to one breaks for no useful reason."""
+        return sorted(self._pricing)
+
     def add(self, pricing: ModelPricing) -> None:
         self._pricing[self._normalise(pricing.model)] = pricing
 

@@ -131,13 +131,22 @@ def test_unknown_model_returns_none() -> None:
 
 
 def test_pricing_loads_from_the_seed_file() -> None:
-    """The same file `refresh_model_seed.py` writes is the one the gateway prices against."""
+    """The same file `refresh_model_seed.py` writes is the one the gateway prices against.
+
+    Asserts a *property* rather than naming a model. The earlier version pinned
+    `openai/gpt-oss-20b:free`, which OpenRouter has since withdrawn — so a routine
+    `make refresh-models` broke a test that was testing nothing about our code.
+    """
     table = PricingTable.from_seed_file(SEED_FILE)
 
     assert len(table) >= 10
-    pricing = table.get("openai/gpt-oss-20b:free")
-    assert pricing is not None
-    assert pricing.is_free
+
+    free = [slug for slug in table.slugs() if slug.endswith(":free")]
+    assert free, "the seed should carry at least one free model"
+    for slug in free:
+        pricing = table.get(slug)
+        assert pricing is not None
+        assert pricing.is_free, f"{slug} ends in :free but is not priced as free"
 
 
 def test_every_seeded_model_has_non_negative_pricing() -> None:

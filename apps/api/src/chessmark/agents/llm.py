@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from chessmark.agents.caching import apply_cache_control
 from chessmark.agents.normalise import normalise_response
 from chessmark.agents.pricing import PricingTable, compute_cost
 from chessmark.agents.redaction import redact
@@ -184,7 +185,10 @@ class LlmGateway:
         # accident for the one vendor whose name it recognises.
         request: dict[str, Any] = {
             "model": model if model.startswith("openrouter/") else f"openrouter/{model}",
-            "messages": messages,
+            # Cache breakpoints are added here rather than in the transcript, so the stored history
+            # stays a record of what we *built* and the request carries what we *sent*. Anthropic
+            # and Alibaba cache nothing without them; see `agents/caching.py`.
+            "messages": apply_cache_control(messages, model_slug=model),
             "timeout": self.timeout,
         }
         if tools:
