@@ -8,13 +8,22 @@ and is gated in Phase 9.
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import Annotated, Any
 
 import sqlalchemy as sa
-from fastapi import APIRouter, HTTPException, Path, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import PlainTextResponse
 
-from chessmark.api.deps import GameDep, QueueDep, SessionDep
+from chessmark.api.deps import (
+    BudgetDep,
+    CurrentUser,
+    GameDep,
+    QueueDep,
+    SessionDep,
+    SettingsDep,
+    enforce_rate_limit,
+)
 from chessmark.api.schemas import (
     CreateGameRequest,
     CreateGameResponse,
@@ -38,6 +47,7 @@ from chessmark.db.models import (
     ToolCall,
     Turn,
 )
+from chessmark.db.quotas import QuotaExceededError, reserve_game
 from chessmark.db.repositories import load_events, rebuild_referee
 from chessmark.game import Colour
 from chessmark.game.pgn import PgnMetadata, to_pgn
@@ -317,15 +327,38 @@ async def get_raw_calls(
 # ---------------------------------------------------------------------- creation
 
 
-@router.post("", response_model=CreateGameResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=CreateGameResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(enforce_rate_limit)],
+)
 async def create_game_endpoint(
-    session: SessionDep, queue: QueueDep, request: CreateGameRequest
+    session: SessionDep,
+    queue: QueueDep,
+    budget: BudgetDep,
+    settings: SettingsDep,
+    user: CurrentUser,
+    request: CreateGameRequest,
 ) -> CreateGameResponse:
     """Start a model-vs-model game.
 
-    **Unauthenticated and unmetered until Phase 9**, which is a hard gate before any public
-    deploy — this spends money and there is no per-user quota behind it yet (ADR-0011).
+    The only endpoint on this router that requires an account, because it is the only one that
+    spends money (AUTH-02). Three of ADR-0011's four layers are applied here, outermost first:
+    the rate limiter, the global kill switch, then the user's daily quota. The fourth — the
+    per-game cap — is carried on the game itself and enforced by the worker.
+
+    Order matters. The kill switch is checked before the quota so that a user is not charged a
+    game against their daily allowance for a request that was never going to run.
     """
+    if await budget.tripped():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Chessmark has reached its daily spend limit. New games resume at UTC midnight; "
+                "watching and replays are unaffected."
+            ),
+        )
     known = {
         row.openrouter_id: row
         for row in await session.scalars(
@@ -353,9 +386,28 @@ async def create_game_endpoint(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"{slug!r} is disabled."
             )
 
+    try:
+        await reserve_game(
+            session,
+            user.id,
+            max_games=settings.max_games_per_user_per_day,
+            max_usd=Decimal(str(settings.max_usd_per_user_per_day)),
+        )
+    except QuotaExceededError as error:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"{error} Quotas reset at UTC midnight.",
+        ) from error
+
     kwargs: dict[str, Any] = {}
     if request.start_fen:
         kwargs["start_fen"] = request.start_fen
+
+    # The per-game cap is never left to the caller alone: a request asking for more than the
+    # server's ceiling is clamped rather than refused, so an ambitious `max_usd` cannot become the
+    # budget. This is layer 3 of ADR-0011.
+    ceiling = Decimal(str(settings.max_usd_per_game))
+    max_usd = min(request.max_usd, ceiling) if request.max_usd else ceiling
 
     match = await create_match(
         session,
@@ -363,8 +415,9 @@ async def create_game_endpoint(
         black=Seat(display_name=known[request.black].display_name, model=request.black),
         is_ranked=request.is_ranked,
         trash_talk_enabled=request.trash_talk_enabled,
-        max_usd=request.max_usd,
+        max_usd=max_usd,
         max_plies=request.max_plies,
+        created_by_user_id=user.id,
         **kwargs,
     )
     job = await start_match(session, queue, game_id=match.game.id)

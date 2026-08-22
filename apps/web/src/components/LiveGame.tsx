@@ -76,30 +76,36 @@ export function LiveGame({
     <div className="flex flex-col gap-4">
       <Header game={game} status={status} outcome={outcome} />
 
-      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[var(--rail)_minmax(0,1fr)_var(--rail)] [--rail:262px]">
+      {/* One expression does the whole layout.
+          The board is square, so its size is bounded by whichever runs out first — the height left
+          under the page chrome, or a reasonable share of the width. `min()` of those two is the
+          board column; the two rails are `1fr` each and split everything else, so there is never a
+          dead gutter and never a horizontal scrollbar.
+          Deriving the board's width from its own height instead is the obvious idea and does not
+          work: in a grid an `auto` column must resolve its width before the row height is known,
+          and in flex the same knot ties itself the other way. Both were tried. */}
+      <div className="grid grid-cols-1 gap-4 lg:h-[calc(100dvh-9.5rem)] lg:grid-cols-[minmax(0,1fr)_min(calc(100dvh-12rem),52vw)_minmax(0,1fr)]">
         {/* Stacked on a phone the order is board, conversation, stats: the conversation is the
             reason someone opened the page, and burying it under the full stats rail means
             scrolling past telemetry to reach the fight (ADR-0013). */}
-        <div className="order-3 lg:order-none">
-          <StatsRail game={game} toMove={toMove} moves={moves} />
+        <div className="order-3 min-w-0 overflow-y-auto lg:order-none">
+          <StatsRail game={game} toMove={toMove} />
         </div>
 
-        {/* The board is square, so capping its width caps its height — otherwise on a short
-            viewport it grows past the fold and the panels beside it are pushed off-screen. */}
-        <div className="order-1 mx-auto flex w-full max-w-[min(100%,calc(100vh-13rem))] flex-col gap-2.5 lg:order-none">
-          <div className="flex items-baseline justify-between font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
-            <span>
+        <div className="order-1 flex min-h-0 min-w-0 flex-col gap-2 lg:order-none">
+          <div className="flex flex-none items-baseline justify-between gap-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
+            <span className="truncate">
               {game.players.find((p) => p.colour === "white")?.display_name} —{" "}
               {game.players.find((p) => p.colour === "black")?.display_name}
             </span>
-            <span className="text-accent">
+            <span className="flex-none text-accent">
               {outcome ? outcome.result : toMove ? `${toMove} to move` : ""}
             </span>
           </div>
           <Board fen={fen} lastMove={lastMove} />
         </div>
 
-        <div className="order-2 flex max-h-[70vh] min-h-[320px] flex-col lg:order-none lg:max-h-[calc(100vh-14rem)]">
+        <div className="order-2 flex min-h-[24rem] min-w-0 flex-col lg:order-none lg:min-h-0">
           <Conversation turns={turns} />
         </div>
       </div>

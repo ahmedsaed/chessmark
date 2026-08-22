@@ -525,7 +525,7 @@ owner rather than a test step.
 
 ---
 
-## Phase 9 — Auth, quotas & cost control
+## Phase 9 — Auth, quotas & cost control ✅ COMPLETE (unexercised against a real Clerk instance)
 
 **Goal:** the app can be exposed to the internet without risking the API budget.
 
@@ -533,7 +533,7 @@ owner rather than a test step.
 
 **Objectives**
 1. Clerk on the frontend; JWKS verification in FastAPI
-2. `users` provisioned on first login via webhook
+2. `users` provisioned on first login **and** by webhook
 3. Per-user daily game and USD quotas via `usage_ledger`
 4. Global daily spend kill switch, backed by a Redis counter
 5. Rate limiting on game creation and every model-triggering endpoint
@@ -541,14 +541,58 @@ owner rather than a test step.
 7. Admin surface: spend, cancel a game, reset a quota
 
 **Exit criteria**
-- [ ] An unauthenticated request to create a game returns 401; spectating and replays return 200
-- [ ] A forged/expired JWT is rejected — asserted by a test
-- [ ] A user at their daily quota is refused with a clear message; the counter resets at UTC midnight
-- [ ] With the global budget tripped, **no LLM call is issued** — asserted by a test that fails if the provider is called
-- [ ] Load test: 100 rapid game-creation requests from one user are rate-limited, not served
-- [ ] No API key appears in any client bundle — asserted by grepping the built output in CI
+- [x] An unauthenticated request to create a game returns 401; spectating and replays return 200 — every game read path is asserted public, parameterised over all six of them
+- [x] A forged/expired JWT is rejected — asserted by a test, over `alg: none`, algorithm confusion, a wrong signing key, a tampered payload, a foreign issuer, a missing expiry, and a missing subject
+- [x] A user at their daily quota is refused with a clear message; the counter resets at UTC midnight
+- [x] With the global budget tripped, **no LLM call is issued** — asserted by a spy provider that records being called and raises; the test fails on contact, not on a spend figure afterwards
+- [x] Load test: 100 rapid game-creation requests from one user are rate-limited, not served — 10 of 100 admitted, fired concurrently
+- [x] No API key appears in any client bundle — `scripts/check_bundle_secrets.py`, run in CI against the built output
 
 **Covers:** AUTH-01 → AUTH-08
+
+**Notes**
+
+- **The accepted JWT algorithm is a fixed list and the token's own `alg` header is never read.**
+  That one line closes both `alg: none` and algorithm confusion — the attack where a forged token
+  is signed with HS256 using the *public* key as the HMAC secret, which a verifier that trusts the
+  header will happily verify, because the public key is public. Verified with teeth: adding an HMAC
+  algorithm to `ALGORITHMS` fails the suite.
+- **The quota reservation is one statement, not a read and then a write.** `SELECT`, compare,
+  `UPDATE` is the obvious shape and it is wrong: firing concurrent requests is exactly what someone
+  beating a quota would do, and all of them read the same old count. The check lives in an
+  `INSERT ... ON CONFLICT ... WHERE` clause so Postgres decides it. **Swapping in the naive version
+  lets 20 of 20 concurrent requests through against a limit of 3.**
+- **Spend is counted in integer hundred-millionths of a dollar**, matching `NUMERIC(16,8)`. Redis
+  has no decimal type and `INCRBYFLOAT` accumulates error across thousands of calls a day; invariant
+  4 asks for exact, not approximately right.
+- **The daily counters reset because the key name contains the date**, not because a job runs. A
+  reset that depends on a cron is a reset that eventually does not happen.
+- **Nothing that runs out silently means "refuse everything".** A limit of zero — budget, rate,
+  spend — means *no limit*. An operator who has not configured a budget has not asked us to halt,
+  and halting on their behalf is the more surprising failure.
+- **A tripped kill switch does not forfeit anybody.** The turn is dropped and the game stays
+  `RUNNING` for the reconciler to pick up. Forfeiting a model because *our* budget ran out would
+  put an operational decision into the benchmark results.
+- **The webhook is the only unauthenticated endpoint that writes to `users`**, so its signature
+  check is the whole of its security. Verified against forgery, a wrong secret, a tampered body, a
+  signature moved from another message, an unknown version, a replay, and a delivery from the
+  future — and it fails closed when no secret is configured.
+- **Production refuses to start** without a JWKS URL, an issuer, a webhook secret, and a budget.
+  Unconfigured, the verifier refuses every token, so the app would fail *closed* — safe, but the
+  symptom ("nothing works") points nowhere near the cause.
+- **Users are provisioned just-in-time as well as by webhook.** A verified token is already proof
+  that Clerk knows this person; waiting for the webhook would put a third party's delivery latency
+  in front of a new user's first action.
+
+**What is genuinely unverified**
+
+Every control above is tested against a locally generated RSA keypair and an in-memory JWKS, the
+same way the LLM tests are tested against a scripted provider — the suite never reaches Clerk, and
+forging the attack tokens *requires* holding a key Clerk would never issue. What has **not**
+happened is a real sign-in against a real Clerk instance: no account exists yet, so
+`CLERK_JWKS_URL`, `CLERK_ISSUER`, and the webhook endpoint have never seen live traffic. The
+integration is written and typechecked, not exercised. That is a configuration step before deploy,
+and the startup guard turns forgetting it into a refusal to boot rather than a silent hole.
 
 ---
 

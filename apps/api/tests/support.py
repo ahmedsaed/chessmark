@@ -53,9 +53,11 @@ async def seat_match(db: AsyncSession, queue: TurnQueue, **kwargs: Any) -> Fixtu
     return Fixture(match=match, first_job=job, queue=queue)
 
 
-def both_sides(white_moves: list[str], black_moves: list[str]) -> Callable[..., Any]:
+def both_sides(
+    white_moves: list[str], black_moves: list[str], *, cost: float = 0.0
+) -> Callable[..., Any]:
     """One completion function serving both players, chosen by whose transcript is being sent."""
-    return alternating(white_moves, black_moves)
+    return alternating(white_moves, black_moves, cost=cost)
 
 
 async def run_next(worker: TurnWorker, queue: TurnQueue, *, consumer: str = "test-worker") -> Any:

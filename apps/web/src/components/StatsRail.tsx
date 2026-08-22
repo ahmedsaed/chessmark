@@ -3,6 +3,10 @@
  *
  * `illegal` sits on the face of the card rather than in a methodology page. It is the benchmark's
  * most interesting number and the whole reason the project exists.
+ *
+ * The move list used to live here and now sits in the conversation as a filter — a move is an
+ * event in the same timeline as everything else, and keeping a second copy beside it meant two
+ * places to look and two things to keep in sync.
  */
 
 import type { GameDetail, Player } from "@/lib/types";
@@ -22,17 +26,12 @@ function cacheRate(player: Player): string {
 export function StatsRail({
   game,
   toMove,
-  moves,
   activePly,
-  onSeek,
 }: {
   game: GameDetail;
   toMove: "white" | "black" | null;
-  moves: string[];
-  /** Replay only: the ply on the board, highlighted in the move list. */
+  /** Replay only: how far through the game the board currently is. */
   activePly?: number;
-  /** Replay only: makes the move list a way to navigate, which is what people reach for first. */
-  onSeek?: (ply: number) => void;
 }) {
   const white = game.players.find((p) => p.colour === "white");
   const black = game.players.find((p) => p.colour === "black");
@@ -40,8 +39,15 @@ export function StatsRail({
   return (
     <aside aria-label="Game statistics" className="flex min-w-0 flex-col gap-2.5">
       <div className="flex flex-col gap-1.5 border border-line bg-surface-2 p-3">
-        <Row label="Move" value={String(Math.ceil(moves.length / 2) || 1)} />
-        <Row label="Plies" value={String(moves.length)} />
+        <Row label="Move" value={String(Math.ceil((activePly ?? game.ply_count) / 2) || 1)} />
+        <Row
+          label="Plies"
+          value={
+            activePly === undefined
+              ? String(game.ply_count)
+              : `${activePly} / ${game.ply_count}`
+          }
+        />
         <Row label="Status" value={game.status} />
         <Row
           label="Ranked"
@@ -60,49 +66,7 @@ export function StatsRail({
         <Row label="Tokens" value={game.total_tokens.toLocaleString()} muted />
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-2 border border-line bg-surface-2 p-3">
-        <Label>Moves</Label>
-        <ol className="tabular grid grid-cols-[1.75rem_1fr_1fr] gap-x-2 gap-y-0.5 overflow-y-auto font-mono text-[11.5px] text-ink-dim">
-          {Array.from({ length: Math.ceil(moves.length / 2) }, (_, index) => (
-            <li key={index} className="contents">
-              <span className="text-ink-faint">{index + 1}</span>
-              <Move san={moves[index * 2]} ply={index * 2 + 1} active={activePly} onSeek={onSeek} />
-              <Move san={moves[index * 2 + 1]} ply={index * 2 + 2} active={activePly} onSeek={onSeek} />
-            </li>
-          ))}
-        </ol>
-      </div>
     </aside>
-  );
-}
-
-function Move({
-  san,
-  ply,
-  active,
-  onSeek,
-}: {
-  san: string | undefined;
-  ply: number;
-  active?: number;
-  onSeek?: (ply: number) => void;
-}) {
-  if (!san) return <span />;
-
-  const isActive = active === ply;
-  const tone = isActive ? "bg-accent-deep text-accent" : "text-ink";
-
-  if (!onSeek) return <span className={tone}>{san}</span>;
-
-  return (
-    <button
-      type="button"
-      onClick={() => onSeek(ply)}
-      aria-current={isActive ? "true" : undefined}
-      className={`text-left transition-colors hover:text-accent ${tone}`}
-    >
-      {san}
-    </button>
   );
 }
 

@@ -97,6 +97,10 @@ typecheck: ## Typecheck backend and frontend
 	cd $(API) && uv run mypy src
 	cd $(WEB) && pnpm exec next typegen && pnpm typecheck
 
+bundle-secrets: ## Assert no API key reached the built client bundle (AUTH-07)
+	cd $(WEB) && pnpm build
+	python3 scripts/check_bundle_secrets.py
+
 check: lint typecheck test ## Run every check
 
 clean: ## Remove build artifacts and caches

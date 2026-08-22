@@ -111,6 +111,16 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Unit tests
+        run: pnpm test
+
+      # AUTH-07 / invariant 10: no API key may reach the client. Asserted against the built
+      # output rather than trusted, because `NEXT_PUBLIC_` prefixing turns any variable into a
+      # client-visible one and nothing else would catch a rename.
+      - name: No secrets in the client bundle
+        working-directory: .
+        run: python3 scripts/check_bundle_secrets.py
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest

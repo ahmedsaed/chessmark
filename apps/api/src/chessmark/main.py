@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from chessmark.api.deps import close_redis
-from chessmark.api.routes import events, games, health, models
+from chessmark.api.routes import admin, events, games, health, me, models, webhooks
 from chessmark.core.config import get_settings
 from chessmark.db.session import dispose_engine
 
@@ -20,8 +20,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await dispose_engine()
 
 
+class InsecureConfigurationError(RuntimeError):
+    """Production is missing a control that Phase 9 makes a hard gate (ADR-0011)."""
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
+
+    # Refuse to start rather than start unprotected. Without this the app would come up and fail
+    # closed — nobody could authenticate — which is safe but gives an operator no idea why.
+    if settings.environment == "production":
+        problems = settings.production_problems()
+        if problems:
+            raise InsecureConfigurationError(
+                "Refusing to start in production:\n  - " + "\n  - ".join(problems)
+            )
 
     app = FastAPI(
         title="Chessmark API",
@@ -48,6 +61,9 @@ def create_app() -> FastAPI:
     app.include_router(models.router)
     app.include_router(games.router)
     app.include_router(events.router)
+    app.include_router(me.router)
+    app.include_router(admin.router)
+    app.include_router(webhooks.router)
 
     return app
 

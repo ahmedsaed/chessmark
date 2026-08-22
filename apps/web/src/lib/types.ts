@@ -91,6 +91,7 @@ export type EventType =
   | "game_started"
   | "turn_started"
   | "thinking"
+  | "output"
   | "tool_called"
   | "illegal_attempt"
   | "move_made"
@@ -105,6 +106,19 @@ export interface GameEvent {
   created_at?: string;
 }
 
+/**
+ * One tool call as the conversation shows it.
+ *
+ * `args` and `result` are provider- and tool-shaped, so they stay `unknown` — the panel renders
+ * them generically rather than pretending to know the schema of seven different tools.
+ */
+export interface ToolCallView {
+  name: string;
+  ok: boolean;
+  args: Record<string, unknown>;
+  result: Record<string, unknown> | null;
+}
+
 /** One agent turn, assembled from the event stream. */
 export interface TurnView {
   key: string;
@@ -112,8 +126,11 @@ export interface TurnView {
   colour: Colour;
   playerId: string;
   model: string;
+  /** What the model was thinking. DeepSeek fills this; Gemini never does. */
   reasoning: string[];
-  tools: { name: string; ok: boolean }[];
+  /** What the model said outside a tool call. Gemini fills this; DeepSeek never does. */
+  output: string[];
+  tools: ToolCallView[];
   illegal: { move: string; detail: string; attempt: number }[];
   said: string[];
   san: string | null;
@@ -164,4 +181,15 @@ export interface RawCall {
   finish_reason: string | null;
   error: string | null;
   created_at: string;
+}
+
+/** `GET /me` — who the caller is and what today's quota has left. */
+export interface Me {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  is_admin: boolean;
+  games_started_today: number;
+  games_remaining_today: number;
+  usd_spent_today: string;
 }

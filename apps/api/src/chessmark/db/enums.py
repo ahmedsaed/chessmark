@@ -58,6 +58,11 @@ class EventType(StrEnum):
     GAME_STARTED = "game_started"
     TURN_STARTED = "turn_started"
     THINKING = "thinking"
+    #: Assistant prose that is not a tool call and not addressed to the opponent.
+    #: Distinct from THINKING because providers split differently: DeepSeek puts everything in
+    #: `reasoning`, Gemini puts everything in `content`, and collapsing the two would either hide
+    #: half the models or mislabel the other half.
+    OUTPUT = "output"
     TOOL_CALLED = "tool_called"
     ILLEGAL_ATTEMPT = "illegal_attempt"
     MOVE_MADE = "move_made"

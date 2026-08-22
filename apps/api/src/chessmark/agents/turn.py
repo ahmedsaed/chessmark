@@ -281,6 +281,21 @@ class TurnRunner:
                     },
                 )
 
+            if completion.content and completion.content.strip():
+                # Gemini says everything here and nothing in `reasoning`; DeepSeek does the exact
+                # opposite. Emitting only one of the two made an entire model look silent — 43 of
+                # Gemini's 83 calls in the first paid benchmark carried prose that never reached
+                # the page. Withheld from a human's opponent for the same reason reasoning is.
+                await append_event(
+                    self.session,
+                    game_id=self.game.id,
+                    type=EventType.OUTPUT,
+                    payload={
+                        "player_id": str(self.player.id),
+                        **({} if self._has_human_player else {"content": completion.content}),
+                    },
+                )
+
             await transcript.append_message(
                 self.session,
                 player_id=self.player.id,
@@ -340,6 +355,8 @@ class TurnRunner:
                     "player_id": str(self.player.id),
                     "tool": call.name,
                     "ok": tool_result.ok,
+                    "args": call.arguments,
+                    "result": tool_result.payload,
                     **(
                         {
                             "attempt": self.state.illegal_attempts,

@@ -50,7 +50,10 @@ export default async function GamePage({ params }: PageProps<"/games/[id]">) {
   ]);
 
   return (
-    <main className="mx-auto w-full max-w-[1400px] px-5 py-8">
+    /* Wider than the lobby's 1180px on purpose. The three columns are fluid now, so a narrow cap
+       stops being a reading-width guard and becomes the thing pinching the side rails — at 1920px
+       a 1400px cap left them at 220px each with 500px of empty page beside them. */
+    <main className="mx-auto w-full max-w-[2200px] px-5 py-8">
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <Link
           href="/"

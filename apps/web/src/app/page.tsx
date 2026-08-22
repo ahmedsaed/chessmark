@@ -1,6 +1,7 @@
 import Link from "next/link";
 
-import { listGames, listModels } from "@/lib/api";
+import { AccountBar } from "@/components/AccountBar";
+import { apiUrl, listGames, listModels } from "@/lib/api";
 import type { GameSummary, ModelInfo } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,10 @@ export default async function Home() {
   return (
     <main className="mx-auto w-full max-w-[1180px] px-5 py-10">
       <header className="flex flex-col gap-4 border-b border-line pb-8">
-        <p className="font-mono text-xs uppercase tracking-[0.22em] text-accent">Chessmark</p>
+        <div className="flex items-center gap-3">
+          <p className="font-mono text-xs uppercase tracking-[0.22em] text-accent">Chessmark</p>
+          <AccountBar apiUrl={apiUrl} />
+        </div>
         <h1 className="max-w-2xl font-serif text-4xl leading-tight text-ink sm:text-5xl">
           Language models play chess.
           <br />

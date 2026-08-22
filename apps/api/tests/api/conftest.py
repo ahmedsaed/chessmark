@@ -15,7 +15,8 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.api.deps import get_redis, get_session
+from chessmark.api.deps import get_redis, get_session, get_verifier
+from chessmark.core.auth import AuthError, Principal, TokenVerifier
 from chessmark.main import create_app
 
 
@@ -36,7 +37,44 @@ def app(db: AsyncSession, sessionmaker: Any, redis: Any) -> FastAPI:
 
     application.dependency_overrides[get_session] = _session
     application.dependency_overrides[get_redis] = _redis
+
+    # No Clerk, ever. The verifier is replaced with one that accepts exactly the tokens this suite
+    # mints — the same reasoning as the scripted provider: exercise the real dependency graph with
+    # only the third party swapped out.
+    application.dependency_overrides[get_verifier] = lambda: FakeVerifier()
     return application
+
+
+VALID_TOKENS: dict[str, Principal] = {}
+
+
+class FakeVerifier(TokenVerifier):
+    """Accepts tokens registered by `as_user`, rejects everything else.
+
+    Deliberately *not* a blanket allow. Half the tests here are about what happens to a caller
+    without a token or with a bad one, and a verifier that waved everything through would make
+    those tests pass without testing anything.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(jwks_url="https://clerk.test/.well-known/jwks.json")
+
+    def verify(self, token: str) -> Principal:
+        principal = VALID_TOKENS.get(token)
+        if principal is None:
+            raise AuthError("unknown test token")
+        return principal
+
+
+def as_user(
+    clerk_user_id: str = "user_test", *, email: str | None = "test@chessmark.test"
+) -> dict[str, str]:
+    """Mint a token for this suite and return the header that carries it."""
+    token = f"token-for-{clerk_user_id}"
+    VALID_TOKENS[token] = Principal(
+        clerk_user_id=clerk_user_id, email=email, display_name=clerk_user_id
+    )
+    return {"authorization": f"Bearer {token}"}
 
 
 @pytest.fixture

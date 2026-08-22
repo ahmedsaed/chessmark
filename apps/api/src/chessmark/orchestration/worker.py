@@ -33,8 +33,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.turn import TurnLimits, TurnResult, TurnRunner
+from chessmark.core.budget import GlobalBudget
 from chessmark.db.enums import EventType, GameStatus, TurnStatus
 from chessmark.db.models import Game, GameEvent, Player
+from chessmark.db.quotas import record_spend
 from chessmark.db.repositories import (
     append_event,
     finish_game,
@@ -63,6 +65,9 @@ GAME_OVER = TurnOutcome("game_over")
 NOT_RUNNING = TurnOutcome("not_running")
 TURN_FAILED = TurnOutcome("turn_failed")
 BUDGET = TurnOutcome("budget_exceeded")
+#: The global kill switch was tripped. The turn is not run and the game is left RUNNING, so it
+#: resumes when the budget resets rather than being forfeited for an outage of our own making.
+GLOBAL_BUDGET = TurnOutcome("global_budget_halted")
 ABORTED = TurnOutcome("aborted")
 
 #: How many times a turn may be retried after a provider failure before the game is abandoned.
@@ -104,12 +109,15 @@ class TurnWorker:
         redis: Redis[Any] | None = None,
         limits: TurnLimits | None = None,
         consumer: str | None = None,
+        budget: GlobalBudget | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
         self.queue = queue
         self.gateway = gateway
         self.redis = redis
         self.limits = limits
+        #: Layer 1 of ADR-0011. Optional so scripted tests, which spend nothing, need not wire it.
+        self.budget = budget
         self.consumer = consumer or f"worker-{uuid.uuid4().hex[:8]}"
         self._stopping = asyncio.Event()
 
@@ -179,6 +187,20 @@ class TurnWorker:
             if over_budget is not None:
                 return HandledJob(BUDGET, game.id, referee.ply, game_outcome=over_budget)
 
+            # Layer 1, checked here rather than in the API because this is the last point before
+            # money is actually spent — a game admitted an hour ago must not keep spending into a
+            # budget that has since run out (AUTH-05).
+            if self.budget is not None and await self.budget.tripped():
+                log.warning(
+                    "global daily budget reached; halting turn for %s at ply %s",
+                    game.id,
+                    referee.ply,
+                )
+                # Deliberately *not* re-enqueued and *not* forfeited. The game stays RUNNING with
+                # its job dropped; the reconciler picks it up as stalled once spending is possible
+                # again. Forfeiting a model for our budget would corrupt the benchmark.
+                return HandledJob(GLOBAL_BUDGET, game.id, referee.ply)
+
             colour = referee.side_to_move
             player = await self._player(session, game.id, colour)
             opponent = await self._player(session, game.id, colour.opponent)
@@ -202,6 +224,10 @@ class TurnWorker:
             )
             before_seq = game.event_seq
             result = await runner.run()
+
+            # Roll this turn's spend into the day's counters. Both are best-effort relative to the
+            # turn: the money is already spent, so a failure to record must not undo the game.
+            await self._record_spend(session, game, result)
 
             # A provider failure is ours, not the model's (AGENT-09). Raising discards the whole
             # turn so the retry starts from an untouched transcript.
@@ -285,6 +311,21 @@ class TurnWorker:
             msg = f"game {game_id} has no {colour.value} player"
             raise LookupError(msg)
         return player
+
+    async def _record_spend(self, session: AsyncSession, game: Game, result: TurnResult) -> None:
+        """Add a turn's cost to the global counter and to the owner's daily ledger.
+
+        Costs come from `result.cost_usd`, which is computed from the token counts the provider
+        actually returned — never estimated (invariant 4).
+        """
+        if result.cost_usd <= 0:
+            return
+
+        if self.budget is not None:
+            await self.budget.record(result.cost_usd)
+
+        if game.created_by_user_id is not None:
+            await record_spend(session, game.created_by_user_id, result.cost_usd)
 
     async def _enforce_budget(
         self, session: AsyncSession, game: Game, referee: Referee

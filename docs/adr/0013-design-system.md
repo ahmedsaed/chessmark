@@ -106,3 +106,36 @@ bottom, which flips the board and its rank gutter with it.
 
 - Nothing blocking. Revisit whether folding-by-default is right once real games exist and we can
   see how a 60-move transcript actually reads.
+
+
+---
+
+## Amendment — 2026-08-22: the three columns are fluid, and the timeline owns the move list
+
+Two changes to the live-game and replay layout, made after the first paid benchmark game was
+watchable end to end and the fixed rails turned out to be wrong in practice.
+
+**The columns are no longer fixed-width.** The board is square, so its size is bounded by whichever
+runs out first — the height under the page chrome, or its share of the width. That is one CSS
+expression (`min()`), and the two rails are `1fr` each, splitting whatever is left. Previously both
+rails were pinned at 262px, which left a dead gutter beside each of them on any viewport where the
+board was height-limited — which is most of them.
+
+Deriving the board's *width from its own height* is the tidier idea and does not work: in a grid an
+`auto` column must resolve its width before the row height is known, and flex ties the same knot the
+other way. Both were tried; one produced a 1193px board on an 800px-tall viewport. The `min()` is
+deterministic and worth the arithmetic.
+
+**The move list moved into the conversation as a filter.** A move is an event in the same timeline
+as everything else, and keeping a second copy of it in the stats rail meant two places to look. The
+filters are now All / Moves + talk / Talk / Moves. The replay transport moved to the top of the
+conversation column for the same reason it left the centre: it scrubs the whole page, and taking it
+out from under the board gives the board back the height that limits how large it can get.
+
+**A fourth register: `output`.** ADR-0013 originally named three — reasoning, tool calls, and
+`say`. Providers do not agree on where prose goes: DeepSeek writes everything to `reasoning` and
+nothing to `content`, Gemini does the exact reverse. Rendering only `reasoning` made Gemini appear
+to play eighty plies in total silence while 43 of its 83 calls carried text. Model output is now its
+own event type and its own register, and tool calls show their arguments inline with their result
+behind a disclosure — `get_legal_moves()` succeeded says nothing; what was asked and what came back
+is the part worth reading.

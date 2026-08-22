@@ -16,6 +16,12 @@ function asNumber(value: unknown): number {
   return typeof value === "number" ? value : 0;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 export interface StreamState {
   turns: TurnView[];
   moves: string[];
@@ -47,6 +53,7 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
           playerId: asString(payload.player_id),
           model: asString(payload.model),
           reasoning: [],
+          output: [],
           tools: [],
           illegal: [],
           said: [],
@@ -65,11 +72,21 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
         break;
       }
 
+      case "output": {
+        // Prose the model wrote outside a tool call. Kept apart from `reasoning` because
+        // providers split the two differently and a reader wants to know which they are seeing.
+        const text = asString(payload.content);
+        if (current && text.trim()) current.output.push(text);
+        break;
+      }
+
       case "tool_called": {
         if (current) {
           current.tools.push({
             name: asString(payload.tool),
             ok: payload.ok !== false,
+            args: asRecord(payload.args),
+            result: payload.result === undefined ? null : asRecord(payload.result),
           });
         }
         break;

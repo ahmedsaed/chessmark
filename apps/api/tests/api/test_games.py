@@ -11,6 +11,7 @@ from chessmark.agents.registry import sync_model_registry
 from chessmark.agents.scripted import plays, says, scripted, tool_call
 from chessmark.db.enums import GameStatus
 from chessmark.db.models import Game
+from tests.api.conftest import as_user
 from tests.orchestration.conftest import Fixture, both_sides, run_next
 
 pytestmark = pytest.mark.integration
@@ -201,7 +202,9 @@ async def test_creating_a_game_enqueues_it(client: AsyncClient, db: AsyncSession
     await db.commit()
 
     response = await client.post(
-        "/games", json={"white": "test/white", "black": "test/black", "max_plies": 20}
+        "/games",
+        json={"white": "test/white", "black": "test/black", "max_plies": 20},
+        headers=as_user("user_enqueue"),
     )
 
     assert response.status_code == 201
@@ -219,7 +222,11 @@ async def test_creating_a_game_enqueues_it(client: AsyncClient, db: AsyncSession
 async def test_creating_with_an_unknown_model_is_rejected(
     client: AsyncClient, db: AsyncSession
 ) -> None:
-    response = await client.post("/games", json={"white": "nope/nope", "black": "nope/nope"})
+    response = await client.post(
+        "/games",
+        json={"white": "nope/nope", "black": "nope/nope"},
+        headers=as_user("user_unknown_model"),
+    )
 
     assert response.status_code == 400
     assert "Unknown model" in response.json()["detail"]
@@ -236,7 +243,11 @@ async def test_a_model_without_tools_cannot_play(client: AsyncClient, db: AsyncS
     )
     await db.commit()
 
-    response = await client.post("/games", json={"white": "test/mute", "black": "test/ok"})
+    response = await client.post(
+        "/games",
+        json={"white": "test/mute", "black": "test/ok"},
+        headers=as_user("user_no_tools"),
+    )
 
     assert response.status_code == 400
     assert "tool calling" in response.json()["detail"]
@@ -261,6 +272,7 @@ async def test_a_ranked_game_is_forced_silent(client: AsyncClient, db: AsyncSess
             "is_ranked": True,
             "trash_talk_enabled": True,
         },
+        headers=as_user("user_ranked"),
     )
 
     body = (await client.get(f"/games/{response.json()['id']}")).json()

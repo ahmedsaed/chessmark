@@ -29,7 +29,7 @@ from redis.asyncio import Redis  # noqa: E402
 
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
-from chessmark.agents.scripted import alternating  # noqa: E402
+from chessmark.agents.scripted import step, tool_call  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.models import Game, GameEvent, Ply  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
@@ -50,6 +50,60 @@ AMBER, CYAN, RED, GREEN = "\033[38;5;179m", "\033[38;5;73m", "\033[38;5;167m", "
 SCRIPTED_WHITE = ["e4", "Bc4", "Qh5", "Qxf7"]
 SCRIPTED_BLACK = ["e5", "Nc6", "Nf6"]
 
+# Deliberately exercises all four conversation registers, because a scripted game is how the UI is
+# developed and a script that only calls tools leaves most of the panel untested. Real models split
+# these differently — Gemini writes `content` and no `reasoning`, DeepSeek the exact reverse — so
+# White here is given prose and Black is given thinking.
+SCRIPTED_WHITE_TALK = [
+    "I will play the Italian Game. A classic for a reason.",
+    "Bishop to c4, eyeing f7 — the weakest square in your camp.",
+    "Queen to h5. You may want to look at f7 now.",
+    "Mate on f7. Good game.",
+]
+SCRIPTED_BLACK_THOUGHT = [
+    "White played e4. The classical reply is e5, fighting for the centre immediately.",
+    "Developing the knight to c6 defends e5 and adds a piece to the centre.",
+    "Nf6 develops with tempo. I should be watching f7, but I want the piece out.",
+]
+
+
+def scripted_players() -> Any:
+    """Both sides of a scripted game, with prose, reasoning, and trash talk.
+
+    Chooses a side from the system prompt at the head of the transcript, the same way
+    `agents.scripted.alternating` does — the worker calls the gateway once per turn without saying
+    whose turn it is.
+    """
+    white = iter(
+        [
+            step(
+                tool_call("get_legal_moves"),
+                tool_call("say", message=talk),
+                tool_call("make_move", move=move),
+                content=talk,
+            )
+            for move, talk in zip(SCRIPTED_WHITE, SCRIPTED_WHITE_TALK, strict=True)
+        ]
+    )
+    black = iter(
+        [
+            step(
+                tool_call("get_board"),
+                tool_call("make_move", move=move),
+                reasoning=thought,
+            )
+            for move, thought in zip(SCRIPTED_BLACK, SCRIPTED_BLACK_THOUGHT, strict=True)
+        ]
+    )
+
+    async def _complete(**kwargs: Any) -> Any:
+        messages = kwargs.get("messages") or [{}]
+        system = str(messages[0].get("content", ""))
+        source = white if "as white" in system.lower() else black
+        return next(source)
+
+    return _complete
+
 
 def indent(text: str, prefix: str = "     ") -> str:
     return "\n".join(f"{DIM}{prefix}{line}{OFF}" for line in text.splitlines())
@@ -61,8 +115,15 @@ def render(event: GameEvent, board: ChessBoard) -> bool:
     payload: dict[str, Any] = event.payload or {}
 
     if kind == "turn_started":
-        print(f"\n{DIM}ply {payload.get('ply')} · {payload.get('colour')} · "
-              f"{payload.get('model', '')}{OFF}")
+        print(
+            f"\n{DIM}ply {payload.get('ply')} · {payload.get('colour')} · "
+            f"{payload.get('model', '')}{OFF}"
+        )
+
+    elif kind == "output":
+        text = str(payload.get("content", "")).replace("\n", " ").strip()
+        if text:
+            print(f"  {BOLD}>{OFF} {text[:150]}{'…' if len(text) > 150 else ''}")
 
     elif kind == "thinking":
         text = str(payload.get("reasoning", "")).replace("\n", " ").strip()
@@ -73,8 +134,10 @@ def render(event: GameEvent, board: ChessBoard) -> bool:
         print(f"  {DIM}▸ {payload.get('tool')}(){OFF}")
 
     elif kind == "illegal_attempt":
-        print(f"  {RED}✗ {payload.get('move')} — {str(payload.get('detail', ''))[:88]}"
-              f" (attempt {payload.get('attempt')}){OFF}")
+        print(
+            f"  {RED}✗ {payload.get('move')} — {str(payload.get('detail', ''))[:88]}"
+            f" (attempt {payload.get('attempt')}){OFF}"
+        )
 
     elif kind == "move_made":
         board.push(str(payload.get("san")))
@@ -83,7 +146,7 @@ def render(event: GameEvent, board: ChessBoard) -> bool:
 
     elif kind == "message_sent":
         tint = AMBER if payload.get("colour") == "white" else CYAN
-        print(f'  {tint}💬 {payload.get("content")}{OFF}')
+        print(f"  {tint}💬 {payload.get('content')}{OFF}")
 
     elif kind == "game_ended":
         print(f"\n{GREEN}══ {payload.get('result')} · {payload.get('termination')}{OFF}")
@@ -150,7 +213,7 @@ async def main() -> int:
     black_model = "scripted/black" if args.scripted else args.black
 
     if args.scripted:
-        gateway = LlmGateway(completion_fn=alternating(SCRIPTED_WHITE, SCRIPTED_BLACK))
+        gateway = LlmGateway(completion_fn=scripted_players())
     else:
         gateway = LlmGateway(
             api_key=api_key,

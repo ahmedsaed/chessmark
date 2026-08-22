@@ -122,8 +122,11 @@ export function Scrubber({
   const moveNumber = ply === 0 ? 0 : Math.ceil(ply / 2);
 
   return (
-    <div className="flex flex-col gap-2 border border-line bg-surface-2 px-3 py-2.5">
-      <div className="flex items-center gap-2">
+    <div className="flex min-w-0 flex-col gap-2">
+      {/* Wraps rather than overflowing. A row of `flex-none` controls has an intrinsic minimum
+          width, and in a grid column that minimum is enough to push the whole page sideways —
+          which is exactly what it did before this. */}
+      <div className="flex flex-wrap items-center gap-1.5">
         <Control label="Start" hint="Home" onClick={() => step(-Infinity)} disabled={ply === 0}>
           ⏮
         </Control>
@@ -159,7 +162,7 @@ export function Scrubber({
           {moveNumber > 0 ? `move ${moveNumber}` : "start"}
         </span>
 
-        <span className="ml-auto flex flex-none items-center gap-1">
+        <span className="ml-auto flex flex-none items-center gap-0.5">
           {SPEEDS.map((option, index) => (
             <button
               key={option.label}

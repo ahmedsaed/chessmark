@@ -471,3 +471,41 @@ class ReadinessResponse(Schema):
     status: str
     database: bool
     redis: bool
+
+
+# ---------------------------------------------------------------------- admin
+
+
+class AdminSpend(Schema):
+    """Today's spend against the kill switch, plus the recorded totals to check it against."""
+
+    spent_today_usd: Decimal
+    daily_limit_usd: Decimal
+    remaining_usd: Decimal | None
+    tripped: bool
+    lifetime_recorded_usd: Decimal
+    games_total: int
+    games_running: int
+
+
+class AdminUsage(Schema):
+    user_id: uuid.UUID
+    day: dt.date
+    games_started: int
+    usd_spent: Decimal
+
+
+class MeOut(Schema):
+    """Who the caller is, and what they have left today.
+
+    The frontend needs the remaining allowance to say "3 of 20 games today" rather than letting
+    someone discover the quota by being refused.
+    """
+
+    id: uuid.UUID
+    email: str | None
+    display_name: str | None
+    is_admin: bool
+    games_started_today: int
+    games_remaining_today: int
+    usd_spent_today: Decimal

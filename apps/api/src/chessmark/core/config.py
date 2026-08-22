@@ -70,11 +70,24 @@ class Settings(BaseSettings):
     clerk_publishable_key: str = ""
     clerk_secret_key: str = ""
     clerk_jwks_url: str = ""
+    #: Expected `iss` claim. Empty disables the issuer check — acceptable locally, and checked at
+    #: startup in production, because a token from someone else's Clerk instance is a valid token
+    #: signed by a real key and the issuer is the only thing that distinguishes it.
+    clerk_issuer: str = ""
+    #: Clerk's webhook signing secret (`whsec_...`). Without it the webhook cannot be trusted and
+    #: refuses every delivery.
+    clerk_webhook_secret: str = ""
 
     # --- Cost & abuse controls ---
     max_usd_per_game: float = 1.00
     max_games_per_user_per_day: int = 20
+    #: Per-user daily spend ceiling. 0 disables it, leaving the game-count quota in charge.
+    max_usd_per_user_per_day: float = 5.00
     global_daily_usd_budget: float = 25.00
+
+    #: Rate limiting on money-spending endpoints. 0 disables it.
+    rate_limit_per_window: int = 10
+    rate_limit_window_seconds: float = 60.0
 
     # --- Provider routing (benchmark integrity) ---
     #: Quantizations a ranked game may be served by. Default is **8-bit and above**: a model
@@ -100,6 +113,33 @@ class Settings(BaseSettings):
     @property
     def is_local(self) -> bool:
         return self.environment == "local"
+
+    def production_problems(self) -> list[str]:
+        """Settings that are tolerable locally and dangerous in production.
+
+        Returned rather than raised so the caller decides — the checks are useful to print in a
+        deploy log even when they are not fatal.
+
+        The failure this prevents is specific: with no JWKS URL the verifier refuses every token,
+        so the app *fails closed* and nobody can start a game. That is safe but silent, and the
+        symptom ("nothing works") points nowhere near the cause. Refusing to boot names it.
+        """
+        problems: list[str] = []
+
+        if not self.clerk_jwks_url:
+            problems.append("CLERK_JWKS_URL is not set — no request could ever authenticate")
+        if not self.clerk_issuer:
+            # A token from someone else's Clerk instance is signed by a real key and verifies
+            # against their JWKS. The issuer is the only claim that says it was minted for us.
+            problems.append("CLERK_ISSUER is not set — tokens from any Clerk instance would pass")
+        if not self.clerk_webhook_secret:
+            problems.append("CLERK_WEBHOOK_SECRET is not set — user updates cannot be received")
+        if self.global_daily_usd_budget <= 0:
+            problems.append("GLOBAL_DAILY_USD_BUDGET is unset — spending would be uncapped")
+        if self.debug:
+            problems.append("DEBUG is on — it exposes /docs and verbose errors")
+
+        return problems
 
 
 @lru_cache

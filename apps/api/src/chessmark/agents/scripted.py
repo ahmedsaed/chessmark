@@ -49,8 +49,14 @@ def step(
     reasoning_tokens: int = 0,
     cached_tokens: int = 0,
     finish_reason: str | None = None,
+    cost: float = 0.0,
 ) -> dict[str, Any]:
-    """One scripted provider response."""
+    """One scripted provider response.
+
+    `cost` is what OpenRouter reports it charged. Zero by default, because most tests care about
+    behaviour rather than money — but the budget tests need a turn that actually costs something,
+    and inventing the number here is better than making them stand up a pricing table.
+    """
     message: dict[str, Any] = {"role": "assistant", "content": content}
     if reasoning:
         message["reasoning_content"] = reasoning
@@ -74,7 +80,7 @@ def step(
             "total_tokens": prompt_tokens + completion_tokens,
             "prompt_tokens_details": {"cached_tokens": cached_tokens},
             "completion_tokens_details": {"reasoning_tokens": reasoning_tokens},
-            "cost": 0,
+            "cost": cost,
         },
     }
 
@@ -118,12 +124,12 @@ def scripted(*steps: dict[str, Any], repeat_last: bool = False) -> CompletionFn:
     return _complete
 
 
-def plays(moves: Iterable[str], *, per_move_tokens: int = 100) -> CompletionFn:
+def plays(moves: Iterable[str], *, per_move_tokens: int = 100, cost: float = 0.0) -> CompletionFn:
     """A model that simply plays the given moves in order, one per turn.
 
     The workhorse for orchestration tests: two of these can play a whole scripted game.
     """
-    sequence = itertools.cycle([step(tool_call("make_move", move=m)) for m in moves])
+    sequence = itertools.cycle([step(tool_call("make_move", move=m), cost=cost) for m in moves])
     calls: list[dict[str, Any]] = []
 
     async def _complete(**kwargs: Any) -> dict[str, Any]:
@@ -135,15 +141,17 @@ def plays(moves: Iterable[str], *, per_move_tokens: int = 100) -> CompletionFn:
     return _complete
 
 
-def alternating(white_moves: Iterable[str], black_moves: Iterable[str]) -> CompletionFn:
+def alternating(
+    white_moves: Iterable[str], black_moves: Iterable[str], *, cost: float = 0.0
+) -> CompletionFn:
     """One completion function serving both sides of a game.
 
     The worker calls the gateway once per turn without saying whose turn it is, so this decides
     from the system prompt at the head of the transcript. Lets a whole scripted game run through
     the real orchestration path with a single injected function.
     """
-    white = plays(white_moves)
-    black = plays(black_moves)
+    white = plays(white_moves, cost=cost)
+    black = plays(black_moves, cost=cost)
 
     async def _complete(**kwargs: Any) -> Any:
         messages = kwargs.get("messages") or [{}]
