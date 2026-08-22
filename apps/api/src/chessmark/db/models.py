@@ -471,6 +471,21 @@ class ModelEndpoint(Base):
     supports_tools: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
     max_completion_tokens: Mapped[int | None] = mapped_column(sa.Integer)
     is_active: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
+
+    #: Health, as OpenRouter measured it when this row was last refreshed. Endpoint selection is
+    #: by uptime (ADR-0015), so these are load-bearing rather than informational — and they are
+    #: stored rather than fetched live so a game can always say what the numbers were when its
+    #: endpoint was chosen.
+    uptime_30m: Mapped[float | None] = mapped_column(sa.Float)
+    uptime_1d: Mapped[float | None] = mapped_column(sa.Float)
+    throughput: Mapped[float | None] = mapped_column(sa.Float)
+    latency_ms: Mapped[float | None] = mapped_column(sa.Float)
+
+    #: Whether this endpoint caches without being asked. Anthropic and Alibaba do not, which is
+    #: why `agents/caching.py` exists; recording it per endpoint makes a 0% hit rate explicable
+    #: instead of suspicious.
+    supports_implicit_caching: Mapped[bool | None] = mapped_column(sa.Boolean)
+
     refreshed_at: Mapped[dt.datetime] = updated_at()
 
     __table_args__ = (

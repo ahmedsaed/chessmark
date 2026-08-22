@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -129,3 +130,133 @@ async def test_a_human_seat_has_no_model(db: AsyncSession) -> None:
 
     assert match.white.model_id is None
     assert match.white.sampling == {}
+
+
+# ====================================================================== endpoint pinning
+
+
+async def _with_endpoints(db: AsyncSession, slug: str, endpoints: list[dict]) -> None:
+    from chessmark.db.models import ModelEndpoint
+
+    model = await _register(db, slug)
+    for endpoint in endpoints:
+        db.add(
+            ModelEndpoint(
+                model_id=model.id,
+                provider_name=endpoint["provider"],
+                quantization=endpoint.get("quantization"),
+                uptime_1d=endpoint.get("uptime"),
+            )
+        )
+    await db.flush()
+
+
+async def test_a_seat_pins_exactly_one_endpoint(db: AsyncSession) -> None:
+    """ADR-0015. The first paid benchmark was served by Baidu for 70 calls and StreamLake for 33
+    inside one game — a blend nothing can reproduce, and the two are not equivalent."""
+    await _with_endpoints(
+        db,
+        "test/pinned",
+        [
+            {"provider": "Solid", "quantization": "fp8", "uptime": 99.9},
+            {"provider": "Flaky", "quantization": "fp8", "uptime": 80.0},
+        ],
+    )
+
+    match = await create_match(
+        db,
+        white=Seat(display_name="w", model="test/pinned"),
+        black=Seat(display_name="b", model="test/pinned"),
+    )
+
+    assert match.white.provider_routing["only"] == ["Solid"]
+    assert match.black.provider_routing["only"] == ["Solid"]
+
+
+async def test_pinning_clears_the_precision_filter(db: AsyncSession) -> None:
+    """The endpoint *is* the constraint once it is chosen. Naming a precision as well would refuse
+    the very endpoint just selected whenever it reports `unknown`."""
+    await _with_endpoints(
+        db, "test/closed", [{"provider": "Vendor", "quantization": "unknown", "uptime": 99.0}]
+    )
+
+    match = await create_match(
+        db,
+        white=Seat(display_name="w", model="test/closed"),
+        black=Seat(display_name="b", model="test/closed"),
+    )
+
+    assert match.white.provider_routing["only"] == ["Vendor"]
+    assert not match.white.provider_routing.get("quantizations")
+
+
+async def test_a_seat_can_ask_for_a_precision(db: AsyncSession) -> None:
+    """`model@fp4` is a contestant. Asking for it pins an fp4 endpoint even though a healthier fp8
+    one exists, because they are different contestants and must not be averaged."""
+    await _with_endpoints(
+        db,
+        "test/both",
+        [
+            {"provider": "Eight", "quantization": "fp8", "uptime": 99.9},
+            {"provider": "Four", "quantization": "fp4", "uptime": 70.0},
+        ],
+    )
+
+    match = await create_match(
+        db,
+        white=Seat(display_name="w", model="test/both", quantization="fp4"),
+        black=Seat(display_name="b", model="test/both", quantization="fp8"),
+    )
+
+    assert match.white.provider_routing["only"] == ["Four"]
+    assert match.black.provider_routing["only"] == ["Eight"]
+
+
+async def test_a_seat_can_force_an_endpoint(db: AsyncSession) -> None:
+    """For telling a model's fault apart from its host's — the investigation that found
+    StreamLake mangling tool calls needed exactly this."""
+    await _with_endpoints(
+        db,
+        "test/forced",
+        [
+            {"provider": "Healthy", "quantization": "fp8", "uptime": 99.9},
+            {"provider": "Suspect", "quantization": "fp8", "uptime": 99.0},
+        ],
+    )
+
+    match = await create_match(
+        db,
+        white=Seat(display_name="w", model="test/forced", provider="Suspect"),
+        black=Seat(display_name="b", model="test/forced"),
+    )
+
+    assert match.white.provider_routing["only"] == ["Suspect"]
+    assert match.black.provider_routing["only"] == ["Healthy"]
+
+
+async def test_asking_for_an_unserved_precision_refuses_the_match(db: AsyncSession) -> None:
+    """Rather than quietly seating a different contestant."""
+    from chessmark.agents.registry import NoEndpointError
+
+    await _with_endpoints(
+        db, "test/eightonly", [{"provider": "Eight", "quantization": "fp8", "uptime": 99.0}]
+    )
+
+    with pytest.raises(NoEndpointError):
+        await create_match(
+            db,
+            white=Seat(display_name="w", model="test/eightonly", quantization="fp4"),
+            black=Seat(display_name="b", model="test/eightonly"),
+        )
+
+
+async def test_a_model_with_no_synced_endpoints_still_plays(db: AsyncSession) -> None:
+    """Better a game that runs and records what served it than a refusal over missing bookkeeping.
+    `scripted/white` will never have an endpoint row."""
+    match = await create_match(
+        db,
+        white=Seat(display_name="w", model="scripted/white"),
+        black=Seat(display_name="b", model="scripted/black"),
+    )
+
+    assert not match.white.provider_routing.get("only")

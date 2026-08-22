@@ -202,6 +202,13 @@ async def fetch_endpoints(client: Any, openrouter_id: str) -> list[dict[str, Any
     return [e for e in endpoints if isinstance(e, dict)]
 
 
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
 async def sync_endpoints(
     session: AsyncSession,
     model: ModelRegistry,
@@ -232,6 +239,12 @@ async def sync_endpoints(
             "supports_tools": "tools" in (endpoint.get("supported_parameters") or []),
             "max_completion_tokens": endpoint.get("max_completion_tokens"),
             "is_active": True,
+            # Health, as OpenRouter measured it. Selection is by uptime (ADR-0015).
+            "uptime_30m": _as_float(endpoint.get("uptime_last_30m")),
+            "uptime_1d": _as_float(endpoint.get("uptime_last_1d")),
+            "throughput": _as_float(endpoint.get("throughput_last_30m")),
+            "latency_ms": _as_float(endpoint.get("latency_last_30m")),
+            "supports_implicit_caching": endpoint.get("supports_implicit_caching"),
         }
         row = existing.get(name)
         if row is None:
@@ -269,3 +282,90 @@ async def endpoints_for(session: AsyncSession, model_id: uuid.UUID) -> list[Mode
         .order_by(ModelEndpoint.provider_name)
     )
     return list(rows)
+
+
+# ---------------------------------------------------------------------- pinning
+
+
+class NoEndpointError(LookupError):
+    """No endpoint serves this model at the requested precision.
+
+    Distinct from "we do not know about this model": the caller asked for something specific and it
+    does not exist, which is worth saying plainly rather than quietly falling back to whatever else
+    is on offer.
+    """
+
+    def __init__(self, model_slug: str, quantization: str | None) -> None:
+        wanted = quantization or "any precision"
+        super().__init__(f"no active endpoint serves {model_slug} at {wanted}")
+        self.model_slug = model_slug
+        self.quantization = quantization
+
+
+async def select_endpoint(
+    session: AsyncSession,
+    *,
+    model_slug: str,
+    quantization: str | None = None,
+) -> ModelEndpoint:
+    """The one endpoint a match will use for this seat, for the whole game (ADR-0015).
+
+    **By uptime, highest first, throughput as the tiebreak.** OpenRouter exposes no request counts,
+    so "the endpoint most likely to behave" has to be inferred; uptime over the last day measures
+    that property more directly than popularity would anyway.
+
+    `quantization` is the contestant's identity, not a filter — asking for `fp4` pins an fp4
+    endpoint, and a model with no fp4 endpoint simply has no fp4 contestant. Asking for nothing
+    takes the healthiest endpoint at any precision, and whatever that turns out to be is recorded.
+
+    Endpoints that cannot call tools are never selected: an agent that cannot act cannot play
+    (AGENT-01), and picking one would produce a forfeit that says nothing about the model.
+    """
+    query = (
+        sa.select(ModelEndpoint)
+        .join(ModelRegistry, ModelRegistry.id == ModelEndpoint.model_id)
+        .where(
+            ModelRegistry.openrouter_id == model_slug,
+            ModelEndpoint.is_active.is_(True),
+            ModelEndpoint.supports_tools.is_(True),
+        )
+        .order_by(
+            # NULLS LAST: an endpoint whose uptime we have never measured is not a good pick, but
+            # it is better than none at all.
+            sa.desc(
+                sa.func.coalesce(ModelEndpoint.uptime_1d, ModelEndpoint.uptime_30m)
+            ).nulls_last(),
+            sa.desc(ModelEndpoint.throughput).nulls_last(),
+            ModelEndpoint.provider_name,
+        )
+    )
+    if quantization is not None:
+        query = query.where(ModelEndpoint.quantization == quantization)
+
+    endpoint = await session.scalar(query.limit(1))
+    if endpoint is None:
+        raise NoEndpointError(model_slug, quantization)
+    return endpoint
+
+
+async def quantizations_offered(session: AsyncSession, model_slug: str) -> list[str]:
+    """Every precision this model can be played at — one contestant per entry (ADR-0015)."""
+    rows = await session.scalars(
+        sa.select(ModelEndpoint.quantization)
+        .join(ModelRegistry, ModelRegistry.id == ModelEndpoint.model_id)
+        .where(
+            ModelRegistry.openrouter_id == model_slug,
+            ModelEndpoint.is_active.is_(True),
+            ModelEndpoint.supports_tools.is_(True),
+        )
+        .distinct()
+    )
+    return sorted({row or "unknown" for row in rows})
+
+
+def is_floating_alias(model_slug: str) -> bool:
+    """`~vendor/model-latest` points at different weights over time (ADR-0015).
+
+    Playable, never rankable: a rating computed across changing weights is a rating of nothing.
+    """
+    return model_slug.startswith("~") or model_slug.endswith("-latest")

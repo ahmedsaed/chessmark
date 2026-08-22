@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.core.budget import GlobalBudget
 from chessmark.db.enums import GameStatus
-from chessmark.db.models import Game, LlmCall, Turn
+from chessmark.db.models import Game, LlmCall, Player, Turn
 from chessmark.orchestration.worker import BUDGET, GLOBAL_BUDGET, TurnWorker
 from tests.orchestration.conftest import Fixture, run_next
 
@@ -213,3 +213,62 @@ async def test_yesterdays_spend_does_not_hold_today_hostage(
     await budget.record(Decimal("100"), day=yesterday)
 
     assert not await budget.tripped()
+
+
+# ====================================================================== mangled tool calls
+
+
+async def test_a_mangled_tool_call_abandons_rather_than_forfeits(
+    db: AsyncSession, game: Fixture, sessionmaker: Any, queue: Any, redis: Any, budget: GlobalBudget
+) -> None:
+    """ADR-0015. The model called tools; its endpoint delivered them as prose. Forfeiting it would
+    publish a claim about the model that the host manufactured — `deepseek-v4-pro` lost two games
+    this way through StreamLake and none at all through Baidu or DeepInfra.
+
+    Same treatment as a provider outage: the turn fails, the game is abandoned, nobody loses.
+    """
+    from chessmark.agents.scripted import step
+
+    bar = "\uff5c"  # FULLWIDTH VERTICAL LINE — what DeepSeek actually emits
+    leaked = f'<{bar}DSML{bar}tool_calls>\n<{bar}DSML{bar}invoke name="get_board">'
+
+    async def mangling_provider(**kwargs: Any) -> Any:
+        # A response with reasoning full of tool-call markup and no structured tool calls.
+        return step(reasoning=leaked)
+
+    worker = _worker(sessionmaker, queue, redis, budget, mangling_provider)
+    for _ in range(6):
+        if await run_next(worker, game.queue) is None:
+            break
+
+    db.expunge_all()
+    stored = await db.get(Game, game.game.id)
+    assert stored is not None
+    assert stored.status is GameStatus.ABORTED, "a provider's mangled output forfeited the model"
+    assert stored.result.value == "*"
+
+    players = (await db.scalars(sa.select(Player).where(Player.game_id == game.game.id))).all()
+    assert not any(p.forfeited for p in players), "nobody should be forfeited for a host's failure"
+
+
+async def test_a_genuine_refusal_still_forfeits(
+    db: AsyncSession, game: Fixture, sessionmaker: Any, queue: Any, redis: Any, budget: GlobalBudget
+) -> None:
+    """The other half. A model that simply replies in prose, with no tool-call markup anywhere, has
+    refused to act — and that is the failure AGENT-05 exists to measure. Laundering it into an
+    abandoned game would be the more flattering mistake and the worse one."""
+    from chessmark.agents.scripted import prose
+
+    async def silent_provider(**kwargs: Any) -> Any:
+        return prose("I think I will consider my options for a while.")
+
+    worker = _worker(sessionmaker, queue, redis, budget, silent_provider)
+    for _ in range(6):
+        if await run_next(worker, game.queue) is None:
+            break
+
+    db.expunge_all()
+    stored = await db.get(Game, game.game.id)
+    assert stored is not None
+    assert stored.termination is not None
+    assert stored.termination.value == "error_forfeit"

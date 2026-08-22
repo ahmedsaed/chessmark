@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents import prompts, transcript
 from chessmark.agents.llm import LlmGateway
+from chessmark.agents.mangled import ProviderMangledError, mangled_tool_call
 from chessmark.agents.tools import ToolDispatcher, ToolName, TurnState, tool_schemas
 from chessmark.agents.types import Completion, LlmError, ToolInvocation
 from chessmark.db.enums import EventType, ModerationStatus, PlayerKind, TurnStatus
@@ -235,6 +236,15 @@ class TurnRunner:
             result.status = TurnStatus.FAILED
             result.error = str(error)
             result.outcome = None
+        except ProviderMangledError as error:
+            # The endpoint failed to parse a tool call the model did make (ADR-0015). Same
+            # treatment as an outage, for the same reason: the model acted correctly and its host
+            # did not, so forfeiting it would publish a claim about the model that the endpoint
+            # manufactured. `deepseek-v4-pro` lost two games this way through StreamLake and none
+            # at all through Baidu or DeepInfra, on identical weights at identical precision.
+            result.status = TurnStatus.FAILED
+            result.error = str(error)
+            result.outcome = None
 
         result.latency_ms = int((time.perf_counter() - started) * 1000)
         await self._finalise(turn, result)
@@ -413,11 +423,16 @@ class TurnRunner:
           would blame the model for an output budget it does not control. Observed live:
           gpt-oss-20b:free spent 32,753 reasoning tokens, hit its provider's output ceiling, and
           was forfeited for a refusal it never made.
+        * the response carries tool-call *markup* but no structured tool calls — the model tried
+          to act and its endpoint failed to parse it. That is the host's failure, not the model's
+          (ADR-0015), so the game is abandoned rather than forfeited.
         * anything else — the model finished its turn and chose not to act. That is the failure
           AGENT-05 is about.
         """
         if completion.finish_reason == "length":
             return await self._retry_truncated(turn, result)
+        if mangled_tool_call(completion):
+            raise ProviderMangledError(self.model, completion)
         return await self._nudge(turn, result)
 
     async def _retry_truncated(self, turn: Turn, result: TurnResult) -> bool:

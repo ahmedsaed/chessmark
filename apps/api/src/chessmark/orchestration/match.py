@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.prompts import PROMPT_VERSION
-from chessmark.agents.registry import endpoints_for
-from chessmark.agents.routing import ProviderRouting, widen_for_first_party
+from chessmark.agents.registry import NoEndpointError, select_endpoint
+from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.tools import TOOL_SCHEMA_VERSION
 from chessmark.agents.turn import ensure_system_prompt
 from chessmark.db.enums import EventType, GameStatus, PlayerKind
@@ -33,6 +33,17 @@ class Seat:
     model_id: uuid.UUID | None = None
     user_id: uuid.UUID | None = None
     persona: str | None = None
+
+    quantization: str | None = None
+    """The precision this contestant plays at (ADR-0015).
+
+    Part of the contestant's identity, not a filter: `model@fp4` and `model@fp8` are different
+    contestants. `None` takes the healthiest endpoint at whatever precision, and records it.
+    """
+
+    provider: str | None = None
+    """Force a specific endpoint. Normally left unset and chosen by uptime — this exists for
+    telling a model's fault apart from its host's."""
 
 
 @dataclass(slots=True)
@@ -106,10 +117,17 @@ async def create_match(
             system_prompt_version=PROMPT_VERSION,
             sampling={"model": seat.model} if seat.model else {},
         )
-        # Resolved per seat: a widening that pins `only` to one vendor's endpoints is meaningless
-        # — and fatal — for the other seat's model.
+        # One endpoint, pinned for the whole game (ADR-0015). Previously the router chose per
+        # call, and it did switch mid-game: the first paid benchmark was served by Baidu for 70
+        # calls and StreamLake for 33, so that result measures a blend nothing can reproduce.
         players[colour].provider_routing = (
-            await resolve_routing(session, routing, seat.model)
+            await resolve_routing(
+                session,
+                routing,
+                seat.model,
+                quantization=seat.quantization,
+                provider=seat.provider,
+            )
         ).to_record()
 
     match = Match(game=game, white=players[Colour.WHITE], black=players[Colour.BLACK])
@@ -162,32 +180,43 @@ async def resolve_routing(
     session: AsyncSession,
     routing: ProviderRouting,
     model_slug: str | None,
+    *,
+    quantization: str | None = None,
+    provider: str | None = None,
 ) -> ProviderRouting:
-    """Adjust the base policy for one specific model.
+    """Pin one endpoint for this seat, for the whole game (ADR-0015).
 
-    A closed-weight model reports `unknown` because there is nothing to disclose, so the strict
-    default would make it unplayable. `widen_for_first_party` admits `unknown` only when that is
-    the sole option *and* only from the model's own vendor.
+    This used to *filter* precisions and leave the router to pick among what remained. That was
+    the wrong shape twice over: it assumed 4-bit is not worth measuring, and it did not actually
+    pin anything — the first paid benchmark was served by two different endpoints inside one game,
+    so the number it produced cannot be reproduced.
 
-    Resolved **per seat**. An earlier version applied one policy to the whole game, on the
-    reasoning that two policies would make a result ambiguous. That was wrong: the widening pins
-    `only` to a vendor's endpoints, and asking Google to serve a DeepSeek model is a 404. The game
-    records the policy requested; each player records what its own model resolved to.
+    Now the seat resolves to a single provider, chosen by uptime, and `only` carries it. The
+    precision comes from the contestant's identity rather than a policy: `model@fp4` is a
+    contestant, not a violation.
+
+    Falls back to the unpinned policy when there is nothing to pin against — an unregistered model,
+    or one with no synced endpoints. Better a game that runs and records what served it than a
+    refusal over missing bookkeeping.
     """
     if not model_slug:
         return routing
 
-    model = await session.scalar(
-        sa.select(ModelRegistry).where(ModelRegistry.openrouter_id == model_slug)
-    )
-    if model is None:
+    if provider is not None:
+        # Explicitly forced, usually to tell a model's fault apart from its host's.
+        return replace(routing, only=(provider,), quantizations=())
+
+    try:
+        endpoint = await select_endpoint(session, model_slug=model_slug, quantization=quantization)
+    except NoEndpointError:
+        # Asking for a precision nothing serves is the caller's mistake and should surface as one.
+        if quantization is not None:
+            raise
         return routing
 
-    pairs = [(e.provider_name, e.quantization) for e in await endpoints_for(session, model.id)]
-    if not pairs:
-        return routing
-
-    return widen_for_first_party(routing, model_slug=model_slug, endpoints=pairs)
+    # `quantizations` is cleared: the endpoint *is* the constraint now, and naming a precision as
+    # well would refuse the very endpoint we just chose whenever it reports `unknown`.
+    return replace(routing, only=(endpoint.provider_name,), quantizations=())
 
 
 async def registry_id_for(session: AsyncSession, model_slug: str | None) -> uuid.UUID | None:

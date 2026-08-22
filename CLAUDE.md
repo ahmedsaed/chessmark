@@ -131,7 +131,7 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–9 complete.** 642 backend + 19 frontend tests, CI green.
+**Phases 0–9 complete.** 676 backend + 19 frontend tests, CI green.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -156,9 +156,12 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
   daily quota, per-game cap, per-turn ceiling); sliding-window rate limiting; an admin surface.
   Reading stays open to everyone. **Never exercised against a real Clerk instance** — no account
   exists yet, so that is a configuration step before deploy.
-- **Provider routing** ([ADR-0014](docs/adr/0014-provider-routing-and-quantization.md)) — games
-  refuse sub-8-bit and undeclared endpoints, so a leaderboard row means one thing. Closed-weight
-  models are widened to their own vendor only. The precision that served each seat is recorded.
+- **Contestant identity** ([ADR-0015](docs/adr/0015-quantization-as-identity-and-pinned-endpoints.md),
+  superseding much of [0014](docs/adr/0014-provider-routing-and-quantization.md)) — a contestant is
+  **`(model, quantization)`**, so `model@fp4` and `model@fp8` are ranked separately rather than one
+  being banned. Every seat **pins one endpoint** for the whole game, chosen by uptime; the router
+  used to switch mid-game, and did. A provider's mangled output abandons the game instead of
+  forfeiting the model.
 
 `agents/scripted.py` is the workhorse for testing and for local development: it plugs in as
 `LlmGateway(completion_fn=...)` so a whole game can run with no API key, exercising the real path

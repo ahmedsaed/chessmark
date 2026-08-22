@@ -19,7 +19,8 @@ supersedes the old one, rather than an edit.
 | [0011](0011-server-keys-layered-budgets.md) | Server-held API keys with four layers of budget control | Accepted |
 | [0012](0012-nonstandard-local-ports.md) | Non-standard local ports | Accepted |
 | [0013](0013-design-system.md) | Design system: Board & Amber, dark only, conversation-led | Accepted |
-| [0014](0014-provider-routing-and-quantization.md) | Pin provider routing and exclude sub-8-bit quantization | Accepted |
+| [0014](0014-provider-routing-and-quantization.md) | Pin provider routing and exclude sub-8-bit quantization | Superseded in part by [0015](0015-quantization-as-identity-and-pinned-endpoints.md) |
+| [0015](0015-quantization-as-identity-and-pinned-endpoints.md) | Quantization identifies the contestant; endpoints are pinned per match | Accepted |
 
 ## Template
 
