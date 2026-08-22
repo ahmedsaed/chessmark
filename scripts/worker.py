@@ -15,6 +15,7 @@ import logging
 import os
 import signal
 import sys
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from redis.asyncio import Redis  # noqa: E402
 
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
+from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.orchestration import TurnQueue, TurnWorker, reconcile  # noqa: E402
@@ -51,14 +53,24 @@ async def main() -> int:
         format="%(asctime)s %(levelname)-5s %(name)s %(message)s",
     )
 
-    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    # Environment first, then `.env` via settings — the file is where the key lives for everyone
+    # working on this project, and reading only `os.environ` meant the worker refused to start
+    # while every other entry point found the key.
+    api_key = os.environ.get("OPENROUTER_API_KEY") or settings.openrouter_api_key
     if not api_key:
-        print("OPENROUTER_API_KEY is not set", file=sys.stderr)
+        print(
+            "OPENROUTER_API_KEY is not set in the environment or .env",
+            file=sys.stderr,
+        )
         return 2
 
     redis: Redis[Any] = Redis.from_url(str(settings.redis_url))
     queue = TurnQueue(redis)
     sessionmaker = get_sessionmaker()
+    # Layer 1 of ADR-0011. This worker is what serves games started from the web UI, so without a
+    # budget it is a way to spend money with no daily ceiling — the same hole `make play` had.
+    budget = GlobalBudget(redis, daily_limit_usd=Decimal(str(settings.global_daily_usd_budget)))
+
     worker = TurnWorker(
         sessionmaker=sessionmaker,
         queue=queue,
@@ -67,6 +79,7 @@ async def main() -> int:
             pricing=PricingTable.from_seed_file(API_ROOT / "seeds" / "models.json"),
         ),
         redis=redis,
+        budget=budget,
     )
 
     loop = asyncio.get_running_loop()

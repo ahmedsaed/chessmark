@@ -171,6 +171,34 @@ def main() -> int:
         for problem in problems:
             bad(f"production: {problem}")
 
+    # ---------------------------------------------------------------- the running server
+    #
+    # Configuration being right is not the same as the *process* having read it. Settings are
+    # cached per process, so an API started before `.env` was written keeps serving the old values
+    # and this script would happily pass while every sign-in returned 500 — which is exactly what
+    # happened. Probing the live server is the only way to catch that.
+    api = f"http://localhost:{settings.api_port}"
+    try:
+        request = urllib.request.Request(
+            f"{api}/me", headers={"authorization": "Bearer not.a.token"}
+        )
+        urllib.request.urlopen(request, timeout=5)
+    except urllib.error.HTTPError as error:
+        if error.code == 401:
+            ok("running API rejects a bad token with 401 (its Clerk config is loaded)")
+        elif error.code == 500:
+            bad(
+                "running API returns 500 on /me — it has not loaded the Clerk config",
+                "restart it: settings are cached per process, so a server started before "
+                ".env was written keeps serving the old values",
+            )
+        else:
+            warn(f"running API answered /me with HTTP {error.code}, expected 401")
+    except (urllib.error.URLError, TimeoutError):
+        warn(f"no API running at {api}", "start it with `make api` and re-run to check it live")
+    else:
+        bad("running API accepted a garbage token", "authentication is not being enforced")
+
     print()
     if failures:
         print(f"{failures} problem(s), {warnings} warning(s) — auth will not work yet.\n")

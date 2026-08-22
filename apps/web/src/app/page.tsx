@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { AccountBar } from "@/components/AccountBar";
+import { NewGameSection } from "@/components/NewGameSection";
 import { apiUrl, listGames, listModels } from "@/lib/api";
 import type { GameSummary, ModelInfo } from "@/lib/types";
 
@@ -34,7 +35,9 @@ export default async function Home() {
         </p>
       </header>
 
-      <Section title="Live now" empty="No games running. Start one from the API or `make play`.">
+      <NewGameSection apiUrl={apiUrl} models={models} />
+
+      <Section title="Live now" empty="No games running. Start one above, or with `make play`.">
         {live.map((game) => (
           <GameCard key={game.id} game={game} />
         ))}
