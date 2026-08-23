@@ -30,11 +30,14 @@ export function Replay({
   apiUrl,
   events,
   turns: turnRows,
+  actions,
 }: {
   game: GameDetail;
   apiUrl: string;
   events: GameEvent[];
   turns: TurnSummary[];
+  /** Copy-link and PGN. They ride the status row rather than a bar of their own (UI feedback). */
+  actions?: React.ReactNode;
 }) {
   const total = useMemo(() => plyCount(events), [events]);
 
@@ -89,7 +92,7 @@ export function Replay({
 
   return (
     <div className="flex flex-col gap-4">
-      <Header game={game} ended={ended} ply={ply} total={total} />
+      <Header game={game} ended={ended} ply={ply} total={total} actions={actions} />
 
       {/* One expression does the whole layout.
           The board is square, so its size is bounded by whichever runs out first — the height left
@@ -160,11 +163,13 @@ function Header({
   ended,
   ply,
   total,
+  actions,
 }: {
   game: GameDetail;
   ended: { result: string; termination: string; detail: string } | null;
   ply: number;
   total: number;
+  actions?: React.ReactNode;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
@@ -179,6 +184,10 @@ function Header({
       {ended?.detail && ply >= total && (
         <span className="text-xs text-ink-dim">{ended.detail}</span>
       )}
+      {/* Wrapped rather than rendered bare. `actions` is built in a Server Component and crosses
+          the RSC boundary into this client one, which lands it in the children array without a
+          key — React warns. A wrapper gives it a single-child slot instead of a list position. */}
+      {actions && <span className="ml-auto flex items-center">{actions}</span>}
     </div>
   );
 }

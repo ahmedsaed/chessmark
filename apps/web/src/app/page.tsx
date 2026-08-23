@@ -2,20 +2,18 @@ import Link from "next/link";
 
 import { HeroGame } from "@/components/HeroGame";
 import { MiniBoard } from "@/components/MiniBoard";
-import { NewGameSection } from "@/components/NewGameSection";
-import { apiUrl, getGame, getLeaderboard, listEvents, listGames, listModels } from "@/lib/api";
+import { apiUrl, getGame, getLeaderboard, listEvents, listGames } from "@/lib/api";
 import { pickReplays } from "@/lib/replays";
-import type { GameDetail, GameSummary, LeaderboardRow, ModelInfo } from "@/lib/types";
+import type { GameDetail, GameSummary, LeaderboardRow } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const [live, recent, models, board] = await Promise.all([
+  const [live, recent, board] = await Promise.all([
     listGames("running", 6),
     /* A wide window on purpose: the replay row draws from this pool, and a pool of twelve is
        mostly the same three games every load. */
     listGames(undefined, 60),
-    listModels(),
     getLeaderboard(),
   ]);
 
@@ -60,10 +58,6 @@ export default async function Home() {
         <TopContestants rows={board.rows} counted={board.games_counted} />
         <RecentGames games={finished.slice(0, 6)} />
       </div>
-
-      <NewGameSection apiUrl={apiUrl} models={models} />
-
-      <Contestants models={models} />
     </main>
   );
 }
@@ -252,91 +246,6 @@ function RecentGames({ games }: { games: GameSummary[] }) {
         </ul>
       )}
     </section>
-  );
-}
-
-/**
- * A model's contestants: one per precision, each naming the endpoint that would serve it.
- *
- * This used to show which precisions were *allowed*, because the policy was a filter. It is not
- * one any more — `model@fp4` and `model@fp8` are separate entrants, ranked apart (ADR-0015) — so
- * the card lists entrants rather than permissions, and names the endpoint, because the endpoint
- * turned out to change results as much as the precision does.
- */
-function Contestants({ models }: { models: ModelInfo[] }) {
-  const entrants = models.reduce((total, model) => total + model.contestants.length, 0);
-
-  return (
-    <section className="mt-16">
-      <div className="mb-4 flex items-baseline gap-3">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
-          The field
-        </h2>
-        <span className="h-px flex-1 bg-line-soft" aria-hidden />
-        <span className="tabular font-mono text-[10px] text-ink-faint">
-          {models.length} models · {entrants} entrants
-        </span>
-      </div>
-
-      <ul className="grid grid-cols-1 gap-px border border-line-soft bg-line-soft sm:grid-cols-2 lg:grid-cols-3">
-        {models.slice(0, 24).map((model) => (
-          <li key={model.id} className="bg-surface px-4 py-3">
-            <p className="truncate font-mono text-xs text-ink">{model.openrouter_id}</p>
-            <p className="tabular mt-1 font-mono text-[10px] text-ink-faint">
-              {model.provider}
-              {model.context_length ? ` · ${Math.round(model.context_length / 1000)}k ctx` : ""}
-              {model.supports_reasoning ? " · reasoning" : ""}
-              {model.is_floating_alias ? " · unrankable" : ""}
-            </p>
-            <ModelContestants model={model} />
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function ModelContestants({ model }: { model: ModelInfo }) {
-  if (model.contestants.length === 0) {
-    return (
-      <p className="mt-1.5 font-mono text-[9px] uppercase tracking-wider text-ink-faint">
-        no tool-capable endpoint
-      </p>
-    );
-  }
-
-  return (
-    <ul className="mt-1.5 flex flex-col gap-1">
-      {model.contestants.map((entrant) => (
-        <li
-          key={entrant.quantization}
-          className="flex flex-wrap items-center gap-1.5 font-mono text-[9px]"
-        >
-          <span
-            title={`played at ${entrant.quantization} — its own leaderboard entry`}
-            className="border border-good/40 px-1 py-px uppercase tracking-wider text-good"
-          >
-            {entrant.quantization}
-          </span>
-          <span className="text-ink-dim" title="the endpoint a game would pin">
-            {entrant.provider}
-          </span>
-          {entrant.uptime_1d !== null && (
-            <span
-              className="tabular text-ink-faint"
-              title="uptime over the last day — how the endpoint is chosen"
-            >
-              {entrant.uptime_1d.toFixed(1)}%
-            </span>
-          )}
-          {entrant.endpoint_count === 1 && (
-            <span title="only one endpoint serves this precision" className="text-ink-faint">
-              sole
-            </span>
-          )}
-        </li>
-      ))}
-    </ul>
   );
 }
 

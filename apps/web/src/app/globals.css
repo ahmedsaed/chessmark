@@ -80,6 +80,76 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* The replay scrubber.
+   `accent-color` alone only tints a native control — the track keeps the platform's groove and
+   the thumb keeps its bevel and shadow, which reads as a browser widget dropped into the page.
+   These rules draw both from tokens instead.
+
+   The vendor pseudo-elements are written as separate rules on purpose. A browser drops an entire
+   selector list when it fails to parse one selector in it, so combining `::-webkit-slider-thumb`
+   with `::-moz-range-thumb` would silently style neither. */
+.scrubber {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 1.25rem;
+  background: transparent;
+  cursor: pointer;
+}
+
+/* `--progress` is set inline from the current ply, so the filled portion of the track tracks the
+   value without a second element to keep in sync. */
+.scrubber::-webkit-slider-runnable-track {
+  height: 3px;
+  background: linear-gradient(
+    to right,
+    var(--color-accent) var(--progress, 0%),
+    var(--color-line) var(--progress, 0%)
+  );
+}
+
+.scrubber::-moz-range-track {
+  height: 3px;
+  background: linear-gradient(
+    to right,
+    var(--color-accent) var(--progress, 0%),
+    var(--color-line) var(--progress, 0%)
+  );
+}
+
+.scrubber::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 10px;
+  height: 14px;
+  margin-top: -5.5px; /* centres the thumb on a 3px track */
+  background: var(--color-accent);
+  border: 1px solid var(--color-on-accent);
+  transition: background-color 120ms;
+}
+
+.scrubber::-moz-range-thumb {
+  width: 10px;
+  height: 14px;
+  border-radius: 0;
+  background: var(--color-accent);
+  border: 1px solid var(--color-on-accent);
+  transition: background-color 120ms;
+}
+
+.scrubber:hover::-webkit-slider-thumb {
+  background: var(--color-ink);
+}
+
+.scrubber:hover::-moz-range-thumb {
+  background: var(--color-ink);
+}
+
+.scrubber:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 4px;
+}
+
 /* Numbers that sit in columns — token counts, ratings, clocks — always align. */
 .tabular {
   font-variant-numeric: tabular-nums;

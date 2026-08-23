@@ -29,10 +29,13 @@ export function LiveGame({
   game: initial,
   apiUrl,
   initialEvents,
+  actions,
 }: {
   game: GameDetail;
   apiUrl: string;
   initialEvents: GameEvent[];
+  /** Copy-link and PGN. They ride the status row rather than a bar of their own (UI feedback). */
+  actions?: React.ReactNode;
 }) {
   const { events, status } = useGameStream({
     gameId: initial.id,
@@ -84,7 +87,7 @@ export function LiveGame({
 
   return (
     <div className="flex flex-col gap-4">
-      <Header game={game} status={status} outcome={outcome} />
+      <Header game={game} status={status} outcome={outcome} actions={actions} />
 
       {/* One expression does the whole layout.
           The board is square, so its size is bounded by whichever runs out first — the height left
@@ -136,10 +139,12 @@ function Header({
   game,
   status,
   outcome,
+  actions,
 }: {
   game: GameDetail;
   status: string;
   outcome: { result: string; termination: string; detail: string } | null;
+  actions?: React.ReactNode;
 }) {
   /* `status` is the *connection*, not the game. Showing it as the game's state is how a finished
      game kept claiming to be live: the SSE stream sits open, so "live" stayed true long after the
@@ -176,6 +181,10 @@ function Header({
           {outcome?.detail || game.termination_detail}
         </span>
       )}
+      {/* Wrapped rather than rendered bare. `actions` is built in a Server Component and crosses
+          the RSC boundary into this client one, which lands it in the children array without a
+          key — React warns. A wrapper gives it a single-child slot instead of a list position. */}
+      {actions && <span className="ml-auto flex items-center">{actions}</span>}
     </div>
   );
 }

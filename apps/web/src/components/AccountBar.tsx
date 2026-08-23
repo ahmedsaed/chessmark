@@ -4,9 +4,10 @@
  * Sign-in state and today's allowance.
  *
  * Watching needs no account (AUTH-02), so this is a quiet corner of the header rather than a wall:
- * signed out, it offers a sign-in; signed in, it shows how many games are left today. Showing the
- * quota *before* it is hit matters — discovering your limit by being refused is a bad way to learn
- * it, especially when the refusal costs you the game you were trying to start.
+ * signed out, it offers a sign-in; signed in, it shows the credits left today — one credit is one
+ * game you can start. Showing the allowance *before* it is spent matters: discovering your limit
+ * by being refused is a bad way to learn it, especially when the refusal costs you the game you
+ * were trying to start.
  *
  * Renders nothing when Clerk is not configured, which is how the project runs locally.
  */
@@ -83,8 +84,8 @@ function Bar({ apiUrl }: { apiUrl: string }) {
             className="tabular font-mono text-[10px] text-ink-faint"
             title={`$${Number(me.usd_spent_today).toFixed(4)} spent today`}
           >
-            {me.games_remaining_today} game
-            {me.games_remaining_today === 1 ? "" : "s"} left today
+            {me.games_remaining_today} credit
+            {me.games_remaining_today === 1 ? "" : "s"}
           </span>
         )}
         <UserButton />

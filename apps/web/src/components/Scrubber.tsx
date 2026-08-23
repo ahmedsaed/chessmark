@@ -194,7 +194,12 @@ export function Scrubber({
           }}
           aria-label="Ply"
           aria-valuetext={ply === 0 ? "starting position" : `ply ${ply} of ${total}`}
-          className="h-1 w-full flex-1 cursor-pointer appearance-none bg-line accent-[var(--color-accent)]"
+          className="scrubber flex-1"
+          style={
+            {
+              "--progress": `${total > 0 ? (ply / Math.max(total, 1)) * 100 : 0}%`,
+            } as React.CSSProperties
+          }
         />
       </label>
     </div>

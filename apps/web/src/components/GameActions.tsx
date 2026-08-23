@@ -24,7 +24,7 @@ export function GameActions({ pgnHref }: { pgnHref: string }) {
   }
 
   return (
-    <span className="ml-auto flex items-center gap-2">
+    <span className="flex items-center gap-2">
       <button
         type="button"
         onClick={copy}

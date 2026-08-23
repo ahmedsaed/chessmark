@@ -53,14 +53,23 @@ export default async function GamePage({ params }: PageProps<"/games/[id]">) {
        stops being a reading-width guard and becomes the thing pinching the side rails — at 1920px
        a 1400px cap left them at 220px each with 500px of empty page beside them. */
     <main className="mx-auto w-full max-w-[2200px] flex-1 px-5 py-8">
-      <div className="mb-5 flex flex-wrap items-center gap-3">
-        <GameActions pgnHref={pgnUrl(id)} />
-      </div>
-
+      {/* The actions used to sit in a bar of their own above the status row, which cost a whole
+          row of vertical space to hold two small buttons. They ride the status row now. */}
       {finished ? (
-        <Replay game={game} apiUrl={apiUrl} events={events} turns={turns} />
+        <Replay
+          game={game}
+          apiUrl={apiUrl}
+          events={events}
+          turns={turns}
+          actions={<GameActions pgnHref={pgnUrl(id)} />}
+        />
       ) : (
-        <LiveGame game={game} apiUrl={apiUrl} initialEvents={events} />
+        <LiveGame
+          game={game}
+          apiUrl={apiUrl}
+          initialEvents={events}
+          actions={<GameActions pgnHref={pgnUrl(id)} />}
+        />
       )}
     </main>
   );
