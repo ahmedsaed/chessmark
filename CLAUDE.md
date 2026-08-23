@@ -131,7 +131,7 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–9 complete.** 676 backend + 19 frontend tests, CI green.
+**Phases 0–9 and 12 complete.** 762 backend + 19 frontend tests, CI green.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -195,6 +195,12 @@ same model, same fp8. Provider is recorded per call for exactly this reason
 **The ply cap is a cost bound, not a rules bound** — threefold and the fifty-move rule are applied
 automatically, so games terminate on their own. 300 plies is the standard; 80 sat at the median of
 real games and let the harness decide half the results.
+
+-  — Glicko-2 from Glickman'''s paper, and the rules for which games may be rated.
+  A contestant is `(model, quantization)`. Forfeits count; harness stops do not. Pure, like `game/`.
+
+- `chessmark.bench` — Glicko-2 from Glickman's paper, and the rules for which games may be rated.
+  A contestant is `(model, quantization)`. Forfeits count; harness stops do not. Pure, like `game/`.
 
 **Next up: Phase 10 — human vs model.** See [ROADMAP.md](docs/ROADMAP.md#phase-10--human-vs-model).
 

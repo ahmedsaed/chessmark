@@ -700,7 +700,7 @@ and the startup guard turns forgetting it into a refusal to boot rather than a s
 
 ---
 
-## Phase 12 — Ratings & leaderboard
+## Phase 12 — Ratings & leaderboard ✅ COMPLETE
 
 **Goal:** a public, defensible ranking of models.
 
@@ -712,13 +712,60 @@ and the startup guard turns forgetting it into a refusal to boot rather than a s
 5. A methodology page stating exactly how ranking works and where it's weak (BENCH-10)
 
 **Exit criteria**
-- [ ] The Glicko-2 implementation reproduces the worked example from Glickman's paper to 3 decimal places
-- [ ] Only games with `is_ranked = true` affect ratings, asserted by a test
-- [ ] Every leaderboard row drills through to the games that produced it
-- [ ] Ratings recomputed from scratch reproduce the stored values exactly (determinism test)
-- [ ] The methodology page is written and linked from the leaderboard
+- [x] The Glicko-2 implementation reproduces the worked example from Glickman's paper — **exactly**, on the internal scale the paper computes (`mu' = -0.2069`, `phi' = 0.8722`). See the note below on why its printed `1464.06` is not the full-precision answer
+- [x] Only games with `is_ranked = true` affect ratings, asserted by a test — and demonstrated live: 29 of 36 finished games are excluded for exactly this
+- [x] Every leaderboard row drills through to the games that produced it — rating → its games → the game page → the raw provider payload
+- [x] Ratings recomputed from scratch reproduce the stored values exactly — asserted in tests and verified against the real six-game round robin
+- [x] The methodology page is written and linked from the leaderboard
 
 **Covers:** BENCH-01, BENCH-02, BENCH-03, BENCH-04, BENCH-10, UI-05
+
+**The first ranked round robin**
+
+Four contestants, six games, trash talk off, one pinned endpoint per seat, $1.65 total:
+
+| # | contestant | rating | W/D/L | illegal/move | cost/game |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `gemini-3.7-flash@unknown` | 1800 ± 228 | 3/0/0 | **0.000** | $0.235 |
+| 2 | `deepseek-v4-flash@fp4` | 1600 ± 228 | 2/0/1 | 0.075 | $0.039 |
+| 3 | `glm-4.7@fp4` | 1400 ± 228 | 1/0/2 | **0.000** | $0.129 |
+| 4 | `gemini-2.5-flash-lite@unknown` | 1200 ± 228 | 0/0/3 | 0.667 | $0.033 |
+
+Six decisive games, no draws. The two Geminis are a clean generational comparison: 3.7 won every
+game with no illegal attempts, 2.5-flash-lite lost every game at **two illegal attempts every three
+moves**. `glm-4.7` is the interesting row — last on chess, perfect on legality, which is precisely
+the distinction this benchmark exists to draw and which a win-loss table alone would hide.
+
+**Notes**
+
+- **Glicko-2 over Elo, for the deviation.** ± 228 after three games is the system being honest, and
+  it is the number that stops a reader treating this ladder as settled. The ratings landing on
+  exactly 1800/1600/1400/1200 is what a single rating period with a clean 3-2-1-0 finish produces
+  from equal starting points; it is arithmetic, not a coincidence worth trusting.
+- **The paper's worked example needs care.** Glickman prints `r' = 1464.06`, which is *not* the
+  full-precision answer — it converts his own rounded `mu'` of -0.2069. Carrying precision through
+  gives 1464.0507. The tests assert the internal-scale values he actually computes, plus a second
+  test that reproduces his printed figure from its rounded input, so nobody later "fixes" the
+  implementation to match the PDF.
+- **Rating a period, not a game.** Rating game by game is the obvious shortcut and gives a
+  different, less defensible answer. A test pins that they differ.
+- **Exclusions are served, not hidden.** 30 of 36 finished games do not count, each with a game id
+  and a sentence. A ranking that silently drops most of its games is indistinguishable from a wrong
+  one, so the count sits on the leaderboard next to the numbers.
+- **Forfeits count; harness stops do not.** A model that ran out of illegal-move retries failed at
+  the task and that is the measurement. A ply cap, a spend budget or an unreachable provider are our
+  decisions — and not hypothetically: two such games turned out to be hiding a resignation and a
+  checkmate one move away, found by raising the budget and playing on.
+- **A capped budget manufactures non-results.** The first attempt at this round robin used $0.30 and
+  its opening game hit the cap at ply 31, producing exactly the category the rules exclude. Restarted
+  with cheaper contestants and a cap that does not bind.
+
+**What the ranking cannot support**
+
+Written on the methodology page rather than left implicit: samples are small and deviations wide,
+colour is not balanced, there is no absolute anchor so a 1700 here means nothing elsewhere, cost
+measures our caching implementation as much as the model, and a contestant requested without a
+precision can be served at a different one between games.
 
 ---
 
