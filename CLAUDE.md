@@ -158,8 +158,10 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
   [ADR-0011](docs/adr/0011-server-keys-layered-budgets.md)) — Clerk JWTs verified against cached
   JWKS with the algorithm pinned; four independent budget layers (global kill switch, per-user
   daily quota, per-game cap, per-turn ceiling); sliding-window rate limiting; an admin surface.
-  Reading stays open to everyone. **Never exercised against a real Clerk instance** — no account
-  exists yet, so that is a configuration step before deploy.
+  Reading stays open to everyone. Exercised against a real Clerk instance: a real sign-in works,
+  and JIT user provisioning commits (it silently did not, at first — `/me` answered correctly
+  while `users` stayed empty). **The `user.deleted` webhook is still not wired**, so a deleted
+  Clerk account leaves its rows behind. That one blocks a public launch, not a deploy.
 - **Contestant identity** ([ADR-0015](docs/adr/0015-quantization-as-identity-and-pinned-endpoints.md),
   superseding much of [0014](docs/adr/0014-provider-routing-and-quantization.md)) — a contestant is
   **`(model, quantization)`**, so `model@fp4` and `model@fp8` are ranked separately rather than one
@@ -213,8 +215,9 @@ real games and let the harness decide half the results.
 Frontend logic in `apps/web/src/lib` is unit-tested with `vitest` (`make test-web`); components
 are still covered by Playwright rather than a jsdom stack.
 
-Four known gaps, all recorded in the roadmap rather than quietly carried: Phase 7's Lighthouse
-score is **unverified** (no Lighthouse in this environment), NFR-06's >80% cache rate is met in
-aggregate but not by Gemini individually, Phase 8's PGN is verified against `chess.js` but **not
-against Lichess or SCID themselves**, and Phase 9's Clerk integration has **never seen a real
-sign-in**.
+Known gaps, recorded rather than quietly carried: Phase 7's Lighthouse score is **unverified**
+(no Lighthouse in this environment), NFR-06's >80% cache rate is met in aggregate but not by
+Gemini individually, Phase 8's PGN is verified against `chess.js` but **not against Lichess or
+SCID themselves**, Clerk's **`user.deleted` webhook is unwired**, and there is **no automated
+browser suite** — every UI claim in Phases 7, 8, 18 and 19 was checked by hand, so no test would
+catch a layout regression.
