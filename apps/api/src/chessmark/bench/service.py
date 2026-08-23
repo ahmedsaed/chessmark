@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.bench.glicko2 import Glicko2, Outcome
 from chessmark.bench.glicko2 import Rating as Glicko2Rating
-from chessmark.bench.ratable import GameFacts, Verdict, judge
+from chessmark.bench.ratable import GameFacts, judge
 from chessmark.db.enums import GameStatus
 from chessmark.db.models import Game, LlmCall, ModelRegistry, Player, Rating, Turn
 from chessmark.game import Colour, GameResult, Termination
@@ -200,6 +200,34 @@ async def _quantization_by_player(
     }
 
 
+async def ratable_games(
+    session: AsyncSession, *, prompt_version: str | None = PROMPT_VERSION
+) -> list[tuple[Game, list[Player], dict[uuid.UUID, str]]]:
+    """Every game that may move a rating, with its seats and their precisions.
+
+    One query shared by the ratings, the aggregates, and the drill-down. Three call sites deciding
+    eligibility separately is three chances for a leaderboard whose rating, whose illegal-move rate
+    and whose "games behind this row" cover different sets of games.
+    """
+    counted: list[tuple[Game, list[Player], dict[uuid.UUID, str]]] = []
+
+    games = list(
+        await session.scalars(
+            sa.select(Game)
+            .where(Game.status.in_([GameStatus.FINISHED, GameStatus.ABORTED]))
+            .order_by(Game.created_at)
+        )
+    )
+
+    for game in games:
+        players = list(await session.scalars(sa.select(Player).where(Player.game_id == game.id)))
+        if not judge(await _facts_for(session, game, players), prompt_version=prompt_version):
+            continue
+        counted.append((game, players, await _quantization_by_player(session, game.id, players)))
+
+    return counted
+
+
 async def compute_ratings(
     session: AsyncSession, *, prompt_version: str | None = PROMPT_VERSION, tau: float = 0.5
 ) -> RatingRun:
@@ -211,28 +239,14 @@ async def compute_ratings(
     system = Glicko2(tau=tau)
     run = RatingRun()
 
-    games = list(
-        await session.scalars(
-            sa.select(Game)
-            .where(Game.status.in_([GameStatus.FINISHED, GameStatus.ABORTED]))
-            .order_by(Game.created_at)
-        )
-    )
+    counted = await ratable_games(session, prompt_version=prompt_version)
+    run.excluded = await excluded_games(session, prompt_version=prompt_version)
 
     by_period: dict[int, list[tuple[Game, list[Player], dict[uuid.UUID, str]]]] = {}
-
-    for game in games:
-        players = list(await session.scalars(sa.select(Player).where(Player.game_id == game.id)))
-        verdict: Verdict = judge(
-            await _facts_for(session, game, players), prompt_version=prompt_version
+    for game, players, quantizations in counted:
+        by_period.setdefault(period_of(game.ended_at or game.created_at), []).append(
+            (game, players, quantizations)
         )
-        if not verdict:
-            run.excluded.append(Excluded(game_id=game.id, reason=verdict.reason))
-            continue
-
-        quantizations = await _quantization_by_player(session, game.id, players)
-        period = period_of(game.ended_at or game.created_at)
-        by_period.setdefault(period, []).append((game, players, quantizations))
         run.games_counted += 1
 
     run.periods = sorted(by_period)
@@ -273,6 +287,33 @@ async def compute_ratings(
     return run
 
 
+async def excluded_games(
+    session: AsyncSession, *, prompt_version: str | None = PROMPT_VERSION
+) -> list[Excluded]:
+    """Finished games that did not count, with the sentence explaining each.
+
+    Reported rather than discarded. "Some games are excluded" invites disbelief; a list of ids and
+    reasons is checkable (BENCH-10).
+    """
+    excluded: list[Excluded] = []
+
+    games = list(
+        await session.scalars(
+            sa.select(Game)
+            .where(Game.status.in_([GameStatus.FINISHED, GameStatus.ABORTED]))
+            .order_by(Game.created_at)
+        )
+    )
+
+    for game in games:
+        players = list(await session.scalars(sa.select(Player).where(Player.game_id == game.id)))
+        verdict = judge(await _facts_for(session, game, players), prompt_version=prompt_version)
+        if not verdict:
+            excluded.append(Excluded(game_id=game.id, reason=verdict.reason))
+
+    return excluded
+
+
 async def store_ratings(session: AsyncSession, run: RatingRun) -> int:
     """Replace the stored ratings with a freshly computed set.
 
@@ -303,26 +344,12 @@ async def compute_aggregates(
 ) -> dict[Contestant, Aggregate]:
     """Per-contestant metrics over the same games the ratings used.
 
-    The *same* eligibility rules, deliberately: a leaderboard whose rating and whose illegal-move
-    rate were computed over different sets of games would be quietly incoherent.
+    The *same* eligibility query, deliberately: a leaderboard whose rating and whose illegal-move
+    rate covered different sets of games would be quietly incoherent.
     """
     aggregates: dict[Contestant, Aggregate] = {}
 
-    games = list(
-        await session.scalars(
-            sa.select(Game)
-            .where(Game.status.in_([GameStatus.FINISHED, GameStatus.ABORTED]))
-            .order_by(Game.created_at)
-        )
-    )
-
-    for game in games:
-        players = list(await session.scalars(sa.select(Player).where(Player.game_id == game.id)))
-        if not judge(await _facts_for(session, game, players), prompt_version=prompt_version):
-            continue
-
-        quantizations = await _quantization_by_player(session, game.id, players)
-
+    for game, players, quantizations in await ratable_games(session, prompt_version=prompt_version):
         for player in players:
             contestant = await _contestant(session, player, quantizations)
             if contestant is None:

@@ -10,6 +10,7 @@ import type {
   GameEvent,
   GameSummary,
   ModelInfo,
+  Leaderboard,
   TurnSummary,
 } from "@/lib/types";
 
@@ -91,6 +92,39 @@ export function listEvents(id: string, limit = 5000): Promise<GameEvent[]> {
  */
 export function listTurns(id: string): Promise<TurnSummary[]> {
   return getOrEmpty<TurnSummary>(`/games/${id}/turns`);
+}
+
+/**
+ * The leaderboard, with its exclusions.
+ *
+ * Never throws: an empty ranking is the honest state before any ranked game has been played, and
+ * a blank page would be a worse way to say so.
+ */
+export async function getLeaderboard(): Promise<Leaderboard> {
+  try {
+    return await get<Leaderboard>("/leaderboard");
+  } catch {
+    return {
+      rows: [],
+      games_counted: 0,
+      excluded: [],
+      prompt_version: null,
+      periods: 0,
+    };
+  }
+}
+
+/**
+ * The games behind one leaderboard row (BENCH-02).
+ *
+ * Only the *ratable* ones — exactly what moved the rating, not everything the model has played.
+ */
+export function getContestantGames(
+  modelSlug: string,
+  quantization?: string,
+): Promise<GameSummary[]> {
+  const query = quantization ? `?quantization=${encodeURIComponent(quantization)}` : "";
+  return getOrEmpty<GameSummary>(`/leaderboard/${modelSlug}/games${query}`);
 }
 
 /** The PGN download URL. Handed to the browser as a link so the file arrives with its filename. */

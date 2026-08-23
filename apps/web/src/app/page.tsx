@@ -21,6 +21,12 @@ export default async function Home() {
       <header className="flex flex-col gap-4 border-b border-line pb-8">
         <div className="flex items-center gap-3">
           <p className="font-mono text-xs uppercase tracking-[0.22em] text-accent">Chessmark</p>
+          <Link
+            href="/leaderboard"
+            className="font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint transition-colors hover:text-accent"
+          >
+            Leaderboard
+          </Link>
           <AccountBar apiUrl={apiUrl} />
         </div>
         <h1 className="max-w-2xl font-serif text-4xl leading-tight text-ink sm:text-5xl">

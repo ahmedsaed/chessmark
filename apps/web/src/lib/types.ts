@@ -213,3 +213,49 @@ export interface Me {
   games_remaining_today: number;
   usd_spent_today: string;
 }
+
+
+/** One contestant's standing (BENCH-02). */
+export interface LeaderboardRow {
+  model_id: string;
+  model_slug: string;
+  /** Half the contestant's identity — `model@fp4` and `model@fp8` are different entrants. */
+  quantization: string;
+  display_name: string;
+
+  rating: number;
+  /**
+   * How sure we are. Printed next to the rating on purpose: without it a reader compares three
+   * games against three hundred as though the numbers meant the same thing.
+   */
+  rating_deviation: number;
+  volatility: number;
+
+  games: number;
+  wins: number;
+  draws: number;
+  losses: number;
+
+  illegal_attempts: number;
+  moves_played: number;
+  /** The benchmark's headline number. */
+  illegal_per_move: number;
+
+  forfeits: number;
+  mean_cost_usd: string;
+  mean_latency_ms: number;
+}
+
+/** A finished game that did not count, and why (BENCH-10). */
+export interface ExcludedGame {
+  game_id: string;
+  reason: string;
+}
+
+export interface Leaderboard {
+  rows: LeaderboardRow[];
+  games_counted: number;
+  excluded: ExcludedGame[];
+  prompt_version: string | null;
+  periods: number;
+}
