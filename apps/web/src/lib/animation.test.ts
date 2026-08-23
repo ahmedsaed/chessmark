@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   LOOP_PAUSE_PLIES,
   advance,
+  boardDomId,
   buildFrames,
   isContiguous,
   positionAt,
@@ -150,5 +151,35 @@ describe("isContiguous", () => {
   it("never animates backwards", () => {
     expect(isContiguous(10, 9)).toBe(false);
     expect(isContiguous(10, 2)).toBe(false);
+  });
+});
+
+describe("boardDomId", () => {
+  it("strips the colons React puts in useId values", () => {
+    expect(boardDomId(":r1:")).toBe("cb-r1");
+    expect(boardDomId(":R7h:")).toBe("cb-R7h");
+  });
+
+  /**
+   * The suite runs in node, so this asserts the identifier's shape rather than handing it to a
+   * real `querySelector`. A colon or a bracket surviving into `#{id}-square-e2` is the failure
+   * that matters, and this catches it.
+   */
+  it("produces a valid CSS identifier", () => {
+    const CSS_IDENT = /^-?[A-Za-z_][A-Za-z0-9_-]*$/;
+    for (const raw of [":r1:", ":r12:", "\u00abr0\u00bb", "_R_1_", ":r1:-x", "", "1"]) {
+      expect(boardDomId(raw)).toMatch(CSS_IDENT);
+    }
+  });
+
+  it("never starts with a digit, which is invalid for a CSS identifier", () => {
+    expect(boardDomId("1")).toMatch(/^[a-zA-Z]/);
+    expect(boardDomId(":r9:")).toMatch(/^[a-zA-Z]/);
+  });
+
+  /** Distinct React ids must stay distinct, or boards measure each other again. */
+  it("keeps distinct inputs distinct", () => {
+    const ids = [":r1:", ":r2:", ":r3:", ":r10:"].map(boardDomId);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });

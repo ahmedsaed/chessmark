@@ -12,10 +12,18 @@
  * and rendered unreliably — ♟♜♞ depend on whichever system font wins, and some platforms give
  * them emoji presentation. The position data was correct throughout; the drawing was not. One
  * renderer for both sizes means the thumbnails cannot drift from the real board.
+ *
+ * Every instance gets its own `id`. The library measures a square with a bare
+ * `document.querySelector('#{id}-square-{square}')` and defaults `id` to the constant
+ * `"chessboard"`, so several boards on one page all measure the first one in the document. With
+ * the 440px hero above the 120px thumbnails, the thumbnails animated using 55px squares and flung
+ * their pieces most of the way across the board before snapping into place.
  */
 
 import { Chessboard } from "react-chessboard";
-import { useMemo } from "react";
+import { useId, useMemo } from "react";
+
+import { boardDomId } from "@/lib/animation";
 
 interface Props {
   fen: string;
@@ -35,6 +43,8 @@ export function Board({
   showNotation = true,
   animationMs = 250,
 }: Props) {
+  const id = boardDomId(useId());
+
   const squareStyles = useMemo(() => {
     if (!lastMove) return {};
     const highlight = { backgroundColor: "color-mix(in srgb, var(--color-sq-mark) 45%, transparent)" };
@@ -45,6 +55,7 @@ export function Board({
     <div className="w-full [&_*]:!font-sans">
       <Chessboard
         options={{
+          id,
           position: fen,
           boardOrientation: orientation,
           allowDragging: false,

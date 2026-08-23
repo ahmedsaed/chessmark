@@ -951,6 +951,15 @@ plies are animated now (`isContiguous`); everything else lands instantly. Measur
 every step across three boards was `+1` apart from the loop wraps, and under reduced motion the
 shown ply does not change at all.
 
+**Amendment — one page, several boards, one DOM id.** `react-chessboard` measures a square with
+a bare `document.querySelector('#{id}-square-{square}')` and defaults `id` to the constant
+`"chessboard"`. Every board on a page therefore measures **the first board in the document**. With
+the 440px hero above the 120px thumbnails, the thumbnails animated using 55px squares: pieces flew
+most of the way across the board and snapped back. Measured with the shared id, 65 transforms in
+seven seconds moved pieces 11 to 14.7 squares on an eight-square board; with a unique id per
+instance, zero. `boardDomId` derives one from `useId()` — sanitised, because React returns values
+like `:r1:` and a colon is a combinator in a CSS selector.
+
 **Covers:** UI-03 (extended). No new requirement.
 
 ---

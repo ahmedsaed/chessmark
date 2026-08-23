@@ -117,3 +117,21 @@ export function isContiguous(previous: number | null, next: number): boolean {
   if (previous === null) return false;
   return next === previous + 1;
 }
+
+/**
+ * A DOM id for one board instance, safe to use inside a CSS selector.
+ *
+ * `react-chessboard` measures its squares with a bare
+ * `document.querySelector('#{id}-square-{square}')`, and its `id` option defaults to the constant
+ * `"chessboard"`. With more than one board mounted, every instance therefore measures **the first
+ * board in the document**. On the landing page that is the 440px hero, so the 120px thumbnails
+ * animated with 55px squares and threw their pieces most of the way across the board before
+ * snapping into place.
+ *
+ * `useId()` is the correct source of uniqueness — stable across SSR and hydration — but it returns
+ * values like `:r1:`, and a colon is a combinator in a CSS selector. Stripping to alphanumerics
+ * and prefixing keeps it a valid identifier, since an id may not begin with a digit.
+ */
+export function boardDomId(reactId: string): string {
+  return `cb-${reactId.replace(/[^a-zA-Z0-9]/g, "")}`;
+}
