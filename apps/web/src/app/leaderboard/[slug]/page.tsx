@@ -33,7 +33,7 @@ export default async function ContestantPage({
   );
 
   return (
-    <main className="mx-auto w-full max-w-[1180px] px-5 py-10">
+    <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-10">
       <Link
         href="/leaderboard"
         className="font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint transition-colors hover:text-accent"

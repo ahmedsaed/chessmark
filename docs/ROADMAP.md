@@ -36,7 +36,8 @@ flowchart LR
     P5 --> P14[14 Stockfish]
     P4 --> P15[15 Personas]
     P9 --> P16[16 Cost dashboard]
-    P8 --> P17[17 Launch]
+    P8 --> P18[18 Site shell]
+    P18 --> P17[17 Launch]
     P11 --> P17
     P13 --> P17
     P16 --> P17
@@ -849,6 +850,43 @@ precision can be served at a different one between games.
 - [ ] An alert fires at 80% of the daily budget
 
 **Covers:** UI-08, LOG-02
+
+---
+
+## Phase 18 — Site shell & landing ✅ COMPLETE (verified by hand, not by an automated suite)
+
+**Goal:** Chessmark reads as a site rather than a set of routes.
+
+Phases 7 and 8 built the product — the live view and the replay — and nothing ever built the
+thing around it. The root layout rendered `{children}` and no chrome at all, so every page
+hand-rolled a `← Chessmark` back-link, the account controls existed only on the landing page, and
+a mistyped game URL produced a raw framework error. No requirement covered site chrome, which is
+why it was missed rather than deferred.
+
+**Objectives**
+1. A persistent shell: header with navigation and account state on every route, and a footer
+2. A landing page led by an actual game in progress
+3. An about page (moved here from Phase 17's launch content)
+4. Not-found and error boundaries in the project's own design
+5. Site-level metadata: OpenGraph card for the root URL, `sitemap.xml`, `robots.txt`
+
+**Exit criteria**
+- [x] Every route renders the shell, and sign-in/sign-out is reachable from all of them — verified
+      in a browser on `/`, `/about`, `/leaderboard`, `/games/[id]`, and the 404
+- [x] The landing hero shows a **running** game and falls back to the most recent finished one —
+      both branches verified against a live scripted game and a finished one
+- [x] A URL that names no game returns **HTTP 404** and the site's own not-found page. This was a
+      real bug: FastAPI answers `422` for a non-UUID path param and the client mapped only `404`,
+      so a mistyped URL returned a 500
+- [x] The root URL renders an OpenGraph card; `sitemap.xml` and `robots.txt` are served
+- [x] `tailMoves` and the API client's not-found mapping are unit-tested, and the tests were
+      confirmed to fail when the logic is broken
+
+**Not covered:** the pages themselves are checked by hand in a browser, the same standard as
+Phases 7 and 8. There is still no automated Playwright suite, so no test would catch a layout
+regression. That is the honest state and it is worth closing before launch.
+
+**Covers:** UI-06 extended to the site root. Site chrome had no requirement ID — see the note above.
 
 ---
 

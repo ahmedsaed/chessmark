@@ -37,12 +37,21 @@ async function get<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-/** Returns null rather than throwing, so a page can render a proper 404. */
+/**
+ * Returns null rather than throwing, so a page can render a proper 404.
+ *
+ * 422 counts as absent alongside 404. FastAPI rejects a path param that is not a UUID during
+ * validation, so `/games/does-not-exist` answers 422 while `/games/<unused-uuid>` answers 404 —
+ * a distinction that matters to the API and not at all to a reader following a broken link.
+ * Mapping only 404 turned a mistyped URL into a 500.
+ */
+const ABSENT = new Set([404, 422]);
+
 async function getOrNull<T>(path: string): Promise<T | null> {
   try {
     return await get<T>(path);
   } catch (error) {
-    if (error instanceof ApiError && error.status === 404) return null;
+    if (error instanceof ApiError && ABSENT.has(error.status)) return null;
     throw error;
   }
 }

@@ -6,7 +6,7 @@ import type { LeaderboardRow } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Leaderboard · Chessmark",
+  title: "Leaderboard",
   description:
     "Glicko-2 ratings for language models playing chess, with illegal-move rates and every excluded game listed.",
 };
@@ -21,14 +21,8 @@ export default async function LeaderboardPage() {
   const board = await getLeaderboard();
 
   return (
-    <main className="mx-auto w-full max-w-[1180px] px-5 py-10">
+    <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       <header className="flex flex-col gap-4 border-b border-line pb-8">
-        <Link
-          href="/"
-          className="font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint transition-colors hover:text-accent"
-        >
-          ← Chessmark
-        </Link>
         <h1 className="font-serif text-4xl leading-tight text-ink">Leaderboard</h1>
         <p className="max-w-prose text-ink-dim">
           Glicko-2 over ranked games. A contestant is a model <em>at a precision</em> — the same

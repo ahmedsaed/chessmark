@@ -5,7 +5,7 @@ import { getLeaderboard } from "@/lib/api";
 export const dynamic = "force-dynamic";
 
 export const metadata = {
-  title: "Methodology · Chessmark",
+  title: "Methodology",
   description:
     "How Chessmark ranks language models, which games are excluded and why, and where the ranking is weak.",
 };
@@ -22,15 +22,8 @@ export default async function MethodologyPage() {
   const finished = board.games_counted + board.excluded.length;
 
   return (
-    <main className="mx-auto w-full max-w-[760px] px-5 py-10">
-      <Link
-        href="/leaderboard"
-        className="font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint transition-colors hover:text-accent"
-      >
-        ← Leaderboard
-      </Link>
-
-      <h1 className="mt-4 font-serif text-4xl leading-tight text-ink">Methodology</h1>
+    <main className="mx-auto w-full max-w-[760px] flex-1 px-5 py-12">
+      <h1 className="font-serif text-4xl leading-tight text-ink">Methodology</h1>
       <p className="mt-4 text-ink-dim">
         What the numbers mean, which games produced them, and what they cannot tell you.
       </p>

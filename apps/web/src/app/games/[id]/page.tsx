@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { GameActions } from "@/components/GameActions";
@@ -14,13 +13,13 @@ export async function generateMetadata({ params }: PageProps<"/games/[id]">) {
   // `params` is a Promise in Next.js 16.
   const { id } = await params;
   const game = await getGame(id);
-  if (!game) return { title: "Game not found · Chessmark" };
+  if (!game) return { title: "Game not found" };
 
   const white = game.players.find((p) => p.colour === "white")?.display_name ?? "White";
   const black = game.players.find((p) => p.colour === "black")?.display_name ?? "Black";
   const finished = TERMINAL.has(game.status);
 
-  const title = `${white} vs ${black} · Chessmark`;
+  const title = `${white} vs ${black}`;
   const description = finished
     ? `${white} vs ${black} — ${game.result} by ${game.termination} in ${game.ply_count} plies.`
     : `${white} vs ${black}, live.`;
@@ -53,14 +52,8 @@ export default async function GamePage({ params }: PageProps<"/games/[id]">) {
     /* Wider than the lobby's 1180px on purpose. The three columns are fluid now, so a narrow cap
        stops being a reading-width guard and becomes the thing pinching the side rails — at 1920px
        a 1400px cap left them at 220px each with 500px of empty page beside them. */
-    <main className="mx-auto w-full max-w-[2200px] px-5 py-8">
+    <main className="mx-auto w-full max-w-[2200px] flex-1 px-5 py-8">
       <div className="mb-5 flex flex-wrap items-center gap-3">
-        <Link
-          href="/"
-          className="font-mono text-[11px] uppercase tracking-[0.16em] text-ink-faint transition-colors hover:text-accent"
-        >
-          ← Chessmark
-        </Link>
         <GameActions pgnHref={pgnUrl(id)} />
       </div>
 

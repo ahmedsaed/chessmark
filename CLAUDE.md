@@ -131,7 +131,7 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–9 and 12 complete.** 762 backend + 19 frontend tests, CI green.
+**Phases 0–9, 12 and 18 complete.** 762 backend + 42 frontend tests, CI green.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -146,10 +146,14 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
   group, `expected_ply` idempotency, one transaction per turn, ack-after-commit.
 - `chessmark.api` — REST plus SSE with `Last-Event-ID` reconnect. Reasoning is withheld while a
   game is live (invariant 8).
-- `apps/web` — the lobby, the live game page (stats left, board centre, conversation right), and
-  the replay: a finished game is scrubbable ply by ply, with the raw provider payloads behind every
-  turn one click away. Replay truncates the event log and reuses the live view's fold, so the two
-  cannot drift ([ADR-0008](docs/adr/0008-game-events-log.md)).
+- `apps/web` — the site shell (header, footer, error and not-found boundaries, site OpenGraph
+  card, sitemap and robots), a landing page led by a live game, `/about`, the live game page
+  (stats left, board centre, conversation right), and the replay: a finished game is scrubbable
+  ply by ply, with the raw provider payloads behind every turn one click away. Replay truncates
+  the event log and reuses the live view's fold, so the two cannot drift
+  ([ADR-0008](docs/adr/0008-game-events-log.md)). The root layout used to render `{children}` and
+  nothing else, so each page hand-rolled a back-link and the account controls existed on one page
+  only — Phase 18 fixed that.
 - **Auth and spend controls** ([ADR-0006](docs/adr/0006-clerk-for-auth.md),
   [ADR-0011](docs/adr/0011-server-keys-layered-budgets.md)) — Clerk JWTs verified against cached
   JWKS with the algorithm pinned; four independent budget layers (global kill switch, per-user
@@ -202,7 +206,9 @@ real games and let the harness decide half the results.
 - `chessmark.bench` — Glicko-2 from Glickman's paper, and the rules for which games may be rated.
   A contestant is `(model, quantization)`. Forfeits count; harness stops do not. Pure, like `game/`.
 
-**Next up: Phase 10 — human vs model.** See [ROADMAP.md](docs/ROADMAP.md#phase-10--human-vs-model).
+**Next up: Phase 17a — deploy.** There is still no Dockerfile and no supervised worker anywhere;
+`docker-compose.yml` runs Postgres and Redis only. See
+[ROADMAP.md](docs/ROADMAP.md#phase-17--production-hardening--launch).
 
 Frontend logic in `apps/web/src/lib` is unit-tested with `vitest` (`make test-web`); components
 are still covered by Playwright rather than a jsdom stack.
