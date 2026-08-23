@@ -30,12 +30,28 @@ export function LiveGame({
   apiUrl,
   initialEvents,
   actions,
+  seat,
+  onMove,
+  controls,
 }: {
   game: GameDetail;
   apiUrl: string;
   initialEvents: GameEvent[];
   /** Copy-link and PGN. They ride the status row rather than a bar of their own (UI feedback). */
   actions?: React.ReactNode;
+  /**
+   * The colour the viewer is playing, when they hold a seat (HUMAN-01). Absent for spectators,
+   * which is what keeps this component usable for the model-vs-model case it was built for.
+   */
+  seat?: "white" | "black";
+  /**
+   * Called when the viewer drops a piece on a legal square. Fired after the move has been
+   * validated locally, but the server is still the authority — a move it refuses is undone by the
+   * next position the stream delivers (invariant 1).
+   */
+  onMove?: (san: string, expectedPly: number) => void;
+  /** Resign, draw, and chat controls. Rendered under the board so they sit near the action. */
+  controls?: React.ReactNode;
 }) {
   const { events, status } = useGameStream({
     gameId: initial.id,
@@ -84,6 +100,25 @@ export function LiveGame({
   }, [moves, initial.start_fen]);
 
   const outcome = ended ?? terminalFrom(game);
+  const yourMove = Boolean(seat && onMove && !outcome && toMove === seat);
+
+  /* Validated locally before it leaves the browser, so a wrong drag is refused without a round
+     trip — but this is a courtesy, not the rule. The same move is checked again by the referee
+     server-side, which is what a crafted request meets (invariant 1). */
+  function handleDrop(from: string, to: string): boolean {
+    if (!onMove) return false;
+
+    const board = new Chess(fen);
+    try {
+      // Promotions are always to a queen here. Under-promotion is rare enough that a picker
+      // would cost every player a click to serve almost nobody; it can come later.
+      const move = board.move({ from, to, promotion: "q" });
+      onMove(move.san, moves.length);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -115,7 +150,15 @@ export function LiveGame({
               {outcome ? outcome.result : toMove ? `${toMove} to move` : ""}
             </span>
           </div>
-          <Board fen={fen} lastMove={lastMove} />
+          <Board
+            fen={fen}
+            lastMove={lastMove}
+            /* The board turns round for a person playing Black. Reading a mirrored board is
+               possible and unpleasant, and nobody plays well doing it. */
+            orientation={seat ?? "white"}
+            onDrop={yourMove ? handleDrop : undefined}
+          />
+          {controls}
         </div>
 
         <div className="order-2 flex min-h-[24rem] min-w-0 flex-col lg:order-none lg:min-h-0">

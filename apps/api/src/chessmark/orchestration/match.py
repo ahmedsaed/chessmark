@@ -133,6 +133,11 @@ async def create_match(
     match = Match(game=game, white=players[Colour.WHITE], black=players[Colour.BLACK])
 
     for colour in (Colour.WHITE, Colour.BLACK):
+        # Only a model has a transcript. A human seat has no prompt, no cached prefix and no
+        # tokens, and seeding one would write a system prompt nothing will ever read.
+        if PlayerKind(match.player(colour).kind) is not PlayerKind.MODEL:
+            continue
+
         await ensure_system_prompt(
             session,
             game=game,

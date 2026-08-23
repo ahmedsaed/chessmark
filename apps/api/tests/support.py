@@ -13,7 +13,9 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.scripted import alternating
-from chessmark.db.models import Game, Player
+from chessmark.db.enums import PlayerKind
+from chessmark.db.models import Game, Player, User
+from chessmark.game import Colour
 from chessmark.orchestration.match import Match, Seat, create_match, start_match
 from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
 from chessmark.orchestration.worker import TurnWorker
@@ -46,6 +48,38 @@ async def seat_match(db: AsyncSession, queue: TurnQueue, **kwargs: Any) -> Fixtu
         black=Seat(display_name="black-model", model="scripted/black"),
         **kwargs,
     )
+    job = await start_match(db, queue, game_id=match.game.id)
+    await db.commit()
+    await queue.enqueue(job)
+
+    return Fixture(match=match, first_job=job, queue=queue)
+
+
+async def make_user(db: AsyncSession, clerk_user_id: str = "user_human") -> User:
+    user = User(
+        clerk_user_id=clerk_user_id,
+        email=f"{clerk_user_id}@chessmark.test",
+        display_name=clerk_user_id,
+    )
+    db.add(user)
+    await db.flush()
+    return user
+
+
+async def seat_human_match(
+    db: AsyncSession,
+    queue: TurnQueue,
+    *,
+    user: User,
+    human_colour: Colour = Colour.WHITE,
+    **kwargs: Any,
+) -> Fixture:
+    """A person against a scripted model, started the way the endpoint starts one."""
+    you = Seat(display_name="you", kind=PlayerKind.HUMAN, user_id=user.id)
+    machine = Seat(display_name="black-model", model="scripted/black")
+    white, black = (you, machine) if human_colour is Colour.WHITE else (machine, you)
+
+    match = await create_match(db, white=white, black=black, **kwargs)
     job = await start_match(db, queue, game_id=match.game.id)
     await db.commit()
     await queue.enqueue(job)

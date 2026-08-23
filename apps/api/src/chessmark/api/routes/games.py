@@ -28,15 +28,22 @@ from chessmark.api.deps import (
 from chessmark.api.schemas import (
     CreateGameRequest,
     CreateGameResponse,
+    CreateHumanGameRequest,
+    DrawResponseRequest,
     EventOut,
     GameDetail,
     GameSummary,
+    HumanActionResponse,
+    HumanMoveRequest,
+    HumanSayRequest,
+    IllegalMoveResponse,
     MessageOut,
     PlyOut,
     RawCallOut,
+    SeatOut,
     TurnDetail,
 )
-from chessmark.db.enums import GameStatus, ModerationStatus
+from chessmark.db.enums import GameStatus, ModerationStatus, PlayerKind
 from chessmark.db.models import (
     Game,
     LlmCall,
@@ -50,9 +57,11 @@ from chessmark.db.models import (
 )
 from chessmark.db.quotas import QuotaExceededError, reserve_game
 from chessmark.db.repositories import load_events, rebuild_referee
-from chessmark.game import Colour
+from chessmark.game import Colour, IllegalMoveError
 from chessmark.game.pgn import PgnMetadata, to_pgn
+from chessmark.orchestration import human as human_play
 from chessmark.orchestration.match import Seat, create_match, start_match
+from chessmark.orchestration.queue import AdvanceTurn
 
 router = APIRouter(prefix="/games", tags=["games"])
 
@@ -447,3 +456,295 @@ async def create_game_endpoint(
         status=GameStatus.RUNNING,
         events_url=f"/games/{match.game.id}/stream",
     )
+
+
+# ---------------------------------------------------------------------- human play
+
+
+async def _acting_seat(session: SessionDep, game: Game, user_id: uuid.UUID) -> Player:
+    """Resolve the caller's seat, turning the service's exceptions into HTTP.
+
+    Reading a game needs no account; acting in one needs the seat. The check is by user id, so
+    holding the URL is not the same as holding the seat.
+    """
+    try:
+        return await human_play.seat_of(session, game.id, user_id)
+    except human_play.NotYourGameError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+
+
+async def _settle(
+    session: SessionDep,
+    queue: QueueDep,
+    game: Game,
+    action: human_play.HumanAction,
+) -> HumanActionResponse:
+    """Commit, publish, and hand the model its turn.
+
+    The enqueue follows the commit for the same reason it does when a game is created: a worker
+    handed a ply that a rolled-back transaction means never happened would rebuild a position that
+    does not exist.
+    """
+    await session.commit()
+    await session.refresh(game)
+
+    if not action.game_over and game.status is GameStatus.RUNNING:
+        await queue.enqueue(AdvanceTurn(game_id=game.id, expected_ply=game.ply_count))
+
+    return HumanActionResponse(
+        ply=game.ply_count,
+        status=game.status,
+        result=game.result,
+        termination=str(game.termination) if game.termination else None,
+        detail=action.detail,
+        game_over=action.game_over,
+    )
+
+
+@router.post(
+    "/human",
+    response_model=CreateGameResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(enforce_rate_limit)],
+)
+async def create_human_game(
+    session: SessionDep,
+    queue: QueueDep,
+    budget: BudgetDep,
+    settings: SettingsDep,
+    user: CurrentUser,
+    request: CreateHumanGameRequest,
+) -> CreateGameResponse:
+    """Sit down against a model (HUMAN-01).
+
+    Spends money exactly as a model-vs-model game does — the machine seat still calls a provider
+    every turn — so it goes through the same budget layers of ADR-0011.
+
+    The game is created RUNNING and its first turn enqueued. When the person has White the worker
+    picks the job up, finds a human to move, and stops without spending anything; when the model
+    has White it plays immediately.
+    """
+    if await budget.tripped():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chessmark has reached its daily spend limit. Watching is unaffected.",
+        )
+
+    model = await session.scalar(
+        sa.select(ModelRegistry).where(ModelRegistry.openrouter_id == request.model)
+    )
+    if model is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown model {request.model!r}."
+        )
+    if not model.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"{request.model!r} is disabled."
+        )
+
+    try:
+        await reserve_game(
+            session,
+            user.id,
+            max_games=settings.max_games_per_user_per_day,
+            max_usd=Decimal(str(settings.max_usd_per_user_per_day)),
+        )
+    except QuotaExceededError as error:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"{error} Quotas reset at UTC midnight.",
+        ) from error
+
+    ceiling = Decimal(str(settings.max_usd_per_game))
+    max_usd = min(request.max_usd, ceiling) if request.max_usd else ceiling
+
+    you = Seat(
+        display_name=user.display_name or "You",
+        kind=PlayerKind.HUMAN,
+        user_id=user.id,
+    )
+    machine = Seat(
+        display_name=model.display_name,
+        model=request.model,
+        quantization=request.model_quantization,
+    )
+    white, black = (you, machine) if request.colour is Colour.WHITE else (machine, you)
+
+    try:
+        match = await create_match(
+            session,
+            white=white,
+            black=black,
+            # Never ranked: a person is not a contestant, and a rating computed partly from human
+            # games would not measure what the leaderboard says it measures.
+            is_ranked=False,
+            trash_talk_enabled=request.trash_talk_enabled,
+            max_usd=max_usd,
+            max_plies=request.max_plies,
+            created_by_user_id=user.id,
+        )
+    except NoEndpointError as error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    job = await start_match(session, queue, game_id=match.game.id)
+
+    # Whose move it is at the start decides whether there is anything to enqueue. When the person
+    # has White there is not: a job would be picked up, answered with `awaiting_human`, and acked,
+    # and it would then sit in the stream as a stale entry for the *human's* first move to trip
+    # over. The move endpoint enqueues the model's reply when the ply actually lands.
+    referee = await rebuild_referee(session, match.game)
+    machine_to_move = referee.side_to_move is not request.colour
+
+    await session.commit()
+    if machine_to_move:
+        await queue.enqueue(job)
+
+    return CreateGameResponse(
+        id=match.game.id,
+        status=GameStatus.RUNNING,
+        events_url=f"/games/{match.game.id}/stream",
+    )
+
+
+@router.post("/{game_id}/moves", response_model=HumanActionResponse)
+async def play_human_move(
+    session: SessionDep,
+    queue: QueueDep,
+    game: GameDep,
+    user: CurrentUser,
+    request: HumanMoveRequest,
+) -> HumanActionResponse:
+    """Play one half-move (HUMAN-02).
+
+    The client previews legality so a wrong drag never leaves the browser, but that is a courtesy
+    and nothing more: this endpoint runs the same `Referee.play` the models do, so a crafted
+    request that skips the client is refused exactly the same way (invariant 1).
+    """
+    player = await _acting_seat(session, game, user.id)
+
+    try:
+        action = await human_play.play_move(
+            session,
+            game=game,
+            player=player,
+            move_text=request.move,
+            expected_ply=request.expected_ply,
+        )
+    except human_play.StalePlyError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except human_play.NotYourTurnError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except IllegalMoveError as error:
+        # 422 with the full legal move list, the same courtesy a model gets (ADR-0002) — but no
+        # retry budget and no forfeit. It simply stays the person's turn.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=IllegalMoveResponse(
+                detail=error.detail,
+                reason=str(error.reason),
+                legal_moves=list(error.legal_moves_san),
+            ).model_dump(),
+        ) from error
+
+    return await _settle(session, queue, game, action)
+
+
+@router.post("/{game_id}/resign", response_model=HumanActionResponse)
+async def resign_human_game(
+    session: SessionDep,
+    queue: QueueDep,
+    game: GameDep,
+    user: CurrentUser,
+) -> HumanActionResponse:
+    """Resign (HUMAN-05). Final, and available whether or not it is your turn."""
+    player = await _acting_seat(session, game, user.id)
+    try:
+        action = await human_play.resign(session, game=game, player=player)
+    except human_play.NotYourTurnError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    return await _settle(session, queue, game, action)
+
+
+@router.post("/{game_id}/draw", response_model=HumanActionResponse)
+async def offer_draw_human_game(
+    session: SessionDep,
+    queue: QueueDep,
+    game: GameDep,
+    user: CurrentUser,
+) -> HumanActionResponse:
+    """Offer a draw (HUMAN-05).
+
+    Advisory. The v1 tool schema has `offer_draw` but no `accept_draw`, and the tool list is part
+    of the cached prefix so it cannot differ between this game and a ranked one — which means a
+    model cannot formally accept. The offer is recorded and delivered; the direction that can
+    actually end a game is `/draw/respond`, where a person answers a model's offer.
+    """
+    player = await _acting_seat(session, game, user.id)
+    try:
+        action = await human_play.offer_draw(session, game=game, player=player)
+    except human_play.NotYourTurnError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    return await _settle(session, queue, game, action)
+
+
+@router.post("/{game_id}/draw/respond", response_model=HumanActionResponse)
+async def respond_to_draw_offer(
+    session: SessionDep,
+    queue: QueueDep,
+    game: GameDep,
+    user: CurrentUser,
+    request: DrawResponseRequest,
+) -> HumanActionResponse:
+    """Accept or decline the model's open draw offer (HUMAN-05)."""
+    player = await _acting_seat(session, game, user.id)
+    try:
+        action = await human_play.respond_to_draw(
+            session, game=game, player=player, accept=request.accept
+        )
+    except human_play.NotYourTurnError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    return await _settle(session, queue, game, action)
+
+
+@router.post("/{game_id}/say", response_model=HumanActionResponse)
+async def say_to_model(
+    session: SessionDep,
+    queue: QueueDep,
+    game: GameDep,
+    user: CurrentUser,
+    request: HumanSayRequest,
+) -> HumanActionResponse:
+    """Say something to the model (TALK-06).
+
+    **Unmoderated.** The text is stored `PENDING` and delivered verbatim. Phase 11 owns the check
+    before public display, and this endpoint has to be gated behind it before the site is public.
+    """
+    player = await _acting_seat(session, game, user.id)
+    try:
+        action = await human_play.say(session, game=game, player=player, message=request.message)
+    except human_play.NotYourTurnError as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
+        ) from error
+    return await _settle(session, queue, game, action)
+
+
+@router.get("/{game_id}/seat", response_model=SeatOut)
+async def my_seat(
+    session: SessionDep,
+    game: GameDep,
+    user: CurrentUser,
+) -> SeatOut:
+    """Which colour, if any, the caller is playing in this game.
+
+    A dedicated endpoint rather than a field on the game, because the game is public and the
+    answer is not: putting `user_id` on the player payload would publish who plays what to every
+    spectator, to save one request.
+    """
+    try:
+        player = await human_play.seat_of(session, game.id, user.id)
+    except human_play.NotYourGameError:
+        return SeatOut(colour=None)
+    return SeatOut(colour=Colour(player.colour))

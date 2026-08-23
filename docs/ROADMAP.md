@@ -658,7 +658,7 @@ and the startup guard turns forgetting it into a refusal to boot rather than a s
 
 ---
 
-## Phase 10 — Human vs model
+## Phase 10 — Human vs model 🚧 IN PROGRESS (backend complete and tested; the UI is not finished)
 
 **Goal:** you sit down and play a model.
 
@@ -666,17 +666,51 @@ and the startup guard turns forgetting it into a refusal to boot rather than a s
 1. Play page: draggable board, client-side legality preview, server-authoritative validation
 2. Human move endpoint that commits a ply and enqueues the model's turn
 3. Resume an in-progress game after a reload
-4. Optional clock; idle games auto-expire
+4. ~~Optional clock~~; idle games auto-expire — **clock deliberately dropped**, see below
 5. Resign and offer-draw controls
 6. Post-game reveal of the model's full reasoning
 7. Optional human→model chat (TALK-06)
 
 **Exit criteria**
-- [ ] A full human-vs-model game completes, with the model replying within a few seconds per move
-- [ ] An illegal human move is refused both client-side and server-side; a crafted API request bypassing the client is still refused
-- [ ] Reloading mid-game restores the exact position and history
-- [ ] An abandoned game expires and is recorded as such
-- [ ] Reasoning is inaccessible via any endpoint until the game is over (HUMAN-07)
+- [x] A full human-vs-model game completes — played end to end through HTTP in
+      `tests/api/test_human_play.py`, human wins by checkmate on ply 7 with the model replying
+      through the real worker between every move
+- [x] An illegal human move is refused server-side, and a crafted API request bypassing the client
+      is refused identically — the endpoint runs the same `Referee.play` the models do
+      (invariant 1). Client-side preview is written but **unverified in a browser**
+- [x] Reloading mid-game restores the exact position and history — asserted against `/games/{id}`
+      and the event log, nothing held in the browser
+- [x] An abandoned game expires and is recorded as such — `ABORTED` / `abandoned`, never a result
+- [x] Reasoning is inaccessible via any endpoint until the game is over (HUMAN-07) — asserted for
+      both `/events` and `/turns` while the game is live
+
+**What is done:** `orchestration/human.py` (move, resign, offer draw, respond to draw, say), six
+endpoints, the worker's human-turn stop, human-aware reconciliation with idle expiry, and 37 tests.
+The frontend has the API client, a draggable `Board`, `PlayableGame`, `GameView` seat resolution,
+and `lib/draw.ts`.
+
+**What is missing — this is why the phase is not complete:**
+- **No way to start a human game from the UI.** `createHumanGame` has no caller; `/play` still
+  shows only the model-vs-model form. The endpoint works and is tested, but a person cannot reach
+  it from a browser.
+- **Nothing has been checked in a browser at all.** Drag-to-move, the controls, the seat
+  resolution and the draw banner are all unexercised outside the type checker.
+- **A human game is never surfaced as *yours*.** No "your games" list, and the lobby does not
+  distinguish a game you are playing from one you are watching.
+
+**Deliberate limitations, recorded rather than hidden:**
+- **No clock.** Idle expiry (2 hours, far longer than the 20-minute stall threshold) satisfies
+  GAME-08 without making casual play stressful. Nothing in the benchmark needs timed human play.
+- **A human's draw offer cannot be accepted by a model.** The v1 tool schema has `offer_draw` but
+  no `accept_draw`, and the schema is part of the cached prefix, so it cannot differ between this
+  game and a ranked one (invariant 5). A human's offer is advisory; the reverse direction — a
+  person answering a model's offer — does conclude the game.
+- **Human→model chat is unmoderated.** Messages are stored `PENDING` and delivered verbatim
+  through the same `Your opponent says:` line a model's own `say` uses, so a model cannot tell a
+  person from a model by the shape of the prompt. **This must be gated behind Phase 11 before the
+  site is public.**
+- **Promotion is always to a queen.** Under-promotion would cost every player a click to serve
+  almost nobody.
 
 **Covers:** HUMAN-01 → HUMAN-06, TALK-06, GAME-08
 

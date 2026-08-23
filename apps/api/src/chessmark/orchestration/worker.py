@@ -34,7 +34,7 @@ from chessmark.agents.llm import LlmGateway
 from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.turn import TurnLimits, TurnResult, TurnRunner
 from chessmark.core.budget import GlobalBudget
-from chessmark.db.enums import EventType, GameStatus, TurnStatus
+from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
 from chessmark.db.models import Game, GameEvent, Player
 from chessmark.db.quotas import record_spend
 from chessmark.db.repositories import (
@@ -68,6 +68,10 @@ BUDGET = TurnOutcome("budget_exceeded")
 #: The global kill switch was tripped. The turn is not run and the game is left RUNNING, so it
 #: resumes when the budget resets rather than being forfeited for an outage of our own making.
 GLOBAL_BUDGET = TurnOutcome("global_budget_halted")
+#: The side to move is a person. The worker does nothing and enqueues nothing — the game waits in
+#: RUNNING until the human's move endpoint commits a ply and enqueues the model's reply. Anything
+#: else would run an LLM turn on a human's behalf and play their move for them.
+AWAITING_HUMAN = TurnOutcome("awaiting_human")
 ABORTED = TurnOutcome("aborted")
 
 #: How many times a turn may be retried after a provider failure before the game is abandoned.
@@ -205,6 +209,12 @@ class TurnWorker:
             player = await self._player(session, game.id, colour)
             opponent = await self._player(session, game.id, colour.opponent)
 
+            # A person is to move. Stop here, and crucially do **not** re-enqueue: a job that
+            # requeued itself would spin at the poll interval for as long as the human took to
+            # think. The move endpoint enqueues the model's turn when the ply lands (HUMAN-02).
+            if PlayerKind(player.kind) is not PlayerKind.MODEL:
+                return HandledJob(AWAITING_HUMAN, game.id, referee.ply)
+
             # Route by *this player's* resolved policy. Per player rather than per game because
             # `only` names providers and providers are model-specific: one vendor's endpoint list
             # is a 404 for the other seat's model.
@@ -242,7 +252,12 @@ class TurnWorker:
         # Committed. Only now is it safe to tell anyone about it.
         await self._publish(job.game_id, events)
 
-        if not referee.is_over:
+        # Enqueue the next turn only if a *model* is to play it. Handing the queue a job for a
+        # human's move produces a job the worker can only answer with `awaiting_human`, and it
+        # lingers in the stream as a stale entry that the human's own follow-up job then queues
+        # behind. The move endpoint enqueues when the person's ply actually lands.
+        next_player = player if referee.side_to_move is colour else opponent
+        if not referee.is_over and PlayerKind(next_player.kind) is PlayerKind.MODEL:
             await self.queue.enqueue(AdvanceTurn(game_id=job.game_id, expected_ply=referee.ply))
 
         return HandledJob(

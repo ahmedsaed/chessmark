@@ -15,13 +15,13 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.api.deps import get_redis, get_session, get_verifier
+from chessmark.api.deps import get_queue, get_redis, get_session, get_verifier
 from chessmark.core.auth import AuthError, Principal, TokenVerifier
 from chessmark.main import create_app
 
 
 @pytest.fixture
-def app(db: AsyncSession, sessionmaker: Any, redis: Any) -> FastAPI:
+def app(db: AsyncSession, sessionmaker: Any, redis: Any, queue: Any) -> FastAPI:
     application = create_app()
 
     async def _session() -> AsyncIterator[AsyncSession]:
@@ -35,8 +35,15 @@ def app(db: AsyncSession, sessionmaker: Any, redis: Any) -> FastAPI:
     async def _redis() -> Any:
         return redis
 
+    async def _queue() -> Any:
+        return queue
+
     application.dependency_overrides[get_session] = _session
     application.dependency_overrides[get_redis] = _redis
+    # The app must enqueue onto the *same* stream the test's worker consumes. Without this the
+    # API writes to the default stream while `make_worker` reads `test:turns`, and a test that
+    # drives a real turn after an API call silently gets no job at all.
+    application.dependency_overrides[get_queue] = _queue
 
     # No Clerk, ever. The verifier is replaced with one that accepts exactly the tokens this suite
     # mints — the same reasoning as the scripted provider: exercise the real dependency graph with

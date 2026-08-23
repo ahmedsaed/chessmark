@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { GameActions } from "@/components/GameActions";
-import { LiveGame } from "@/components/LiveGame";
+import { GameView } from "@/components/GameView";
 import { Replay } from "@/components/Replay";
 import { apiUrl, getGame, listEvents, listTurns, pgnUrl } from "@/lib/api";
 
@@ -64,7 +64,7 @@ export default async function GamePage({ params }: PageProps<"/games/[id]">) {
           actions={<GameActions pgnHref={pgnUrl(id)} />}
         />
       ) : (
-        <LiveGame
+        <GameView
           game={game}
           apiUrl={apiUrl}
           initialEvents={events}

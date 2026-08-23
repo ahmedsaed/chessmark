@@ -34,6 +34,13 @@ interface Props {
   showNotation?: boolean;
   /** Kept below the caller's tick interval, or moves queue up behind the animation. */
   animationMs?: number;
+  /**
+   * Return `true` to accept the drop. The board is optimistic only as far as this says so — the
+   * server still validates, and a move it refuses is reverted by the next position it sends.
+   */
+  onDrop?: (from: string, to: string, piece: string) => boolean;
+  /** Squares to mark, e.g. a king in check. */
+  markedSquares?: Record<string, React.CSSProperties>;
 }
 
 export function Board({
@@ -42,14 +49,20 @@ export function Board({
   orientation = "white",
   showNotation = true,
   animationMs = 250,
+  onDrop,
+  markedSquares,
 }: Props) {
   const id = boardDomId(useId());
 
   const squareStyles = useMemo(() => {
-    if (!lastMove) return {};
-    const highlight = { backgroundColor: "color-mix(in srgb, var(--color-sq-mark) 45%, transparent)" };
-    return { [lastMove.from]: highlight, [lastMove.to]: highlight };
-  }, [lastMove]);
+    const highlight = {
+      backgroundColor: "color-mix(in srgb, var(--color-sq-mark) 45%, transparent)",
+    };
+    return {
+      ...(lastMove ? { [lastMove.from]: highlight, [lastMove.to]: highlight } : {}),
+      ...markedSquares,
+    };
+  }, [lastMove, markedSquares]);
 
   return (
     <div className="w-full [&_*]:!font-sans">
@@ -58,7 +71,13 @@ export function Board({
           id,
           position: fen,
           boardOrientation: orientation,
-          allowDragging: false,
+          allowDragging: Boolean(onDrop),
+          onPieceDrop: onDrop
+            ? ({ sourceSquare, targetSquare, piece }) =>
+                targetSquare
+                  ? onDrop(sourceSquare, targetSquare, String(piece?.pieceType ?? ""))
+                  : false
+            : undefined,
           showNotation,
           animationDurationInMs: animationMs,
           squareStyles,

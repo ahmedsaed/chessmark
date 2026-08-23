@@ -356,6 +356,82 @@ class CreateGameRequest(BaseModel):
     start_fen: str | None = None
 
 
+# ---------------------------------------------------------------------- human play
+
+
+class CreateHumanGameRequest(BaseModel):
+    """Sit down against a model (HUMAN-01).
+
+    Never ranked, and not offered as an option: a person is not a contestant, and a rating
+    computed partly from human games would not measure what the leaderboard claims to.
+    """
+
+    model: str = Field(description="OpenRouter model id for the machine seat")
+    model_quantization: str | None = Field(
+        default=None,
+        description="Precision for the model. Omit to take the healthiest endpoint (ADR-0015).",
+    )
+    colour: Colour = Field(default=Colour.WHITE, description="The colour *you* play.")
+    trash_talk_enabled: bool = True
+    max_usd: Decimal | None = Field(default=Decimal("0.50"), ge=0)
+    max_plies: int = Field(default=300, ge=2, le=1000)
+
+
+class HumanMoveRequest(BaseModel):
+    move: str = Field(
+        min_length=2,
+        max_length=10,
+        description="Algebraic (e4, Nf3, O-O, e8=Q) or UCI (e2e4, e7e8q).",
+    )
+    expected_ply: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "The ply count your client believes the game is at. Supplied to make a resubmitted "
+            "move harmless: if the server has moved on, the request is refused rather than "
+            "playing a second move."
+        ),
+    )
+
+
+class HumanSayRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=500)
+
+
+class DrawResponseRequest(BaseModel):
+    accept: bool
+
+
+class HumanActionResponse(Schema):
+    """The state of the game after a human action."""
+
+    ply: int
+    status: GameStatus
+    result: GameResult
+    termination: str | None = None
+    detail: str = ""
+    #: Present when the action ended the game, so the client need not refetch to know.
+    game_over: bool = False
+
+
+class SeatOut(Schema):
+    """Which colour the caller plays here, or `null` for a spectator."""
+
+    colour: Colour | None
+
+
+class IllegalMoveResponse(Schema):
+    """A refused move, with everything needed to try again (ADR-0002).
+
+    A person gets the same courtesy a model does — the reason and the full legal move list — but
+    no retry budget and no forfeit. Nobody loses a game to a mis-drag.
+    """
+
+    detail: str
+    reason: str
+    legal_moves: list[str]
+
+
 class CreateGameResponse(Schema):
     id: uuid.UUID
     status: GameStatus

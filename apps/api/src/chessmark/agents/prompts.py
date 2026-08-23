@@ -111,4 +111,21 @@ TRUNCATED_PROMPT = (
 )
 
 #: Injected into the receiving player's transcript when the opponent speaks (TALK-02).
+#: A human's message to a model uses this same line (TALK-06), so a model cannot tell a person
+#: from another model by the shape of the prompt.
 OPPONENT_SAID = "Your opponent says: {message}"
+
+#: A draw offer arriving from the opponent.
+#:
+#: Deliberately does not promise a way to accept. The v1 tool schema has `offer_draw` but no
+#: `accept_draw`, and the schema is part of the cached prefix, so it cannot vary within a game or
+#: between a ranked game and this one. Telling a model to "accept" would be telling it to call a
+#: tool that does not exist, which is exactly the kind of instruction that produces an invented
+#: tool call and then a forfeit.
+DRAW_OFFER_RECEIVED = (
+    "Your opponent has offered a draw. There is no tool to accept it, so play on: make your move "
+    "as usual. If you believe the position is genuinely lost for you, `resign` remains available."
+)
+
+#: The opponent turned down a draw offer this model made.
+DRAW_DECLINED = "Your opponent declined your draw offer. Play on."

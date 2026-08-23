@@ -131,7 +131,8 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–9, 12, 18 and 19 complete.** 762 backend + 58 frontend tests, CI green.
+**Phases 0–9, 12, 18 and 19 complete. Phase 10 is in progress** — its backend is done and
+tested, its UI is not. 799 backend + 75 frontend tests.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -142,8 +143,11 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
   redaction, registry sync, the seven tools, the append-only transcript, and `TurnRunner`.
   96% coverage.
 
-- `chessmark.orchestration` — the queue, the worker, and the reconciler. Redis Streams consumer
-  group, `expected_ply` idempotency, one transaction per turn, ack-after-commit.
+- `chessmark.orchestration` — the queue, the worker, the reconciler, and `human.py`. Redis Streams
+  consumer group, `expected_ply` idempotency, one transaction per turn, ack-after-commit. A turn is
+  enqueued **only when a model is to play it**: handing the queue a job for a person's move
+  produces one the worker can only answer with `awaiting_human`, and it then lingers as a stale
+  entry the human's own next job queues behind. That bug cost a full debugging pass.
 - `chessmark.api` — REST plus SSE with `Last-Event-ID` reconnect. Reasoning is withheld while a
   game is live (invariant 8).
 - `apps/web` — the site shell (header, footer, error and not-found boundaries, site OpenGraph
@@ -202,15 +206,24 @@ same model, same fp8. Provider is recorded per call for exactly this reason
 automatically, so games terminate on their own. 300 plies is the standard; 80 sat at the median of
 real games and let the harness decide half the results.
 
--  — Glicko-2 from Glickman'''s paper, and the rules for which games may be rated.
-  A contestant is `(model, quantization)`. Forfeits count; harness stops do not. Pure, like `game/`.
-
 - `chessmark.bench` — Glicko-2 from Glickman's paper, and the rules for which games may be rated.
   A contestant is `(model, quantization)`. Forfeits count; harness stops do not. Pure, like `game/`.
 
-**Next up: Phase 17a — deploy.** There is still no Dockerfile and no supervised worker anywhere;
-`docker-compose.yml` runs Postgres and Redis only. See
-[ROADMAP.md](docs/ROADMAP.md#phase-17--production-hardening--launch).
+**In progress: Phase 10 — human vs model.** `orchestration/human.py` and six endpoints are
+written and covered by 37 tests, including a full game played to checkmate over HTTP. The worker
+stops at a human turn and enqueues nothing; the reconciler tells "waiting on a person" apart from
+"stalled" and expires idle games after two hours.
+
+**What is left is the UI, and it is the larger half of what a person would notice:** there is no
+way to start a human game from a browser (`createHumanGame` has no caller, `/play` still shows
+only the model-vs-model form), nothing has been checked in a browser, and a game you are playing
+is not distinguished from one you are watching. See
+[ROADMAP.md](docs/ROADMAP.md#phase-10--human-vs-model--in-progress-backend-complete-and-tested-the-ui-is-not-finished)
+for the deliberate limitations too — no clock, advisory-only human draw offers, and unmoderated
+chat that **must be gated behind Phase 11 before launch**.
+
+**Then: Phase 17a — deploy.** There is still no Dockerfile and no supervised worker anywhere;
+`docker-compose.yml` runs Postgres and Redis only.
 
 Frontend logic in `apps/web/src/lib` is unit-tested with `vitest` (`make test-web`); components
 are still covered by Playwright rather than a jsdom stack.

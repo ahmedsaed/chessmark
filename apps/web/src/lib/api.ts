@@ -8,6 +8,8 @@
 import type {
   GameDetail,
   GameEvent,
+  GameResult,
+  GameStatus,
   GameSummary,
   ModelInfo,
   Leaderboard,
@@ -142,3 +144,98 @@ export function pgnUrl(id: string): string {
 }
 
 export const apiUrl = API_URL;
+
+// ---------------------------------------------------------------------- human play
+
+/**
+ * Endpoints a person acts through.
+ *
+ * These all carry a Clerk token, so unlike everything above they are called from the client
+ * rather than during server rendering — the token belongs to the browser session and never
+ * reaches a server component.
+ */
+
+async function post<T>(path: string, token: string | null, body?: unknown): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new ApiError(response.status, describe(payload) ?? `POST ${path} failed`);
+  }
+  return payload as T;
+}
+
+/**
+ * A readable message out of FastAPI's `detail`, which is a string for most errors and an object
+ * for a refused move — the shape carrying the legal move list (ADR-0002).
+ */
+function describe(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const detail = (payload as { detail?: unknown }).detail;
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object") {
+    const inner = (detail as { detail?: unknown }).detail;
+    if (typeof inner === "string") return inner;
+  }
+  return null;
+}
+
+export interface HumanActionResult {
+  ply: number;
+  status: GameStatus;
+  result: GameResult;
+  termination: string | null;
+  detail: string;
+  game_over: boolean;
+}
+
+export function createHumanGame(
+  token: string | null,
+  body: { model: string; colour: "white" | "black"; trash_talk_enabled?: boolean },
+): Promise<{ id: string }> {
+  return post<{ id: string }>("/games/human", token, body);
+}
+
+export function sendMove(
+  id: string,
+  token: string | null,
+  move: string,
+  expectedPly: number,
+): Promise<HumanActionResult> {
+  return post<HumanActionResult>(`/games/${id}/moves`, token, {
+    move,
+    expected_ply: expectedPly,
+  });
+}
+
+export function resignGame(id: string, token: string | null): Promise<HumanActionResult> {
+  return post<HumanActionResult>(`/games/${id}/resign`, token);
+}
+
+export function offerDraw(id: string, token: string | null): Promise<HumanActionResult> {
+  return post<HumanActionResult>(`/games/${id}/draw`, token);
+}
+
+export function respondToDraw(
+  id: string,
+  token: string | null,
+  accept: boolean,
+): Promise<HumanActionResult> {
+  return post<HumanActionResult>(`/games/${id}/draw/respond`, token, { accept });
+}
+
+export function sayToModel(
+  id: string,
+  token: string | null,
+  message: string,
+): Promise<HumanActionResult> {
+  return post<HumanActionResult>(`/games/${id}/say`, token, { message });
+}
