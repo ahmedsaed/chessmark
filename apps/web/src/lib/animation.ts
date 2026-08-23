@@ -11,6 +11,9 @@ import { Chess } from "chess.js";
 /** How long one ply stays on screen. Slow enough to read a move, quick enough to feel alive. */
 export const PLY_INTERVAL_MS = 750;
 
+/** Piece slide. Must stay under `PLY_INTERVAL_MS` or moves queue up behind the animation. */
+export const PLY_ANIMATION_MS = 280;
+
 /** Delay between neighbouring boards' first tick, so the row does not step in unison. */
 export const STAGGER_MS = 240;
 
@@ -95,4 +98,22 @@ export function buildFrames(startFen: string, moves: string[]): Frame[] {
   }
 
   return frames;
+}
+
+
+/**
+ * Whether moving from one position to the next is a single ply, and so worth animating.
+ *
+ * Everything else is a jump, and a board asked to animate a jump slides every piece across the
+ * squares at once — which reads as pieces overshooting and then snapping into place. Two jumps
+ * happen in normal use: the loop restart, where an endgame becomes an opening, and the first
+ * render after the reduced-motion query resolves, where the final position becomes the staggered
+ * start. Both must land instantly.
+ *
+ * `previous` is `null` on the very first paint, which is a jump by definition — there is nothing
+ * to animate from.
+ */
+export function isContiguous(previous: number | null, next: number): boolean {
+  if (previous === null) return false;
+  return next === previous + 1;
 }

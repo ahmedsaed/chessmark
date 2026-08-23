@@ -4,6 +4,7 @@ import {
   LOOP_PAUSE_PLIES,
   advance,
   buildFrames,
+  isContiguous,
   positionAt,
   shouldAnimate,
   staggeredStart,
@@ -116,5 +117,38 @@ describe("buildFrames", () => {
 
   it("survives junk without throwing", () => {
     expect(buildFrames(START, ["not-a-move"])).toHaveLength(1);
+  });
+});
+
+describe("isContiguous", () => {
+  it("animates a single step forward", () => {
+    expect(isContiguous(4, 5)).toBe(true);
+  });
+
+  it("does not animate the first paint", () => {
+    expect(isContiguous(null, 0)).toBe(false);
+    expect(isContiguous(null, 27)).toBe(false);
+  });
+
+  /** The loop restart: an endgame becoming an opening is not a move. */
+  it("does not animate the wrap back to the start", () => {
+    expect(isContiguous(52, 0)).toBe(false);
+  });
+
+  /**
+   * The reduced-motion resolution: the first paint shows the final position, and the board then
+   * jumps to its staggered start. Animating that slides every piece at once.
+   */
+  it("does not animate a jump from the final position to a staggered start", () => {
+    expect(isContiguous(72, 24)).toBe(false);
+  });
+
+  it("does not animate standing still, as during the end-of-loop dwell", () => {
+    expect(isContiguous(30, 30)).toBe(false);
+  });
+
+  it("never animates backwards", () => {
+    expect(isContiguous(10, 9)).toBe(false);
+    expect(isContiguous(10, 2)).toBe(false);
   });
 });

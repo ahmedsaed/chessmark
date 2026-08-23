@@ -942,6 +942,15 @@ emoji presentation. Saving a few kilobytes is not worth a board that renders dif
 machine, so the thumbnails now use the same `Board` the game page does. One renderer, and the
 thumbnails cannot drift from the real board.
 
+**Amendment — animating a jump is not animating a move.** Handing a discontinuous position
+change to a real board makes it slide every piece across the squares at once, which reads as
+pieces overshooting and then snapping into place. Two such jumps happened in normal use: the loop
+restart, and — on every single page load — the first render after the reduced-motion query
+resolved, where the final position became the staggered start. Only genuinely contiguous single
+plies are animated now (`isContiguous`); everything else lands instantly. Measured afterwards:
+every step across three boards was `+1` apart from the loop wraps, and under reduced motion the
+shown ply does not change at all.
+
 **Covers:** UI-03 (extended). No new requirement.
 
 ---
