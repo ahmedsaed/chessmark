@@ -38,6 +38,8 @@ flowchart LR
     P9 --> P16[16 Cost dashboard]
     P8 --> P18[18 Site shell]
     P18 --> P17[17 Launch]
+    P18 --> P19[19 Living replays]
+    P18 --> P20[20 Models + matchmaking]
     P11 --> P17
     P13 --> P17
     P16 --> P17
@@ -887,6 +889,71 @@ Phases 7 and 8. There is still no automated Playwright suite, so no test would c
 regression. That is the honest state and it is worth closing before launch.
 
 **Covers:** UI-06 extended to the site root. Site chrome had no requirement ID — see the note above.
+
+---
+
+## Phase 19 — Living replays
+
+**Goal:** the landing page moves. Someone who lands on it sees pieces being played within a
+second, whether or not a game is live right now.
+
+The replay row shows three final positions today, which is a photograph of a game rather than a
+game. Live games are the exception, not the rule, on a small deployment — most visitors arrive
+when nothing is running — so the front page has to carry its own motion.
+
+**Objectives**
+1. `MiniBoard` gains an auto-playing client variant driven by the moves already on the page
+2. Each board loops, and the three start at different offsets so they are not in lockstep
+3. The last move is highlighted, so the eye catches what changed
+4. `prefers-reduced-motion: reduce` renders the final position and starts no timer at all
+5. Boards that are scrolled out of view stop ticking
+
+**Exit criteria**
+- [ ] Pieces are moving within two seconds of a cold load, with no live game running
+- [ ] The three boards are visibly out of phase with each other
+- [ ] With `prefers-reduced-motion: reduce`, no timer is created — asserted by a test, not by eye
+- [ ] Scrolling the row out of view stops its timers, verified
+- [ ] No API call beyond what the landing page already makes: `GameDetail.moves` is already
+      fetched for each replay, so this is a rendering change, not a data one
+- [ ] A move the client cannot replay stops that board rather than rendering a position that
+      never existed — the rule `LiveGame` already follows
+
+**Covers:** UI-03 (extended). No new requirement.
+
+---
+
+## Phase 20 — Models & matchmaking
+
+**Goal:** the 240 models in the registry become browsable, searchable, and individually
+accountable — and picking two of them to play becomes a real page.
+
+The registry has been a dropdown and a grid of cards. Everything we know about a model — which
+endpoints serve it, at which precisions, how often it plays an illegal move, what it costs per
+game, which games it has actually played — exists in the database and has never had a page.
+
+**Objectives**
+1. `GET /models/{slug}` — one model with aggregates over **all** its games, not only ratable ones
+2. `GET /games?model=<slug>` — games filtered by model, both seats
+3. `/models` — the full list with client-side search over slug and provider
+4. `/models/[slug]` — registry facts, every contestant with its pinned endpoint, ratings where
+   they exist, aggregate illegal rate / cost / latency / cache rate, and the games behind them
+5. `/play` — model selection through the same search, showing cost and context for the picks
+
+**Exit criteria**
+- [ ] `/models` lists every registered model and filters as you type, with no network request per
+      keystroke — 240 models is small enough to filter in the client, and this asserts that choice
+- [ ] `/models/[slug]` reaches the games behind every aggregate it prints
+- [ ] Aggregates reconcile **exactly** with a SQL query over `llm_calls` for the same model —
+      asserted by a test, in the manner of Phase 16's dashboard criterion
+- [ ] A model with zero games renders a real empty state; an unknown slug returns 404, not 500
+- [ ] A model whose contestants are ranked links to its leaderboard rows, and one that is a
+      floating alias says why it cannot be ranked
+- [ ] `/play` starts a game end to end, and the picker shows cost and context window (UI-07)
+
+**Covers:** UI-07, BENCH-02 (extended to unranked games).
+
+**Note:** neither this nor Phase 19 gates the deploy. Both are site work that can land on a
+running deployment.
 
 ---
 
