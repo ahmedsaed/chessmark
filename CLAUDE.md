@@ -131,7 +131,7 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–9, 12 and 18 complete.** 762 backend + 42 frontend tests, CI green.
+**Phases 0–9, 12, 18 and 19 complete.** 762 backend + 58 frontend tests, CI green.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.

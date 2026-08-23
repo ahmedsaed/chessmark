@@ -39,8 +39,27 @@ function squares(fen: string): (Square | null)[] {
   return cells;
 }
 
-export function MiniBoard({ fen, label }: { fen: string; label?: string }) {
+/** `a8` is index 0, `h1` is 63 — the same order `squares` produces. */
+function indexOf(square: string): number {
+  const file = square.charCodeAt(0) - 97;
+  const rank = 8 - Number(square[1]);
+  return rank * 8 + file;
+}
+
+export function MiniBoard({
+  fen,
+  label,
+  lastMove,
+}: {
+  fen: string;
+  label?: string;
+  /** Highlighted so the eye can find the move on a board this small. */
+  lastMove?: { from: string; to: string } | null;
+}) {
   const cells = squares(fen);
+  const marked = lastMove
+    ? new Set([indexOf(lastMove.from), indexOf(lastMove.to)])
+    : new Set<number>();
 
   return (
     <div
@@ -60,7 +79,20 @@ export function MiniBoard({ fen, label }: { fen: string; label?: string }) {
             className={`flex items-center justify-center leading-none ${
               light ? "bg-sq-light" : "bg-sq-dark"
             } ${square?.white ? "text-piece-white" : "text-piece-black"}`}
-            style={{ fontSize: "min(2.6vw, 15px)" }}
+            style={{
+              fontSize: "min(2.6vw, 15px)",
+              /* Mixed into the square's own colour, not laid over it as a transparent wash.
+                 `backgroundColor` is the same property the class sets, so a translucent value
+                 would replace the square rather than tint it — there is nothing behind it to
+                 show through. */
+              ...(marked.has(index)
+                ? {
+                    backgroundColor: `color-mix(in srgb, var(--color-sq-mark) 55%, var(${
+                      light ? "--color-sq-light" : "--color-sq-dark"
+                    }))`,
+                  }
+                : {}),
+            }}
           >
             {square?.glyph ?? ""}
           </span>

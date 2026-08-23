@@ -892,7 +892,7 @@ regression. That is the honest state and it is worth closing before launch.
 
 ---
 
-## Phase 19 — Living replays
+## Phase 19 — Living replays ✅ COMPLETE
 
 **Goal:** the landing page moves. Someone who lands on it sees pieces being played within a
 second, whether or not a game is live right now.
@@ -909,14 +909,25 @@ when nothing is running — so the front page has to carry its own motion.
 5. Boards that are scrolled out of view stop ticking
 
 **Exit criteria**
-- [ ] Pieces are moving within two seconds of a cold load, with no live game running
-- [ ] The three boards are visibly out of phase with each other
-- [ ] With `prefers-reduced-motion: reduce`, no timer is created — asserted by a test, not by eye
-- [ ] Scrolling the row out of view stops its timers, verified
-- [ ] No API call beyond what the landing page already makes: `GameDetail.moves` is already
-      fetched for each replay, so this is a rendering change, not a data one
-- [ ] A move the client cannot replay stops that board rather than rendering a position that
-      never existed — the rule `LiveGame` already follows
+- [x] Pieces are moving within two seconds of a cold load, with no live game running — measured
+      in the browser: all three boards changed position inside 2s
+- [x] The three boards are visibly out of phase — each starts at a different fraction of its own
+      game (`staggeredStart`) and its first tick is offset by `STAGGER_MS`; the three positions
+      were asserted distinct
+- [x] With `prefers-reduced-motion: reduce`, **no timer is created**. Counted directly by patching
+      `setInterval` before page load: **5 intervals created normally, 2 under reduced motion** —
+      exactly three board timers, and zero when motion is reduced. The gating decision is also a
+      pure function (`shouldAnimate`) asserted in the suite
+- [x] Scrolling the row out of view stops its timers — verified through the full cycle: in view it
+      animates, scrolled away the positions freeze, scrolled back it resumes
+- [x] No API call beyond what the landing page already makes. `GameDetail.moves` and `start_fen`
+      were already fetched per replay, so this is purely a rendering change
+- [x] A move the client cannot replay stops that board rather than rendering a position that never
+      existed — `buildFrames` lives in `lib/` precisely so this is asserted rather than asserted
+      about, and the test fails when the rule is relaxed to `continue`
+
+**Note:** the positions are derived once per board, not per tick. Recomputing on each frame would
+replay the whole game every 750ms, three times over.
 
 **Covers:** UI-03 (extended). No new requirement.
 

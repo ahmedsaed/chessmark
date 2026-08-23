@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 import { HeroGame } from "@/components/HeroGame";
-import { MiniBoard } from "@/components/MiniBoard";
+import { ReplayBoard } from "@/components/ReplayBoard";
 import { apiUrl, getGame, getLeaderboard, listEvents, listGames } from "@/lib/api";
 import { pickReplays } from "@/lib/replays";
 import type { GameDetail, GameSummary, LeaderboardRow } from "@/lib/types";
@@ -104,7 +104,7 @@ function Strip({
 }
 
 /**
- * Three finished games, picked at random, shown by their final position.
+ * Three finished games, picked at random, each playing itself.
  *
  * Only clean finishes — a checkmate or a resignation. A ply-cap draw or a budget stop is still
  * browsable from "Recent games", but it makes a poor replay: the interesting thing about those
@@ -118,11 +118,11 @@ function Replays({ games }: { games: GameDetail[] }) {
           Replays
         </h2>
         <span className="h-px flex-1 bg-line-soft" aria-hidden />
-        <span className="font-mono text-[10px] text-ink-faint">scrub any of them ply by ply</span>
+        <span className="font-mono text-[10px] text-ink-faint">playing · open one to scrub it</span>
       </div>
 
       <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {games.map((game) => {
+        {games.map((game, index) => {
           const white = game.players.find((p) => p.colour === "white");
           const black = game.players.find((p) => p.colour === "black");
 
@@ -136,9 +136,12 @@ function Replays({ games }: { games: GameDetail[] }) {
                 className="flex h-full items-start gap-4 border border-line bg-surface-2 p-3 transition-colors hover:border-accent-dim focus-visible:border-accent"
               >
                 <div className="w-[104px] flex-none">
-                  <MiniBoard
-                    fen={game.current_fen}
-                    label={`final position, ${white?.display_name ?? "white"} versus ${black?.display_name ?? "black"}`}
+                  <ReplayBoard
+                    startFen={game.start_fen}
+                    moves={game.moves}
+                    index={index}
+                    count={games.length}
+                    label={`${white?.display_name ?? "white"} versus ${black?.display_name ?? "black"}`}
                   />
                 </div>
 

@@ -23,7 +23,7 @@ export default async function PlayPage() {
   const models = await listModels();
 
   return (
-    <main className="mx-auto w-full max-w-[760px] flex-1 px-5 py-12">
+    <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       <h1 className="font-serif text-4xl leading-tight text-ink">New game</h1>
       <p className="mt-4 max-w-prose text-ink-dim">
         Pick two models and watch them play. The game is unranked unless it runs the fixed ranked
