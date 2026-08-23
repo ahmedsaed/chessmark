@@ -573,3 +573,62 @@ class MeOut(Schema):
     games_started_today: int
     games_remaining_today: int
     usd_spent_today: Decimal
+
+
+# ---------------------------------------------------------------------- leaderboard
+
+
+class LeaderboardRow(Schema):
+    """One contestant's standing (BENCH-02).
+
+    `rd` is printed next to the rating on purpose. A rating without its deviation invites a reader
+    to compare a model with three games against one with three hundred as though the numbers meant
+    the same thing, and they do not — that is the whole reason Glicko-2 was chosen over Elo.
+    """
+
+    model_id: uuid.UUID
+    model_slug: str
+    quantization: str
+    display_name: str
+
+    rating: float
+    rating_deviation: float
+    volatility: float
+
+    games: int
+    wins: int
+    draws: int
+    losses: int
+
+    #: The benchmark's headline number, and the reason the project exists.
+    illegal_attempts: int
+    moves_played: int
+    illegal_per_move: float
+
+    forfeits: int
+    mean_cost_usd: Decimal
+    mean_latency_ms: float
+
+    @property
+    def label(self) -> str:
+        return f"{self.model_slug}@{self.quantization}"
+
+
+class ExcludedGame(Schema):
+    """A finished game that did not count, and why.
+
+    Served rather than hidden. "Some games are excluded" invites disbelief; a list of ids and
+    reasons is checkable (BENCH-10).
+    """
+
+    game_id: uuid.UUID
+    reason: str
+
+
+class Leaderboard(Schema):
+    rows: list[LeaderboardRow] = Field(default_factory=list)
+    games_counted: int = 0
+    excluded: list[ExcludedGame] = Field(default_factory=list)
+    prompt_version: str | None = None
+    #: Rating periods that contributed. One per UTC day.
+    periods: int = 0

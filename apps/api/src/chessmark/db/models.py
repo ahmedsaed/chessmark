@@ -496,7 +496,12 @@ class ModelEndpoint(Base):
 
 
 class Rating(Base):
-    """Glicko-2 rating for one model at the end of one rating period (BENCH-01)."""
+    """Glicko-2 rating for one **contestant** at the end of one rating period (BENCH-01).
+
+    A contestant is `(model, quantization)`, not a model (ADR-0015). `model@fp4` and `model@fp8`
+    are different entrants and are rated apart — averaging them would produce a number describing
+    neither, which is the failure this project keeps finding in its own results.
+    """
 
     __tablename__ = "ratings"
 
@@ -504,6 +509,11 @@ class Rating(Base):
     model_id: Mapped[uuid.UUID] = mapped_column(
         _fk("model_registry.id", ondelete="CASCADE"), index=True
     )
+    quantization: Mapped[str] = mapped_column(
+        sa.Text, default="unknown", server_default="unknown", index=True
+    )
+    """The precision this contestant played at. Half of its identity, not a detail."""
+
     period: Mapped[int] = mapped_column(sa.Integer, index=True)
     rating: Mapped[float] = mapped_column(sa.Float, default=1500.0)
     rating_deviation: Mapped[float] = mapped_column(sa.Float, default=350.0)
@@ -511,7 +521,11 @@ class Rating(Base):
     games_played: Mapped[int] = mapped_column(default=0, server_default="0")
     computed_at: Mapped[dt.datetime] = created_at()
 
-    __table_args__ = (sa.UniqueConstraint("model_id", "period", name="uq_ratings_model_id_period"),)
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "model_id", "quantization", "period", name="uq_ratings_contestant_period"
+        ),
+    )
 
 
 class AnalysisJob(Base):

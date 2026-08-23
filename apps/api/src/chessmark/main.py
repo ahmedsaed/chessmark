@@ -7,7 +7,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from chessmark.api.deps import close_redis
-from chessmark.api.routes import admin, events, games, health, me, models, webhooks
+from chessmark.api.routes import (
+    admin,
+    events,
+    games,
+    health,
+    leaderboard,
+    me,
+    models,
+    webhooks,
+)
 from chessmark.core.config import get_settings
 from chessmark.db.session import dispose_engine
 
@@ -62,6 +71,7 @@ def create_app() -> FastAPI:
     app.include_router(games.router)
     app.include_router(events.router)
     app.include_router(me.router)
+    app.include_router(leaderboard.router)
     app.include_router(admin.router)
     app.include_router(webhooks.router)
 
