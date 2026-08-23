@@ -62,6 +62,9 @@ smoke-llm: ## One real end-to-end LLM call. Manual only — the test suite never
 play: ## Play a full game and watch it. ARGS="--scripted" needs no API key
 	cd $(API) && uv run python ../../scripts/play_game.py $(ARGS)
 
+resume: ## Reopen a game the harness stopped: make resume GAME=<id> USD=1.50
+	cd $(API) && uv run python ../../scripts/resume_game.py $(GAME) $(if $(USD),--max-usd $(USD),) $(if $(PLIES),--max-plies $(PLIES),)
+
 worker: ## Run a standalone turn worker
 	cd $(API) && uv run python ../../scripts/worker.py
 

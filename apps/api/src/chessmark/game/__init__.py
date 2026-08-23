@@ -16,6 +16,7 @@ from chessmark.game.pgn import PgnMetadata, final_position_from_pgn, to_pgn
 from chessmark.game.referee import (
     DEFAULT_MAX_PLIES,
     FORFEIT_TERMINATIONS,
+    RESUMABLE_TERMINATIONS,
     Colour,
     GameResult,
     MoveOutcome,
@@ -27,6 +28,7 @@ from chessmark.game.referee import (
 __all__ = [
     "DEFAULT_MAX_PLIES",
     "FORFEIT_TERMINATIONS",
+    "RESUMABLE_TERMINATIONS",
     "BoardView",
     "ChessBoard",
     "Colour",

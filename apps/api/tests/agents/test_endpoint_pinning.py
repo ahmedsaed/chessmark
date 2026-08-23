@@ -213,3 +213,74 @@ def test_a_floating_alias_is_recognised(slug: str) -> None:
 )
 def test_a_pinned_version_is_not_a_floating_alias(slug: str) -> None:
     assert not is_floating_alias(slug)
+
+
+# ====================================================================== declared beats unknown
+
+
+async def test_a_declared_precision_beats_unknown_even_at_lower_uptime(
+    db: AsyncSession,
+) -> None:
+    """The real case, from `z-ai/glm-4.7`.
+
+    Uptime alone picked Google Vertex at `unknown` (99.98%) over Novita at fp8 (95.93%) — recorded
+    honestly, but a reseller at an undeclared precision is not what anyone means by "GLM-4.7".
+    `unknown` says the least about what actually ran, so it is a contestant you may ask for and no
+    longer the silent default.
+    """
+    await _seed(
+        db,
+        [
+            {"provider": "Google", "quantization": "unknown", "uptime": 99.98},
+            {"provider": "Novita", "quantization": "fp8", "uptime": 95.93},
+            {"provider": "Z.AI", "quantization": "fp4", "uptime": 95.61},
+        ],
+    )
+
+    chosen = await select_endpoint(db, model_slug=SLUG)
+
+    assert chosen.provider_name == "Novita"
+    assert chosen.quantization == "fp8"
+
+
+async def test_unknown_still_wins_when_it_is_all_there_is(db: AsyncSession) -> None:
+    """A closed-weight model has nothing to declare. Preferring declared precision must not make
+    it unplayable — that would be ADR-0014's exclusion policy returning by the back door."""
+    await _seed(
+        db,
+        [
+            {"provider": "Google", "quantization": "unknown", "uptime": 99.0},
+            {"provider": "Azure", "quantization": None, "uptime": 99.9},
+        ],
+    )
+
+    assert (await select_endpoint(db, model_slug=SLUG)).provider_name == "Azure"
+
+
+async def test_unknown_can_still_be_asked_for_by_name(db: AsyncSession) -> None:
+    """It is a contestant, not a fallback. Asking for it pins it even against a declared one."""
+    await _seed(
+        db,
+        [
+            {"provider": "Reseller", "quantization": "unknown", "uptime": 99.9},
+            {"provider": "Specialist", "quantization": "fp8", "uptime": 99.0},
+        ],
+    )
+
+    chosen = await select_endpoint(db, model_slug=SLUG, quantization="unknown")
+
+    assert chosen.provider_name == "Reseller"
+
+
+async def test_uptime_still_decides_between_two_declared_precisions(db: AsyncSession) -> None:
+    """The preference is declared-over-unknown, not fp8-over-fp4. Both are real contestants and
+    neither is inherently the right default."""
+    await _seed(
+        db,
+        [
+            {"provider": "Eight", "quantization": "fp8", "uptime": 90.0},
+            {"provider": "Four", "quantization": "fp4", "uptime": 99.0},
+        ],
+    )
+
+    assert (await select_endpoint(db, model_slug=SLUG)).provider_name == "Four"

@@ -315,8 +315,14 @@ async def select_endpoint(
     that property more directly than popularity would anyway.
 
     `quantization` is the contestant's identity, not a filter — asking for `fp4` pins an fp4
-    endpoint, and a model with no fp4 endpoint simply has no fp4 contestant. Asking for nothing
-    takes the healthiest endpoint at any precision, and whatever that turns out to be is recorded.
+    endpoint, and a model with no fp4 endpoint simply has no fp4 contestant.
+
+    Asking for nothing prefers a **declared** precision over `unknown`, then takes the healthiest
+    within that. Uptime alone was the first rule and it had a consequence worth avoiding: `unknown`
+    wins whenever a reseller happens to be more reliable than the specialists, and it is the one
+    value that tells a reader least. `z-ai/glm-4.7` defaulted to Google Vertex at `unknown` (99.98%)
+    over Novita at fp8 (95.93%) — recorded honestly, but not what anyone means by "GLM-4.7".
+    `unknown` remains a contestant you can ask for; it is no longer the silent default.
 
     Endpoints that cannot call tools are never selected: an agent that cannot act cannot play
     (AGENT-01), and picking one would produce a forfeit that says nothing about the model.
@@ -330,6 +336,13 @@ async def select_endpoint(
             ModelEndpoint.supports_tools.is_(True),
         )
         .order_by(
+            # A declared precision first, unless one was asked for by name. `unknown` is a real
+            # contestant but a poor default: it says the least about what actually ran.
+            sa.case(
+                (ModelEndpoint.quantization.is_(None), 1),
+                (ModelEndpoint.quantization == "unknown", 1),
+                else_=0,
+            ),
             # NULLS LAST: an endpoint whose uptime we have never measured is not a good pick, but
             # it is better than none at all.
             sa.desc(

@@ -69,3 +69,6 @@ class EventType(StrEnum):
     MESSAGE_SENT = "message_sent"
     DRAW_OFFERED = "draw_offered"
     GAME_ENDED = "game_ended"
+    #: A game stopped by the harness — a budget, a ply cap, a provider outage — was reopened with
+    #: room to continue. Never a chess result: those are final.
+    GAME_RESUMED = "game_resumed"

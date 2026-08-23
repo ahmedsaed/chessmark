@@ -66,6 +66,19 @@ class Termination(StrEnum):
 
 #: Terminations that mean a player failed rather than lost at chess. Reported separately on the
 #: leaderboard — losing to a stronger model is not the same as failing to emit a legal move.
+#: Endings the *harness* imposed, not the game. Chessmark ran out of budget, hit its own ply cap,
+#: or could not reach a provider — none of which is anything either model did. They are the only
+#: endings that may be reopened: a checkmate is final, and so is a forfeit, because both are
+#: findings about a player.
+RESUMABLE_TERMINATIONS = frozenset(
+    {
+        Termination.BUDGET_EXCEEDED,
+        Termination.PLY_CAP,
+        Termination.ABANDONED,
+    }
+)
+
+
 FORFEIT_TERMINATIONS = frozenset(
     {
         Termination.ILLEGAL_MOVE_FORFEIT,

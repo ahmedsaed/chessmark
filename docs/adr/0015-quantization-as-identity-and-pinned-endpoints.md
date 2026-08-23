@@ -35,7 +35,9 @@ together. No precision is banned; `unknown` is a value like any other, and a gam
 undeclared precision says so.
 
 **Every seat pins exactly one endpoint for the whole match.** Chosen by **uptime**, highest first,
-among endpoints serving the requested quantization, with throughput as the tiebreak. The choice is
+among endpoints serving the requested quantization, with throughput as the tiebreak. When no
+precision is requested, a **declared** precision is preferred over `unknown` before uptime is
+considered. The choice is
 resolved once at match creation, recorded on the player, and passed as `only: [provider]` for every
 call in that game.
 
@@ -104,3 +106,25 @@ models "blocked on precision". Both are gone.
 Baidu/deepseek-v4-flash, StreamLake/kimi-k2.5) and `true` for the one measured at 28%
 (Google/gemini-3.7-flash). It was on the model card for about ten minutes before that comparison was
 run. An interface element that is wrong more often than right is worse than an absent one.
+
+
+## Amendment — 2026-08-23: a declared precision outranks `unknown` by default
+
+Uptime alone was the first selection rule, and it had a consequence worth avoiding. `z-ai/glm-4.7`
+is served by eight endpoints; the healthiest is **Google Vertex at `unknown`, 99.98%**, ahead of
+Novita at fp8 (95.93%) and Z.AI's own fp4 (95.61%). So a game of "GLM-4.7" ran on a reseller at an
+undeclared precision — recorded honestly, and not what anyone means by the name.
+
+`unknown` now sorts last when no precision was asked for. It remains a contestant that can be
+requested by name, and it still wins outright when it is all a model offers — a closed-weight model
+has nothing to declare, and excluding it would be ADR-0014's exclusion policy returning by the back
+door.
+
+**The preference is declared-over-undeclared, not fp8-over-fp4.** Both are real contestants and
+neither is inherently the right default, so uptime still decides between them: on current data
+`glm-4.7` defaults to DeepInfra at fp4 (99.36%) rather than Novita at fp8 (95.93%). A consequence
+worth stating plainly — **the default contestant for a model can change between games as uptimes
+move.** That is survivable because the precision played is recorded and ratings group by
+`(model, quantization)`, so two games at different precisions land in different rows rather than
+being averaged. It does mean an unqualified model name is not a stable contestant, only a stable
+*model*, and the game form shows which endpoint a choice will actually get before it is started.

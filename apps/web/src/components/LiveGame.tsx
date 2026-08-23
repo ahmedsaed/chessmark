@@ -18,6 +18,7 @@ import { Chess } from "chess.js";
 import { Board } from "@/components/Board";
 import { Conversation } from "@/components/Conversation";
 import { StatsRail } from "@/components/StatsRail";
+import { useGameDetail } from "@/hooks/useGameDetail";
 import { useGameStream } from "@/hooks/useGameStream";
 import { foldEvents } from "@/lib/turns";
 import type { GameDetail, GameEvent } from "@/lib/types";
@@ -25,7 +26,7 @@ import type { GameDetail, GameEvent } from "@/lib/types";
 const TERMINAL = new Set(["finished", "aborted"]);
 
 export function LiveGame({
-  game,
+  game: initial,
   apiUrl,
   initialEvents,
 }: {
@@ -34,10 +35,10 @@ export function LiveGame({
   initialEvents: GameEvent[];
 }) {
   const { events, status } = useGameStream({
-    gameId: game.id,
+    gameId: initial.id,
     apiUrl,
-    afterSeq: game.event_seq,
-    enabled: !TERMINAL.has(game.status),
+    afterSeq: initial.event_seq,
+    enabled: !TERMINAL.has(initial.status),
   });
 
   // History first, then whatever has streamed in since. The move list is rebuilt from
@@ -48,8 +49,17 @@ export function LiveGame({
     [initialEvents, events],
   );
 
+  // Stats are not in the event stream; refetch the record as plies land, or the rail shows the
+  // numbers as they were when the page loaded and never moves again.
+  const game = useGameDetail({
+    initial,
+    apiUrl,
+    plyCount: moves.length,
+    ended: ended !== null,
+  });
+
   const { fen, lastMove, toMove } = useMemo(() => {
-    const board = new Chess(game.start_fen);
+    const board = new Chess(initial.start_fen);
     let last: { from: string; to: string } | null = null;
 
     for (const san of moves) {
@@ -68,7 +78,7 @@ export function LiveGame({
       lastMove: last,
       toMove: board.isGameOver() ? null : (board.turn() === "w" ? "white" : "black"),
     } as const;
-  }, [moves, game.start_fen]);
+  }, [moves, initial.start_fen]);
 
   const outcome = ended ?? terminalFrom(game);
 
@@ -131,11 +141,18 @@ function Header({
   status: string;
   outcome: { result: string; termination: string; detail: string } | null;
 }) {
+  /* `status` is the *connection*, not the game. Showing it as the game's state is how a finished
+     game kept claiming to be live: the SSE stream sits open, so "live" stayed true long after the
+     last move. The game's own record decides, and the connection is a smaller note beside it. */
+  const finished = outcome !== null || TERMINAL.has(game.status);
+
   return (
     <div className="flex flex-wrap items-center gap-3">
-      {outcome ? (
+      {finished ? (
         <span className="border border-good px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-good">
-          {outcome.result} · {outcome.termination}
+          {outcome?.result || game.result}
+          {(outcome?.termination || game.termination) &&
+            ` · ${outcome?.termination || game.termination}`}
         </span>
       ) : (
         <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-bad">
@@ -148,9 +165,16 @@ function Header({
           {status === "reconnecting" ? "reconnecting" : "live"}
         </span>
       )}
+
+      {/* Plies move as the game does, so this is the readout that shows it is still going. */}
+      <span className="tabular font-mono text-[10px] text-ink-faint">
+        {game.ply_count} plies
+      </span>
       <span className="font-mono text-[10px] text-ink-faint">game {game.id.slice(0, 8)}</span>
-      {outcome?.detail && (
-        <span className="text-xs text-ink-dim">{outcome.detail}</span>
+      {(outcome?.detail || game.termination_detail) && (
+        <span className="text-xs text-ink-dim">
+          {outcome?.detail || game.termination_detail}
+        </span>
       )}
     </div>
   );
