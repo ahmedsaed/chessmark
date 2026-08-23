@@ -135,7 +135,7 @@ function Replays({ games }: { games: GameDetail[] }) {
                    boards. `h-full` makes every card fill its grid row so the three line up. */
                 className="flex h-full items-start gap-4 border border-line bg-surface-2 p-3 transition-colors hover:border-accent-dim focus-visible:border-accent"
               >
-                <div className="w-[104px] flex-none">
+                <div className="w-[120px] flex-none">
                   <ReplayBoard
                     startFen={game.start_fen}
                     moves={game.moves}

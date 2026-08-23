@@ -914,10 +914,14 @@ when nothing is running — so the front page has to carry its own motion.
 - [x] The three boards are visibly out of phase — each starts at a different fraction of its own
       game (`staggeredStart`) and its first tick is offset by `STAGGER_MS`; the three positions
       were asserted distinct
-- [x] With `prefers-reduced-motion: reduce`, **no timer is created**. Counted directly by patching
-      `setInterval` before page load: **5 intervals created normally, 2 under reduced motion** —
-      exactly three board timers, and zero when motion is reduced. The gating decision is also a
-      pure function (`shouldAnimate`) asserted in the suite
+- [x] With `prefers-reduced-motion: reduce`, the animation creates **no timer**. Counted by
+      patching `setInterval` before page load: **10 intervals normally against 4 under reduced
+      motion**. The gating decision is a pure function (`shouldAnimate`) asserted in the suite, and
+      the boards' rendered markup was byte-identical after five seconds.
+      **Caveat, stated rather than buried:** the counts are not a clean three because
+      `react-chessboard` runs timers of its own per instance regardless of our gate. The claim
+      that survives is narrower than the one first written here — *our* animation starts nothing
+      and nothing moves — not that the page creates zero timers
 - [x] Scrolling the row out of view stops its timers — verified through the full cycle: in view it
       animates, scrolled away the positions freeze, scrolled back it resumes
 - [x] No API call beyond what the landing page already makes. `GameDetail.moves` and `start_fen`
@@ -928,6 +932,15 @@ when nothing is running — so the front page has to carry its own motion.
 
 **Note:** the positions are derived once per board, not per tick. Recomputing on each frame would
 replay the whole game every 750ms, three times over.
+
+**Amendment — the boards were first drawn by hand and that was wrong.** The initial version
+rendered its own 8x8 grid of Unicode glyphs, to avoid shipping a drag-and-drop board three times
+for three thumbnails. The position data was correct the whole time — sampled live, the boards
+never showed anything but 64 cells and exactly two kings — but the *drawing* broke up as games
+progressed, because the glyphs resolve to whatever system font wins and some platforms give them
+emoji presentation. Saving a few kilobytes is not worth a board that renders differently per
+machine, so the thumbnails now use the same `Board` the game page does. One renderer, and the
+thumbnails cannot drift from the real board.
 
 **Covers:** UI-03 (extended). No new requirement.
 

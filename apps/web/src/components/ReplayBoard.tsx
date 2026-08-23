@@ -6,6 +6,10 @@
  * The row used to show three final positions — a photograph of a game rather than a game. Live
  * games are the exception on a small deployment, so the front page has to carry its own motion.
  *
+ * Draws through the same `Board` the game page uses. The first version drew its own grid of
+ * Unicode glyphs, which was cheap and unreliable: the positions were correct but the pieces
+ * rendered differently depending on which system font won, and broke up as the games progressed.
+ *
  * No new data: `GameDetail.moves` is already fetched for each card, so this is a rendering change.
  * Every position is derived once, up front, by replaying SAN through chess.js; the animation is
  * then an index into that array. Recomputing the position on each tick would replay the whole
@@ -17,7 +21,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { MiniBoard } from "@/components/MiniBoard";
+import { Board } from "@/components/Board";
 import {
   PLY_INTERVAL_MS,
   STAGGER_MS,
@@ -96,8 +100,15 @@ export function ReplayBoard({
   const frame = frames[reducedMotion ? plies : positionAt(cycle, plies)] ?? frames[0];
 
   return (
-    <div ref={hostRef} data-animating={animating ? "true" : "false"}>
-      <MiniBoard fen={frame.fen} lastMove={frame.lastMove} label={label} />
+    <div
+      ref={hostRef}
+      data-animating={animating ? "true" : "false"}
+      role="img"
+      aria-label={label}
+    >
+      {/* Notation off and the animation kept well under `PLY_INTERVAL_MS`, or moves queue up
+          behind the slide and the board falls behind the ply it claims to show. */}
+      <Board fen={frame.fen} lastMove={frame.lastMove} showNotation={false} animationMs={280} />
     </div>
   );
 }
