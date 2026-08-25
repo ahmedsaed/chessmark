@@ -232,6 +232,17 @@ variable they do — worth remembering that a guard downstream of a throwing pro
 Frontend logic in `apps/web/src/lib` is unit-tested with `vitest` (`make test-web`); components
 are still covered by Playwright rather than a jsdom stack.
 
+**Nine pickable models cannot finish a game.** Their context window is under 33k, and the
+transcript reaches ~66k tokens by ply 39 — so they exhaust it around ply 20 of a possible 300.
+`context_exceeded` is a **forfeit**, so an unplayable model records a loss against a model that
+never had a chance. Same class as the `:batch` variants already excluded; AGENT-14 states the rule
+and Phase 22 has yet to apply it to context length.
+
+**Nobody in `users` has an email or a display name.** `core/auth.py` reads an `email` claim that
+Clerk's default session token does not send, so every row is `NULL` — which means an administrator
+granting credits has nothing to identify a person by except an opaque Clerk id. AUTH-14 and
+Phase 22.
+
 Known gaps, recorded rather than quietly carried: Phase 7's Lighthouse score is **unverified**
 (no Lighthouse in this environment), NFR-06's >80% cache rate is met in aggregate but not by
 Gemini individually, Phase 8's PGN is verified against `chess.js` but **not against Lichess or

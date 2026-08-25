@@ -41,7 +41,10 @@ flowchart LR
     P18 --> P19[19 Living replays]
     P18 --> P20[20 Models + matchmaking]
     P9 --> P21[21 Credits]
-    P21 --> P17
+    P21 --> P22[22 Accountability]
+    P22 --> P17
+    P7 --> P23[23 Browser suite]
+    P23 --> P17
     P11 --> P17
     P13 --> P17
     P16 --> P17
@@ -1123,6 +1126,75 @@ manual and out of band, which is the intent while testing is done by the owner a
 end for anyone arriving later. A signup grant changes one default when that changes.
 
 **Covers:** AUTH-10, AUTH-11, AUTH-12. Supersedes AUTH-03.
+
+---
+
+## Phase 22 — Accountability: credit history, identity, and a fresh catalogue
+
+**Goal:** the things Phase 21 relies on stop being unwritten assumptions.
+
+Three gaps found by using the credit system rather than by planning it. None is a bug today; each
+is the kind that only shows up when someone asks a question the data cannot answer.
+
+**Objectives**
+1. `credit_ledger` — every movement appended: user, delta, reason, administrator, timestamp
+2. Grants and charges write to it; a balance becomes a projection of its history
+3. Capture a usable identifier at provisioning, so an administrator can act on a person
+4. Admin grant accepts an email or Clerk id, not an internal UUID
+5. A scheduled catalogue refresh, replacing the by-hand `make seed-models`
+
+**Exit criteria**
+- [ ] Every balance in the system equals the sum of its ledger rows — asserted by a test that
+      replays the ledger and compares
+- [ ] A grant records which administrator made it and why; revocation is a negative row, never an
+      edit, so a balance's history cannot be rewritten
+- [ ] An administrator can grant credits knowing only a person's email address
+- [ ] A user provisioned today carries an identifier beyond their provider id. **Every user in the
+      database currently has `email = NULL` and `display_name = NULL`**, because `auth.py` reads an
+      `email` claim Clerk's default session token does not send
+- [ ] The catalogue refreshes unattended, and a refresh that cannot reach OpenRouter leaves the
+      registry untouched rather than half-written
+
+**On identity — a webhook is the wrong primary mechanism.** It needs a public URL and puts a third
+party's delivery latency in front of a new user's first action, which is the reason just-in-time
+provisioning exists. Preferred order: add the claim to Clerk's session token (the code already
+reads it), then fetch from Clerk's API at provisioning, and keep the webhook for updates and
+deletions where it genuinely belongs.
+
+**Covers:** AUTH-13, AUTH-14, OPS-09.
+
+**Note:** designed so a future top-up path — a user buying or requesting credits — writes to the
+same ledger. The mechanism for *why* a balance moved should not depend on who moved it.
+
+---
+
+## Phase 23 — The browser suite
+
+**Goal:** a UI regression fails a test instead of a person.
+
+Phases 7, 8, 10, 18, 19 and 21 all closed with "verified by hand". Each was honest about it, and
+because no requirement was unmet, six footnotes never added up to a tracked item. NFR-11 makes it
+one.
+
+**Objectives**
+1. Playwright against a running stack, in CI
+2. The paths a person actually takes, not a screenshot diff of every page
+3. Deterministic: a scripted provider, so the suite spends nothing and cannot flake on a vendor
+
+**Exit criteria**
+- [ ] A person can sign in, pick a model, sit down, move, and resign — asserted end to end
+- [ ] A game reloaded mid-play restores the exact position, history and costs
+- [ ] Reasoning stays folded while a game is live and expands once it is over (HUMAN-07 — the
+      invariant most easily broken by a refactor that cannot be caught by types)
+- [ ] A replay scrubs ply by ply and reaches the raw payload behind a turn
+- [ ] The suite runs on a scripted provider and spends nothing
+- [ ] Frontend `lib/` coverage is measured and reported (NFR-10)
+
+**Covers:** NFR-10, NFR-11.
+
+**Why it gates launch:** every UI claim in six phases rests on someone having looked at it once.
+The board, the conversation fold, and the reasoning gate have all been rewritten repeatedly in this
+project, and only the last rewrite was ever checked.
 
 ---
 
