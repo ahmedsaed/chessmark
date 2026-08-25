@@ -76,8 +76,30 @@ test: test-api test-web ## Run every test (database tests need `make up`; never 
 test-api: ## Run backend tests
 	cd $(API) && uv run pytest
 
-test-web: ## Run frontend unit tests (pure logic in src/lib)
+# Coverage is on by default here, so the NFR-10 floor is enforced by `make check` rather than
+# only by CI. It costs well under a second.
+test-web: ## Run frontend unit tests with the coverage floor (pure logic in src/lib)
+	cd $(WEB) && pnpm test:coverage
+
+test-web-fast: ## Frontend unit tests without the coverage pass
 	cd $(WEB) && pnpm test
+
+# The browser suite. Needs the API, the web app and the datastores up; it starts its own scripted
+# worker and stops it again. Nothing here calls a provider.
+test-e2e: ## Run the browser suite (public pages — no Clerk needed)
+	cd $(WEB) && pnpm exec playwright test --project=public $(ARGS)
+
+test-e2e-all: ## Run the whole browser suite, signed-in flows included. Needs Clerk keys
+	cd $(WEB) && pnpm exec playwright test $(ARGS)
+
+seed-e2e: ## Play a scripted game into the database for the browser suite to replay
+	cd $(API) && uv run python ../../scripts/seed_e2e.py
+
+seed-e2e-user: ## Create the browser suite's Clerk test account and fund it
+	cd $(API) && uv run python ../../scripts/seed_e2e_user.py $(ARGS)
+
+worker-scripted: ## Run a turn worker with a scripted provider — no API key, no spend
+	cd $(API) && uv run python ../../scripts/worker.py --scripted
 
 test-unit: ## Run only tests that need no database
 	cd $(API) && uv run pytest -m "not integration and not llm"

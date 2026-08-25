@@ -1262,13 +1262,47 @@ one.
 3. Deterministic: a scripted provider, so the suite spends nothing and cannot flake on a vendor
 
 **Exit criteria**
-- [ ] A person can sign in, pick a model, sit down, move, and resign — asserted end to end
-- [ ] A game reloaded mid-play restores the exact position, history and costs
-- [ ] Reasoning stays folded while a game is live and expands once it is over (HUMAN-07 — the
+- [x] A person can sign in, pick a model, sit down, move, and resign — asserted end to end
+- [x] A game reloaded mid-play restores the exact position, history and costs
+- [x] Reasoning stays folded while a game is live and expands once it is over (HUMAN-07 — the
       invariant most easily broken by a refactor that cannot be caught by types)
-- [ ] A replay scrubs ply by ply and reaches the raw payload behind a turn
-- [ ] The suite runs on a scripted provider and spends nothing
-- [ ] Frontend `lib/` coverage is measured and reported (NFR-10)
+- [x] A replay scrubs ply by ply and reaches the raw payload behind a turn
+- [x] The suite runs on a scripted provider and spends nothing
+- [x] Frontend `lib/` coverage is measured and reported (NFR-10)
+
+**Delivered.** Playwright in `apps/web/e2e/`, two projects. `public` runs in CI and needs no
+identity — reading is open to everyone (AUTH-02). `signed-in` signs in through a real Clerk
+development instance with a `+clerk_test` address, so a genuine session JWT is verified against
+real JWKS and **no password lives in the repository**; it is opt-in and skipped rather than faked
+when the keys are absent, the same bargain the `llm` marker strikes.
+
+Nothing is spent. `agents.scripted.responsive` is a scripted opponent that reads the legal moves
+and plays one deterministically — every other helper in that module replays a fixed list, which
+cannot answer a person. `scripts/worker.py --scripted` runs the real worker with only the provider
+replaced; `scripts/seed_e2e.py` plays a whole game through the real queue so replay has something
+finished to scrub.
+
+Two bugs the suite found in its own scaffolding, both worth remembering: a message's content is
+not always a string by the time it reaches the provider (the caching path wraps it in blocks,
+ADR-0003), and `/ w /` is not "the model has replied" — the starting position is white-to-move
+too, so the wait was already satisfied and every later assertion read a stale board.
+
+`data-fen` was added to `Board` for this: the board renders pieces as SVG with no notion of the
+position they came from, so without it a test can count pieces but cannot tell two positions with
+the same material apart.
+
+**Writing the test found a real bug, since fixed.** "Expands once it is over" was true only
+between models: in a game with a human seat, `agents/turn.py` left the reasoning text out of the
+event payload entirely. The log is append-only (ADR-0008), so that omission was permanent — a
+person's own games, the ones they would most want to read back, were the only games whose thinking
+the transcript could never show, long after there was anything left to leak.
+
+The gate now runs on the way **out** (`api/redaction.py`) rather than on the way in: the text is
+always recorded, and is withheld only while the game is live *and* a person holds a seat. Both read
+paths apply it — the REST event log and the SSE stream — because gating one and not the other
+would withhold it from a reload and hand it to the live page a second earlier. Model prose
+(`output.content`) travels the same route for the same reason: Gemini says everything there and
+nothing in `reasoning`, so publishing one and withholding the other would defeat the gate.
 
 **Covers:** NFR-10, NFR-11.
 
@@ -1313,7 +1347,8 @@ Not deploy steps — things that must be *true* before anyone else can reach the
 - [ ] **Credits cannot be obtained by signing up.** New accounts hold zero and granting is manual
       (ADR-0016), which is the intended state for a private beta and a dead end for anyone else.
       Public launch needs either a signup grant or a page explaining how to ask.
-- [ ] **A browser suite exists** (Phase 23, NFR-11). Six phases have shipped on "verified by hand".
+- [x] **A browser suite exists** (Phase 23, NFR-11). Six phases shipped on "verified by hand"; the
+      paths they claimed are now asserted.
 - [ ] Clerk's `user.deleted` webhook is registered in the dashboard, not merely handled in code.
 
 ---

@@ -129,9 +129,56 @@ shape cannot be reached on the free tier, hand-author the fixture and mark it `H
 a test enforces that. Anything that would spend money carries the `llm` marker or lives in
 `scripts/`, run by hand.
 
+## The browser suite
+
+Playwright, in `apps/web/e2e/`. Two projects, because the flows differ in what they need:
+
+| | runs | needs |
+| --- | --- | --- |
+| `public` | `make test-e2e` — **and CI** | a running stack, nothing else |
+| `signed-in` | `make test-e2e-all` | a real Clerk development instance |
+
+Reading is open to everyone (AUTH-02), so the lobby, the catalogue, a model page and a whole
+replay assert with no identity at all. The signed-in flows sign in **for real** — a genuine Clerk
+session JWT, verified against real JWKS — using a `+clerk_test@example.com` address, which a
+development instance treats as a test identity: no mail is sent, the code is fixed, and **no
+password lives in this repository**. They are opt-in and skipped rather than faked when the keys
+are absent, the same bargain the `llm` marker strikes.
+
+The suite starts its own **scripted worker** and seeds its own fixtures, so it spends nothing:
+
+- `agents.scripted.responsive` is a scripted opponent that **reads the board** — it asks for the
+  legal moves and plays the alphabetically first, deterministically. Every other helper in that
+  module replays a fixed list, which cannot answer a person.
+- `scripts/worker.py --scripted` runs the real worker with only the provider replaced. Its log is
+  `apps/web/e2e/.auth/worker.log` — **the first place to look when the board never moves.**
+- `scripts/seed_e2e.py` plays a whole game (Scholar's Mate) through the real queue and worker so
+  replay has something finished to scrub. Idempotent, and it seeds a minimal catalogue only when
+  the registry is empty, which is CI — a developer's 256 real models are left alone.
+- `scripts/seed_e2e_user.py` creates and funds the test account. New users get no credits by
+  design (AUTH-11), so an unattended suite would otherwise be unable to start a game.
+
+**The suite tests a *running* stack, so a stale process gives a stale answer.** A leak that the
+browser reported as real turned out to be an API server started hours earlier, serving events
+without the redaction the worker beside it was already writing. Restart the API and the worker
+after backend changes, or run them with reload.
+
+Two traps, both of which cost a debugging pass:
+
+1. **A message's content is not always a string.** By the time it reaches the provider, the
+   prompt-caching path may have wrapped it into `[{"type": "text", ...}]` so a `cache_control`
+   marker can ride along (ADR-0003). Parsing it as a string made the scripted opponent ask for
+   the legal moves twenty times in one turn, in silence.
+2. **`/ w /` is not "the model has replied".** The starting position is white-to-move too, so the
+   wait was already satisfied and every later assertion read a board that had not moved.
+
+Frontend `lib/` coverage is measured *and* enforced (`make test-web-coverage`, NFR-10).
+`api.ts` and `site.ts` are excluded from that floor and covered by the browser suite instead:
+unit-testing fetch wrappers means mocking `fetch` and then asserting the mock.
+
 ## Current state
 
-**Phases 0–10, 12, 18–22 complete.** 878 backend + 122 frontend tests.
+**Phases 0–10, 12, 18–23 complete.** 889 backend + 122 frontend + 18 browser tests.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -148,7 +195,18 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
   produces one the worker can only answer with `awaiting_human`, and it then lingers as a stale
   entry the human's own next job queues behind. That bug cost a full debugging pass.
 - `chessmark.api` — REST plus SSE with `Last-Event-ID` reconnect. Reasoning is withheld while a
-  game is live (invariant 8).
+  game is live (invariant 8), by `api/redaction.py` — **on the way out, not when the event is
+  written**. Two models cannot read each other's stream, so an audience watching both sides think
+  leaks nothing (ADR-0013); a person holding a seat is a participant, so their live game's
+  `thinking` and `output` payloads are stripped of text and keep only the token count. Both read
+  paths must apply it — the REST event log *and* the SSE stream — and there is a test per path,
+  each verified to fail when its own gate is removed.
+
+  This used to be enforced in `agents/turn.py`, which simply never wrote the text for a game with
+  a human seat. The log is append-only (ADR-0008), so that was permanent: a person's own games
+  were the only ones whose reasoning the transcript could never show, long after there was
+  anything left to leak. Model prose travels the same route, because Gemini says everything in
+  `content` and nothing in `reasoning`.
 - `apps/web` — the site shell (header, footer, error and not-found boundaries, site OpenGraph
   card, sitemap and robots), a landing page led by a live game, `/about`, the live game page
   (stats left, board centre, conversation right), and the replay: a finished game is scrubbable
@@ -276,8 +334,9 @@ correctly refused — `playable=false` still reaches the registry as stored.
 Known gaps, recorded rather than quietly carried: Phase 7's Lighthouse score is **unverified**
 (no Lighthouse in this environment), NFR-06's >80% cache rate is met in aggregate but not by
 Gemini individually, Phase 8's PGN is verified against `chess.js` but **not against Lichess or
-SCID themselves**, and there is **no automated browser suite** — every UI claim in
-Phases 7, 8, 10, 18 and 19 was checked by hand, so no test would catch a layout regression.
+SCID themselves**, and the browser suite's **signed-in half does not run in CI** — it needs a real
+Clerk instance, so CI asserts the public pages only and the playing flow is asserted locally by
+`make test-e2e-all`.
 
 Clerk's `user.deleted` **is** handled (`api/routes/webhooks.py`), contrary to what this file said
 for a while; what is missing is a test over the route handler and registration of the endpoint in

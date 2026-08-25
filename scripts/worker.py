@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """A standalone turn worker.
 
-    make worker
+    make worker              # real models, real money
+    make worker ARGS=--scripted   # a scripted opponent, no key, no spend
 
 Consumes `advance_turn` jobs until interrupted. Run as many as you like — jobs are idempotent
 (ADR-0007), so workers never need to coordinate. Also periodically reconciles games that stalled
@@ -10,6 +11,7 @@ because their job was lost entirely rather than merely dropped by a dead worker.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import os
@@ -27,12 +29,20 @@ from redis.asyncio import Redis  # noqa: E402
 
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
+from chessmark.agents.scripted import responsive  # noqa: E402
 from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.orchestration import TurnQueue, TurnWorker, reconcile  # noqa: E402
 
 log = logging.getLogger("chessmark.worker")
+
+#: What the scripted opponent "thinks" while it moves.
+#:
+#: It exists so invariant 8 is testable: reasoning must be withheld while a game is live and
+#: readable once it is over. A scripted model that never reasons would let that gate be deleted
+#: without a single test noticing.
+SCRIPTED_REASONING = "Taking the first move the board offers. I am scripted; there is no plan."
 
 
 async def reconcile_loop(sessionmaker: Any, queue: TurnQueue, *, every: float = 300.0) -> None:
@@ -46,7 +56,21 @@ async def reconcile_loop(sessionmaker: Any, queue: TurnQueue, *, every: float = 
             log.exception("reconciler failed")
 
 
-async def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--scripted",
+        action="store_true",
+        help=(
+            "Play model turns with a scripted opponent that reads the board — no API key, no "
+            "spend, deterministic. This is what the browser suite runs against."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+async def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     settings = get_settings()
     logging.basicConfig(
         level=settings.log_level,
@@ -57,7 +81,7 @@ async def main() -> int:
     # working on this project, and reading only `os.environ` meant the worker refused to start
     # while every other entry point found the key.
     api_key = os.environ.get("OPENROUTER_API_KEY") or settings.openrouter_api_key
-    if not api_key:
+    if not api_key and not args.scripted:
         print(
             "OPENROUTER_API_KEY is not set in the environment or .env",
             file=sys.stderr,
@@ -82,9 +106,13 @@ async def main() -> int:
     worker = TurnWorker(
         sessionmaker=sessionmaker,
         queue=queue,
-        gateway=LlmGateway(
-            api_key=api_key,
-            pricing=pricing,
+        gateway=(
+            # The provider is the only thing replaced: normalisation, costing, persistence and the
+            # retry loop all run for real, so a game played this way exercises the same code a paid
+            # one does. `completion_fn` takes precedence, so the key is never read.
+            LlmGateway(completion_fn=responsive(reasoning=SCRIPTED_REASONING), pricing=pricing)
+            if args.scripted
+            else LlmGateway(api_key=api_key, pricing=pricing)
         ),
         redis=redis,
         budget=budget,
@@ -94,7 +122,8 @@ async def main() -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, worker.stop)
 
-    log.info("worker %s started", worker.consumer)
+    mode = " (scripted — no spend)" if args.scripted else ""
+    log.info("worker %s started%s", worker.consumer, mode)
     reconciler = asyncio.create_task(reconcile_loop(sessionmaker, queue))
     try:
         await worker.run_forever()
@@ -108,4 +137,4 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()))
+    raise SystemExit(asyncio.run(main(sys.argv[1:])))

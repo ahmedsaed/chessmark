@@ -138,7 +138,10 @@ export function Board({
   }, [lastMove, markedSquares, selected, targets]);
 
   return (
-    <div className="w-full [&_*]:!font-sans">
+    /* `data-fen` is the only thing the browser suite can assert an exact position against: the
+       board renders pieces as SVG with no notion of the position they came from, so without it a
+       test can count pieces but never tell one position from another with the same material. */
+    <div className="w-full [&_*]:!font-sans" data-fen={fen}>
       <Chessboard
         options={{
           id,
