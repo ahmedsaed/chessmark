@@ -123,11 +123,22 @@ def _reveal_reasoning(game: Game) -> bool:
 async def list_games(
     session: SessionDep,
     status_filter: Annotated[GameStatus | None, Query(alias="status")] = None,
+    model: Annotated[str | None, Query(description="OpenRouter id; matches either seat")] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[GameSummary]:
     query = sa.select(Game).order_by(Game.created_at.desc()).limit(limit)
     if status_filter is not None:
         query = query.where(Game.status == status_filter)
+    if model is not None:
+        # Either seat, and a model that played itself appears once — `IN` over a subquery rather
+        # than a join, which would return the game twice.
+        query = query.where(
+            Game.id.in_(
+                sa.select(Player.game_id)
+                .join(ModelRegistry, ModelRegistry.id == Player.model_id)
+                .where(ModelRegistry.openrouter_id == model)
+            )
+        )
 
     games = list(await session.scalars(query))
     if not games:

@@ -122,6 +122,36 @@ export interface Contestant {
   endpoint_count: number;
 }
 
+/** What a model has actually done, over every game — not only the ratable ones (Phase 20). */
+export interface ModelStats {
+  games: number;
+  /** Higher than `games` only when a model played itself: it won one and lost one. */
+  seats: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  forfeits: number;
+  illegal_attempts: number;
+  moves_played: number;
+  illegal_per_move: number;
+  llm_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cached_tokens: number;
+  /** Null when nothing has been sent — not measured, rather than measured at zero. */
+  cache_rate: number | null;
+  total_cost_usd: string;
+  cost_per_game: string;
+  mean_latency_ms: number | null;
+}
+
+export interface ModelDetail extends ModelInfo {
+  stats: ModelStats;
+  /** Empty when no contestant of this model is ranked — which is a fact worth showing. */
+  ratings: LeaderboardRow[];
+}
+
 export type EventType =
   | "game_started"
   | "turn_started"

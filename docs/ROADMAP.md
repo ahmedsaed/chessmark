@@ -1071,10 +1071,11 @@ like `:r1:` and a colon is a combinator in a CSS selector.
 
 ---
 
-## Phase 20 — Models & matchmaking
+## Phase 20 — Models & matchmaking ✅ COMPLETE
 
-**Goal:** the 240 models in the registry become browsable, searchable, and individually
-accountable — and picking two of them to play becomes a real page.
+**Goal:** the models in the registry become browsable, searchable, and individually accountable —
+and picking two of them to play becomes a real page. (275 registered at the time of writing; the
+"240" this said originally was a count from the stale seed file that Phase 21 replaced.)
 
 The registry has been a dropdown and a grid of cards. Everything we know about a model — which
 endpoints serve it, at which precisions, how often it plays an illegal move, what it costs per
@@ -1089,25 +1090,40 @@ game, which games it has actually played — exists in the database and has neve
 5. `/play` — model selection through the same search, showing cost and context for the picks
 
 **Exit criteria**
-- [ ] `/models` lists every registered model and filters as you type, with no network request per
-      keystroke — 240 models is small enough to filter in the client, and this asserts that choice
-- [ ] `/models/[slug]` reaches the games behind every aggregate it prints
-- [ ] Aggregates reconcile **exactly** with a SQL query over `llm_calls` for the same model —
-      asserted by a test, in the manner of Phase 16's dashboard criterion
-- [ ] A model with zero games renders a real empty state; an unknown slug returns 404, not 500
-- [ ] A model whose contestants are ranked links to its leaderboard rows, and one that is a
+- [x] `/models` lists every registered model and filters as you type, with **no network request per
+      keystroke** — measured in the browser: nine keystrokes narrowed 275 models to 21 and issued
+      zero requests. A few hundred kilobytes fetched once beats a debounced endpoint that has to be
+      rate-limited and cached
+- [x] `/models/[slug]` reaches the games behind every aggregate it prints
+- [x] Aggregates reconcile **exactly** with a SQL query over `llm_calls` for the same model —
+      asserted by a test that runs the aggregation and the raw query side by side, including that
+      an opponent's calls in the same game do not leak into the total
+- [x] A model with zero games renders a real empty state; an unknown slug returns 404, not 500
+- [x] A model whose contestants are ranked links to its leaderboard rows, and one that is a
       floating alias says why it cannot be ranked
-- [x] `/play` starts a game end to end, and the picker shows cost — **partly done, in Phase 21.**
-      The picker is a searchable disclosure over 330 models grouped by provider, showing each
-      model's credit price and its input price. It does **not** yet show context window or
-      reasoning support, so UI-07 is not fully met
-- [ ] `/models` lists every registered model and filters as you type
+- [x] `/play` starts a game end to end, and the picker shows cost and context window (UI-07). The
+      picker landed in Phase 21; the context window and reasoning support are here
 
-**Covers:** UI-07 (partly — see above), BENCH-02 (extended to unranked games).
+**Covers:** UI-07, BENCH-02 (extended to unranked games).
+
+**What the numbers actually mean.** A model page is deliberately *not* the leaderboard. The
+leaderboard answers "how is this contestant rated", over ranked games only, keyed by
+`(model, quantization)`, because that is all a rating may see (BENCH-03). A model page answers
+"what has this model done" — exhibition games, human games and ranked ones alike. A model with no
+ranked games has still done things worth reporting, and a page that showed nothing for it would be
+describing the rating rules rather than the model.
+
+Two sources, on purpose: money and tokens come from `llm_calls`, the row written per provider call,
+so a page cannot print a cost the call log disagrees with; results and illegal moves come from
+`players`, because they are properties of a seat rather than of any single call.
+
+**A model can hold both seats.** Games and seats are counted separately — a model that played
+itself appears once in the game count and twice in W/D/L, having won one and lost one. Counting the
+game twice would inflate every per-game average, and a `JOIN` in the games filter would have
+returned it twice; both are asserted.
 
 **Already built, ahead of this phase:** objective 5's search landed with the credit work, because a
-catalogue of 330 models with a 300-fold price range is not choosable from a `<select>`. What
-remains here is the model *pages* — `/models`, `/models/[slug]`, and the aggregates behind them.
+catalogue of 275 models with a 300-fold price range is not choosable from a `<select>`.
 
 **Note:** neither this nor Phase 19 gates the deploy. Both are site work that can land on a
 running deployment.

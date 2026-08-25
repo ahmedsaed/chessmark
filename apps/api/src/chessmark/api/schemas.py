@@ -32,6 +32,7 @@ from chessmark.db.models import (
     ToolCall,
     Turn,
 )
+from chessmark.db.stats import ModelStats
 from chessmark.game import Colour, GameResult, Termination
 
 
@@ -141,6 +142,71 @@ class ModelOut(Schema):
             is_floating_alias=is_floating_alias(row.openrouter_id),
             credit_cost=row.credits,
         )
+
+
+class ModelStatsOut(Schema):
+    """What a model has actually done, over every game (Phase 20, BENCH-02 extended).
+
+    Not the leaderboard's numbers. Those cover ranked games only, keyed by contestant, because
+    that is all a rating may see (BENCH-03). These cover exhibition and human games too, which is
+    the difference between "how is it rated" and "what has it done".
+    """
+
+    games: int
+    seats: int
+    """Higher than `games` only when a model played itself — then it won one and lost one."""
+
+    wins: int
+    draws: int
+    losses: int
+    forfeits: int
+
+    illegal_attempts: int
+    moves_played: int
+    illegal_per_move: float
+
+    llm_calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cached_tokens: int
+    cache_rate: float | None = None
+    total_cost_usd: Decimal
+    cost_per_game: Decimal
+    mean_latency_ms: float | None = None
+
+    @classmethod
+    def from_stats(cls, stats: ModelStats) -> ModelStatsOut:
+        return cls(
+            games=stats.games,
+            seats=stats.seats,
+            wins=stats.wins,
+            draws=stats.draws,
+            losses=stats.losses,
+            forfeits=stats.forfeits,
+            illegal_attempts=stats.illegal_attempts,
+            moves_played=stats.moves_played,
+            illegal_per_move=stats.illegal_per_move,
+            llm_calls=stats.llm_calls,
+            prompt_tokens=stats.prompt_tokens,
+            completion_tokens=stats.completion_tokens,
+            total_tokens=stats.total_tokens,
+            cached_tokens=stats.cached_tokens,
+            cache_rate=stats.cache_rate,
+            total_cost_usd=stats.total_cost_usd,
+            cost_per_game=stats.cost_per_game,
+            mean_latency_ms=stats.mean_latency_ms,
+        )
+
+
+class ModelDetail(ModelOut):
+    """One model, with everything we know about how it has played."""
+
+    stats: ModelStatsOut
+
+    #: Ratings this model's contestants hold, when any of them are ranked. Empty is a fact worth
+    #: showing — a floating alias can never be ranked, and a new model has simply not played yet.
+    ratings: list[LeaderboardRow] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------- players
@@ -763,6 +829,42 @@ class LeaderboardRow(Schema):
     @property
     def label(self) -> str:
         return f"{self.model_slug}@{self.quantization}"
+
+    @classmethod
+    def from_rating(
+        cls,
+        contestant: Any,
+        rating: Any,
+        aggregate: Any,
+        *,
+        display_name: str | None = None,
+    ) -> LeaderboardRow:
+        """One row, built in one place.
+
+        The leaderboard and a model page print the same numbers, and building them separately is
+        how two views of one rating start disagreeing. A contestant with no aggregate is a rating
+        with no ratable games behind it — every count is zero rather than absent, because the row
+        still exists.
+        """
+        return cls(
+            model_id=contestant.model_id,
+            model_slug=contestant.model_slug,
+            quantization=contestant.quantization,
+            display_name=display_name or contestant.model_slug,
+            rating=rating.rating,
+            rating_deviation=rating.rd,
+            volatility=rating.volatility,
+            games=aggregate.games if aggregate else 0,
+            wins=aggregate.wins if aggregate else 0,
+            draws=aggregate.draws if aggregate else 0,
+            losses=aggregate.losses if aggregate else 0,
+            illegal_attempts=aggregate.illegal_attempts if aggregate else 0,
+            moves_played=aggregate.moves_played if aggregate else 0,
+            illegal_per_move=aggregate.illegal_per_move if aggregate else 0.0,
+            forfeits=aggregate.forfeits if aggregate else 0,
+            mean_cost_usd=aggregate.mean_cost_usd if aggregate else Decimal(0),
+            mean_latency_ms=aggregate.mean_latency_ms if aggregate else 0.0,
+        )
 
 
 class ExcludedGame(Schema):

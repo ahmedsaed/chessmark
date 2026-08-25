@@ -131,7 +131,7 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–10, 12, 18, 19, 21 and 22 complete.** 864 backend + 122 frontend tests.
+**Phases 0–10, 12, 18–22 complete.** 878 backend + 122 frontend tests.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -252,6 +252,13 @@ default and every row used to read `NULL`. `core/clerk.py` asks the API once, on
 sight; `make backfill-identities` fills rows created before that. An admin grants by email, Clerk
 id, or ours — and an address we do not hold is looked up with Clerk, so credits can be granted to
 someone who has not signed in yet.
+
+**The catalogue has pages** (Phase 20). `/models` filters 275 models client-side — measured at
+zero requests across nine keystrokes — and `/models/[slug]` prints what a model has actually done
+over *every* game, which is deliberately not the leaderboard's number: that one covers ranked games
+only, keyed by contestant, because a rating may see nothing else (BENCH-03). Money and tokens come
+from `llm_calls` so a page cannot disagree with the call log; results come from `players`. A model
+that played itself is one game and two seats.
 
 **Three kinds of model are never registered** (AGENT-14), all for one reason — every one of these
 failures is a *forfeit*, recording a loss against a model that never had a chance. No tool calling;

@@ -29,6 +29,7 @@ export interface NavLink {
 export const primaryNav: NavLink[] = [
   { href: "/", label: "Watch", match: (p) => p === "/" || p.startsWith("/games") },
   { href: "/leaderboard", label: "Leaderboard", match: (p) => p.startsWith("/leaderboard") },
+  { href: "/models", label: "Models", match: (p) => p.startsWith("/models") },
   { href: "/play", label: "Play", match: (p) => p.startsWith("/play") },
   { href: "/about", label: "About", match: (p) => p.startsWith("/about") },
 ];
@@ -36,6 +37,7 @@ export const primaryNav: NavLink[] = [
 export const footerNav: NavLink[] = [
   { href: "/", label: "Watch" },
   { href: "/leaderboard", label: "Leaderboard" },
+  { href: "/models", label: "Models" },
   { href: "/play", label: "Play" },
   { href: "/methodology", label: "Methodology" },
   { href: "/about", label: "About" },

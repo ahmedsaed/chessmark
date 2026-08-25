@@ -11,6 +11,7 @@ import type {
   GameResult,
   GameStatus,
   GameSummary,
+  ModelDetail,
   ModelInfo,
   Leaderboard,
   MyGameSummary,
@@ -83,6 +84,17 @@ export function getGame(id: string): Promise<GameDetail | null> {
 
 export function listModels(freeOnly = false): Promise<ModelInfo[]> {
   return getOrEmpty<ModelInfo>(`/models?free_only=${freeOnly}`);
+}
+
+/** One model with its aggregates, or null for a slug nothing answers to. */
+export function getModel(slug: string): Promise<ModelDetail | null> {
+  return getOrNull<ModelDetail>(`/models/${slug}`);
+}
+
+/** Every game a model has played, either seat (Phase 20). */
+export function listGamesByModel(slug: string, limit = 50): Promise<GameSummary[]> {
+  const query = new URLSearchParams({ model: slug, limit: String(limit) });
+  return getOrEmpty<GameSummary>(`/games?${query}`);
 }
 
 /**
