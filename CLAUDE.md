@@ -276,7 +276,8 @@ Paid models work and are cheap. Two benchmark games so far:
 
 The second is the first decisive result, and both sides played nine moves of correct Richter-Rauzer
 theory. Across two games, **every** illegal attempt has been `not_reachable` — board-state tracking,
-never rule knowledge. Free models cannot finish a game at all: too slow, too verbose, no caching.
+never rule knowledge. Free models were long recorded as unable to finish a game at all; that
+turned out to be an endpoint bug rather than the models — see below.
 
 **Reasoning must be handed back, not just recorded.** Gemini 3 rejects a function call missing its
 `thought_signature`; DeepSeek rejects a thinking-mode history missing `reasoning_content`.
@@ -287,6 +288,27 @@ replays verbatim. LiteLLM files it under `provider_specific_fields`, not at the 
 markup instead of tool calls on 9 of 63 calls via StreamLake and 0 of 40 via Baidu and DeepInfra —
 same model, same fp8. Provider is recorded per call for exactly this reason
 ([ADR-0014 amendment](docs/adr/0014-provider-routing-and-quantization.md)).
+
+**Free models can play — the note that said otherwise was measuring a bug.** `fetch_endpoints`
+stripped the `:free` suffix before asking OpenRouter which providers serve a model, on the belief
+that the endpoints route did not accept it. It does. A free variant is served by an entirely
+different — usually *single* — provider from the paid one, so the paid variant's 29 providers were
+stored against the free slug, the seat pinned the highest-uptime one (ADR-0015), and every free
+game died at ply 0 with a 404 naming a provider we had never chosen. Two tests pin the path now,
+both verified to fail when the strip returns.
+
+With that fixed, `poolside/laguna-s-2.1:free` vs `nvidia/nemotron-3.5-lightning:free` played 22
+plies of the Giuoco Piano — five moves of correct theory, both sides castled, a real bishop
+sacrifice on f7 — with **zero illegal attempts**. What remains true is that they are slow and
+verbose: 17s and 38s mean latency against 2.6s for paid models, worst call 442s, ~1,100–1,950
+output tokens per call, and 2.95 calls per ply.
+
+**The free tier is a shared pool, and it is patchy.** 429s carry
+`limit_source: upstream_provider_shared_pool` and arrive from first-party providers too — a probe
+of six free models returned four 200s, one 429 and one 403. Our `RetryPolicy` backs off a maximum
+of **8 seconds** and reads nothing from the provider's `Retry-After`, so a hot provider costs ~20
+doomed requests and then abandons the game. A tournament has no deadline and should wait minutes;
+fixing that is a prerequisite for Phase 13, not an optimisation.
 
 **The ply cap is a cost bound, not a rules bound** — threefold and the fifty-move rule are applied
 automatically, so games terminate on their own. 300 plies is the standard; 80 sat at the median of
