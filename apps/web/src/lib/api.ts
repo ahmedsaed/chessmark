@@ -13,6 +13,7 @@ import type {
   GameSummary,
   ModelInfo,
   Leaderboard,
+  MyGameSummary,
   TurnSummary,
 } from "@/lib/types";
 
@@ -199,9 +200,33 @@ export interface HumanActionResult {
 
 export function createHumanGame(
   token: string | null,
-  body: { model: string; colour: "white" | "black"; trash_talk_enabled?: boolean },
+  body: {
+    model: string;
+    colour: "white" | "black";
+    model_quantization?: string | null;
+    trash_talk_enabled?: boolean;
+  },
 ): Promise<{ id: string }> {
   return post<{ id: string }>("/games/human", token, body);
+}
+
+/**
+ * The games you hold a seat in (HUMAN-03).
+ *
+ * Read from the browser rather than during server rendering, like everything else here: the
+ * answer depends on who is asking, and the token belongs to the browser session.
+ */
+export async function listMyGames(token: string | null): Promise<MyGameSummary[]> {
+  const response = await fetch(`${API_URL}/games/mine`, {
+    headers: {
+      accept: "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, `Could not load your games (HTTP ${response.status}).`);
+  }
+  return (await response.json()) as MyGameSummary[];
 }
 
 export function sendMove(

@@ -18,15 +18,12 @@ import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
+import { CreditBadge, ModelPicker } from "@/components/ModelPicker";
 import type { ModelInfo } from "@/lib/types";
 
 const DEFAULT_WHITE = "google/gemini-3.7-flash";
 const DEFAULT_BLACK = "moonshotai/kimi-k2.5";
 
-function usdPerMillion(perToken: string): string {
-  const value = Number(perToken) * 1_000_000;
-  return Number.isFinite(value) ? `$${value.toFixed(2)}/M` : "—";
-}
 
 export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[] }) {
   const { getToken } = useAuth();
@@ -50,6 +47,12 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
   const [blackQuant, setBlackQuant] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /* A game costs the sum of its seats (ADR-0016) — two frontier models is a real decision, and
+     the total is the number that makes it one. */
+  const priceOf = (slug: string) =>
+    playable.find((m) => m.openrouter_id === slug)?.credit_cost ?? 0;
+  const price = priceOf(white) + priceOf(black);
 
   async function start() {
     setBusy(true);
@@ -93,13 +96,13 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
   const ready = white && black && !busy;
 
   return (
-    <section className="mt-10 flex flex-col gap-3 border border-line bg-surface-2 p-4">
+    <section className="flex flex-col gap-3 border border-line bg-surface-2 p-4">
       <h2 className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
         Start a game · {playable.length} playable models
       </h2>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr_auto]">
-        <Picker
+        <ModelPicker
           label="White"
           value={white}
           onChange={(next) => {
@@ -111,7 +114,7 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           onQuantizationChange={setWhiteQuant}
         />
         <span className="self-center text-center font-mono text-[11px] text-ink-faint">vs</span>
-        <Picker
+        <ModelPicker
           label="Black"
           value={black}
           onChange={(next) => {
@@ -122,6 +125,12 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           quantization={blackQuant}
           onQuantizationChange={setBlackQuant}
         />
+
+        {white && black && (
+          <span className="flex items-end gap-1.5 pb-2">
+            <CreditBadge credits={price} />
+          </span>
+        )}
 
         <button
           type="button"
@@ -139,79 +148,5 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
         </p>
       )}
     </section>
-  );
-}
-
-function Picker({
-  label,
-  value,
-  onChange,
-  models,
-  quantization,
-  onQuantizationChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  models: ModelInfo[];
-  quantization: string;
-  onQuantizationChange: (value: string) => void;
-}) {
-  const chosen = models.find((model) => model.openrouter_id === value);
-  const entrants = chosen?.contestants ?? [];
-  // Empty means "let the server pick the healthiest", which is the sane default and is recorded.
-  const entrant = entrants.find((c) => c.quantization === quantization) ?? entrants[0];
-
-  return (
-    <label className="flex min-w-0 flex-col gap-1">
-      <span className="font-mono text-[9px] uppercase tracking-[0.12em] text-ink-faint">
-        {label}
-      </span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full border border-line bg-surface px-2 py-2 font-mono text-xs text-ink"
-      >
-        <option value="">choose a model…</option>
-        {models.map((model) => (
-          <option key={model.id} value={model.openrouter_id}>
-            {model.openrouter_id}
-          </option>
-        ))}
-      </select>
-
-      {entrants.length > 1 && (
-        <span className="flex flex-wrap items-center gap-1">
-          {entrants.map((option) => {
-            const active = option.quantization === (quantization || entrants[0].quantization);
-            return (
-              <button
-                key={option.quantization}
-                type="button"
-                onClick={() => onQuantizationChange(option.quantization)}
-                aria-pressed={active}
-                title={`${option.provider}, uptime ${option.uptime_1d?.toFixed(1) ?? "?"}% — a separate entrant`}
-                className={`border px-1.5 py-px font-mono text-[9px] uppercase tracking-wider transition-colors ${
-                  active
-                    ? "border-accent bg-accent text-on-accent"
-                    : "border-line text-ink-faint hover:text-ink-dim"
-                }`}
-              >
-                {option.quantization}
-              </button>
-            );
-          })}
-        </span>
-      )}
-
-      {chosen && entrant && (
-        <span className="tabular font-mono text-[9.5px] text-ink-faint">
-          in {usdPerMillion(chosen.prompt_usd_per_token)} · out{" "}
-          {usdPerMillion(chosen.completion_usd_per_token)} ·{" "}
-          <span className="text-good">{entrant.provider}</span>
-          {entrant.uptime_1d !== null && ` ${entrant.uptime_1d.toFixed(1)}%`}
-        </span>
-      )}
-    </label>
   );
 }

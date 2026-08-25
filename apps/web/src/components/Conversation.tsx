@@ -23,7 +23,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { ToolCallView, TurnView } from "@/lib/types";
+import type { Player, ToolCallView, TurnView } from "@/lib/types";
 
 type Filter = "all" | "moves-talk" | "talk" | "moves";
 
@@ -50,6 +50,8 @@ export function Conversation({
   onInspect,
   emptyMessage = "Waiting for the first turn…",
   header,
+  footer,
+  players = [],
 }: {
   turns: TurnView[];
   /**
@@ -63,14 +65,50 @@ export function Conversation({
   emptyMessage?: string;
   /** Rendered above the filters. The replay transport lives here, next to what it scrubs. */
   header?: React.ReactNode;
+  /**
+   * Pinned under the timeline: resign, draw, and the message box. They belong to the conversation
+   * rather than to the board — everything said to an opponent is already in this column.
+   */
+  footer?: React.ReactNode;
+  /**
+   * The seats, so a turn can be labelled with who took it. A person's turn carries no model name,
+   * and without this every human ply was headed "white" or "black" rather than by the player.
+   */
+  players?: Player[];
 }) {
   const [filter, setFilter] = useState<Filter>("all");
   const [toggled, setToggled] = useState<Record<string, boolean>>({});
-  const bottom = useRef<HTMLDivElement>(null);
+  const scroller = useRef<HTMLDivElement>(null);
+  const content = useRef<HTMLDivElement>(null);
+  /** Whether the reader is at the bottom. Starts true: a fresh panel is scrolled to the newest. */
+  const pinned = useRef(true);
 
+  /* Follow the conversation only while the reader is already at the bottom — the rule every
+     messaging app follows, and the reason is the same: someone who has scrolled up to read an
+     earlier turn is *reading it*, and yanking them back on the next event loses their place.
+     A `ResizeObserver` rather than an effect on `turns.length`, because a turn does not arrive at
+     its full height: it lands folded and then grows as its tool calls stream in. Following the
+     length alone scrolled to a bottom that immediately moved, leaving the panel short of it —
+     and the gap was enough to read as "the reader scrolled up", so it stopped following after
+     one turn. Watching the content's height instead follows whatever makes it taller. */
   useEffect(() => {
-    bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [turns.length]);
+    const element = content.current;
+    const view = scroller.current;
+    if (!element || !view) return;
+
+    const stick = () => {
+      if (!pinned.current) return;
+      /* Instant, not smooth. A smooth scroll animates through positions far from the bottom, and
+         the scroll events it emits on the way are indistinguishable from a reader scrolling up —
+         so the panel unpinned itself mid-animation. */
+      view.scrollTop = view.scrollHeight;
+    };
+
+    stick();
+    const observer = new ResizeObserver(stick);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   const visible = useMemo(() => {
     if (filter === "talk") return turns.filter((turn) => turn.said.length > 0);
@@ -110,7 +148,19 @@ export function Conversation({
         ))}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
+      <div
+        ref={scroller}
+        onScroll={(event) => {
+          /* Slack, because "at the bottom" is never exactly zero: sub-pixel heights, a growing
+             live turn, and the browser's own rounding all leave a few pixels. Too strict a test
+             unpins a panel that is in fact at the bottom, and then it stops following. */
+          const element = event.currentTarget;
+          const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
+          pinned.current = distance < 80;
+        }}
+        className="min-h-0 flex-1 overflow-y-auto p-3"
+      >
+        <div ref={content} className="flex flex-col gap-3">
         {visible.length === 0 && (
           <p className="font-mono text-xs text-ink-faint">{emptyMessage}</p>
         )}
@@ -122,6 +172,7 @@ export function Conversation({
             <Turn
               key={turn.key}
               turn={turn}
+              name={turnName(turn, players)}
               filter={filter}
               open={isOpen(turn)}
               onToggle={() =>
@@ -131,10 +182,25 @@ export function Conversation({
             />
           ))
         )}
-        <div ref={bottom} />
+        </div>
       </div>
+
+      {footer && <div className="flex-none border-t border-line bg-surface-3 p-2">{footer}</div>}
     </section>
   );
+}
+
+/**
+ * Who took this turn.
+ *
+ * A model's turn is headed by its slug, which is the thing worth knowing about it. A person's has
+ * no slug — `model` is empty — so it falls back to the seat's display name, and only then to the
+ * bare colour. Before this, every human ply was headed "white".
+ */
+function turnName(turn: TurnView, players: Player[]): string {
+  if (turn.model) return turn.model;
+  const seat = players.find((player) => player.id === turn.playerId);
+  return seat?.display_name || turn.colour;
 }
 
 /** The move list, as a filter rather than a separate panel — it is part of the same timeline. */
@@ -156,12 +222,15 @@ function MoveList({ turns }: { turns: TurnView[] }) {
 
 function Turn({
   turn,
+  name,
   filter,
   open,
   onToggle,
   onInspect,
 }: {
   turn: TurnView;
+  /** The model slug, or the person's name for a human turn. */
+  name: string;
   filter: Filter;
   open: boolean;
   onToggle: () => void;
@@ -201,11 +270,11 @@ function Turn({
               isWhite ? "bg-piece-white" : "bg-piece-black"
             }`}
           />
-          {turn.model || turn.colour}
+          {name}
           {turn.live && <span className="text-accent">· thinking</span>}
         </div>
 
-        {filter !== "talk" && (
+        {filter !== "talk" && !turn.human && (
           <div className={`flex flex-wrap items-center gap-1.5 ${isWhite ? "" : "justify-end"}`}>
             <button
               type="button"

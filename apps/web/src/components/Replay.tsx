@@ -18,8 +18,10 @@ import { Chess } from "chess.js";
 
 import { Board } from "@/components/Board";
 import { Conversation } from "@/components/Conversation";
+import { captures } from "@/lib/captures";
 import { RawTranscript } from "@/components/RawTranscript";
 import { Scrubber } from "@/components/Scrubber";
+import { PlayerBar } from "@/components/PlayerBar";
 import { StatsRail } from "@/components/StatsRail";
 import { eventsThroughPly, plyCount, turnIdsByPly } from "@/lib/replay";
 import { foldEvents } from "@/lib/turns";
@@ -73,6 +75,13 @@ export function Replay({
     } as const;
   }, [moves, game.start_fen]);
 
+  /* Captures at the ply being shown, not at the end — scrubbing back should show the material as
+     it stood then, which is half of what makes a replay worth scrubbing. */
+  const { taken, advantage } = useMemo(() => {
+    const { white, black, advantage: lead } = captures(fen);
+    return { taken: { white, black }, advantage: lead };
+  }, [fen]);
+
   const turnIds = useMemo(() => turnIdsByPly(turnRows), [turnRows]);
   const focus = turns.at(-1) ?? null;
 
@@ -108,19 +117,28 @@ export function Replay({
         </div>
 
         <div className="order-1 flex min-h-0 min-w-0 flex-col gap-2 lg:order-none">
-          <div className="flex flex-none items-baseline justify-between gap-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
-            <span className="truncate">
-              {game.players.find((p) => p.colour === "white")?.display_name} —{" "}
-              {game.players.find((p) => p.colour === "black")?.display_name}
-            </span>
-            <span className="flex-none text-accent">{game.result}</span>
-          </div>
+          {/* Black above, White below — each player on the side their pieces are on, and the
+              captures beside the name, so scrubbing shows material swing as it happened. */}
+          <PlayerBar
+            player={game.players.find((p) => p.colour === "black")}
+            taken={taken.black}
+            advantage={Math.max(0, -advantage)}
+            active={sideToMove === "black"}
+            toMoveLabel={game.result}
+          />
           <Board fen={fen} lastMove={lastMove} />
+          <PlayerBar
+            player={game.players.find((p) => p.colour === "white")}
+            taken={taken.white}
+            advantage={Math.max(0, advantage)}
+            active={sideToMove === "white"}
+          />
         </div>
 
         <div className="order-2 flex min-h-[24rem] min-w-0 flex-col lg:order-none lg:min-h-0">
           <Conversation
             turns={turns}
+            players={game.players}
             emptyMessage="The starting position — step forward to begin."
             focusKey={focus?.key ?? null}
             onInspect={(turn) => turnIds.has(turn.ply) && setInspecting(turn)}
