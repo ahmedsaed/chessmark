@@ -33,7 +33,7 @@ from chessmark.agents.llm import LlmGateway
 from chessmark.agents.mangled import ProviderMangledError, mangled_tool_call
 from chessmark.agents.tools import ToolDispatcher, ToolName, TurnState, tool_schemas
 from chessmark.agents.types import Completion, LlmError, ToolInvocation
-from chessmark.db.enums import EventType, ModerationStatus, PlayerKind, TurnStatus
+from chessmark.db.enums import EventType, ModerationStatus, TurnStatus
 from chessmark.db.models import Game, LlmCall, Message, Player, ToolCall, Turn
 from chessmark.db.repositories import append_event, record_ply
 from chessmark.game import Colour, MoveOutcome, Outcome, Referee, Termination
@@ -176,12 +176,6 @@ class TurnRunner:
         self._tools = tool_schemas(trash_talk_enabled=game.trash_talk_enabled)
         self._llm_sequence = 0
         self._tool_sequence = 0
-        #: True when either seat is a human. Reasoning is withheld from the event stream in
-        #: that case — the human can read the page (invariant 8, HUMAN-07).
-        self._has_human_player = PlayerKind.HUMAN in {
-            PlayerKind(player.kind),
-            PlayerKind(opponent.kind),
-        }
         self._nudged = False
         self._truncations = 0
         self._move_committed = False
@@ -274,12 +268,15 @@ class TurnRunner:
             self._accumulate(result, completion)
 
             if completion.reasoning:
-                # Invariant 8 is about *participants*, not spectators. Two models cannot read this
-                # stream — each sees only its own transcript — so showing their thinking live to an
-                # audience leaks nothing and is the whole appeal (ADR-0013). A human, however, is
-                # sitting on the page: streaming their opponent's plan to them would hand them the
-                # game. So the text is withheld whenever a human is at the table, and only the
-                # token count goes out.
+                # Written in full, always. Whether a *reader* may see it is decided on the way out,
+                # in `api/redaction.py`: withheld from a person while their own game is live
+                # (invariant 8, HUMAN-07), published to spectators of a model-vs-model game, and
+                # revealed to everyone once the game is over.
+                #
+                # It used to be dropped here instead, for any game with a human seat. The log is
+                # append-only (ADR-0008), so that made the omission permanent — a person's own
+                # games were the only ones whose reasoning the transcript could never show, long
+                # after there was anything left to leak.
                 await append_event(
                     self.session,
                     game_id=self.game.id,
@@ -287,7 +284,7 @@ class TurnRunner:
                     payload={
                         "player_id": str(self.player.id),
                         "tokens": completion.usage.reasoning,
-                        **({} if self._has_human_player else {"reasoning": completion.reasoning}),
+                        "reasoning": completion.reasoning,
                     },
                 )
 
@@ -295,14 +292,15 @@ class TurnRunner:
                 # Gemini says everything here and nothing in `reasoning`; DeepSeek does the exact
                 # opposite. Emitting only one of the two made an entire model look silent — 43 of
                 # Gemini's 83 calls in the first paid benchmark carried prose that never reached
-                # the page. Withheld from a human's opponent for the same reason reasoning is.
+                # the page. Held back from a live human opponent for the same reason reasoning is,
+                # and by the same gate on the way out.
                 await append_event(
                     self.session,
                     game_id=self.game.id,
                     type=EventType.OUTPUT,
                     payload={
                         "player_id": str(self.player.id),
-                        **({} if self._has_human_player else {"content": completion.content}),
+                        "content": completion.content,
                     },
                 )
 

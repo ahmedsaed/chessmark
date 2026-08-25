@@ -653,11 +653,19 @@ async def test_reasoning_streams_live_in_a_model_vs_model_game(
     assert events[0].payload["reasoning"] == "Control the centre."
 
 
-async def test_reasoning_is_withheld_from_the_stream_when_a_human_plays(
+async def test_a_human_game_records_its_reasoning_like_any_other(
     db: AsyncSession, db_human_table: Table
 ) -> None:
-    """A human is sitting on the page. Streaming their opponent's plan to them hands them the
-    game (HUMAN-07). The token count still goes out — it leaks nothing."""
+    """The log is written in full even when a person is playing.
+
+    Withholding it from that person is a *read* concern and lives in `api/redaction.py`; the gate
+    used to run here instead, and because `game_events` is append-only (ADR-0008) that made the
+    omission permanent — a person's own games were the only ones whose reasoning the transcript
+    could never show, long after there was anything left to leak.
+
+    `tests/api/test_human_play.py` covers the other half: that neither read path serves this text
+    to a human while their game is live.
+    """
     await play_turn(
         db,
         db_human_table,
@@ -675,6 +683,5 @@ async def test_reasoning_is_withheld_from_the_stream_when_a_human_plays(
     ).all()
 
     assert events
-    assert "reasoning" not in events[0].payload
+    assert events[0].payload["reasoning"] == "I plan Qh5 next."
     assert events[0].payload["tokens"] > 0
-    assert "Qh5" not in str(events[0].payload)

@@ -29,6 +29,7 @@ from fastapi import APIRouter, Header, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
 from chessmark.api.deps import GameDep, RedisDep, SessionDep
+from chessmark.api.redaction import must_withhold_thinking, redact
 from chessmark.api.schemas import EventOut
 from chessmark.db.enums import EventType, GameStatus
 from chessmark.db.models import Game
@@ -84,6 +85,20 @@ async def stream_events(
     cursor = _resolve_cursor(last_event_id, after_seq)
     channel = EVENT_CHANNEL.format(game_id=game.id)
 
+    # Decided once, before anything is sent. A person reading their own live game must not be
+    # handed their opponent's reasoning or prose (invariant 8, HUMAN-07) — and this stream is the
+    # path that would deliver it to them fastest. See `api/redaction.py`.
+    #
+    # If the game ends mid-stream the answer stays "withhold" for the rest of this connection.
+    # That is deliberate: the client is told the game ended and re-reads the finished log, which
+    # comes back complete. Re-evaluating per event would mean querying the seats on every frame.
+    withhold = await must_withhold_thinking(session, game)
+
+    def visible(event: EventOut) -> EventOut:
+        if not withhold:
+            return event
+        return event.model_copy(update={"payload": redact(str(event.type), event.payload)})
+
     async def publisher() -> AsyncIterator[dict[str, Any]]:
         pubsub = redis.pubsub()
         # Step 1: subscribe first. Anything committed from here on is buffered for us.
@@ -94,7 +109,7 @@ async def stream_events(
             # Step 2 and 3: everything the client missed, straight from the durable log.
             backfill = await load_events(session, game.id, after_seq=cursor)
             for row in backfill:
-                yield _frame(EventOut.from_model(row))
+                yield _frame(visible(EventOut.from_model(row)))
                 delivered = row.seq
 
             if _already_over(game, backfill):
@@ -118,6 +133,9 @@ async def stream_events(
 
                 delivered = parsed["seq"]
                 last_beat = now
+                # The live branch is by definition mid-game, so this is the frame that would leak.
+                if withhold:
+                    parsed["payload"] = redact(str(parsed["type"]), parsed.get("payload") or {})
                 yield {
                     "id": str(parsed["seq"]),
                     "event": parsed["type"],

@@ -25,6 +25,7 @@ from chessmark.api.deps import (
     SettingsDep,
     enforce_rate_limit,
 )
+from chessmark.api.redaction import must_withhold_thinking, redact
 from chessmark.api.schemas import (
     CreateGameRequest,
     CreateGameResponse,
@@ -312,10 +313,17 @@ async def get_event_log(
 ) -> list[EventOut]:
     """The event log as a plain list — the replay path (ADR-0008).
 
-    The same rows the SSE stream delivers live, which is what keeps live and replay consistent.
+    The same rows the SSE stream delivers live, which is what keeps live and replay consistent —
+    including the withholding: a person reading their own live game must not be handed their
+    opponent's thinking here either (`api/redaction.py`).
     """
     events = await load_events(session, game.id, after_seq=after_seq, limit=limit)
-    return [EventOut.from_model(event) for event in events]
+    withhold = await must_withhold_thinking(session, game)
+
+    out = [EventOut.from_model(event) for event in events]
+    if not withhold:
+        return out
+    return [row.model_copy(update={"payload": redact(str(row.type), row.payload)}) for row in out]
 
 
 # ---------------------------------------------------------------------- artefacts
