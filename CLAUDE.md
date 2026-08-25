@@ -131,8 +131,7 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–9, 12, 18 and 19 complete. Phase 10 is in progress** — its backend is done and
-tested, its UI is not. 799 backend + 75 frontend tests.
+**Phases 0–10, 12, 18 and 19 complete.** 811 backend + 81 frontend tests.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -209,18 +208,23 @@ real games and let the harness decide half the results.
 - `chessmark.bench` — Glicko-2 from Glickman's paper, and the rules for which games may be rated.
   A contestant is `(model, quantization)`. Forfeits count; harness stops do not. Pure, like `game/`.
 
-**In progress: Phase 10 — human vs model.** `orchestration/human.py` and six endpoints are
-written and covered by 37 tests, including a full game played to checkmate over HTTP. The worker
-stops at a human turn and enqueues nothing; the reconciler tells "waiting on a person" apart from
-"stalled" and expires idle games after two hours.
+**Phase 10 — human vs model — is complete.** `orchestration/human.py` and six endpoints; the
+worker stops at a human turn and enqueues nothing; the reconciler tells "waiting on a person" apart
+from "stalled" and expires idle games after two hours. `/play` has a two-tab chooser with
+`NewHumanGame` first, `GET /games/mine` and `MyGames` surface a game as *yours* on `/play` and the
+lobby, and the whole flow was driven in a browser against a real Clerk instance and a real
+provider — sit down, drag a move, the model replies, reload, resign.
 
-**What is left is the UI, and it is the larger half of what a person would notice:** there is no
-way to start a human game from a browser (`createHumanGame` has no caller, `/play` still shows
-only the model-vs-model form), nothing has been checked in a browser, and a game you are playing
-is not distinguished from one you are watching. See
-[ROADMAP.md](docs/ROADMAP.md#phase-10--human-vs-model--in-progress-backend-complete-and-tested-the-ui-is-not-finished)
-for the deliberate limitations too — no clock, advisory-only human draw offers, and unmoderated
-chat that **must be gated behind Phase 11 before launch**.
+**Human→model chat is off by default here**, opt-in per game, because it is unmoderated: messages
+are stored `PENDING` and delivered verbatim. **It must be gated behind Phase 11 before launch.**
+The other deliberate limitations stand — no clock, advisory-only human draw offers, promotion
+always to a queen.
+
+**The site would not load at all without Clerk keys.** `src/proxy.ts` called `clerkMiddleware()`
+unconditionally and it throws without a publishable key; a throwing proxy takes every route with
+it, so `/`, `/about`, `/leaderboard` and `/play` all answered 500 on a fresh clone. `AuthProvider`
+and `AccountBar` both degraded correctly and it made no difference. The proxy now reads the same
+variable they do — worth remembering that a guard downstream of a throwing proxy is not a guard.
 
 **Then: Phase 17a — deploy.** There is still no Dockerfile and no supervised worker anywhere;
 `docker-compose.yml` runs Postgres and Redis only.
@@ -231,6 +235,9 @@ are still covered by Playwright rather than a jsdom stack.
 Known gaps, recorded rather than quietly carried: Phase 7's Lighthouse score is **unverified**
 (no Lighthouse in this environment), NFR-06's >80% cache rate is met in aggregate but not by
 Gemini individually, Phase 8's PGN is verified against `chess.js` but **not against Lichess or
-SCID themselves**, Clerk's **`user.deleted` webhook is unwired**, and there is **no automated
-browser suite** — every UI claim in Phases 7, 8, 18 and 19 was checked by hand, so no test would
-catch a layout regression.
+SCID themselves**, and there is **no automated browser suite** — every UI claim in
+Phases 7, 8, 10, 18 and 19 was checked by hand, so no test would catch a layout regression.
+
+Clerk's `user.deleted` **is** handled (`api/routes/webhooks.py`), contrary to what this file said
+for a while; what is missing is a test over the route handler and registration of the endpoint in
+the Clerk dashboard. Only signature verification is covered.

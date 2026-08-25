@@ -658,7 +658,7 @@ and the startup guard turns forgetting it into a refusal to boot rather than a s
 
 ---
 
-## Phase 10 — Human vs model 🚧 IN PROGRESS (backend complete and tested; the UI is not finished)
+## Phase 10 — Human vs model ✅ COMPLETE (verified by hand in a browser, not by an automated suite)
 
 **Goal:** you sit down and play a model.
 
@@ -677,26 +677,47 @@ and the startup guard turns forgetting it into a refusal to boot rather than a s
       through the real worker between every move
 - [x] An illegal human move is refused server-side, and a crafted API request bypassing the client
       is refused identically — the endpoint runs the same `Referee.play` the models do
-      (invariant 1). Client-side preview is written but **unverified in a browser**
+      (invariant 1)
 - [x] Reloading mid-game restores the exact position and history — asserted against `/games/{id}`
-      and the event log, nothing held in the browser
+      and the event log, nothing held in the browser, and confirmed in a browser: after a reload at
+      2 plies the board still showed 1.e4 e5, the folded model turn, and the running costs
+- [x] **A person can start and play a game from a browser.** Driven end to end against a real
+      Clerk instance and a real provider: signed in, chose Gemini 3.7 Flash and White from `/play`,
+      dragged e2–e4, and the model answered 1…e5 through the worker for $0.003 across 3,358 tokens
+      with zero illegal attempts. Resign took two clicks, produced `0-1 · resignation`, and flipped
+      the page into replay
+- [x] **Reasoning stays hidden until it is over, in the UI too.** While the game was live the
+      model's turn showed only `4 tools` folded; after the resignation the same turn expanded to
+      `get_board() → get_move_history() → get_legal_moves() → make_move(e5)` with RAW alongside
 - [x] An abandoned game expires and is recorded as such — `ABORTED` / `abandoned`, never a result
 - [x] Reasoning is inaccessible via any endpoint until the game is over (HUMAN-07) — asserted for
       both `/events` and `/turns` while the game is live
 
-**What is done:** `orchestration/human.py` (move, resign, offer draw, respond to draw, say), six
+**Backend:** `orchestration/human.py` (move, resign, offer draw, respond to draw, say), six
 endpoints, the worker's human-turn stop, human-aware reconciliation with idle expiry, and 37 tests.
-The frontend has the API client, a draggable `Board`, `PlayableGame`, `GameView` seat resolution,
-and `lib/draw.ts`.
 
-**What is missing — this is why the phase is not complete:**
-- **No way to start a human game from the UI.** `createHumanGame` has no caller; `/play` still
-  shows only the model-vs-model form. The endpoint works and is tested, but a person cannot reach
-  it from a browser.
-- **Nothing has been checked in a browser at all.** Drag-to-move, the controls, the seat
-  resolution and the draw banner are all unexercised outside the type checker.
-- **A human game is never surfaced as *yours*.** No "your games" list, and the lobby does not
-  distinguish a game you are playing from one you are watching.
+**Frontend:** `NewHumanGame` on `/play` behind a two-tab chooser — playing a model is the first
+tab, because it is the thing a visitor cannot do anywhere else. `GET /games/mine` and `MyGames`
+surface a game as *yours* on both `/play` and the lobby, badging the ones waiting on your move;
+`GameCard` and `ModelPicker` were lifted out of the landing page and `NewGame` so the two forms
+and every listing share one card and one picker. Ordering lives in `lib/mine.ts` with its own
+tests, matching how the rest of the frontend's logic is covered.
+
+**Chat is opt-in here, and off by default** — the one place a human game deliberately differs from
+a model-vs-model one. See the limitation below: until Phase 11 exists, the unmoderated path should
+be something a person chooses rather than something they get.
+
+**A bug this phase uncovered, fixed here:** `src/proxy.ts` called `clerkMiddleware()`
+unconditionally, and it throws without a publishable key. A throwing proxy takes every route with
+it, so a clone with no Clerk keys answered **500 on `/`, `/about`, `/leaderboard` and `/play`** —
+despite `.env.example` promising "left blank, the site runs signed-out" and both `AuthProvider` and
+`AccountBar` carefully degrading. Neither mattered: nothing downstream of a throwing proxy runs.
+The proxy now reads the same variable they do.
+
+**What is still not covered:** the same standard as Phases 7, 8, 18 and 19 — this was checked by
+hand in a browser, and no automated suite would catch a regression. The draw banner
+(`drawOffered`) is the one control not exercised live, because it needs a model that offers a
+draw; its logic is unit-tested in `lib/draw.ts`.
 
 **Deliberate limitations, recorded rather than hidden:**
 - **No clock.** Idle expiry (2 hours, far longer than the 20-minute stall threshold) satisfies
