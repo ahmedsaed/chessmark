@@ -230,19 +230,19 @@ async def main() -> int:
     white_model = "scripted/white" if args.scripted else args.white
     black_model = "scripted/black" if args.scripted else args.black
 
-    if args.scripted:
-        gateway = LlmGateway(completion_fn=scripted_players())
-    else:
-        gateway = LlmGateway(
-            api_key=api_key,
-            pricing=PricingTable.from_seed_file(API_ROOT / "seeds" / "models.json"),
-        )
-
     settings = get_settings()
     redis: Redis[Any] = Redis.from_url(str(settings.redis_url))
     queue = TurnQueue(redis)
     await queue.ensure_group()
     sessionmaker = get_sessionmaker()
+
+    if args.scripted:
+        gateway = LlmGateway(completion_fn=scripted_players())
+    else:
+        # Pricing from the registry — the same rows the caps in ADR-0011 are computed against.
+        async with sessionmaker() as session:
+            pricing = await PricingTable.from_registry(session)
+        gateway = LlmGateway(api_key=api_key, pricing=pricing)
 
     async with sessionmaker() as session:
         routing = (

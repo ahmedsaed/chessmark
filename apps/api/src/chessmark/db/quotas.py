@@ -1,6 +1,12 @@
-"""Per-user daily quotas — layer 2 of ADR-0011 (AUTH-03).
+"""Per-user daily counters — **a record, no longer a limit**.
 
-Two numbers per user per day: games started and dollars spent. Either can refuse a new game.
+This was layer 2 of ADR-0011: a daily allowance of games and dollars that refused a new game when
+either ran out. [ADR-0016](../../../../docs/adr/0016-credits-as-a-granted-balance.md) replaced that
+with a granted credit balance (`db/credits.py`), which does not regenerate and is not per day.
+
+What survives is the ledger itself, because the admin spend view reads it: how many games a user
+started on a given day and what they cost. `reserve_game` is gone; `note_game_started` writes the
+same row without gating anything.
 
 **The reservation is a single statement, not a read followed by a write.** `SELECT` the count,
 compare it, then `UPDATE` is the obvious shape and it is wrong: two requests from the same user
@@ -62,29 +68,16 @@ async def usage_for(
     return Usage(day=when, games_started=row.games_started, usd_spent=row.usd_spent)
 
 
-async def reserve_game(
-    session: AsyncSession,
-    user_id: uuid.UUID,
-    *,
-    max_games: int,
-    max_usd: Decimal | None = None,
-    day: dt.date | None = None,
+async def note_game_started(
+    session: AsyncSession, user_id: uuid.UUID, *, day: dt.date | None = None
 ) -> Usage:
-    """Claim one game against today's quota, or raise `QuotaExceededError`.
+    """Record that a user started a game today. **Refuses nothing.**
 
-    Reserved *before* the game is created, not after. Counting on completion would let a user open
-    any number of games at once and only discover the quota when the money was already committed.
+    The credit charge in `db/credits.py` is what decides whether a game may start; this only keeps
+    the count the admin view reports. It is still an upsert rather than a read-then-write, because
+    two games started at once should produce a count of two.
     """
     when = day or today()
-
-    # The spend limit cannot be enforced in the same statement — `usd_spent` is updated by workers
-    # as calls complete, so it is read here and compared before the reservation is attempted.
-    # A user who blows through it mid-game is stopped at their *next* game, which is the most a
-    # daily-spend limit can promise: the cost of a call is not known until it returns.
-    if max_usd is not None and max_usd > 0:
-        current = await usage_for(session, user_id, day=when)
-        if current.usd_spent >= max_usd:
-            raise QuotaExceededError(reason="spend", used=current.usd_spent, limit=max_usd)
 
     statement = (
         pg_insert(UsageLedger)
@@ -92,18 +85,11 @@ async def reserve_game(
         .on_conflict_do_update(
             index_elements=[UsageLedger.user_id, UsageLedger.day],
             set_={"games_started": UsageLedger.games_started + 1},
-            # The quota check *is* the where clause. If it fails, no row is updated and nothing is
-            # returned — so two concurrent requests cannot both find room in the last slot.
-            where=UsageLedger.games_started < max_games,
         )
         .returning(UsageLedger.games_started, UsageLedger.usd_spent)
     )
 
-    row = (await session.execute(statement)).one_or_none()
-    if row is None:
-        used = await usage_for(session, user_id, day=when)
-        raise QuotaExceededError(reason="games", used=used.games_started, limit=max_games)
-
+    row = (await session.execute(statement)).one()
     return Usage(day=when, games_started=row.games_started, usd_spent=row.usd_spent)
 
 

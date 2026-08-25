@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.registry import sync_model_registry
 from chessmark.db.models import ModelEndpoint, ModelRegistry
-from tests.api.conftest import as_user
+from tests.api.conftest import as_user, fund
 from tests.orchestration.conftest import Fixture
 
 pytestmark = pytest.mark.integration
@@ -157,6 +157,7 @@ async def test_a_precision_can_be_requested_when_starting_a_game(
         ],
     )
 
+    await fund(db, "user_picky")
     response = await client.post(
         "/games",
         json={
@@ -184,6 +185,7 @@ async def test_asking_for_a_precision_nobody_serves_is_a_400(
     await _model(
         db, "test/eightonly", [{"provider": "Eight", "quantization": "fp8", "uptime": 99.0}]
     )
+    await fund(db, "user_wrong_precision")
 
     response = await client.post(
         "/games",

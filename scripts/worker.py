@@ -67,6 +67,14 @@ async def main() -> int:
     redis: Redis[Any] = Redis.from_url(str(settings.redis_url))
     queue = TurnQueue(redis)
     sessionmaker = get_sessionmaker()
+
+    # Pricing comes from `model_registry`, refreshed by `make seed-models`. Read once at start-up:
+    # it is a fallback for calls where OpenRouter does not report its own cost, and a worker that
+    # re-read it per turn would query the same rows thousands of times a game.
+    async with sessionmaker() as session:
+        pricing = await PricingTable.from_registry(session)
+    log.info("pricing loaded for %d models", len(pricing))
+
     # Layer 1 of ADR-0011. This worker is what serves games started from the web UI, so without a
     # budget it is a way to spend money with no daily ceiling — the same hole `make play` had.
     budget = GlobalBudget(redis, daily_limit_usd=Decimal(str(settings.global_daily_usd_budget)))
@@ -76,7 +84,7 @@ async def main() -> int:
         queue=queue,
         gateway=LlmGateway(
             api_key=api_key,
-            pricing=PricingTable.from_seed_file(API_ROOT / "seeds" / "models.json"),
+            pricing=pricing,
         ),
         redis=redis,
         budget=budget,

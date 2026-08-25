@@ -7,14 +7,11 @@ leaderboard and every budget cap in ADR-0011 drifts with it.
 from __future__ import annotations
 
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 
 from chessmark.agents.pricing import ModelPricing, PricingTable, compute_cost
 from chessmark.agents.types import CostSource, TokenUsage
-
-SEED_FILE = Path(__file__).resolve().parent.parent.parent / "seeds" / "models.json"
 
 # GPT-4o-class pricing, chosen because the arithmetic is easy to verify by hand:
 #   $2.50 per million prompt tokens  = 0.0000025 / token
@@ -130,34 +127,55 @@ def test_unknown_model_returns_none() -> None:
     assert PricingTable().get("nobody/nothing") is None
 
 
-def test_pricing_loads_from_the_seed_file() -> None:
-    """The same file `refresh_model_seed.py` writes is the one the gateway prices against.
+@pytest.mark.integration
+async def test_pricing_loads_from_the_registry(db) -> None:
+    """The rows the caps are computed against are the rows the gateway prices with.
 
-    Asserts a *property* rather than naming a model. The earlier version pinned
-    `openai/gpt-oss-20b:free`, which OpenRouter has since withdrawn — so a routine
-    `make refresh-models` broke a test that was testing nothing about our code.
+    This used to read `seeds/models.json` — a committed snapshot that the worker priced against
+    while the *registry* it was costing for could say something else entirely. There is one source
+    now, and this asserts the gateway reads it.
+
+    Asserts a property rather than naming a model: the earlier version pinned
+    `openai/gpt-oss-20b:free`, which OpenRouter has since withdrawn, so a routine catalogue
+    refresh broke a test that was testing nothing about our code.
     """
-    table = PricingTable.from_seed_file(SEED_FILE)
+    from chessmark.agents.registry import sync_model_registry
 
-    assert len(table) >= 10
+    await sync_model_registry(
+        db,
+        [
+            {
+                "openrouter_id": "vendor/paid",
+                "display_name": "Paid",
+                "prompt_usd_per_token": Decimal("0.000001"),
+                "completion_usd_per_token": Decimal("0.000002"),
+                "supports_tools": True,
+            },
+            {
+                "openrouter_id": "vendor/gratis:free",
+                "display_name": "Free",
+                "prompt_usd_per_token": Decimal(0),
+                "completion_usd_per_token": Decimal(0),
+                "supports_tools": True,
+            },
+        ],
+    )
+    await db.commit()
+
+    table = await PricingTable.from_registry(db)
 
     free = [slug for slug in table.slugs() if slug.endswith(":free")]
-    assert free, "the seed should carry at least one free model"
+    assert free, "the registry should carry at least one free model"
     for slug in free:
         pricing = table.get(slug)
         assert pricing is not None
         assert pricing.is_free, f"{slug} ends in :free but is not priced as free"
 
-
-def test_every_seeded_model_has_non_negative_pricing() -> None:
-    import json
-
-    table = PricingTable.from_seed_file(SEED_FILE)
-
-    for entry in json.loads(SEED_FILE.read_text(encoding="utf-8")):
-        pricing = table.get(entry["openrouter_id"])
-        assert pricing is not None, f"{entry['openrouter_id']} missing from the table"
+    for slug in table.slugs():
+        pricing = table.get(slug)
+        assert pricing is not None
         assert pricing.prompt_usd_per_token >= 0
+        assert pricing.completion_usd_per_token >= 0
         assert pricing.completion_usd_per_token >= 0
 
 

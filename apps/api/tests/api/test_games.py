@@ -11,7 +11,7 @@ from chessmark.agents.registry import sync_model_registry
 from chessmark.agents.scripted import plays, says, scripted, tool_call
 from chessmark.db.enums import GameStatus
 from chessmark.db.models import Game
-from tests.api.conftest import as_user
+from tests.api.conftest import as_user, fund
 from tests.orchestration.conftest import Fixture, both_sides, run_next
 
 pytestmark = pytest.mark.integration
@@ -200,6 +200,7 @@ async def test_creating_a_game_enqueues_it(client: AsyncClient, db: AsyncSession
         ],
     )
     await db.commit()
+    await fund(db, "user_enqueue")
 
     response = await client.post(
         "/games",
@@ -263,6 +264,7 @@ async def test_a_ranked_game_is_forced_silent(client: AsyncClient, db: AsyncSess
         ],
     )
     await db.commit()
+    await fund(db, "user_ranked")
 
     response = await client.post(
         "/games",

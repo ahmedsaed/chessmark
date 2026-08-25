@@ -111,12 +111,15 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | --- | --- | --- |
 | AUTH-01 | Clerk authentication; the FastAPI backend verifies JWTs via JWKS on every protected request. | M |
 | AUTH-02 | Watching games and viewing replays requires no account. Starting a game does. | M |
-| AUTH-03 | Per-user daily quotas on games started and USD spent. | M |
+| AUTH-03 | ~~Per-user daily quotas on games started and USD spent.~~ Superseded by AUTH-10 ([ADR-0016](adr/0016-credits-as-a-granted-balance.md)); the ledger survives as a record, not a limit. | M |
 | AUTH-04 | A per-game hard USD cap; exceeding it ends the game as `budget_exceeded`. | M |
 | AUTH-05 | A global daily USD kill switch that halts all new LLM calls when tripped. | M |
 | AUTH-06 | Rate limiting on game creation and all model-triggering endpoints. | M |
 | AUTH-07 | Server-held API keys only; keys are never sent to the client. | M |
 | AUTH-08 | An admin surface to inspect spend, cancel games, and reset quotas. | S |
+| AUTH-10 | A user holds a **credit balance**, granted rather than accrued, spent to start a game and not regenerating. New accounts hold zero. | M |
+| AUTH-11 | An administrator can grant and revoke credits. It is the only way a balance rises. | M |
+| AUTH-12 | Each model carries a credit price in four tiers, derived from its own token prices and overridable per model. A game costs the sum of its seats. | M |
 | AUTH-09 | Bring-your-own OpenRouter key to unlock expensive models. | W |
 
 ## 9. Platform & operations (OPS)

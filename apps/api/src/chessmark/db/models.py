@@ -60,6 +60,12 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(sa.Text)
     display_name: Mapped[str | None] = mapped_column(sa.Text)
     is_admin: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+
+    #: Credits held, spent to start a game (ADR-0016). **Zero by default and granted by an
+    #: administrator** — it does not regenerate, so a new account cannot play until someone says
+    #: so. Deliberate for the testing phase; a signup grant changes this default and nothing else.
+    credit_balance: Mapped[int] = mapped_column(default=0, server_default="0")
+
     created_at: Mapped[dt.datetime] = created_at()
     updated_at: Mapped[dt.datetime] = updated_at()
 
@@ -68,7 +74,7 @@ class ModelRegistry(Base):
     """Playable models and their pricing.
 
     Pricing is load-bearing: it feeds the budget caps in ADR-0011, so stale numbers mean wrong
-    caps. Refreshed from OpenRouter by `scripts/refresh_model_seed.py`.
+    caps. Refreshed from OpenRouter by `make seed-models`.
     """
 
     __tablename__ = "model_registry"
@@ -84,6 +90,22 @@ class ModelRegistry(Base):
     supports_tools: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
     is_free: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     enabled: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
+
+    #: What a seat against this model costs to start, in credits (ADR-0016). **Derived** from the
+    #: model's own prices at catalogue sync, so it is rewritten on every `make seed-models`.
+    credit_cost: Mapped[int] = mapped_column(default=1, server_default="1")
+
+    #: An administrator's price for this model, which wins over the derived one. Separate column
+    #: precisely so re-seeding cannot silently undo a deliberate exception.
+    credit_cost_override: Mapped[int | None] = mapped_column(sa.Integer)
+
+    @property
+    def credits(self) -> int:
+        """What this model actually costs. The override if there is one, else the derived tier."""
+        return (
+            self.credit_cost_override if self.credit_cost_override is not None else self.credit_cost
+        )
+
     created_at: Mapped[dt.datetime] = created_at()
     updated_at: Mapped[dt.datetime] = updated_at()
 

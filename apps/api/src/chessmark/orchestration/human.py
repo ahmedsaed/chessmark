@@ -296,7 +296,12 @@ async def say(session: AsyncSession, *, game: Game, player: Player, message: str
             "player_id": str(player.id),
             "colour": player.colour,
             "ply": referee.ply,
-            "message": text,
+            # `content`, matching what a model's `say` writes (`agents/turn.py`). This said
+            # `message` until it was noticed that the panel reads `content` and therefore never
+            # displayed a word a person typed — stored, delivered to the model, invisible on the
+            # page. One key for one thing; the reader deserializes both (`lib/turns.ts`), because
+            # the event log is append-only and the rows written under the old key still exist.
+            "content": text,
             "human": True,
         },
     )

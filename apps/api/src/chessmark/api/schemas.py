@@ -87,6 +87,10 @@ class ModelOut(Schema):
     #: Floating aliases point at different weights over time, so a rating across one rates nothing.
     is_floating_alias: bool = False
 
+    #: What a seat against this model costs to start (ADR-0016). The picker shows it, because with
+    #: 330 models spanning a 300-fold price range a name alone is not enough to choose on.
+    credit_cost: int = 1
+
     @classmethod
     def from_model(
         cls, row: ModelRegistry, *, endpoints: list[ModelEndpoint] | None = None
@@ -134,6 +138,7 @@ class ModelOut(Schema):
             contestants=contestants,
             endpoint_count=len(endpoints),
             is_floating_alias=is_floating_alias(row.openrouter_id),
+            credit_cost=row.credits,
         )
 
 
@@ -286,6 +291,19 @@ class GameSummary(Schema):
                 key=lambda p: p.colour.value,
             ),
         )
+
+
+class MyGameSummary(GameSummary):
+    """A game the caller holds a seat in.
+
+    The two extra fields are the caller's alone, which is why this is a separate shape rather than
+    fields on `GameSummary`: putting "whose seat" on the public payload would publish who plays
+    what to every spectator, the same reason `/games/{id}/seat` exists at all.
+    """
+
+    your_colour: Colour
+    #: True when the game is running and it is this person's move — what a "your turn" list needs.
+    your_turn: bool
 
 
 class GameDetail(GameSummary):
@@ -616,6 +634,20 @@ class ReadinessResponse(Schema):
 # ---------------------------------------------------------------------- admin
 
 
+class CreditGrantRequest(BaseModel):
+    """How many credits to add. Negative takes them away (ADR-0016)."""
+
+    credits: int = Field(description="Credits to add; negative removes them.")
+
+
+class CreditGrantOut(Schema):
+    user_id: uuid.UUID
+    #: The balance after the grant.
+    credit_balance: int
+    #: What was just applied, echoed so an operator can see the change they made took effect.
+    granted: int
+
+
 class AdminSpend(Schema):
     """Today's spend against the kill switch, plus the recorded totals to check it against."""
 
@@ -646,8 +678,11 @@ class MeOut(Schema):
     email: str | None
     display_name: str | None
     is_admin: bool
+    #: Credits held. Granted by an administrator and spent to start a game (ADR-0016).
+    credit_balance: int
+
+    #: Kept for the admin spend view; no longer a limit on anything.
     games_started_today: int
-    games_remaining_today: int
     usd_spent_today: Decimal
 
 

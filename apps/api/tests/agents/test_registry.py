@@ -8,11 +8,41 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.registry import (
+    fetch_catalogue,
+    is_batch,
     load_pricing_table,
-    load_seed,
     playable_models,
     provider_of,
     sync_model_registry,
+    to_registry_entry,
+)
+
+
+def catalogue(*models: dict) -> list[dict]:
+    """The entries `fetch_catalogue` would produce for these OpenRouter payloads.
+
+    Hand-built rather than fetched: the suite never calls a provider, and a test that depended on
+    OpenRouter's live catalogue would fail whenever a vendor withdrew a model.
+    """
+    return [to_registry_entry(model) for model in models]
+
+
+def payload(
+    model_id: str, *, prompt: str = "0.000001", completion: str = "0.000002", tools: bool = True
+) -> dict:
+    return {
+        "id": model_id,
+        "name": model_id,
+        "context_length": 128_000,
+        "pricing": {"prompt": prompt, "completion": completion},
+        "supported_parameters": ["tools"] if tools else [],
+    }
+
+
+SEED = catalogue(
+    payload("vendor/cheap"),
+    payload("vendor/free:free", prompt="0", completion="0"),
+    payload("other/model", prompt="0.00001", completion="0.00003"),
 )
 
 
@@ -22,18 +52,99 @@ def test_provider_is_the_vendor_half_of_the_slug() -> None:
     assert provider_of("bare-name") == "unknown"
 
 
-def test_the_seed_file_is_readable_and_tool_capable() -> None:
-    """AGENT-01: a model that cannot call tools cannot play, so none should be seeded."""
-    entries = load_seed()
+async def test_the_catalogue_keeps_only_tool_capable_models() -> None:
+    """AGENT-01: a model that cannot call tools cannot play, so none should be registered."""
 
-    assert len(entries) >= 10
-    assert all(entry["openrouter_id"] for entry in entries)
-    assert all(entry.get("supports_tools", True) for entry in entries)
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            return {
+                "data": [
+                    payload("vendor/with-tools"),
+                    payload("vendor/without-tools", tools=False),
+                ]
+            }
+
+    class FakeClient:
+        @staticmethod
+        async def get(url: str) -> FakeResponse:
+            return FakeResponse()
+
+    entries = await fetch_catalogue(FakeClient())  # type: ignore[arg-type]
+
+    assert [entry["openrouter_id"] for entry in entries] == ["vendor/with-tools"]
+
+
+def test_batch_variants_are_recognised() -> None:
+    assert is_batch("openai/gpt-5.5-pro:batch")
+    assert not is_batch("openai/gpt-5.5-pro")
+    assert not is_batch("meta/llama:free")
+    # `:thinking` is synchronous and perfectly playable — only `:batch` is asynchronous.
+    assert not is_batch("qwen/qwen3:thinking")
+
+
+async def test_batch_variants_are_never_registered() -> None:
+    """They cannot play, and an unplayable model does not fail politely.
+
+    A `:batch` model is served asynchronously, so a turn blocks until its 600-second ceiling and
+    then **forfeits the model** — recording a loss against a model that never moved. Nothing in
+    the data marks them: they declare `tools`, carry active endpoints, and report 99% uptime.
+    """
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            return {
+                "data": [
+                    payload("vendor/model"),
+                    payload("vendor/model:batch"),
+                ]
+            }
+
+    class FakeClient:
+        @staticmethod
+        async def get(url: str) -> FakeResponse:
+            return FakeResponse()
+
+    entries = await fetch_catalogue(FakeClient())  # type: ignore[arg-type]
+
+    assert [entry["openrouter_id"] for entry in entries] == ["vendor/model"]
+
+
+def test_a_negative_price_is_read_as_unknown_not_as_a_discount() -> None:
+    """OpenRouter reports -1 for the `openrouter/auto` routers, whose price it cannot state.
+
+    Left signed, such a model looks like it *earns* money and sorts to the top of any
+    cheapest-first ordering — which is exactly where a cost-conscious picker would land on it.
+    """
+    entry = to_registry_entry(payload("openrouter/auto", prompt="-1", completion="-1"))
+
+    assert entry["prompt_usd_per_token"] == Decimal(0)
+    assert entry["completion_usd_per_token"] == Decimal(0)
+
+
+def test_prices_keep_their_full_precision() -> None:
+    """Twelve decimal places survive the trip. A float would round exactly what invariant 4 measures."""
+    entry = to_registry_entry(payload("vendor/precise", prompt="0.000000123456"))
+
+    assert entry["prompt_usd_per_token"] == Decimal("0.000000123456")
 
 
 @pytest.mark.integration
 async def test_sync_creates_then_is_idempotent(db: AsyncSession) -> None:
-    entries = load_seed()
+    entries = SEED
 
     first = await sync_model_registry(db, entries)
     await db.commit()
@@ -108,7 +219,7 @@ async def test_playable_models_exclude_tool_incapable(db: AsyncSession) -> None:
 
 @pytest.mark.integration
 async def test_free_only_filter(db: AsyncSession) -> None:
-    await sync_model_registry(db, load_seed())
+    await sync_model_registry(db, SEED)
     await db.commit()
 
     free = await playable_models(db, free_only=True)
@@ -120,16 +231,17 @@ async def test_free_only_filter(db: AsyncSession) -> None:
 
 @pytest.mark.integration
 async def test_pricing_table_is_built_from_the_database(db: AsyncSession) -> None:
-    """At runtime the registry is the authority; the seed file only bootstraps it.
+    """At runtime the registry is the authority — there is no file left to price against.
 
-    Asserts a property, not a named model — see the note in `test_pricing.py`.
+    Asserts a property, not a named model: vendors withdraw models, and a test pinned to one
+    breaks for no useful reason.
     """
-    await sync_model_registry(db, load_seed())
+    await sync_model_registry(db, SEED)
     await db.commit()
 
     table = await load_pricing_table(db)
 
-    assert len(table) >= 10
+    assert len(table) == len(SEED)
 
     free = [slug for slug in table.slugs() if slug.endswith(":free")]
     assert free, "the registry should carry at least one free model"

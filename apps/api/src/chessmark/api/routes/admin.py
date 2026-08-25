@@ -17,7 +17,8 @@ import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, status
 
 from chessmark.api.deps import AdminUser, BudgetDep, SessionDep, SettingsDep
-from chessmark.api.schemas import AdminSpend, AdminUsage
+from chessmark.api.schemas import AdminSpend, AdminUsage, CreditGrantOut, CreditGrantRequest
+from chessmark.db.credits import grant
 from chessmark.db.enums import GameStatus
 from chessmark.db.models import Game, User
 from chessmark.db.quotas import reset_quota, usage_for
@@ -94,6 +95,34 @@ async def reset_user_quota(session: SessionDep, user_id: uuid.UUID, admin: Admin
         games_started=usage.games_started,
         usd_spent=usage.usd_spent,
     )
+
+
+@router.post("/users/{user_id}/credits", response_model=CreditGrantOut)
+async def grant_credits(
+    session: SessionDep,
+    user_id: uuid.UUID,
+    request: CreditGrantRequest,
+    admin: AdminUser,
+) -> CreditGrantOut:
+    """Give a user credits, or take them back (AUTH-11, ADR-0016).
+
+    The only way a balance goes up. New accounts hold zero and there is no request flow in the
+    product, so this is the whole granting mechanism during the testing phase — deliberately, to
+    keep an unattended account from consuming provider spend.
+
+    A negative `credits` removes them, clamped at zero: a negative balance would be a debt to work
+    off before playing again, which is not what anyone means by taking credits away.
+    """
+    del admin
+    try:
+        balance = await grant(session, user_id, request.credits)
+    except LookupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"No user with id {user_id}."
+        ) from error
+
+    await session.commit()
+    return CreditGrantOut(user_id=user_id, credit_balance=balance, granted=request.credits)
 
 
 @router.post("/games/{game_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)

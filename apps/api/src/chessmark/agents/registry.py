@@ -1,28 +1,35 @@
-"""Sync the playable-model registry from the seed file.
+"""Sync the playable-model registry from OpenRouter.
 
-`scripts/refresh_model_seed.py` writes `seeds/models.json` from OpenRouter's public model list;
-this loads it into Postgres. Idempotent, so it can run on deploy without special handling.
+`make seed-models` calls OpenRouter's public model list and upserts it into Postgres. Idempotent,
+so it can run on deploy without special handling.
 
-Pricing here is load-bearing rather than informational: it backs the budget caps in ADR-0011, so
-a stale price means a wrong cap.
+**There is no seed file.** There was one — `seeds/models.json`, written by a script and committed —
+and it was a snapshot that silently went stale: it held 239 models against 419 live, and it was
+missing the entire frontier tier, because the script that wrote it defaulted to *free* models only.
+Nothing surfaced that. A checked-in copy of someone else's catalogue is a cache with no expiry and
+no invalidation, and pricing here is load-bearing rather than informational — it backs the budget
+caps in ADR-0011, so a stale price is a wrong cap.
+
+The catalogue is fetched at seed time instead, which means seeding needs the network. That is the
+trade: a deploy that cannot reach OpenRouter cannot refresh the registry, but the rows already in
+Postgres keep serving, so a running system is unaffected.
 """
 
 from __future__ import annotations
 
-import json
 import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
+import httpx
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.pricing import ModelPricing, PricingTable
 from chessmark.db.models import ModelEndpoint, ModelRegistry
 
-DEFAULT_SEED_PATH = Path(__file__).resolve().parents[3] / "seeds" / "models.json"
+MODELS_URL = "https://openrouter.ai/api/v1/models"
 
 
 @dataclass(slots=True)
@@ -47,9 +54,129 @@ def provider_of(openrouter_id: str) -> str:
     return openrouter_id.split("/", 1)[0] if "/" in openrouter_id else "unknown"
 
 
-def load_seed(path: Path | None = None) -> list[dict[str, Any]]:
-    seed_path = path or DEFAULT_SEED_PATH
-    entries: list[dict[str, Any]] = json.loads(seed_path.read_text(encoding="utf-8"))
+def to_registry_entry(model: dict[str, Any]) -> dict[str, Any]:
+    """One OpenRouter catalogue entry, in the shape `sync_model_registry` upserts.
+
+    Prices are read as strings and kept as strings: they run to twelve decimal places and the
+    column is `NUMERIC`, so passing them through `float` would round away precision that
+    invariant 4 depends on.
+    """
+    pricing = model.get("pricing") or {}
+    supported = model.get("supported_parameters") or []
+    model_id: str = model["id"]
+
+    prompt = _price(pricing.get("prompt"))
+    completion = _price(pricing.get("completion"))
+
+    return {
+        "openrouter_id": model_id,
+        "display_name": model.get("name") or model_id,
+        "context_length": model.get("context_length"),
+        "prompt_usd_per_token": prompt,
+        "completion_usd_per_token": completion,
+        "credit_cost": credit_cost_for(prompt, completion),
+        "supports_reasoning": "reasoning" in supported,
+        "supports_tools": "tools" in supported,
+        "is_free": model_id.endswith(":free"),
+        "enabled": True,
+    }
+
+
+#: Credit price per tier, and the ceiling each tier allows (ADR-0016).
+#:
+#: Read as: a model costs `credits` if **both** its prices fit under the two ceilings. The last
+#: entry is open-ended — anything above the third tier lands there.
+#:
+#: Ordered cheapest first and evaluated in order, so the first tier a model fits is its tier.
+CREDIT_TIERS: tuple[tuple[int, Decimal, Decimal], ...] = (
+    (1, Decimal("0.30"), Decimal("1.50")),
+    (2, Decimal("2.00"), Decimal("8.00")),
+    (3, Decimal("10.00"), Decimal("40.00")),
+)
+
+#: What a model above every tier costs. Seventeen models sit here, up to $30/M in and $180/M out —
+#: one game against one of them can cost more than everything else on the site put together.
+TOP_TIER_CREDITS = 6
+
+PER_MILLION = Decimal(1_000_000)
+
+
+def credit_cost_for(prompt_usd_per_token: Decimal, completion_usd_per_token: Decimal) -> int:
+    """What a seat against this model costs, in credits (ADR-0016).
+
+    **The worse of the two prices decides.** A model that is cheap to prompt and ruinous to
+    generate is still a model that can hurt, and the failure is asymmetric: pricing one too low
+    costs real money, pricing one too high costs a user a credit.
+
+    A free model is tier 1 rather than free: it still occupies a seat, and the free tier is slow
+    and verbose enough that unlimited games against it are their own problem.
+    """
+    prompt = Decimal(prompt_usd_per_token) * PER_MILLION
+    completion = Decimal(completion_usd_per_token) * PER_MILLION
+
+    for credits, max_prompt, max_completion in CREDIT_TIERS:
+        if prompt <= max_prompt and completion <= max_completion:
+            return credits
+    return TOP_TIER_CREDITS
+
+
+def _price(raw: object) -> Decimal:
+    """A catalogue price, or zero.
+
+    OpenRouter reports `-1` for models whose price it cannot state — the `openrouter/auto` router
+    entries. Negative is not a discount, and letting one through would make a model look like it
+    *earns* money and sort to the top of any cost ordering, so it is treated as unknown.
+    """
+    if raw is None:
+        return Decimal(0)
+    try:
+        value = Decimal(str(raw))
+    except (ArithmeticError, ValueError):
+        return Decimal(0)
+    return value if value > 0 else Decimal(0)
+
+
+def is_batch(openrouter_id: str) -> bool:
+    """A batch variant, which cannot play a game.
+
+    OpenRouter's `:batch` models are the same weights at half price, served **asynchronously**: a
+    job is submitted and collected later, not answered on the chat endpoint a turn calls. A turn
+    blocks on a synchronous completion with a 600-second ceiling, so a batch model either errors or
+    runs out the clock.
+
+    Running out the clock is the reason this is a registration filter rather than a warning in the
+    UI. A turn that times out **forfeits the model** (`TurnLimits.max_seconds`), so an unplayable
+    model does not fail politely — it records a loss against a model that never got to move, in the
+    one number this project exists to publish.
+
+    Nothing in the data marks them. They declare `tools`, they carry active endpoints, and ours
+    report 99% uptime; only the slug says what they are. 60 of the 61 in the catalogue have a
+    non-batch sibling, so excluding them costs the field almost nothing.
+    """
+    return openrouter_id.endswith(":batch")
+
+
+async def fetch_catalogue(
+    client: httpx.AsyncClient, *, tools_only: bool = True, free_only: bool = False
+) -> list[dict[str, Any]]:
+    """The live catalogue, ready to upsert.
+
+    Two filters, both for the same reason — a model that cannot play should not be registered,
+    because registering it only invites a confusing failure later:
+
+    * `tools_only` (default): the runtime acts only through tools (AGENT-01).
+    * batch variants: asynchronous, so they cannot answer a turn. See `is_batch`.
+    """
+    response = await client.get(MODELS_URL)
+    response.raise_for_status()
+    models: list[dict[str, Any]] = response.json()["data"]
+
+    entries = [to_registry_entry(model) for model in models]
+    entries = [entry for entry in entries if not is_batch(entry["openrouter_id"])]
+    if tools_only:
+        entries = [entry for entry in entries if entry["supports_tools"]]
+    if free_only:
+        entries = [entry for entry in entries if entry["is_free"]]
     return entries
 
 
@@ -84,6 +211,18 @@ async def sync_model_registry(
             "supports_tools": bool(entry.get("supports_tools", True)),
             "is_free": bool(entry.get("is_free", slug.endswith(":free"))),
             "enabled": bool(entry.get("enabled", True)),
+            # Derived, and rewritten on every sync so a vendor's price change moves the tier with
+            # it. `credit_cost_override` is deliberately absent from this dict: an administrator's
+            # exception must survive a refresh (ADR-0016).
+            "credit_cost": int(
+                entry.get(
+                    "credit_cost",
+                    credit_cost_for(
+                        Decimal(str(entry.get("prompt_usd_per_token", 0))),
+                        Decimal(str(entry.get("completion_usd_per_token", 0))),
+                    ),
+                )
+            ),
         }
 
         row = existing.get(slug)

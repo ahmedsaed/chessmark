@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.core.webhooks import sign
 from chessmark.db.enums import GameStatus
 from chessmark.db.models import Game, User
-from chessmark.db.quotas import reserve_game
+from chessmark.db.quotas import note_game_started
 from tests.api.conftest import as_user
 from tests.orchestration.conftest import Fixture
 
@@ -89,7 +89,7 @@ async def test_an_admin_can_reset_a_users_quota(client: AsyncClient, db: AsyncSe
     victim = User(clerk_user_id="user_victim")
     db.add(victim)
     await db.flush()
-    await reserve_game(db, victim.id, max_games=10)
+    await note_game_started(db, victim.id)
     await db.commit()
 
     response = await client.post(

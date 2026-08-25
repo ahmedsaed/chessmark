@@ -38,11 +38,13 @@ from chessmark.api.schemas import (
     HumanSayRequest,
     IllegalMoveResponse,
     MessageOut,
+    MyGameSummary,
     PlyOut,
     RawCallOut,
     SeatOut,
     TurnDetail,
 )
+from chessmark.db.credits import InsufficientCreditsError, charge, cost_of
 from chessmark.db.enums import GameStatus, ModerationStatus, PlayerKind
 from chessmark.db.models import (
     Game,
@@ -55,7 +57,7 @@ from chessmark.db.models import (
     ToolCall,
     Turn,
 )
-from chessmark.db.quotas import QuotaExceededError, reserve_game
+from chessmark.db.quotas import note_game_started
 from chessmark.db.repositories import load_events, rebuild_referee
 from chessmark.game import Colour, IllegalMoveError
 from chessmark.game.pgn import PgnMetadata, to_pgn
@@ -138,6 +140,77 @@ async def list_games(
         by_game.setdefault(player.game_id, []).append(player)
 
     return [GameSummary.from_model(game, by_game.get(game.id, [])) for game in games]
+
+
+def _side_to_move(start_fen: str, ply_count: int) -> Colour:
+    """Whose move it is, without rebuilding a board.
+
+    Colours strictly alternate, so the start position's side plus the ply parity is exact — and a
+    list of twenty games should not replay twenty games to say whose turn each one is. Read from
+    the FEN rather than assumed to be White, because the start position is configurable (GAME-06).
+    """
+    field = start_fen.split(" ")
+    starter = Colour.BLACK if len(field) > 1 and field[1] == "b" else Colour.WHITE
+    if ply_count % 2 == 0:
+        return starter
+    return Colour.BLACK if starter is Colour.WHITE else Colour.WHITE
+
+
+@router.get("/mine", response_model=list[MyGameSummary])
+async def list_my_games(
+    session: SessionDep,
+    user: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[MyGameSummary]:
+    """The games the caller is playing (HUMAN-03).
+
+    Declared **before** `/games/{game_id}`: FastAPI matches in declaration order, and the literal
+    would otherwise be swallowed by the UUID path param and answered 422.
+
+    A game you are playing is not a game you are watching, and until now the site could not tell
+    them apart — a human game was reachable only by holding on to its URL.
+    """
+    seats = list(
+        await session.scalars(
+            sa.select(Player).where(Player.user_id == user.id, Player.kind == PlayerKind.HUMAN)
+        )
+    )
+    if not seats:
+        return []
+
+    colour_of = {seat.game_id: Colour(seat.colour) for seat in seats}
+    games = list(
+        await session.scalars(
+            sa.select(Game)
+            .where(Game.id.in_(colour_of))
+            .order_by(Game.created_at.desc())
+            .limit(limit)
+        )
+    )
+    if not games:
+        return []
+
+    ids = [game.id for game in games]
+    players = list(await session.scalars(sa.select(Player).where(Player.game_id.in_(ids))))
+    by_game: dict[uuid.UUID, list[Player]] = {}
+    for player in players:
+        by_game.setdefault(player.game_id, []).append(player)
+
+    out: list[MyGameSummary] = []
+    for game in games:
+        colour = colour_of[game.id]
+        summary = GameSummary.from_model(game, by_game.get(game.id, []))
+        out.append(
+            MyGameSummary(
+                **summary.model_dump(),
+                your_colour=colour,
+                your_turn=(
+                    game.status is GameStatus.RUNNING
+                    and _side_to_move(game.start_fen, game.ply_count) is colour
+                ),
+            )
+        )
+    return out
 
 
 @router.get("/{game_id}", response_model=GameDetail)
@@ -396,18 +469,19 @@ async def create_game_endpoint(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"{slug!r} is disabled."
             )
 
+    # A game costs the sum of its seats (ADR-0016). Charged before it exists, atomically, so two
+    # concurrent requests cannot both spend the last credit.
+    price = await cost_of(session, [request.white, request.black])
     try:
-        await reserve_game(
-            session,
-            user.id,
-            max_games=settings.max_games_per_user_per_day,
-            max_usd=Decimal(str(settings.max_usd_per_user_per_day)),
-        )
-    except QuotaExceededError as error:
+        await charge(session, user.id, price)
+    except InsufficientCreditsError as error:
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"{error} Quotas reset at UTC midnight.",
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"{error} Credits are granted by an administrator.",
         ) from error
+
+    # No longer a limit — kept because the admin spend view reads it (ADR-0016).
+    await note_game_started(session, user.id)
 
     kwargs: dict[str, Any] = {}
     if request.start_fen:
@@ -542,18 +616,17 @@ async def create_human_game(
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"{request.model!r} is disabled."
         )
 
+    # Only the machine seat is charged: a person plays for free as themselves (ADR-0016).
+    price = await cost_of(session, [request.model])
     try:
-        await reserve_game(
-            session,
-            user.id,
-            max_games=settings.max_games_per_user_per_day,
-            max_usd=Decimal(str(settings.max_usd_per_user_per_day)),
-        )
-    except QuotaExceededError as error:
+        await charge(session, user.id, price)
+    except InsufficientCreditsError as error:
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"{error} Quotas reset at UTC midnight.",
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"{error} Credits are granted by an administrator.",
         ) from error
+
+    await note_game_started(session, user.id)
 
     ceiling = Decimal(str(settings.max_usd_per_game))
     max_usd = min(request.max_usd, ceiling) if request.max_usd else ceiling

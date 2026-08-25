@@ -44,11 +44,8 @@ migration: ## Autogenerate a migration: make migration m="add foo"
 drift: ## Fail if models and migrations disagree
 	cd $(API) && uv run alembic check
 
-seed-models: ## Load seeds/models.json into model_registry
-	cd $(API) && uv run python ../../scripts/seed_models.py
-
-refresh-models: ## Re-fetch the tool-capable model list from OpenRouter
-	python3 scripts/refresh_model_seed.py
+seed-models: ## Fetch the model catalogue from OpenRouter into model_registry (needs network)
+	cd $(API) && uv run python ../../scripts/seed_models.py $(ARGS)
 
 refresh-endpoints: ## Refresh which providers serve each model, and at what quantization
 	cd $(API) && uv run python ../../scripts/refresh_endpoints.py

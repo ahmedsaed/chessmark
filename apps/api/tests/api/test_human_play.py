@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents.registry import sync_model_registry
 from chessmark.db.enums import GameStatus
 from chessmark.db.models import Game
-from tests.api.conftest import as_user
+from tests.api.conftest import as_user, fund
 from tests.orchestration.conftest import both_sides, run_next
 
 pytestmark = pytest.mark.integration
@@ -30,6 +30,8 @@ async def _seed_model(db: AsyncSession) -> None:
 
 async def _new_game(client: AsyncClient, db: AsyncSession, *, colour: str = "white", **body):
     await _seed_model(db)
+    # Sitting down costs credits now (ADR-0016); a test user holds none until granted.
+    await fund(db)
     response = await client.post(
         "/games/human",
         json={"model": "test/opponent", "colour": colour, **body},
