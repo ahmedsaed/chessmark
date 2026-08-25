@@ -47,12 +47,20 @@ test("the models page filters in the browser, without a request per keystroke", 
   const requests: string[] = [];
   page.on("request", (request) => requests.push(request.url()));
 
-  await search.fill("anthropic");
+  // Typed a character at a time, because "one request per keystroke" is the failure mode this
+  // guards against and `fill()` would produce a single input event.
+  await search.pressSequentially("anthropic", { delay: 30 });
   await expect(page.getByRole("heading", { name: /anthropic/i }).first()).toBeVisible();
 
   // The whole catalogue is fetched once by the page above; filtering is local. This asserts the
   // choice rather than merely permitting it.
-  expect(requests.filter((url) => url.includes("/models"))).toEqual([]);
+  //
+  // Scoped to the **API origin**, not to any URL containing "/models". A production build
+  // prefetches its own routes over RSC, so `localhost:3010/models?_rsc=…` shows up here in CI and
+  // not under `next dev` — a router concern that says nothing about whether filtering hits the
+  // network. What must stay at zero is calls to the catalogue endpoint.
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  expect(requests.filter((url) => url.startsWith(api))).toEqual([]);
 });
 
 test("a model page reaches the games behind its numbers", async ({ page }) => {

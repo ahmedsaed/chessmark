@@ -172,7 +172,22 @@ then fought over the seeded game: the seed plays a fixed script while the worker
 plies; in CI it lost and the game ran to fifteen. If you are running `make worker` by hand, stop it
 before running the suite.
 
-Three traps, each of which cost a debugging pass:
+**CI serves a production build; `make web` serves `next dev`.** They are not the same target. A
+production build prefetches its own routes over RSC, so `localhost:3010/models?_rsc=…` appears in
+the network log there and never under `next dev` — which is why an assertion about "no request per
+keystroke" passed locally and failed in CI. To reproduce CI exactly:
+
+```
+cd apps/web && pnpm build && pnpm start     # not pnpm dev — and on 3010, not another port
+pnpm exec playwright test --project=public
+```
+
+**On 3010 specifically.** The API allows one CORS origin (`cors_origins`, default
+`http://localhost:3010`), so serving the front end anywhere else makes every browser-side fetch
+fail and the suite reports it as missing UI. That is the suite working — it catches a CORS
+misconfiguration, which is worth knowing before Phase 17a puts this behind a real domain.
+
+Four traps, each of which cost a debugging pass:
 
 1. **A message's content is not always a string.** By the time it reaches the provider, the
    prompt-caching path may have wrapped it into `[{"type": "text", ...}]` so a `cache_control`
@@ -183,6 +198,8 @@ Three traps, each of which cost a debugging pass:
 3. **The first `aria-expanded="false"` on a signed-in page is the account button**, not a turn.
    Clicking it opens the Clerk user menu over the page and every later click fails on an element
    it has covered. Scope fold selectors by their text.
+4. **Not every URL containing `/models` is an API call.** Assert against the API origin, or a
+   router prefetch counts as a request the page did not make.
 
 Frontend `lib/` coverage is measured *and* enforced (`make test-web-coverage`, NFR-10).
 `api.ts` and `site.ts` are excluded from that floor and covered by the browser suite instead:
