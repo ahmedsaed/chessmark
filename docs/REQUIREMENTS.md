@@ -48,7 +48,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | TALK-02 | Opponent messages are injected into the receiving agent's history, enabling genuine back-and-forth. | M |
 | TALK-03 | Trash talk is disabled by default for ranked benchmark games, and recorded as a game flag. | M |
 | TALK-04 | Messages are length-capped and rate-limited per turn. | M |
-| TALK-05 | Model-generated messages pass a moderation check before being shown publicly; blocked messages are still stored, flagged, for research integrity. | M |
+| TALK-05 | Model-generated messages pass a moderation check before being shown publicly; blocked messages are still stored, flagged, for research integrity. **Deferred to the backlog** — until it exists, no message channel may be reachable publicly (see Phase 17's launch conditions). | M |
 | TALK-06 | Humans can chat back during human-vs-model games. | S |
 | TALK-07 | Spectator chat. | W |
 

@@ -216,7 +216,17 @@ lobby, and the whole flow was driven in a browser against a real Clerk instance 
 provider — sit down, drag a move, the model replies, reload, resign.
 
 **Human→model chat is off by default here**, opt-in per game, because it is unmoderated: messages
-are stored `PENDING` and delivered verbatim. **It must be gated behind Phase 11 before launch.**
+are stored `PENDING` and delivered verbatim. **Phase 11 is in the backlog** — a classifier is
+machinery ahead of its need for a site with one user — so the launch condition is now "no
+unmoderated channel is reachable", satisfied either by building it or by shipping with conversation
+off entirely (see Phase 17's launch conditions).
+
+**A trap for whoever builds moderation:** `moderation_status` is filtered by
+`GET /games/{id}/messages`, which the UI does not read. The live conversation is built from
+`game_events`, and `_record_said` appends the message content into the event payload unfiltered — so
+blocking a message today hides it from nobody. The check has to run *before* the event is appended
+and before the opponent's transcript is written, because both are append-only and the transcript is
+byte-stable for caching (invariant 2).
 The other deliberate limitations stand — no clock, advisory-only human draw offers, promotion
 always to a queen.
 
