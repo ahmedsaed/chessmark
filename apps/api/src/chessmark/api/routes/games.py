@@ -473,7 +473,7 @@ async def create_game_endpoint(
     # concurrent requests cannot both spend the last credit.
     price = await cost_of(session, [request.white, request.black])
     try:
-        await charge(session, user.id, price)
+        entry = await charge(session, user.id, price)
     except InsufficientCreditsError as error:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -517,6 +517,11 @@ async def create_game_endpoint(
         # The caller named a precision nobody serves. That is a bad request, not a server fault —
         # and seating them at a different precision would quietly measure another contestant.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    # The charge happened before the game existed; name the game on it now. Same transaction, so
+    # a failure after this point rolls the charge back with everything else.
+    if entry is not None:
+        entry.game_id = match.game.id
 
     job = await start_match(session, queue, game_id=match.game.id)
     await session.commit()
@@ -619,7 +624,7 @@ async def create_human_game(
     # Only the machine seat is charged: a person plays for free as themselves (ADR-0016).
     price = await cost_of(session, [request.model])
     try:
-        await charge(session, user.id, price)
+        entry = await charge(session, user.id, price)
     except InsufficientCreditsError as error:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
@@ -658,6 +663,11 @@ async def create_human_game(
         )
     except NoEndpointError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+
+    # The charge happened before the game existed; name the game on it now. Same transaction, so
+    # a failure after this point rolls the charge back with everything else.
+    if entry is not None:
+        entry.game_id = match.game.id
 
     job = await start_match(session, queue, game_id=match.game.id)
 

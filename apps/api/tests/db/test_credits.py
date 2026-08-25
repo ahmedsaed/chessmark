@@ -21,17 +21,28 @@ from chessmark.db.credits import (
     charge,
     cost_of,
     grant,
+    history_of,
+    ledger_total,
     refund,
 )
+from chessmark.db.enums import CreditReason
 from chessmark.db.models import ModelRegistry, User
 
 pytestmark = pytest.mark.integration
 
 
 async def _user(db: AsyncSession, *, credits: int = 0) -> uuid.UUID:
-    user = User(clerk_user_id=f"user_{uuid.uuid4().hex[:8]}", credit_balance=credits)
+    """A user with a balance, seeded **through the ledger**.
+
+    Setting `credit_balance` directly would leave a balance with no history, which is the one thing
+    the ledger is supposed to make impossible — and a helper that quietly does it would let the
+    invariant tests pass on data production can never produce.
+    """
+    user = User(clerk_user_id=f"user_{uuid.uuid4().hex[:8]}")
     db.add(user)
     await db.flush()
+    if credits:
+        await grant(db, user.id, credits, note="test fixture")
     return user.id
 
 
@@ -118,14 +129,15 @@ async def test_a_game_with_no_machine_seat_is_free(db: AsyncSession) -> None:
 async def test_charging_leaves_the_remainder(db: AsyncSession) -> None:
     user = await _user(db, credits=10)
 
-    assert await charge(db, user, 3) == 7
+    await charge(db, user, 3)
     assert await balance_of(db, user) == 7
 
 
 async def test_a_balance_can_be_spent_exactly(db: AsyncSession) -> None:
     user = await _user(db, credits=2)
 
-    assert await charge(db, user, 2) == 0
+    await charge(db, user, 2)
+    assert await balance_of(db, user) == 0
 
 
 async def test_charging_more_than_the_balance_is_refused(db: AsyncSession) -> None:
@@ -235,3 +247,110 @@ async def test_a_balance_does_not_regenerate(db: AsyncSession) -> None:
     assert await balance_of(db, user) == 0
     with pytest.raises(InsufficientCreditsError):
         await charge(db, user, 1)
+
+
+# ====================================================================== the ledger (AUTH-13)
+
+
+async def test_a_balance_equals_the_sum_of_its_history(db: AsyncSession) -> None:
+    """The property the whole ledger exists for.
+
+    `users.credit_balance` stays the enforcement point — a charge has to be one statement whose
+    `WHERE` clause is the check — so the two are separate stores that must agree. This is what
+    would catch them drifting.
+    """
+    user = await _user(db)
+
+    await grant(db, user, 10)
+    await charge(db, user, 3)
+    await grant(db, user, -2)
+    await refund(db, user, 1)
+
+    assert await balance_of(db, user) == 6
+    assert await ledger_total(db, user) == 6
+
+
+async def test_every_movement_is_recorded_with_its_reason(db: AsyncSession) -> None:
+    user = await _user(db)
+
+    await grant(db, user, 10, note="beta invite")
+    await charge(db, user, 2)
+    await grant(db, user, -1)
+    await refund(db, user, 2)
+
+    rows = await history_of(db, user)
+
+    assert [row.reason for row in rows] == [
+        CreditReason.REFUND,
+        CreditReason.ADMIN_REVOKE,
+        CreditReason.GAME_START,
+        CreditReason.ADMIN_GRANT,
+    ]
+    assert rows[-1].note == "beta invite"
+
+
+async def test_a_grant_records_who_made_it(db: AsyncSession) -> None:
+    """A balance that cannot name the person who moved it explains nothing."""
+    admin = await _user(db)
+    user = await _user(db)
+
+    await grant(db, user, 5, actor_user_id=admin, note="why not")
+
+    entry = (await history_of(db, user))[0]
+    assert entry.actor_user_id == admin
+    assert entry.note == "why not"
+
+
+async def test_a_charge_has_no_actor(db: AsyncSession) -> None:
+    """Nobody *decides* a charge — it is the price of a thing the user chose to do."""
+    user = await _user(db, credits=5)
+
+    await charge(db, user, 2)
+
+    assert (await history_of(db, user))[0].actor_user_id is None
+
+
+async def test_a_clamped_revocation_records_what_actually_happened(db: AsyncSession) -> None:
+    """Revoking 10 from a balance of 2 moves it by 2.
+
+    A ledger that stored the *requested* delta would say -10 and stop summing to the balance —
+    which is exactly the drift this ledger exists to make impossible.
+    """
+    user = await _user(db, credits=2)
+
+    await grant(db, user, -10)
+
+    entry = (await history_of(db, user))[0]
+    assert entry.delta == -2
+    assert entry.balance_after == 0
+    assert await ledger_total(db, user) == await balance_of(db, user)
+
+
+async def test_a_refused_charge_writes_nothing(db: AsyncSession) -> None:
+    """A ledger of things that did not happen is worse than no ledger."""
+    user = await _user(db, credits=1)
+    before = len(await history_of(db, user))
+
+    with pytest.raises(InsufficientCreditsError):
+        await charge(db, user, 5)
+
+    assert len(await history_of(db, user)) == before
+
+
+async def test_a_free_game_writes_nothing(db: AsyncSession) -> None:
+    user = await _user(db, credits=5)
+    before = len(await history_of(db, user))
+
+    assert await charge(db, user, 0) is None
+    assert len(await history_of(db, user)) == before
+
+
+async def test_a_charge_can_name_the_game_it_paid_for(db: AsyncSession) -> None:
+    """Set after the fact: the charge happens before the game exists, in the same transaction."""
+    user = await _user(db, credits=5)
+
+    entry = await charge(db, user, 2)
+
+    assert entry is not None
+    assert entry.game_id is None  # not known yet at charge time
+    assert entry.reason is CreditReason.GAME_START

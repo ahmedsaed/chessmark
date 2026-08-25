@@ -156,16 +156,40 @@ def is_batch(openrouter_id: str) -> bool:
     return openrouter_id.endswith(":batch")
 
 
+def fits_a_game(context_length: int | None, minimum: int) -> bool:
+    """Whether this model's context window can hold a game worth playing (AGENT-14).
+
+    The transcript is replayed whole on every turn (ADR-0003), so a turn's prompt *is* the context
+    it needs, and it grows about **1,818 tokens per ply** — measured across real games, not
+    assumed. A 32k window is therefore exhausted around ply 20 of a possible 300.
+
+    That is not a polite failure. `context_exceeded` is in `FORFEIT_TERMINATIONS`, so the model
+    records a **loss** it never had a chance to avoid, in the number the leaderboard publishes.
+
+    A model with no declared context length is kept: unknown is not the same as small, and
+    excluding on missing metadata would silently drop models over a gap in someone else's data.
+    """
+    if minimum <= 0 or context_length is None:
+        return True
+    return context_length >= minimum
+
+
 async def fetch_catalogue(
-    client: httpx.AsyncClient, *, tools_only: bool = True, free_only: bool = False
+    client: httpx.AsyncClient,
+    *,
+    tools_only: bool = True,
+    free_only: bool = False,
+    min_context: int = 0,
 ) -> list[dict[str, Any]]:
     """The live catalogue, ready to upsert.
 
-    Two filters, both for the same reason — a model that cannot play should not be registered,
-    because registering it only invites a confusing failure later:
+    Three filters, all for one reason — a model that cannot play should not be registered, because
+    registering it only invites a confusing failure later, and every one of these failures is a
+    forfeit rather than an apology:
 
     * `tools_only` (default): the runtime acts only through tools (AGENT-01).
     * batch variants: asynchronous, so they cannot answer a turn. See `is_batch`.
+    * `min_context`: too small to hold a game. See `fits_a_game`.
     """
     response = await client.get(MODELS_URL)
     response.raise_for_status()
@@ -173,6 +197,7 @@ async def fetch_catalogue(
 
     entries = [to_registry_entry(model) for model in models]
     entries = [entry for entry in entries if not is_batch(entry["openrouter_id"])]
+    entries = [e for e in entries if fits_a_game(e["context_length"], min_context)]
     if tools_only:
         entries = [entry for entry in entries if entry["supports_tools"]]
     if free_only:

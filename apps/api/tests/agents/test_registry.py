@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.registry import (
     fetch_catalogue,
+    fits_a_game,
     is_batch,
     load_pricing_table,
     playable_models,
@@ -249,3 +250,51 @@ async def test_pricing_table_is_built_from_the_database(db: AsyncSession) -> Non
         pricing = table.get(slug)
         assert pricing is not None
         assert pricing.is_free
+
+
+# ====================================================================== context window (AGENT-14)
+
+
+def test_a_window_too_small_for_a_game_is_rejected() -> None:
+    """Measured, not assumed: the transcript grows ~1,818 tokens a ply, so a 32k window is spent
+    around ply 20 of a possible 300 — and `context_exceeded` is a forfeit."""
+    assert not fits_a_game(32_768, 128_000)
+    assert fits_a_game(128_000, 128_000)
+    assert fits_a_game(1_000_000, 128_000)
+
+
+def test_an_undeclared_window_is_kept() -> None:
+    """Unknown is not the same as small.
+
+    Excluding on missing metadata would silently drop models over a gap in someone else's data,
+    which is a worse failure than letting one through — the ply cap still bounds the game.
+    """
+    assert fits_a_game(None, 128_000)
+
+
+def test_the_check_can_be_turned_off() -> None:
+    assert fits_a_game(1_000, 0)
+
+
+async def test_a_model_too_small_to_play_is_never_registered() -> None:
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            small = payload("vendor/tiny")
+            small["context_length"] = 8_192
+            return {"data": [payload("vendor/roomy"), small]}
+
+    class FakeClient:
+        @staticmethod
+        async def get(url: str) -> FakeResponse:
+            return FakeResponse()
+
+    entries = await fetch_catalogue(FakeClient(), min_context=128_000)  # type: ignore[arg-type]
+
+    assert [entry["openrouter_id"] for entry in entries] == ["vendor/roomy"]

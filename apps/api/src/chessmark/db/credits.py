@@ -21,7 +21,8 @@ import uuid
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.db.models import ModelRegistry, User
+from chessmark.db.enums import CreditReason
+from chessmark.db.models import CreditLedger, ModelRegistry, User
 
 
 class InsufficientCreditsError(Exception):
@@ -60,16 +61,46 @@ async def cost_of(session: AsyncSession, model_slugs: list[str]) -> int:
     return sum(prices.get(slug, TOP_TIER_CREDITS) for slug in model_slugs)
 
 
-async def charge(session: AsyncSession, user_id: uuid.UUID, credits: int) -> int:
-    """Spend credits, or raise `InsufficientCreditsError`. Returns the balance left.
+def _entry(
+    *,
+    user_id: uuid.UUID,
+    delta: int,
+    balance_after: int,
+    reason: CreditReason,
+    game_id: uuid.UUID | None = None,
+    actor_user_id: uuid.UUID | None = None,
+    note: str | None = None,
+) -> CreditLedger:
+    return CreditLedger(
+        user_id=user_id,
+        delta=delta,
+        balance_after=balance_after,
+        reason=reason,
+        game_id=game_id,
+        actor_user_id=actor_user_id,
+        note=note,
+    )
+
+
+async def charge(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    credits: int,
+    *,
+    game_id: uuid.UUID | None = None,
+) -> CreditLedger | None:
+    """Spend credits, or raise `InsufficientCreditsError`. Returns the ledger row it wrote.
 
     Charged *before* the game is created, not after. Counting on completion would let a user open
-    any number of games at once and discover the price when the money was already committed.
+    any number of games at once and discover the price when the money was already committed — which
+    is also why `game_id` is usually unknown here and set on the returned row once the game exists.
+    Both happen in one transaction, so a failure anywhere rolls back the charge with it.
 
-    A charge of zero — a game with no machine seat — succeeds without touching the row.
+    A charge of zero — a game with no machine seat — succeeds without touching anything, and writes
+    no row: a ledger of no-ops is a ledger nobody reads.
     """
     if credits <= 0:
-        return await balance_of(session, user_id)
+        return None
 
     statement = (
         sa.update(User)
@@ -81,16 +112,39 @@ async def charge(session: AsyncSession, user_id: uuid.UUID, credits: int) -> int
     remaining = (await session.execute(statement)).scalar_one_or_none()
     if remaining is None:
         raise InsufficientCreditsError(needed=credits, held=await balance_of(session, user_id))
-    return int(remaining)
+
+    entry = _entry(
+        user_id=user_id,
+        delta=-credits,
+        balance_after=int(remaining),
+        reason=CreditReason.GAME_START,
+        game_id=game_id,
+    )
+    session.add(entry)
+    return entry
 
 
-async def grant(session: AsyncSession, user_id: uuid.UUID, credits: int) -> int:
-    """Add credits to a balance and return the new total (AUTH-11).
+async def grant(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    credits: int,
+    *,
+    actor_user_id: uuid.UUID | None = None,
+    note: str | None = None,
+    reason: CreditReason | None = None,
+) -> int:
+    """Add credits to a balance and return the new total (AUTH-11, AUTH-13).
 
     Also used to take them away, with a negative amount — clamped at zero, because a negative
     balance would have to be worked off before play resumed, which is a debt rather than a
     revocation and not what anyone means by removing credits.
+
+    **The clamp is why `balance_after` is recorded rather than derived.** Revoking 10 from a
+    balance of 2 moves it by 2, not 10, so a ledger that stored only the requested delta would not
+    sum to the balance. The row records what actually happened.
     """
+    before = await balance_of(session, user_id)
+
     statement = (
         sa.update(User)
         .where(User.id == user_id)
@@ -101,16 +155,60 @@ async def grant(session: AsyncSession, user_id: uuid.UUID, credits: int) -> int:
     total = (await session.execute(statement)).scalar_one_or_none()
     if total is None:
         raise LookupError(f"no user with id {user_id}")
-    return int(total)
+
+    after = int(total)
+    if after != before:
+        session.add(
+            _entry(
+                user_id=user_id,
+                delta=after - before,
+                balance_after=after,
+                reason=reason
+                or (CreditReason.ADMIN_GRANT if credits > 0 else CreditReason.ADMIN_REVOKE),
+                actor_user_id=actor_user_id,
+                note=note,
+            )
+        )
+    return after
 
 
-async def refund(session: AsyncSession, user_id: uuid.UUID, credits: int) -> int:
+async def refund(
+    session: AsyncSession, user_id: uuid.UUID, credits: int, *, note: str | None = None
+) -> int:
     """Give credits back for a game that never ran.
 
-    Distinct from `grant` only in name, and the name is the point: a refund is an accident being
-    undone, a grant is a decision. They read differently in the code that calls them.
+    Distinct from `grant` only in the reason it records, and that is the point: a refund is an
+    accident being undone, a grant is a decision about a person. Anyone auditing a balance needs
+    to tell them apart.
     """
-    return await grant(session, user_id, credits)
+    return await grant(session, user_id, credits, note=note, reason=CreditReason.REFUND)
+
+
+async def history_of(
+    session: AsyncSession, user_id: uuid.UUID, *, limit: int = 100
+) -> list[CreditLedger]:
+    """A balance's history, newest first."""
+    rows = await session.scalars(
+        sa.select(CreditLedger)
+        .where(CreditLedger.user_id == user_id)
+        .order_by(CreditLedger.id.desc())
+        .limit(limit)
+    )
+    return list(rows)
+
+
+async def ledger_total(session: AsyncSession, user_id: uuid.UUID) -> int:
+    """What the history says the balance should be.
+
+    `users.credit_balance` is the enforcement point and this is the account of it; they must agree,
+    and a test replays every ledger to prove it.
+    """
+    total = await session.scalar(
+        sa.select(sa.func.coalesce(sa.func.sum(CreditLedger.delta), 0)).where(
+            CreditLedger.user_id == user_id
+        )
+    )
+    return int(total or 0)
 
 
 async def balance_of(session: AsyncSession, user_id: uuid.UUID) -> int:

@@ -50,6 +50,12 @@ seed-models: ## Fetch the model catalogue from OpenRouter into model_registry (n
 refresh-endpoints: ## Refresh which providers serve each model, and at what quantization
 	cd $(API) && uv run python ../../scripts/refresh_endpoints.py
 
+refresh-catalogue: ## Models + endpoints in one pass, for a scheduler (OPS-09)
+	cd $(API) && uv run python ../../scripts/refresh_catalogue.py $(ARGS)
+
+backfill-identities: ## Ask Clerk for the email of users provisioned without one (AUTH-14)
+	cd $(API) && uv run python ../../scripts/backfill_identities.py $(ARGS)
+
 record-llm: ## Re-record LLM test fixtures (spends free-tier requests; never run by CI)
 	cd $(API) && uv run python ../../scripts/record_llm_fixtures.py
 

@@ -1129,7 +1129,7 @@ end for anyone arriving later. A signup grant changes one default when that chan
 
 ---
 
-## Phase 22 — Accountability: credit history, identity, and a fresh catalogue
+## Phase 22 — Accountability: credit history, identity, and a fresh catalogue ✅ COMPLETE
 
 **Goal:** the things Phase 21 relies on stop being unwritten assumptions.
 
@@ -1144,16 +1144,28 @@ is the kind that only shows up when someone asks a question the data cannot answ
 5. A scheduled catalogue refresh, replacing the by-hand `make seed-models`
 
 **Exit criteria**
-- [ ] Every balance in the system equals the sum of its ledger rows — asserted by a test that
-      replays the ledger and compares
-- [ ] A grant records which administrator made it and why; revocation is a negative row, never an
-      edit, so a balance's history cannot be rewritten
-- [ ] An administrator can grant credits knowing only a person's email address
-- [ ] A user provisioned today carries an identifier beyond their provider id. **Every user in the
-      database currently has `email = NULL` and `display_name = NULL`**, because `auth.py` reads an
-      `email` claim Clerk's default session token does not send
-- [ ] The catalogue refreshes unattended, and a refresh that cannot reach OpenRouter leaves the
-      registry untouched rather than half-written
+- [x] Every balance in the system equals the sum of its ledger rows — asserted by replaying it,
+      and true of the real database: the owner's 48 credits reconcile against an **opening entry**
+      the migration writes. Without that, the invariant would have been false on day one for
+      everyone who already held credits, and the first thing anyone audited would be the account
+      that did not add up
+- [x] A grant records which administrator made it and why; revocation is a negative row, never an
+      edit. A *clamped* revocation records what actually happened rather than what was asked —
+      taking 10 from a balance of 2 moves it by 2, and a ledger storing the requested delta would
+      stop summing to the balance
+- [x] An administrator can grant credits knowing only a person's email address — driven over HTTP
+      against real Clerk. An address we do not hold is looked up with Clerk and the row
+      provisioned, so credits can be granted to someone who has never signed in
+- [x] A user provisioned today carries an identifier beyond their provider id. Resolved once, on
+      genuine first sight, and **both existing users were backfilled** — `/me` now answers with a
+      real address where every row read `NULL`
+- [x] The catalogue refreshes unattended in one command, and an empty fetch leaves the registry
+      untouched. Measured: 275 models and 909 endpoints in 30s
+- [x] **AGENT-14 applied to context length.** 14 models were registered that could not finish a
+      game — `openai/gpt-3.5-turbo-0613` at 4,095 tokens would have exhausted its window around
+      ply 2 and recorded a forfeit. The floor is derived, not picked: the transcript grows
+      **1,818 tokens per ply**, measured across real games, so 128k covers ~70 plies against a
+      real-game median of 39
 
 **On identity — a webhook is the wrong primary mechanism.** It needs a public URL and puts a third
 party's delivery latency in front of a new user's first action, which is the reason just-in-time
@@ -1161,7 +1173,15 @@ provisioning exists. Preferred order: add the claim to Clerk's session token (th
 reads it), then fetch from Clerk's API at provisioning, and keep the webhook for updates and
 deletions where it genuinely belongs.
 
-**Covers:** AUTH-13, AUTH-14, OPS-09.
+**A floor, not a guarantee.** No context threshold makes a 300-ply game safe — that needs ~545k
+and would exclude almost the whole field. This removes models that cannot get *started*; the ply
+cap and the spend cap still bound the rest.
+
+**What is deliberately still manual:** the refresh is a command built for a scheduler, not a
+scheduler. There is nowhere to run it until Phase 17a exists, and inventing a cron inside the API
+process would be a worse answer than the one the deploy will bring.
+
+**Covers:** AUTH-13, AUTH-14, AGENT-14, OPS-09.
 
 **Note:** designed so a future top-up path — a user buying or requesting credits — writes to the
 same ledger. The mechanism for *why* a balance moved should not depend on who moved it.

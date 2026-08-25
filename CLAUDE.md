@@ -131,7 +131,7 @@ a test enforces that. Anything that would spend money carries the `llm` marker o
 
 ## Current state
 
-**Phases 0–10, 12, 18, 19 and 21 complete.** 834 backend + 122 frontend tests.
+**Phases 0–10, 12, 18, 19, 21 and 22 complete.** 864 backend + 122 frontend tests.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -232,16 +232,22 @@ variable they do — worth remembering that a guard downstream of a throwing pro
 Frontend logic in `apps/web/src/lib` is unit-tested with `vitest` (`make test-web`); components
 are still covered by Playwright rather than a jsdom stack.
 
-**Nine pickable models cannot finish a game.** Their context window is under 33k, and the
-transcript reaches ~66k tokens by ply 39 — so they exhaust it around ply 20 of a possible 300.
-`context_exceeded` is a **forfeit**, so an unplayable model records a loss against a model that
-never had a chance. Same class as the `:batch` variants already excluded; AGENT-14 states the rule
-and Phase 22 has yet to apply it to context length.
+**Credits are a granted balance with a history** (ADR-0016, AUTH-10..14). `users.credit_balance`
+stays the enforcement point — a charge must be one statement whose `WHERE` clause is the check —
+and `credit_ledger` is the append-only account of how it got there. The two are asserted to agree,
+including for balances that predate the ledger, which the migration gives an opening entry.
 
-**Nobody in `users` has an email or a display name.** `core/auth.py` reads an `email` claim that
-Clerk's default session token does not send, so every row is `NULL` — which means an administrator
-granting credits has nothing to identify a person by except an opaque Clerk id. AUTH-14 and
-Phase 22.
+**Identity is resolved from Clerk at provisioning**, because a session token carries no email by
+default and every row used to read `NULL`. `core/clerk.py` asks the API once, on genuine first
+sight; `make backfill-identities` fills rows created before that. An admin grants by email, Clerk
+id, or ours — and an address we do not hold is looked up with Clerk, so credits can be granted to
+someone who has not signed in yet.
+
+**Three kinds of model are never registered** (AGENT-14), all for one reason — every one of these
+failures is a *forfeit*, recording a loss against a model that never had a chance. No tool calling;
+`:batch` variants, which are asynchronous; and a context window under `MIN_CONTEXT_TOKENS`
+(128k). The last is derived: the transcript grows **1,818 tokens per ply**, measured, so 128k
+covers ~70 plies. It removed 14 models, including `gpt-3.5-turbo-0613` at 4,095 tokens.
 
 Known gaps, recorded rather than quietly carried: Phase 7's Lighthouse score is **unverified**
 (no Lighthouse in this environment), NFR-06's >80% cache rate is met in aggregate but not by

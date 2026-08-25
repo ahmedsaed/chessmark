@@ -72,3 +72,22 @@ class EventType(StrEnum):
     #: A game stopped by the harness — a budget, a ply cap, a provider outage — was reopened with
     #: room to continue. Never a chess result: those are final.
     GAME_RESUMED = "game_resumed"
+
+
+class CreditReason(StrEnum):
+    """Why a balance moved (AUTH-13).
+
+    Stored rather than inferred: "the balance went down by two" does not say whether a game was
+    started, an administrator took credits back, or we corrected our own mistake — and those are
+    the three questions anyone auditing a balance actually has.
+    """
+
+    #: Spent to start a game. Carries the game it paid for.
+    GAME_START = "game_start"
+    #: An administrator adding credits. Carries who.
+    ADMIN_GRANT = "admin_grant"
+    #: An administrator taking them back.
+    ADMIN_REVOKE = "admin_revoke"
+    #: Given back for a game that never ran. Distinct from a grant because it undoes rather than
+    #: decides — a refund is our mistake being corrected, not a decision about a person.
+    REFUND = "refund"

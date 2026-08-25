@@ -310,3 +310,136 @@ async def test_the_webhook_refuses_everything_when_no_secret_is_set(
     response = await client.post("/webhooks/clerk", content=raw, headers=headers)
 
     assert response.status_code == 401
+
+
+# ====================================================================== granting credits
+
+
+async def _plain_user(db: AsyncSession, clerk_user_id: str, email: str | None = None) -> User:
+    user = User(clerk_user_id=clerk_user_id, email=email)
+    db.add(user)
+    await db.commit()
+    return user
+
+
+async def test_granting_credits_needs_an_admin(client: AsyncClient, db: AsyncSession) -> None:
+    await _plain_user(db, "user_nobody")
+
+    response = await client.post(
+        "/admin/credits",
+        json={"user": "user_nobody", "credits": 5},
+        headers=as_user("user_nobody"),
+    )
+
+    assert response.status_code == 403
+
+
+async def test_an_admin_can_grant_by_our_own_id(client: AsyncClient, db: AsyncSession) -> None:
+    await _make_admin(db, "user_admin_uuid")
+    target = await _plain_user(db, "user_target_uuid")
+
+    response = await client.post(
+        "/admin/credits",
+        json={"user": str(target.id), "credits": 5},
+        headers=as_user("user_admin_uuid"),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["credit_balance"] == 5
+
+
+async def test_an_admin_can_grant_by_clerk_id(client: AsyncClient, db: AsyncSession) -> None:
+    await _make_admin(db, "user_admin_clerk")
+    await _plain_user(db, "user_target_clerk")
+
+    response = await client.post(
+        "/admin/credits",
+        json={"user": "user_target_clerk", "credits": 3},
+        headers=as_user("user_admin_clerk"),
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["credit_balance"] == 3
+
+
+async def test_an_admin_can_grant_by_email(client: AsyncClient, db: AsyncSession) -> None:
+    """The identifier an operator actually has.
+
+    It was our internal UUID alone, which meant granting credits began with a database query.
+    """
+    await _make_admin(db, "user_admin_email")
+    await _plain_user(db, "user_target_email", email="player@chessmark.test")
+
+    response = await client.post(
+        "/admin/credits",
+        json={"user": "player@chessmark.test", "credits": 7, "note": "beta invite"},
+        headers=as_user("user_admin_email"),
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["credit_balance"] == 7
+    assert body["email"] == "player@chessmark.test"
+
+
+async def test_an_unknown_identifier_is_a_404_not_a_guess(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    await _make_admin(db, "user_admin_unknown")
+
+    response = await client.post(
+        "/admin/credits",
+        json={"user": "nobody-at-all", "credits": 5},
+        headers=as_user("user_admin_unknown"),
+    )
+
+    assert response.status_code == 404
+    # The message has to say what shapes are accepted, or the operator is left guessing.
+    assert "email" in response.text.lower()
+
+
+async def test_credits_can_be_taken_back(client: AsyncClient, db: AsyncSession) -> None:
+    await _make_admin(db, "user_admin_revoke")
+    target = await _plain_user(db, "user_target_revoke")
+
+    header = as_user("user_admin_revoke")
+    await client.post("/admin/credits", json={"user": str(target.id), "credits": 5}, headers=header)
+    response = await client.post(
+        "/admin/credits", json={"user": str(target.id), "credits": -3}, headers=header
+    )
+
+    assert response.json()["credit_balance"] == 2
+
+
+async def test_the_history_names_the_administrator_who_granted(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """AUTH-13. A balance that cannot say who moved it explains nothing."""
+    admin = await _make_admin(db, "user_admin_history")
+    target = await _plain_user(db, "user_target_history")
+    header = as_user("user_admin_history")
+
+    await client.post(
+        "/admin/credits",
+        json={"user": str(target.id), "credits": 9, "note": "for testing"},
+        headers=header,
+    )
+
+    rows = (await client.get(f"/admin/users/{target.id}/credits", headers=header)).json()
+
+    assert len(rows) == 1
+    assert rows[0]["delta"] == 9
+    assert rows[0]["balance_after"] == 9
+    assert rows[0]["reason"] == "admin_grant"
+    assert rows[0]["actor_user_id"] == str(admin.id)
+    assert rows[0]["note"] == "for testing"
+
+
+async def test_the_history_is_private_to_admins(client: AsyncClient, db: AsyncSession) -> None:
+    target = await _plain_user(db, "user_target_private")
+
+    response = await client.get(
+        f"/admin/users/{target.id}/credits", headers=as_user("user_target_private")
+    )
+
+    assert response.status_code == 403

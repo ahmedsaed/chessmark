@@ -36,6 +36,7 @@ from chessmark.db.base import (
 )
 from chessmark.db.enums import (
     AnalysisStatus,
+    CreditReason,
     EventType,
     GameStatus,
     ModerationStatus,
@@ -569,6 +570,53 @@ class AnalysisJob(Base):
     created_at: Mapped[dt.datetime] = created_at()
     started_at: Mapped[dt.datetime | None] = mapped_column()
     completed_at: Mapped[dt.datetime | None] = mapped_column()
+
+
+class CreditLedger(Base):
+    """Every movement of a credit balance, append-only (AUTH-13, ADR-0016).
+
+    `users.credit_balance` stays the enforcement point — the charge has to be one statement whose
+    `WHERE` clause is the check, and a balance summed from history on every request could not do
+    that. This is the *account* of how it got there, and the two are asserted to agree.
+
+    Append-only in the same sense the game event log is: a revocation is a negative row, never an
+    edit, so a balance's history cannot be rewritten to hide a mistake. Rows outlive the thing they
+    reference — `game_id` is `SET NULL`, because a deleted game must not erase the record that
+    somebody paid for it.
+
+    Deliberately shaped so a future top-up writes here too. Why a balance moved should not depend
+    on who moved it, and `reason` already distinguishes a grant from a refund.
+    """
+
+    __tablename__ = "credit_ledger"
+
+    id: Mapped[int] = bigint_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(_fk("users.id", ondelete="CASCADE"), index=True)
+
+    #: Signed. Negative spends, positive grants — so the balance is the plain sum of the column.
+    delta: Mapped[int] = mapped_column(sa.Integer)
+
+    #: The balance immediately after this row, recorded rather than derived. It makes a divergence
+    #: between the ledger and `users.credit_balance` visible at the row that caused it, instead of
+    #: only in the total.
+    balance_after: Mapped[int] = mapped_column(sa.Integer)
+
+    reason: Mapped[CreditReason] = mapped_column(enum_column(CreditReason), index=True)
+
+    #: The game this paid for, when the reason is a charge.
+    game_id: Mapped[uuid.UUID | None] = mapped_column(
+        _fk("games.id", ondelete="SET NULL"), index=True
+    )
+
+    #: The administrator who did it, when a person did. Null for a charge, which nobody decides.
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        _fk("users.id", ondelete="SET NULL"), index=True
+    )
+
+    #: Free text from whoever granted. The "why" a reason code cannot carry.
+    note: Mapped[str | None] = mapped_column(sa.Text)
+
+    created_at: Mapped[dt.datetime] = created_at()
 
 
 class UsageLedger(Base):

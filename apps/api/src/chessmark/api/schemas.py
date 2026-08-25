@@ -19,8 +19,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from chessmark.agents.registry import is_floating_alias
-from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
+from chessmark.db.enums import CreditReason, EventType, GameStatus, PlayerKind, TurnStatus
 from chessmark.db.models import (
+    CreditLedger,
     Game,
     GameEvent,
     LlmCall,
@@ -635,17 +636,56 @@ class ReadinessResponse(Schema):
 
 
 class CreditGrantRequest(BaseModel):
-    """How many credits to add. Negative takes them away (ADR-0016)."""
+    """Who to grant to, and how many. Negative takes them away (ADR-0016)."""
 
+    user: str = Field(
+        description=(
+            "An email address, a Clerk user id, or a Chessmark user id — whichever you have. "
+            "An email Chessmark does not know is looked up with Clerk, so credits can be granted "
+            "to someone who has not signed in yet."
+        )
+    )
     credits: int = Field(description="Credits to add; negative removes them.")
+    note: str | None = Field(
+        default=None,
+        description="Why. Recorded on the ledger row, because a reason code cannot carry it.",
+    )
 
 
 class CreditGrantOut(Schema):
     user_id: uuid.UUID
+    #: Echoed so an operator can see *who* they just granted to, not only that it worked.
+    email: str | None = None
     #: The balance after the grant.
     credit_balance: int
     #: What was just applied, echoed so an operator can see the change they made took effect.
     granted: int
+
+
+class CreditEntryOut(Schema):
+    """One movement of a balance (AUTH-13)."""
+
+    id: int
+    delta: int
+    balance_after: int
+    reason: CreditReason
+    game_id: uuid.UUID | None = None
+    actor_user_id: uuid.UUID | None = None
+    note: str | None = None
+    created_at: dt.datetime
+
+    @classmethod
+    def from_model(cls, row: CreditLedger) -> CreditEntryOut:
+        return cls(
+            id=row.id,
+            delta=row.delta,
+            balance_after=row.balance_after,
+            reason=CreditReason(row.reason),
+            game_id=row.game_id,
+            actor_user_id=row.actor_user_id,
+            note=row.note,
+            created_at=row.created_at,
+        )
 
 
 class AdminSpend(Schema):
