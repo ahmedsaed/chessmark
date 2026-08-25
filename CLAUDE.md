@@ -154,7 +154,8 @@ The suite starts its own **scripted worker** and seeds its own fixtures, so it s
   `apps/web/e2e/.auth/worker.log` — **the first place to look when the board never moves.**
 - `scripts/seed_e2e.py` plays a whole game (Scholar's Mate) through the real queue and worker so
   replay has something finished to scrub. Idempotent, and it seeds a minimal catalogue only when
-  the registry is empty, which is CI — a developer's 256 real models are left alone.
+  the registry is empty, which is CI — a developer's 256 real models are left alone. It runs in
+  `global-setup.ts` **before** the worker is started, and that order is load-bearing (see below).
 - `scripts/seed_e2e_user.py` creates and funds the test account. New users get no credits by
   design (AUTH-11), so an unattended suite would otherwise be unable to start a game.
 
@@ -163,7 +164,15 @@ browser reported as real turned out to be an API server started hours earlier, s
 without the redaction the worker beside it was already writing. Restart the API and the worker
 after backend changes, or run them with reload.
 
-Two traps, both of which cost a debugging pass:
+**Only one worker may consume the queue.** A job goes to whichever worker reaches it first, so a
+second one is not redundancy — it is a coin toss over who plays each turn. Seeding used to run as
+a Playwright project, i.e. *after* `global-setup.ts` had started the background worker, and the two
+then fought over the seeded game: the seed plays a fixed script while the worker plays whatever
+`responsive` decides. Locally the seed usually won and the game came out at its expected seven
+plies; in CI it lost and the game ran to fifteen. If you are running `make worker` by hand, stop it
+before running the suite.
+
+Three traps, each of which cost a debugging pass:
 
 1. **A message's content is not always a string.** By the time it reaches the provider, the
    prompt-caching path may have wrapped it into `[{"type": "text", ...}]` so a `cache_control`
@@ -171,6 +180,9 @@ Two traps, both of which cost a debugging pass:
    the legal moves twenty times in one turn, in silence.
 2. **`/ w /` is not "the model has replied".** The starting position is white-to-move too, so the
    wait was already satisfied and every later assertion read a board that had not moved.
+3. **The first `aria-expanded="false"` on a signed-in page is the account button**, not a turn.
+   Clicking it opens the Clerk user menu over the page and every later click fails on an element
+   it has covered. Scope fold selectors by their text.
 
 Frontend `lib/` coverage is measured *and* enforced (`make test-web-coverage`, NFR-10).
 `api.ts` and `site.ts` are excluded from that floor and covered by the browser suite instead:

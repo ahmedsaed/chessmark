@@ -1282,10 +1282,15 @@ cannot answer a person. `scripts/worker.py --scripted` runs the real worker with
 replaced; `scripts/seed_e2e.py` plays a whole game through the real queue so replay has something
 finished to scrub.
 
-Two bugs the suite found in its own scaffolding, both worth remembering: a message's content is
+Three bugs the suite found in its own scaffolding, all worth remembering: a message's content is
 not always a string by the time it reaches the provider (the caching path wraps it in blocks,
-ADR-0003), and `/ w /` is not "the model has replied" — the starting position is white-to-move
-too, so the wait was already satisfied and every later assertion read a stale board.
+ADR-0003); `/ w /` is not "the model has replied" — the starting position is white-to-move too, so
+the wait was already satisfied and every later assertion read a stale board; and **two workers must
+never share the queue**. Seeding ran as a Playwright project, which is to say *after* global setup
+had started the background worker, so the two fought over the seeded game's turns — the seed plays
+a fixed script, the worker plays whatever `responsive` decides, and the game was whichever of them
+won each turn. Locally the seed usually won; in CI it did not, and a seven-ply Scholar's Mate came
+out at fifteen plies. Seeding now completes before the worker exists.
 
 `data-fen` was added to `Board` for this: the board renders pieces as SVG with no notion of the
 position they came from, so without it a test can count pieces but cannot tell two positions with

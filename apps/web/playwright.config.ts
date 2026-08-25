@@ -57,12 +57,10 @@ export default defineConfig({
   },
 
   projects: [
-    { name: "seed", testMatch: /seed\.setup\.ts/ },
-    { name: "auth", testMatch: /auth\.setup\.ts/, dependencies: ["seed"] },
+    { name: "auth", testMatch: /auth\.setup\.ts/ },
     {
       name: "public",
       testMatch: /public\/.*\.spec\.ts/,
-      dependencies: ["seed"],
       use: { ...devices["Desktop Chrome"] },
     },
     {
