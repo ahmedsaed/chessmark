@@ -123,9 +123,13 @@ async def test_an_endpoint_without_tools_is_not_a_contestant(
         [{"provider": "Chat", "quantization": "fp8", "uptime": 99.0, "supports_tools": False}],
     )
 
-    body = next(
-        m for m in (await client.get("/models")).json() if m["openrouter_id"] == "test/notools"
-    )
+    # Absent from the default listing entirely — it has no playable endpoint, so it is not an
+    # offer. The registry view still holds it, with no contestants.
+    offered = {m["openrouter_id"] for m in (await client.get("/models")).json()}
+    assert "test/notools" not in offered
+
+    registry = (await client.get("/models", params={"playable": False})).json()
+    body = next(m for m in registry if m["openrouter_id"] == "test/notools")
 
     assert body["contestants"] == []
 

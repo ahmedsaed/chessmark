@@ -38,7 +38,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | AGENT-11 | Agents may call read-only tools (`get_board`, `get_legal_moves`, `get_move_history`) any number of times per turn, up to the turn budget. | M |
 | AGENT-12 | Configurable personas / custom system prompts, flagged as non-ranked. | S |
 | AGENT-13 | Context strategy (full-history vs. windowed) is a recorded per-game parameter, enabling ablation studies. | C |
-| AGENT-14 | Only models that can complete a game are offered. A model that cannot call tools, cannot answer synchronously, or whose context window cannot hold a full game is never registered. An unplayable model does not fail politely — every one of these terminations is a **forfeit**, recording a loss against a model that never had a chance to play. | M |
+| AGENT-14 | Only models that can complete a game **and say what played it** are registered. Excluded: no tool calling; asynchronous `:batch` variants; a context window too small to hold a game; and floating aliases like `-latest`, whose weights change under a fixed name. The first three fail as a **forfeit**, recording a loss against a model that never had a chance. The fourth plays fine but leaves a record that cannot be reproduced (BENCH-04). | M |
 
 ## 3. Trash talk (TALK)
 

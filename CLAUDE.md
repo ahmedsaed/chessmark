@@ -260,11 +260,18 @@ only, keyed by contestant, because a rating may see nothing else (BENCH-03). Mon
 from `llm_calls` so a page cannot disagree with the call log; results come from `players`. A model
 that played itself is one game and two seats.
 
-**Three kinds of model are never registered** (AGENT-14), all for one reason — every one of these
-failures is a *forfeit*, recording a loss against a model that never had a chance. No tool calling;
-`:batch` variants, which are asynchronous; and a context window under `MIN_CONTEXT_TOKENS`
-(128k). The last is derived: the transcript grows **1,818 tokens per ply**, measured, so 128k
-covers ~70 plies. It removed 14 models, including `gpt-3.5-turbo-0613` at 4,095 tokens.
+**Four kinds of model are never registered** (AGENT-14). Three cannot finish a game, and each
+failure is a *forfeit* — a loss against a model that never had a chance: no tool calling; `:batch`
+variants, which are asynchronous; and a context window under `MIN_CONTEXT_TOKENS` (128k, derived —
+the transcript grows **1,818 tokens per ply**, measured, so 128k covers ~70 plies). The fourth is
+different: a **floating alias** (`-latest`, `~vendor/…`) plays fine but cannot say what played, so
+its record is unreproducible (BENCH-04). ADR-0015 originally kept these playable-but-unrankable and
+was [amended](docs/adr/0015-quantization-as-identity-and-pinned-endpoints.md) once it was clear that
+a game record which cannot name its weights is as useless as a rating across them.
+
+`GET /models` returns only models with an active tool-capable endpoint. It listed everything
+registered for about an hour, which meant the catalogue page advertised 18 models the picker
+correctly refused — `playable=false` still reaches the registry as stored.
 
 Known gaps, recorded rather than quietly carried: Phase 7's Lighthouse score is **unverified**
 (no Lighthouse in this environment), NFR-06's >80% cache rate is met in aggregate but not by

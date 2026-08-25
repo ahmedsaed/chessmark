@@ -11,6 +11,7 @@ from chessmark.agents.registry import (
     fetch_catalogue,
     fits_a_game,
     is_batch,
+    is_floating_alias,
     load_pricing_table,
     playable_models,
     provider_of,
@@ -298,3 +299,49 @@ async def test_a_model_too_small_to_play_is_never_registered() -> None:
     entries = await fetch_catalogue(FakeClient(), min_context=128_000)  # type: ignore[arg-type]
 
     assert [entry["openrouter_id"] for entry in entries] == ["vendor/roomy"]
+
+
+# ====================================================================== floating aliases
+
+
+def test_a_floating_alias_is_recognised() -> None:
+    assert is_floating_alias("~anthropic/claude-opus-latest")
+    assert is_floating_alias("google/gemini-flash-latest")
+    assert not is_floating_alias("google/gemini-3.7-flash")
+    # A version in the name is the opposite of floating — it says exactly what it is.
+    assert not is_floating_alias("anthropic/claude-sonnet-4.5")
+
+
+async def test_a_floating_alias_is_never_registered() -> None:
+    """It can play perfectly well; what it cannot do is say what played.
+
+    BENCH-04 requires a run to record its model version, and `-latest` cannot — so the record is
+    unreproducible whether or not anyone rates it. ADR-0015 originally kept these playable and
+    merely unrankable, which was half a decision.
+    """
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            return {
+                "data": [
+                    payload("vendor/model-3.7"),
+                    payload("vendor/model-latest"),
+                    payload("~vendor/model-pinned"),
+                ]
+            }
+
+    class FakeClient:
+        @staticmethod
+        async def get(url: str) -> FakeResponse:
+            return FakeResponse()
+
+    entries = await fetch_catalogue(FakeClient())  # type: ignore[arg-type]
+
+    assert [entry["openrouter_id"] for entry in entries] == ["vendor/model-3.7"]

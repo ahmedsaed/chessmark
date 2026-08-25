@@ -52,8 +52,18 @@ outage already does. Chessmark has always separated "played badly" from "failed 
 adds "was failed by its host" to the second group.
 
 **Floating aliases cannot be ranked.** `~vendor/model-latest` points at different weights over time,
-so a rating computed across it is a rating of nothing. They stay playable and stay excluded from
-ranked play.
+so a rating computed across it is a rating of nothing. ~~They stay playable and stay excluded from
+ranked play.~~
+
+> **Amended 2026-08-25: they are not registered at all** (AGENT-14). Keeping them playable was half
+> a decision. A rating across changing weights is a rating of nothing — but so is a *game record*
+> that cannot say which weights played it, and BENCH-04 requires a run to record its model version.
+> An alias game is therefore unreproducible whether or not anyone rates it, which is a worse
+> failure for this project than being unplayable.
+>
+> The cost was near zero: of the 13 in the catalogue, 12 had no endpoint and could not be played
+> anyway, one could, and none had ever been played. `is_floating_alias` survives as a predicate,
+> because rows written before this rule still need identifying.
 
 ## Alternatives considered
 

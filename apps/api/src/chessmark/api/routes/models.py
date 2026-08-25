@@ -22,17 +22,33 @@ router = APIRouter(prefix="/models", tags=["models"])
 async def list_models(
     session: SessionDep,
     free_only: Annotated[bool, Query()] = False,
+    playable: Annotated[
+        bool, Query(description="Only models with an active tool-capable endpoint")
+    ] = True,
 ) -> list[ModelOut]:
     """Models a game may actually use.
 
-    Filtered to tool-capable models: an agent acts only through tools (AGENT-01), so one without
-    them cannot play at all and listing it would only invite a confusing 400 later.
+    **Playable by default**, meaning the model has at least one active tool-capable endpoint. A
+    registered model with none has no contestants and cannot be picked (ADR-0015) — it is a record
+    that its providers dropped it, not an offer. Listing those was a real bug: the picker filtered
+    them and the catalogue page did not, so `/models` advertised 18 models nobody could play.
+
+    Pass `playable=false` for the registry as stored, which is what an operator auditing what
+    disappeared upstream wants.
     """
     query = sa.select(ModelRegistry).where(
         ModelRegistry.enabled.is_(True), ModelRegistry.supports_tools.is_(True)
     )
     if free_only:
         query = query.where(ModelRegistry.is_free.is_(True))
+    if playable:
+        query = query.where(
+            ModelRegistry.id.in_(
+                sa.select(ModelEndpoint.model_id).where(
+                    ModelEndpoint.is_active.is_(True), ModelEndpoint.supports_tools.is_(True)
+                )
+            )
+        )
 
     rows = list(await session.scalars(query.order_by(ModelRegistry.openrouter_id)))
     if not rows:

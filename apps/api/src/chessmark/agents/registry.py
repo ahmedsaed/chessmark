@@ -183,13 +183,17 @@ async def fetch_catalogue(
 ) -> list[dict[str, Any]]:
     """The live catalogue, ready to upsert.
 
-    Three filters, all for one reason — a model that cannot play should not be registered, because
-    registering it only invites a confusing failure later, and every one of these failures is a
-    forfeit rather than an apology:
+    Four filters. The first three share a reason — a model that cannot play should not be
+    registered, because registering it only invites a confusing failure later, and every one of
+    those failures is a forfeit rather than an apology:
 
     * `tools_only` (default): the runtime acts only through tools (AGENT-01).
     * batch variants: asynchronous, so they cannot answer a turn. See `is_batch`.
     * `min_context`: too small to hold a game. See `fits_a_game`.
+
+    The fourth is different in kind. A floating alias *can* play perfectly well; what it cannot do
+    is say what played. Its record is unreproducible, which is a worse failure for a benchmark than
+    being unable to move. See `is_floating_alias`.
     """
     response = await client.get(MODELS_URL)
     response.raise_for_status()
@@ -197,6 +201,7 @@ async def fetch_catalogue(
 
     entries = [to_registry_entry(model) for model in models]
     entries = [entry for entry in entries if not is_batch(entry["openrouter_id"])]
+    entries = [e for e in entries if not is_floating_alias(e["openrouter_id"])]
     entries = [e for e in entries if fits_a_game(e["context_length"], min_context)]
     if tools_only:
         entries = [entry for entry in entries if entry["supports_tools"]]
@@ -541,8 +546,15 @@ async def quantizations_offered(session: AsyncSession, model_slug: str) -> list[
 
 
 def is_floating_alias(model_slug: str) -> bool:
-    """`~vendor/model-latest` points at different weights over time (ADR-0015).
+    """`~vendor/model-latest` points at different weights over time.
 
-    Playable, never rankable: a rating computed across changing weights is a rating of nothing.
+    **Never registered** (AGENT-14). ADR-0015 originally kept them playable-but-unrankable, and
+    that was half a decision: a rating computed across changing weights is a rating of nothing, but
+    so is a *game record* that cannot say which weights played it. BENCH-04 requires a run to record
+    its model version, and this slug cannot — so an alias game is unreproducible whether or not
+    anyone rates it.
+
+    Kept as a predicate rather than deleted, because rows written before this rule existed still
+    need identifying — a game that used one must stay readable.
     """
     return model_slug.startswith("~") or model_slug.endswith("-latest")

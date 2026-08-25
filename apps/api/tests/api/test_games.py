@@ -296,8 +296,10 @@ async def test_the_model_registry_is_listed(client: AsyncClient, db: AsyncSessio
     )
     await db.commit()
 
-    everything = (await client.get("/models")).json()
-    free = (await client.get("/models", params={"free_only": True})).json()
+    # `playable=false` for the registry as stored: these fixtures have no endpoints, and the
+    # default listing offers only models something can actually serve.
+    everything = (await client.get("/models", params={"playable": False})).json()
+    free = (await client.get("/models", params={"free_only": True, "playable": False})).json()
 
     slugs = {m["openrouter_id"] for m in everything}
     assert slugs == {"free/one", "paid/two"}, "tool-incapable models must not be offered"
