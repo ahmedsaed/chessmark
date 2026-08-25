@@ -40,6 +40,8 @@ flowchart LR
     P18 --> P17[17 Launch]
     P18 --> P19[19 Living replays]
     P18 --> P20[20 Models + matchmaking]
+    P9 --> P21[21 Credits]
+    P21 --> P17
     P11 --> P17
     P13 --> P17
     P16 --> P17
@@ -606,6 +608,9 @@ owner rather than a test step.
 - [x] An unauthenticated request to create a game returns 401; spectating and replays return 200 — every game read path is asserted public, parameterised over all six of them
 - [x] A forged/expired JWT is rejected — asserted by a test, over `alg: none`, algorithm confusion, a wrong signing key, a tampered payload, a foreign issuer, a missing expiry, and a missing subject
 - [x] A user at their daily quota is refused with a clear message; the counter resets at UTC midnight
+      — **superseded by Phase 21.** The daily allowance is now a granted credit balance
+      ([ADR-0016](adr/0016-credits-as-a-granted-balance.md)); what this criterion proved about the
+      *reservation being atomic* carried over unchanged to the credit charge
 - [x] With the global budget tripped, **no LLM call is issued** — asserted by a spy provider that records being called and raises; the test fails on contact, not on a spend figure afterwards
 - [x] Load test: 100 rapid game-creation requests from one user are rate-limited, not served — 10 of 100 admitted, fired concurrently
 - [x] No API key appears in any client bundle — `scripts/check_bundle_secrets.py`, run in CI against the built output
@@ -1045,12 +1050,79 @@ game, which games it has actually played — exists in the database and has neve
 - [ ] A model with zero games renders a real empty state; an unknown slug returns 404, not 500
 - [ ] A model whose contestants are ranked links to its leaderboard rows, and one that is a
       floating alias says why it cannot be ranked
-- [ ] `/play` starts a game end to end, and the picker shows cost and context window (UI-07)
+- [x] `/play` starts a game end to end, and the picker shows cost — **partly done, in Phase 21.**
+      The picker is a searchable disclosure over 330 models grouped by provider, showing each
+      model's credit price and its input price. It does **not** yet show context window or
+      reasoning support, so UI-07 is not fully met
+- [ ] `/models` lists every registered model and filters as you type
 
-**Covers:** UI-07, BENCH-02 (extended to unranked games).
+**Covers:** UI-07 (partly — see above), BENCH-02 (extended to unranked games).
+
+**Already built, ahead of this phase:** objective 5's search landed with the credit work, because a
+catalogue of 330 models with a 300-fold price range is not choosable from a `<select>`. What
+remains here is the model *pages* — `/models`, `/models/[slug]`, and the aggregates behind them.
 
 **Note:** neither this nor Phase 19 gates the deploy. Both are site work that can land on a
 running deployment.
+
+---
+
+## Phase 21 — Credits ✅ COMPLETE (verified by hand in a browser, not by an automated suite)
+
+**Goal:** the owner decides who plays, and what each game costs them.
+
+Supersedes layer 2 of [ADR-0011](adr/0011-server-keys-layered-budgets.md) — the per-user *daily*
+quota — with [ADR-0016](adr/0016-credits-as-a-granted-balance.md). Layers 1, 3 and 4 stand.
+
+Three things forced it. "Credit" was a UI invention with nothing behind it: the word appeared once
+in the codebase, rendering `games_remaining_today`. A daily reset is the wrong control for a
+private testing phase, because it grants access continuously to anyone who has ever signed in. And
+one game is not one price — the catalogue spans **$0.09 to $30 per million input tokens**, which
+had been invisible while the registry held a stale snapshot topping out at $1/M.
+
+**Objectives**
+1. A credit balance on `users`, granted rather than accrued, zero by default
+2. A per-model credit price in four tiers, derived from the model's own prices
+3. Charge at creation, atomically, summed across the game's seats
+4. An admin grant/revoke endpoint — the only way a balance rises
+5. The balance and every model's price on the face of the UI
+
+**Exit criteria**
+- [x] A new account holds zero and cannot start a game — asserted, and the refusal names both the
+      price and the balance rather than saying "insufficient credits"
+- [x] Concurrent requests cannot overspend a balance — 20 fired at 3 credits admit exactly 3. The
+      check lives in the `WHERE` clause of the update, so Postgres decides it
+- [x] A game costs the sum of its seats, and a model playing itself is charged twice
+- [x] An administrator's price survives a catalogue refresh — the derived and overridden costs are
+      separate columns precisely so re-seeding cannot undo a deliberate exception
+- [x] The whole loop driven in a browser against a real Clerk instance: refused at zero, granted 5
+      through the admin endpoint, then **5 → 3 → 1 → refused**
+- [x] The balance updates without a reload. It did not at first: `/me` was read once on mount and
+      `AccountBar` lives in the root layout, so a client-side push to a new game left the header
+      showing a number from first paint
+
+**The tiers**, on the live catalogue — a model qualifies only if **both** its prices fit:
+
+| Tier | Credits | Input ≤ | Output ≤ | Models | Share |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 1 | $0.30/M | $1.50/M | 129 | 39.1% |
+| 2 | 2 | $2.00/M | $8.00/M | 129 | 39.1% |
+| 3 | 3 | $10.00/M | $40.00/M | 55 | 16.7% |
+| 4 | 6 | above | above | 17 | 5.2% |
+
+The worse price decides, because the failure is asymmetric: pricing a model too low costs real
+money, too high costs a user one credit.
+
+**Recorded as a non-goal: credits are not cost accounting.** Four tiers cannot price a 300-fold
+range — tier 4 spans $10 to $30/M, so a 6-credit game can cost three times another 6-credit game.
+`MAX_USD_PER_GAME` still bounds a bill and the global kill switch is still the backstop that trusts
+nothing, including this arithmetic.
+
+**What is deliberately absent:** there is no way for a user to *ask* for credits. Granting is
+manual and out of band, which is the intent while testing is done by the owner alone, and a dead
+end for anyone arriving later. A signup grant changes one default when that changes.
+
+**Covers:** AUTH-10, AUTH-11, AUTH-12. Supersedes AUTH-03.
 
 ---
 
