@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.registry import sync_model_registry
 from chessmark.db.models import ModelEndpoint, ModelRegistry
-from tests.api.conftest import as_user
+from tests.api.conftest import as_user, fund
 from tests.orchestration.conftest import Fixture
 
 pytestmark = pytest.mark.integration
@@ -123,9 +123,13 @@ async def test_an_endpoint_without_tools_is_not_a_contestant(
         [{"provider": "Chat", "quantization": "fp8", "uptime": 99.0, "supports_tools": False}],
     )
 
-    body = next(
-        m for m in (await client.get("/models")).json() if m["openrouter_id"] == "test/notools"
-    )
+    # Absent from the default listing entirely — it has no playable endpoint, so it is not an
+    # offer. The registry view still holds it, with no contestants.
+    offered = {m["openrouter_id"] for m in (await client.get("/models")).json()}
+    assert "test/notools" not in offered
+
+    registry = (await client.get("/models", params={"playable": False})).json()
+    body = next(m for m in registry if m["openrouter_id"] == "test/notools")
 
     assert body["contestants"] == []
 
@@ -157,6 +161,7 @@ async def test_a_precision_can_be_requested_when_starting_a_game(
         ],
     )
 
+    await fund(db, "user_picky")
     response = await client.post(
         "/games",
         json={
@@ -184,6 +189,7 @@ async def test_asking_for_a_precision_nobody_serves_is_a_400(
     await _model(
         db, "test/eightonly", [{"provider": "Eight", "quantization": "fp8", "uptime": 99.0}]
     )
+    await fund(db, "user_wrong_precision")
 
     response = await client.post(
         "/games",

@@ -111,8 +111,9 @@ jobs:
       - name: Build
         run: pnpm build
 
-      - name: Unit tests
-        run: pnpm test
+      # NFR-10: frontend logic coverage is measured and enforced, not merely reported.
+      - name: Unit tests with coverage
+        run: pnpm test:coverage
 
       # AUTH-07 / invariant 10: no API key may reach the client. Asserted against the built
       # output rather than trusted, because `NEXT_PUBLIC_` prefixing turns any variable into a
@@ -120,6 +121,114 @@ jobs:
       - name: No secrets in the client bundle
         working-directory: .
         run: python3 scripts/check_bundle_secrets.py
+
+  browser:
+    name: Browser suite (public pages)
+    runs-on: ubuntu-latest
+
+    # Only the public project runs here. Reading is open to everyone (AUTH-02), so the lobby, the
+    # catalogue, a model page and a whole replay need no identity at all. The signed-in flows need
+    # a real Clerk development instance and are opt-in — `make test-e2e-all` — the same bargain the
+    # `llm` pytest marker strikes. A test that depends on something external is never silently
+    # green.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: chessmark
+          POSTGRES_PASSWORD: chessmark
+          POSTGRES_DB: chessmark
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://chessmark:chessmark@localhost:5432/chessmark
+      REDIS_URL: redis://localhost:6379/0
+      NEXT_PUBLIC_API_URL: http://localhost:8010
+      E2E_WEB_URL: http://localhost:3010
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+
+      - name: Install backend
+        working-directory: apps/api
+        run: uv sync --all-groups --frozen
+
+      - name: Migrate
+        working-directory: apps/api
+        run: uv run alembic upgrade head
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: apps/web/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install frontend
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        working-directory: apps/web
+        run: pnpm exec playwright install --with-deps chromium
+
+      # Built and served, not `next dev`. The suite should assert what a visitor gets.
+      - name: Build the web app
+        working-directory: apps/web
+        run: pnpm build
+
+      - name: Start the API
+        working-directory: apps/api
+        run: |
+          uv run uvicorn chessmark.main:app --port 8010 &
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:8010/health && break
+            sleep 1
+          done
+
+      - name: Start the web app
+        working-directory: apps/web
+        run: |
+          pnpm start &
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:3010/ >/dev/null && break
+            sleep 1
+          done
+
+      # The suite seeds its own fixtures (a scripted game played through the real queue and
+      # worker) and starts its own scripted worker. Nothing calls a provider; nothing is spent.
+      - name: Browser suite
+        working-directory: apps/web
+        run: pnpm exec playwright test --project=public
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
+          retention-days: 7
 
   secrets:
     name: Secret scan

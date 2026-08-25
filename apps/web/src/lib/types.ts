@@ -59,6 +59,19 @@ export interface GameSummary {
   players: Player[];
 }
 
+/**
+ * A game *you* hold a seat in.
+ *
+ * Two fields the public summary deliberately lacks: `/games` says nothing about who plays what,
+ * because publishing that to every spectator to save one request is the wrong trade. These come
+ * from `/games/mine`, which answers only for the caller.
+ */
+export interface MyGameSummary extends GameSummary {
+  your_colour: Colour;
+  /** Running, and waiting on you. What the "your move" badge reads. */
+  your_turn: boolean;
+}
+
 export interface GameDetail extends GameSummary {
   start_fen: string;
   current_fen: string;
@@ -91,6 +104,8 @@ export interface ModelInfo {
   endpoint_count: number;
   /** Points at different weights over time, so it can never be ranked. */
   is_floating_alias: boolean;
+  /** What one seat against this model costs to start, in credits (ADR-0016). */
+  credit_cost: number;
 }
 
 /**
@@ -105,6 +120,36 @@ export interface Contestant {
   uptime_1d: number | null;
   /** How many endpoints serve this precision. One means an outage takes the contestant with it. */
   endpoint_count: number;
+}
+
+/** What a model has actually done, over every game — not only the ratable ones (Phase 20). */
+export interface ModelStats {
+  games: number;
+  /** Higher than `games` only when a model played itself: it won one and lost one. */
+  seats: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  forfeits: number;
+  illegal_attempts: number;
+  moves_played: number;
+  illegal_per_move: number;
+  llm_calls: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  cached_tokens: number;
+  /** Null when nothing has been sent — not measured, rather than measured at zero. */
+  cache_rate: number | null;
+  total_cost_usd: string;
+  cost_per_game: string;
+  mean_latency_ms: number | null;
+}
+
+export interface ModelDetail extends ModelInfo {
+  stats: ModelStats;
+  /** Empty when no contestant of this model is ranked — which is a fact worth showing. */
+  ratings: LeaderboardRow[];
 }
 
 export type EventType =
@@ -146,6 +191,8 @@ export interface TurnView {
   colour: Colour;
   playerId: string;
   model: string;
+  /** A person's turn, not a model's. There is no provider call behind it and no name in `model`. */
+  human: boolean;
   /** What the model was thinking. DeepSeek fills this; Gemini never does. */
   reasoning: string[];
   /** What the model said outside a tool call. Gemini fills this; DeepSeek never does. */
@@ -209,8 +256,9 @@ export interface Me {
   email: string | null;
   display_name: string | null;
   is_admin: boolean;
+  /** Credits held. Granted by an administrator, spent to start a game (ADR-0016). */
+  credit_balance: number;
   games_started_today: number;
-  games_remaining_today: number;
   usd_spent_today: string;
 }
 

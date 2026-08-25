@@ -19,8 +19,9 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from chessmark.agents.registry import is_floating_alias
-from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
+from chessmark.db.enums import CreditReason, EventType, GameStatus, PlayerKind, TurnStatus
 from chessmark.db.models import (
+    CreditLedger,
     Game,
     GameEvent,
     LlmCall,
@@ -31,6 +32,7 @@ from chessmark.db.models import (
     ToolCall,
     Turn,
 )
+from chessmark.db.stats import ModelStats
 from chessmark.game import Colour, GameResult, Termination
 
 
@@ -87,6 +89,10 @@ class ModelOut(Schema):
     #: Floating aliases point at different weights over time, so a rating across one rates nothing.
     is_floating_alias: bool = False
 
+    #: What a seat against this model costs to start (ADR-0016). The picker shows it, because with
+    #: 330 models spanning a 300-fold price range a name alone is not enough to choose on.
+    credit_cost: int = 1
+
     @classmethod
     def from_model(
         cls, row: ModelRegistry, *, endpoints: list[ModelEndpoint] | None = None
@@ -134,7 +140,73 @@ class ModelOut(Schema):
             contestants=contestants,
             endpoint_count=len(endpoints),
             is_floating_alias=is_floating_alias(row.openrouter_id),
+            credit_cost=row.credits,
         )
+
+
+class ModelStatsOut(Schema):
+    """What a model has actually done, over every game (Phase 20, BENCH-02 extended).
+
+    Not the leaderboard's numbers. Those cover ranked games only, keyed by contestant, because
+    that is all a rating may see (BENCH-03). These cover exhibition and human games too, which is
+    the difference between "how is it rated" and "what has it done".
+    """
+
+    games: int
+    seats: int
+    """Higher than `games` only when a model played itself — then it won one and lost one."""
+
+    wins: int
+    draws: int
+    losses: int
+    forfeits: int
+
+    illegal_attempts: int
+    moves_played: int
+    illegal_per_move: float
+
+    llm_calls: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    cached_tokens: int
+    cache_rate: float | None = None
+    total_cost_usd: Decimal
+    cost_per_game: Decimal
+    mean_latency_ms: float | None = None
+
+    @classmethod
+    def from_stats(cls, stats: ModelStats) -> ModelStatsOut:
+        return cls(
+            games=stats.games,
+            seats=stats.seats,
+            wins=stats.wins,
+            draws=stats.draws,
+            losses=stats.losses,
+            forfeits=stats.forfeits,
+            illegal_attempts=stats.illegal_attempts,
+            moves_played=stats.moves_played,
+            illegal_per_move=stats.illegal_per_move,
+            llm_calls=stats.llm_calls,
+            prompt_tokens=stats.prompt_tokens,
+            completion_tokens=stats.completion_tokens,
+            total_tokens=stats.total_tokens,
+            cached_tokens=stats.cached_tokens,
+            cache_rate=stats.cache_rate,
+            total_cost_usd=stats.total_cost_usd,
+            cost_per_game=stats.cost_per_game,
+            mean_latency_ms=stats.mean_latency_ms,
+        )
+
+
+class ModelDetail(ModelOut):
+    """One model, with everything we know about how it has played."""
+
+    stats: ModelStatsOut
+
+    #: Ratings this model's contestants hold, when any of them are ranked. Empty is a fact worth
+    #: showing — a floating alias can never be ranked, and a new model has simply not played yet.
+    ratings: list[LeaderboardRow] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------- players
@@ -286,6 +358,19 @@ class GameSummary(Schema):
                 key=lambda p: p.colour.value,
             ),
         )
+
+
+class MyGameSummary(GameSummary):
+    """A game the caller holds a seat in.
+
+    The two extra fields are the caller's alone, which is why this is a separate shape rather than
+    fields on `GameSummary`: putting "whose seat" on the public payload would publish who plays
+    what to every spectator, the same reason `/games/{id}/seat` exists at all.
+    """
+
+    your_colour: Colour
+    #: True when the game is running and it is this person's move — what a "your turn" list needs.
+    your_turn: bool
 
 
 class GameDetail(GameSummary):
@@ -616,6 +701,59 @@ class ReadinessResponse(Schema):
 # ---------------------------------------------------------------------- admin
 
 
+class CreditGrantRequest(BaseModel):
+    """Who to grant to, and how many. Negative takes them away (ADR-0016)."""
+
+    user: str = Field(
+        description=(
+            "An email address, a Clerk user id, or a Chessmark user id — whichever you have. "
+            "An email Chessmark does not know is looked up with Clerk, so credits can be granted "
+            "to someone who has not signed in yet."
+        )
+    )
+    credits: int = Field(description="Credits to add; negative removes them.")
+    note: str | None = Field(
+        default=None,
+        description="Why. Recorded on the ledger row, because a reason code cannot carry it.",
+    )
+
+
+class CreditGrantOut(Schema):
+    user_id: uuid.UUID
+    #: Echoed so an operator can see *who* they just granted to, not only that it worked.
+    email: str | None = None
+    #: The balance after the grant.
+    credit_balance: int
+    #: What was just applied, echoed so an operator can see the change they made took effect.
+    granted: int
+
+
+class CreditEntryOut(Schema):
+    """One movement of a balance (AUTH-13)."""
+
+    id: int
+    delta: int
+    balance_after: int
+    reason: CreditReason
+    game_id: uuid.UUID | None = None
+    actor_user_id: uuid.UUID | None = None
+    note: str | None = None
+    created_at: dt.datetime
+
+    @classmethod
+    def from_model(cls, row: CreditLedger) -> CreditEntryOut:
+        return cls(
+            id=row.id,
+            delta=row.delta,
+            balance_after=row.balance_after,
+            reason=CreditReason(row.reason),
+            game_id=row.game_id,
+            actor_user_id=row.actor_user_id,
+            note=row.note,
+            created_at=row.created_at,
+        )
+
+
 class AdminSpend(Schema):
     """Today's spend against the kill switch, plus the recorded totals to check it against."""
 
@@ -646,8 +784,11 @@ class MeOut(Schema):
     email: str | None
     display_name: str | None
     is_admin: bool
+    #: Credits held. Granted by an administrator and spent to start a game (ADR-0016).
+    credit_balance: int
+
+    #: Kept for the admin spend view; no longer a limit on anything.
     games_started_today: int
-    games_remaining_today: int
     usd_spent_today: Decimal
 
 
@@ -688,6 +829,42 @@ class LeaderboardRow(Schema):
     @property
     def label(self) -> str:
         return f"{self.model_slug}@{self.quantization}"
+
+    @classmethod
+    def from_rating(
+        cls,
+        contestant: Any,
+        rating: Any,
+        aggregate: Any,
+        *,
+        display_name: str | None = None,
+    ) -> LeaderboardRow:
+        """One row, built in one place.
+
+        The leaderboard and a model page print the same numbers, and building them separately is
+        how two views of one rating start disagreeing. A contestant with no aggregate is a rating
+        with no ratable games behind it — every count is zero rather than absent, because the row
+        still exists.
+        """
+        return cls(
+            model_id=contestant.model_id,
+            model_slug=contestant.model_slug,
+            quantization=contestant.quantization,
+            display_name=display_name or contestant.model_slug,
+            rating=rating.rating,
+            rating_deviation=rating.rd,
+            volatility=rating.volatility,
+            games=aggregate.games if aggregate else 0,
+            wins=aggregate.wins if aggregate else 0,
+            draws=aggregate.draws if aggregate else 0,
+            losses=aggregate.losses if aggregate else 0,
+            illegal_attempts=aggregate.illegal_attempts if aggregate else 0,
+            moves_played=aggregate.moves_played if aggregate else 0,
+            illegal_per_move=aggregate.illegal_per_move if aggregate else 0.0,
+            forfeits=aggregate.forfeits if aggregate else 0,
+            mean_cost_usd=aggregate.mean_cost_usd if aggregate else Decimal(0),
+            mean_latency_ms=aggregate.mean_latency_ms if aggregate else 0.0,
+        )
 
 
 class ExcludedGame(Schema):

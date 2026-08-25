@@ -1,6 +1,8 @@
 import Link from "next/link";
 
+import { GameCard } from "@/components/GameCard";
 import { HeroGame } from "@/components/HeroGame";
+import { MyGames } from "@/components/MyGames";
 import { ReplayBoard } from "@/components/ReplayBoard";
 import { apiUrl, getGame, getLeaderboard, listEvents, listGames } from "@/lib/api";
 import { pickReplays } from "@/lib/replays";
@@ -43,6 +45,10 @@ export default async function Home() {
       ) : (
         <EmptyHero />
       )}
+
+      {/* A game you are playing is not a game you are watching, and the lobby could not tell them
+          apart. Renders nothing at all for a visitor with no games of their own. */}
+      <MyGames heading="Your games" />
 
       {live.length > 1 && (
         <Strip title="Also live" count={live.length - 1}>
@@ -249,45 +255,5 @@ function RecentGames({ games }: { games: GameSummary[] }) {
         </ul>
       )}
     </section>
-  );
-}
-
-function GameCard({ game }: { game: GameSummary }) {
-  const white = game.players.find((p) => p.colour === "white");
-  const black = game.players.find((p) => p.colour === "black");
-  const running = game.status === "running";
-  const illegal = game.players.reduce((total, p) => total + p.illegal_attempts, 0);
-
-  return (
-    <li>
-      <Link
-        href={`/games/${game.id}`}
-        className="flex flex-col gap-2.5 border border-line bg-surface-2 p-4 transition-colors hover:border-accent-dim focus-visible:border-accent"
-      >
-        <div className="flex items-center justify-between gap-3">
-          <span className="truncate font-mono text-xs text-ink">
-            {white?.display_name ?? "?"} <span className="text-ink-faint">vs</span>{" "}
-            {black?.display_name ?? "?"}
-          </span>
-          {running ? (
-            <span className="inline-flex flex-none items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-bad">
-              <i aria-hidden className="block h-1.5 w-1.5 animate-pulse rounded-full bg-bad" />
-              live
-            </span>
-          ) : (
-            <span className="tabular flex-none font-mono text-[11px] text-accent">
-              {game.result}
-            </span>
-          )}
-        </div>
-
-        <p className="tabular font-mono text-[10px] text-ink-faint">
-          {game.ply_count} plies
-          {game.termination ? ` · ${game.termination}` : ""}
-          {illegal > 0 ? ` · ${illegal} illegal` : ""}
-          {game.is_ranked ? " · ranked" : ""}
-        </p>
-      </Link>
-    </li>
   );
 }

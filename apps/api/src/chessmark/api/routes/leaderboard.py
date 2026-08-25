@@ -11,8 +11,6 @@ indistinguishable from one that is wrong.
 
 from __future__ import annotations
 
-from decimal import Decimal
-
 import sqlalchemy as sa
 from fastapi import APIRouter
 
@@ -38,30 +36,15 @@ async def get_leaderboard(session: SessionDep) -> Leaderboard:
 
     names = {row.id: row.display_name for row in await session.scalars(sa.select(ModelRegistry))}
 
-    rows: list[LeaderboardRow] = []
-    for contestant, rating in run.ratings.items():
-        aggregate = aggregates.get(contestant)
-        rows.append(
-            LeaderboardRow(
-                model_id=contestant.model_id,
-                model_slug=contestant.model_slug,
-                quantization=contestant.quantization,
-                display_name=names.get(contestant.model_id, contestant.model_slug),
-                rating=rating.rating,
-                rating_deviation=rating.rd,
-                volatility=rating.volatility,
-                games=aggregate.games if aggregate else 0,
-                wins=aggregate.wins if aggregate else 0,
-                draws=aggregate.draws if aggregate else 0,
-                losses=aggregate.losses if aggregate else 0,
-                illegal_attempts=aggregate.illegal_attempts if aggregate else 0,
-                moves_played=aggregate.moves_played if aggregate else 0,
-                illegal_per_move=aggregate.illegal_per_move if aggregate else 0.0,
-                forfeits=aggregate.forfeits if aggregate else 0,
-                mean_cost_usd=aggregate.mean_cost_usd if aggregate else Decimal(0),
-                mean_latency_ms=aggregate.mean_latency_ms if aggregate else 0.0,
-            )
+    rows = [
+        LeaderboardRow.from_rating(
+            contestant,
+            rating,
+            aggregates.get(contestant),
+            display_name=names.get(contestant.model_id),
         )
+        for contestant, rating in run.ratings.items()
+    ]
 
     # Rating first, but a wide deviation is not a high rank — ties on rating go to whoever we are
     # more sure about.

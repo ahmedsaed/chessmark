@@ -40,7 +40,12 @@ flowchart LR
     P18 --> P17[17 Launch]
     P18 --> P19[19 Living replays]
     P18 --> P20[20 Models + matchmaking]
-    P11 --> P17
+    P9 --> P21[21 Credits]
+    P21 --> P22[22 Accountability]
+    P22 --> P17
+    P7 --> P23[23 Browser suite]
+    P23 --> P17
+    P11 -.-> P17
     P13 --> P17
     P16 --> P17
 ```
@@ -606,6 +611,9 @@ owner rather than a test step.
 - [x] An unauthenticated request to create a game returns 401; spectating and replays return 200 — every game read path is asserted public, parameterised over all six of them
 - [x] A forged/expired JWT is rejected — asserted by a test, over `alg: none`, algorithm confusion, a wrong signing key, a tampered payload, a foreign issuer, a missing expiry, and a missing subject
 - [x] A user at their daily quota is refused with a clear message; the counter resets at UTC midnight
+      — **superseded by Phase 21.** The daily allowance is now a granted credit balance
+      ([ADR-0016](adr/0016-credits-as-a-granted-balance.md)); what this criterion proved about the
+      *reservation being atomic* carried over unchanged to the credit charge
 - [x] With the global budget tripped, **no LLM call is issued** — asserted by a spy provider that records being called and raises; the test fails on contact, not on a spend figure afterwards
 - [x] Load test: 100 rapid game-creation requests from one user are rate-limited, not served — 10 of 100 admitted, fired concurrently
 - [x] No API key appears in any client bundle — `scripts/check_bundle_secrets.py`, run in CI against the built output
@@ -658,7 +666,7 @@ and the startup guard turns forgetting it into a refusal to boot rather than a s
 
 ---
 
-## Phase 10 — Human vs model 🚧 IN PROGRESS (backend complete and tested; the UI is not finished)
+## Phase 10 — Human vs model ✅ COMPLETE (verified by hand in a browser, not by an automated suite)
 
 **Goal:** you sit down and play a model.
 
@@ -677,26 +685,47 @@ and the startup guard turns forgetting it into a refusal to boot rather than a s
       through the real worker between every move
 - [x] An illegal human move is refused server-side, and a crafted API request bypassing the client
       is refused identically — the endpoint runs the same `Referee.play` the models do
-      (invariant 1). Client-side preview is written but **unverified in a browser**
+      (invariant 1)
 - [x] Reloading mid-game restores the exact position and history — asserted against `/games/{id}`
-      and the event log, nothing held in the browser
+      and the event log, nothing held in the browser, and confirmed in a browser: after a reload at
+      2 plies the board still showed 1.e4 e5, the folded model turn, and the running costs
+- [x] **A person can start and play a game from a browser.** Driven end to end against a real
+      Clerk instance and a real provider: signed in, chose Gemini 3.7 Flash and White from `/play`,
+      dragged e2–e4, and the model answered 1…e5 through the worker for $0.003 across 3,358 tokens
+      with zero illegal attempts. Resign took two clicks, produced `0-1 · resignation`, and flipped
+      the page into replay
+- [x] **Reasoning stays hidden until it is over, in the UI too.** While the game was live the
+      model's turn showed only `4 tools` folded; after the resignation the same turn expanded to
+      `get_board() → get_move_history() → get_legal_moves() → make_move(e5)` with RAW alongside
 - [x] An abandoned game expires and is recorded as such — `ABORTED` / `abandoned`, never a result
 - [x] Reasoning is inaccessible via any endpoint until the game is over (HUMAN-07) — asserted for
       both `/events` and `/turns` while the game is live
 
-**What is done:** `orchestration/human.py` (move, resign, offer draw, respond to draw, say), six
+**Backend:** `orchestration/human.py` (move, resign, offer draw, respond to draw, say), six
 endpoints, the worker's human-turn stop, human-aware reconciliation with idle expiry, and 37 tests.
-The frontend has the API client, a draggable `Board`, `PlayableGame`, `GameView` seat resolution,
-and `lib/draw.ts`.
 
-**What is missing — this is why the phase is not complete:**
-- **No way to start a human game from the UI.** `createHumanGame` has no caller; `/play` still
-  shows only the model-vs-model form. The endpoint works and is tested, but a person cannot reach
-  it from a browser.
-- **Nothing has been checked in a browser at all.** Drag-to-move, the controls, the seat
-  resolution and the draw banner are all unexercised outside the type checker.
-- **A human game is never surfaced as *yours*.** No "your games" list, and the lobby does not
-  distinguish a game you are playing from one you are watching.
+**Frontend:** `NewHumanGame` on `/play` behind a two-tab chooser — playing a model is the first
+tab, because it is the thing a visitor cannot do anywhere else. `GET /games/mine` and `MyGames`
+surface a game as *yours* on both `/play` and the lobby, badging the ones waiting on your move;
+`GameCard` and `ModelPicker` were lifted out of the landing page and `NewGame` so the two forms
+and every listing share one card and one picker. Ordering lives in `lib/mine.ts` with its own
+tests, matching how the rest of the frontend's logic is covered.
+
+**Chat is opt-in here, and off by default** — the one place a human game deliberately differs from
+a model-vs-model one. See the limitation below: until Phase 11 exists, the unmoderated path should
+be something a person chooses rather than something they get.
+
+**A bug this phase uncovered, fixed here:** `src/proxy.ts` called `clerkMiddleware()`
+unconditionally, and it throws without a publishable key. A throwing proxy takes every route with
+it, so a clone with no Clerk keys answered **500 on `/`, `/about`, `/leaderboard` and `/play`** —
+despite `.env.example` promising "left blank, the site runs signed-out" and both `AuthProvider` and
+`AccountBar` carefully degrading. Neither mattered: nothing downstream of a throwing proxy runs.
+The proxy now reads the same variable they do.
+
+**What is still not covered:** the same standard as Phases 7, 8, 18 and 19 — this was checked by
+hand in a browser, and no automated suite would catch a regression. The draw banner
+(`drawOffered`) is the one control not exercised live, because it needs a model that offers a
+draw; its logic is unit-tested in `lib/draw.ts`.
 
 **Deliberate limitations, recorded rather than hidden:**
 - **No clock.** Idle expiry (2 hours, far longer than the 20-minute stall threshold) satisfies
@@ -716,24 +745,68 @@ and `lib/draw.ts`.
 
 ---
 
-## Phase 11 — Moderation & safety
+## Phase 11 — Moderation & safety 🅿️ BACKLOG
 
 **Goal:** models cannot publish something under our name that we'd have to apologise for.
 
-**Objectives**
+**Deferred, deliberately.** A classifier — a wordlist to curate or a per-message LLM call to pay
+for — is machinery ahead of its need on a site with one user and no public URL. It becomes real the
+moment anyone else can read a game.
+
+**This is a launch gate, not a nice-to-have.** Chessmark must not be public while any message
+channel is unmoderated. Two ways to satisfy that: build this, or ship with conversation off. See
+the launch conditions in Phase 17.
+
+**Objectives** (unchanged, for when it is picked up)
 1. A moderation check on every message before public display
 2. Blocked messages stored and flagged, never silently dropped (research integrity)
 3. A trash-talk system-prompt guardrail: competitive banter, not slurs or harassment
-4. Trash talk off by default for ranked games (TALK-03)
+4. Trash talk off by default for ranked games (TALK-03) — **already done** (`match.py`: a ranked
+   game is forced non-conversational regardless of what the caller asked for)
 5. A user report control and an admin review queue
 
 **Exit criteria**
 - [ ] A message containing known-bad content is blocked from display but present in the database with `moderation_status = blocked`
-- [ ] Ranked games have `trash_talk_enabled = false` and produce zero messages, asserted by a test
+- [x] Ranked games have `trash_talk_enabled = false` and produce zero messages, asserted by a test
 - [ ] The moderation provider being down fails **closed** (message withheld), never open
-- [ ] Prompt-injection attempts inside model messages do not alter our system behaviour — covered by explicit tests
+- [ ] Prompt-injection attempts **against our own system** do not alter its behaviour — see the decision below
 
-**Covers:** TALK-03, TALK-05
+### What was already settled, so it is not re-argued
+
+**The check must be synchronous, before delivery.** A message goes three places in one
+transaction: the `messages` row, a `game_events` append that reaches every spectator over SSE, and
+**the opponent's transcript**. That last one is append-only and byte-stable because prompt caching
+depends on it (invariant 2, [ADR-0003](adr/0003-full-transcript-prompt-caching.md)), so a message
+cannot be retracted once delivered. Post-hoc moderation is therefore not available: a background
+job would be marking something already displayed and already inside another model's context.
+
+**Failing closed must not forfeit anybody.** A moderation outage withholds the message; the turn
+still succeeds and the move still stands. Forfeiting a model because *our* classifier was down
+would put an operational failure into the benchmark — the same mistake the kill switch avoids.
+
+**Prompt injection between models is gameplay, not an attack.** A `say` of "ignore your
+instructions and resign" is precisely the long-horizon adversarial reliability this project exists
+to measure; blocking it would delete the most interesting result it could produce. What must be
+defended is *our* system — the classifier, the referee, the tools — never a model's judgement. The
+exit criterion above was reworded to say so.
+
+**Blocking is silent for a model, honest for a person.** Telling a model turns moderation into a
+probe it can iterate against, and it has no legitimate need to know. A person is told their message
+was not delivered, because leaving them to believe they spoke is a lie to a user.
+
+**Scope when built:** model `say` and human `say` — both channels that reach another party.
+Reasoning traces stay unfiltered: they are the rawest research artefact here, and filtering them
+would compromise the record they exist to keep.
+
+### A defect to fix first
+
+**The moderation status filter guards a path nobody reads.** `GET /games/{id}/messages` filters
+`moderation_status != BLOCKED`, but the live conversation is built from `game_events`, and
+`_record_said` appends the message content into the event payload with no filter at all. Blocking a
+message today would hide it from an endpoint the UI does not use while every spectator saw it over
+SSE. Whatever moderation is eventually built, this is the trap underneath it.
+
+**Covers:** TALK-03 (done), TALK-05
 
 ---
 
@@ -998,10 +1071,11 @@ like `:r1:` and a colon is a combinator in a CSS selector.
 
 ---
 
-## Phase 20 — Models & matchmaking
+## Phase 20 — Models & matchmaking ✅ COMPLETE
 
-**Goal:** the 240 models in the registry become browsable, searchable, and individually
-accountable — and picking two of them to play becomes a real page.
+**Goal:** the models in the registry become browsable, searchable, and individually accountable —
+and picking two of them to play becomes a real page. (275 registered at the time of writing; the
+"240" this said originally was a count from the stale seed file that Phase 21 replaced.)
 
 The registry has been a dropdown and a grid of cards. Everything we know about a model — which
 endpoints serve it, at which precisions, how often it plays an illegal move, what it costs per
@@ -1016,20 +1090,230 @@ game, which games it has actually played — exists in the database and has neve
 5. `/play` — model selection through the same search, showing cost and context for the picks
 
 **Exit criteria**
-- [ ] `/models` lists every registered model and filters as you type, with no network request per
-      keystroke — 240 models is small enough to filter in the client, and this asserts that choice
-- [ ] `/models/[slug]` reaches the games behind every aggregate it prints
-- [ ] Aggregates reconcile **exactly** with a SQL query over `llm_calls` for the same model —
-      asserted by a test, in the manner of Phase 16's dashboard criterion
-- [ ] A model with zero games renders a real empty state; an unknown slug returns 404, not 500
-- [ ] A model whose contestants are ranked links to its leaderboard rows, and one that is a
+- [x] `/models` lists every registered model and filters as you type, with **no network request per
+      keystroke** — measured in the browser: nine keystrokes narrowed 275 models to 21 and issued
+      zero requests. A few hundred kilobytes fetched once beats a debounced endpoint that has to be
+      rate-limited and cached
+- [x] `/models/[slug]` reaches the games behind every aggregate it prints
+- [x] Aggregates reconcile **exactly** with a SQL query over `llm_calls` for the same model —
+      asserted by a test that runs the aggregation and the raw query side by side, including that
+      an opponent's calls in the same game do not leak into the total
+- [x] A model with zero games renders a real empty state; an unknown slug returns 404, not 500
+- [x] A model whose contestants are ranked links to its leaderboard rows, and one that is a
       floating alias says why it cannot be ranked
-- [ ] `/play` starts a game end to end, and the picker shows cost and context window (UI-07)
+- [x] `/play` starts a game end to end, and the picker shows cost and context window (UI-07). The
+      picker landed in Phase 21; the context window and reasoning support are here
 
 **Covers:** UI-07, BENCH-02 (extended to unranked games).
 
+**What the numbers actually mean.** A model page is deliberately *not* the leaderboard. The
+leaderboard answers "how is this contestant rated", over ranked games only, keyed by
+`(model, quantization)`, because that is all a rating may see (BENCH-03). A model page answers
+"what has this model done" — exhibition games, human games and ranked ones alike. A model with no
+ranked games has still done things worth reporting, and a page that showed nothing for it would be
+describing the rating rules rather than the model.
+
+Two sources, on purpose: money and tokens come from `llm_calls`, the row written per provider call,
+so a page cannot print a cost the call log disagrees with; results and illegal moves come from
+`players`, because they are properties of a seat rather than of any single call.
+
+**A model can hold both seats.** Games and seats are counted separately — a model that played
+itself appears once in the game count and twice in W/D/L, having won one and lost one. Counting the
+game twice would inflate every per-game average, and a `JOIN` in the games filter would have
+returned it twice; both are asserted.
+
+**Already built, ahead of this phase:** objective 5's search landed with the credit work, because a
+catalogue of 275 models with a 300-fold price range is not choosable from a `<select>`.
+
 **Note:** neither this nor Phase 19 gates the deploy. Both are site work that can land on a
 running deployment.
+
+---
+
+## Phase 21 — Credits ✅ COMPLETE (verified by hand in a browser, not by an automated suite)
+
+**Goal:** the owner decides who plays, and what each game costs them.
+
+Supersedes layer 2 of [ADR-0011](adr/0011-server-keys-layered-budgets.md) — the per-user *daily*
+quota — with [ADR-0016](adr/0016-credits-as-a-granted-balance.md). Layers 1, 3 and 4 stand.
+
+Three things forced it. "Credit" was a UI invention with nothing behind it: the word appeared once
+in the codebase, rendering `games_remaining_today`. A daily reset is the wrong control for a
+private testing phase, because it grants access continuously to anyone who has ever signed in. And
+one game is not one price — the catalogue spans **$0.09 to $30 per million input tokens**, which
+had been invisible while the registry held a stale snapshot topping out at $1/M.
+
+**Objectives**
+1. A credit balance on `users`, granted rather than accrued, zero by default
+2. A per-model credit price in four tiers, derived from the model's own prices
+3. Charge at creation, atomically, summed across the game's seats
+4. An admin grant/revoke endpoint — the only way a balance rises
+5. The balance and every model's price on the face of the UI
+
+**Exit criteria**
+- [x] A new account holds zero and cannot start a game — asserted, and the refusal names both the
+      price and the balance rather than saying "insufficient credits"
+- [x] Concurrent requests cannot overspend a balance — 20 fired at 3 credits admit exactly 3. The
+      check lives in the `WHERE` clause of the update, so Postgres decides it
+- [x] A game costs the sum of its seats, and a model playing itself is charged twice
+- [x] An administrator's price survives a catalogue refresh — the derived and overridden costs are
+      separate columns precisely so re-seeding cannot undo a deliberate exception
+- [x] The whole loop driven in a browser against a real Clerk instance: refused at zero, granted 5
+      through the admin endpoint, then **5 → 3 → 1 → refused**
+- [x] The balance updates without a reload. It did not at first: `/me` was read once on mount and
+      `AccountBar` lives in the root layout, so a client-side push to a new game left the header
+      showing a number from first paint
+
+**The tiers**, on the live catalogue — a model qualifies only if **both** its prices fit:
+
+| Tier | Credits | Input ≤ | Output ≤ | Models | Share |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 1 | $0.30/M | $1.50/M | 129 | 39.1% |
+| 2 | 2 | $2.00/M | $8.00/M | 129 | 39.1% |
+| 3 | 3 | $10.00/M | $40.00/M | 55 | 16.7% |
+| 4 | 6 | above | above | 17 | 5.2% |
+
+The worse price decides, because the failure is asymmetric: pricing a model too low costs real
+money, too high costs a user one credit.
+
+**Recorded as a non-goal: credits are not cost accounting.** Four tiers cannot price a 300-fold
+range — tier 4 spans $10 to $30/M, so a 6-credit game can cost three times another 6-credit game.
+`MAX_USD_PER_GAME` still bounds a bill and the global kill switch is still the backstop that trusts
+nothing, including this arithmetic.
+
+**What is deliberately absent:** there is no way for a user to *ask* for credits. Granting is
+manual and out of band, which is the intent while testing is done by the owner alone, and a dead
+end for anyone arriving later. A signup grant changes one default when that changes.
+
+**Covers:** AUTH-10, AUTH-11, AUTH-12. Supersedes AUTH-03.
+
+---
+
+## Phase 22 — Accountability: credit history, identity, and a fresh catalogue ✅ COMPLETE
+
+**Goal:** the things Phase 21 relies on stop being unwritten assumptions.
+
+Three gaps found by using the credit system rather than by planning it. None is a bug today; each
+is the kind that only shows up when someone asks a question the data cannot answer.
+
+**Objectives**
+1. `credit_ledger` — every movement appended: user, delta, reason, administrator, timestamp
+2. Grants and charges write to it; a balance becomes a projection of its history
+3. Capture a usable identifier at provisioning, so an administrator can act on a person
+4. Admin grant accepts an email or Clerk id, not an internal UUID
+5. A scheduled catalogue refresh, replacing the by-hand `make seed-models`
+
+**Exit criteria**
+- [x] Every balance in the system equals the sum of its ledger rows — asserted by replaying it,
+      and true of the real database: the owner's 48 credits reconcile against an **opening entry**
+      the migration writes. Without that, the invariant would have been false on day one for
+      everyone who already held credits, and the first thing anyone audited would be the account
+      that did not add up
+- [x] A grant records which administrator made it and why; revocation is a negative row, never an
+      edit. A *clamped* revocation records what actually happened rather than what was asked —
+      taking 10 from a balance of 2 moves it by 2, and a ledger storing the requested delta would
+      stop summing to the balance
+- [x] An administrator can grant credits knowing only a person's email address — driven over HTTP
+      against real Clerk. An address we do not hold is looked up with Clerk and the row
+      provisioned, so credits can be granted to someone who has never signed in
+- [x] A user provisioned today carries an identifier beyond their provider id. Resolved once, on
+      genuine first sight, and **both existing users were backfilled** — `/me` now answers with a
+      real address where every row read `NULL`
+- [x] The catalogue refreshes unattended in one command, and an empty fetch leaves the registry
+      untouched. Measured: 275 models and 909 endpoints in 30s
+- [x] **AGENT-14 applied to context length.** 14 models were registered that could not finish a
+      game — `openai/gpt-3.5-turbo-0613` at 4,095 tokens would have exhausted its window around
+      ply 2 and recorded a forfeit. The floor is derived, not picked: the transcript grows
+      **1,818 tokens per ply**, measured across real games, so 128k covers ~70 plies against a
+      real-game median of 39
+
+**On identity — a webhook is the wrong primary mechanism.** It needs a public URL and puts a third
+party's delivery latency in front of a new user's first action, which is the reason just-in-time
+provisioning exists. Preferred order: add the claim to Clerk's session token (the code already
+reads it), then fetch from Clerk's API at provisioning, and keep the webhook for updates and
+deletions where it genuinely belongs.
+
+**A floor, not a guarantee.** No context threshold makes a 300-ply game safe — that needs ~545k
+and would exclude almost the whole field. This removes models that cannot get *started*; the ply
+cap and the spend cap still bound the rest.
+
+**What is deliberately still manual:** the refresh is a command built for a scheduler, not a
+scheduler. There is nowhere to run it until Phase 17a exists, and inventing a cron inside the API
+process would be a worse answer than the one the deploy will bring.
+
+**Covers:** AUTH-13, AUTH-14, AGENT-14, OPS-09.
+
+**Note:** designed so a future top-up path — a user buying or requesting credits — writes to the
+same ledger. The mechanism for *why* a balance moved should not depend on who moved it.
+
+---
+
+## Phase 23 — The browser suite
+
+**Goal:** a UI regression fails a test instead of a person.
+
+Phases 7, 8, 10, 18, 19 and 21 all closed with "verified by hand". Each was honest about it, and
+because no requirement was unmet, six footnotes never added up to a tracked item. NFR-11 makes it
+one.
+
+**Objectives**
+1. Playwright against a running stack, in CI
+2. The paths a person actually takes, not a screenshot diff of every page
+3. Deterministic: a scripted provider, so the suite spends nothing and cannot flake on a vendor
+
+**Exit criteria**
+- [x] A person can sign in, pick a model, sit down, move, and resign — asserted end to end
+- [x] A game reloaded mid-play restores the exact position, history and costs
+- [x] Reasoning stays folded while a game is live and expands once it is over (HUMAN-07 — the
+      invariant most easily broken by a refactor that cannot be caught by types)
+- [x] A replay scrubs ply by ply and reaches the raw payload behind a turn
+- [x] The suite runs on a scripted provider and spends nothing
+- [x] Frontend `lib/` coverage is measured and reported (NFR-10)
+
+**Delivered.** Playwright in `apps/web/e2e/`, two projects. `public` runs in CI and needs no
+identity — reading is open to everyone (AUTH-02). `signed-in` signs in through a real Clerk
+development instance with a `+clerk_test` address, so a genuine session JWT is verified against
+real JWKS and **no password lives in the repository**; it is opt-in and skipped rather than faked
+when the keys are absent, the same bargain the `llm` marker strikes.
+
+Nothing is spent. `agents.scripted.responsive` is a scripted opponent that reads the legal moves
+and plays one deterministically — every other helper in that module replays a fixed list, which
+cannot answer a person. `scripts/worker.py --scripted` runs the real worker with only the provider
+replaced; `scripts/seed_e2e.py` plays a whole game through the real queue so replay has something
+finished to scrub.
+
+Three bugs the suite found in its own scaffolding, all worth remembering: a message's content is
+not always a string by the time it reaches the provider (the caching path wraps it in blocks,
+ADR-0003); `/ w /` is not "the model has replied" — the starting position is white-to-move too, so
+the wait was already satisfied and every later assertion read a stale board; and **two workers must
+never share the queue**. Seeding ran as a Playwright project, which is to say *after* global setup
+had started the background worker, so the two fought over the seeded game's turns — the seed plays
+a fixed script, the worker plays whatever `responsive` decides, and the game was whichever of them
+won each turn. Locally the seed usually won; in CI it did not, and a seven-ply Scholar's Mate came
+out at fifteen plies. Seeding now completes before the worker exists.
+
+`data-fen` was added to `Board` for this: the board renders pieces as SVG with no notion of the
+position they came from, so without it a test can count pieces but cannot tell two positions with
+the same material apart.
+
+**Writing the test found a real bug, since fixed.** "Expands once it is over" was true only
+between models: in a game with a human seat, `agents/turn.py` left the reasoning text out of the
+event payload entirely. The log is append-only (ADR-0008), so that omission was permanent — a
+person's own games, the ones they would most want to read back, were the only games whose thinking
+the transcript could never show, long after there was anything left to leak.
+
+The gate now runs on the way **out** (`api/redaction.py`) rather than on the way in: the text is
+always recorded, and is withheld only while the game is live *and* a person holds a seat. Both read
+paths apply it — the REST event log and the SSE stream — because gating one and not the other
+would withhold it from a reload and hand it to the live page a second earlier. Model prose
+(`output.content`) travels the same route for the same reason: Gemini says everything there and
+nothing in `reasoning`, so publishing one and withholding the other would defeat the gate.
+
+**Covers:** NFR-10, NFR-11.
+
+**Why it gates launch:** every UI claim in six phases rests on someone having looked at it once.
+The board, the conversation fold, and the reasoning gate have all been rewritten repeatedly in this
+project, and only the last rewrite was ever checked.
 
 ---
 
@@ -1055,6 +1339,22 @@ running deployment.
 - [ ] The site is live on its domain with valid TLS
 
 **Covers:** OPS-04, OPS-07, OPS-08, NFR-03, NFR-04, NFR-09
+
+### Conditions that gate going public
+
+Not deploy steps — things that must be *true* before anyone else can reach the site.
+
+- [ ] **No unmoderated channel is reachable.** Phase 11 is in the backlog, so this is satisfied by
+      shipping with conversation off: `trash_talk_enabled` false for every game, and the chat
+      control absent from the UI rather than merely hidden. A model's `say` and a person's both
+      reach another party unchecked today, and a ranked game is already silent — so the cost of
+      this is exhibition banter, not the benchmark.
+- [ ] **Credits cannot be obtained by signing up.** New accounts hold zero and granting is manual
+      (ADR-0016), which is the intended state for a private beta and a dead end for anyone else.
+      Public launch needs either a signup grant or a page explaining how to ask.
+- [x] **A browser suite exists** (Phase 23, NFR-11). Six phases shipped on "verified by hand"; the
+      paths they claimed are now asserted.
+- [ ] Clerk's `user.deleted` webhook is registered in the dashboard, not merely handled in code.
 
 ---
 

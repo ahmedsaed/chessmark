@@ -13,10 +13,12 @@ from typing import Any
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.api.deps import get_queue, get_redis, get_session, get_verifier
 from chessmark.core.auth import AuthError, Principal, TokenVerifier
+from chessmark.db.models import User
 from chessmark.main import create_app
 
 
@@ -82,6 +84,24 @@ def as_user(
         clerk_user_id=clerk_user_id, email=email, display_name=clerk_user_id
     )
     return {"authorization": f"Bearer {token}"}
+
+
+async def fund(db: AsyncSession, clerk_user_id: str = "user_test", *, credits: int = 100) -> None:
+    """Give a test user credits.
+
+    Explicit rather than a fixture default, because holding nothing is the real behaviour of a
+    new account (ADR-0016): a test that creates a game has to say it can afford one, the same way
+    a person has to be granted credits before they can play.
+    """
+    statement = (
+        pg_insert(User)
+        .values(clerk_user_id=clerk_user_id, credit_balance=credits)
+        .on_conflict_do_update(
+            index_elements=[User.clerk_user_id], set_={"credit_balance": credits}
+        )
+    )
+    await db.execute(statement)
+    await db.commit()
 
 
 @pytest.fixture

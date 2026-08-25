@@ -23,12 +23,13 @@ from chessmark.core.auth import (
     bearer_token,
 )
 from chessmark.core.budget import GlobalBudget
+from chessmark.core.clerk import ClerkDirectory
 from chessmark.core.config import Settings, get_settings
 from chessmark.core.ratelimit import RateLimiter
 from chessmark.db.models import Game, User
 from chessmark.db.repositories import GameNotFoundError, get_game
 from chessmark.db.session import get_sessionmaker
-from chessmark.db.users import user_for
+from chessmark.db.users import get_by_clerk_id, upsert_user
 from chessmark.orchestration.queue import TurnQueue
 
 if TYPE_CHECKING:
@@ -154,6 +155,23 @@ async def get_principal(
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
 
 
+_directory: ClerkDirectory | None = None
+
+
+def get_directory() -> ClerkDirectory:
+    """One Clerk directory client per process."""
+    global _directory
+    if _directory is None:
+        _directory = ClerkDirectory(get_settings().clerk_secret_key)
+    return _directory
+
+
+def reset_directory() -> None:
+    """Drop the cached client. For tests and config reloads."""
+    global _directory
+    _directory = None
+
+
 async def get_current_user(session: SessionDep, principal: PrincipalDep) -> User:
     """The `users` row for the caller, created on first sight (see `db/users.py`).
 
@@ -162,11 +180,37 @@ async def get_current_user(session: SessionDep, principal: PrincipalDep) -> User
     happened: `/me` returned 200 with a correct quota readout while `users` stayed empty, because
     the only endpoint that committed was game creation. Whether this person exists is not
     contingent on the rest of the request succeeding.
+
+    **Identity is resolved once, on genuine first sight** (AUTH-14). Clerk's default session token
+    carries no email, so a row provisioned from claims alone is anonymous — and an administrator
+    granting credits then has nothing to go on but an opaque `user_...` id. When the token does not
+    carry one we ask Clerk's API, but only when there is no row yet: the extra `SELECT` is indexed
+    and cheap, while an HTTP call on every request would put an identity service in the path of
+    every authenticated action to fix something that changes almost never.
     """
-    user = await user_for(session, principal)
+    known = await get_by_clerk_id(session, principal.clerk_user_id)
+
+    email, display_name = principal.email, principal.display_name
+    if known is None and not email:
+        email, display_name = await _resolve_identity(principal, display_name)
+
+    user = await upsert_user(
+        session,
+        clerk_user_id=principal.clerk_user_id,
+        email=email,
+        display_name=display_name,
+    )
     await session.commit()
     await session.refresh(user)
     return user
+
+
+async def _resolve_identity(
+    principal: Principal, display_name: str | None
+) -> tuple[str | None, str | None]:
+    """Ask Clerk who this is. Never raises — see `core/clerk.py`."""
+    found_email, found_name = await get_directory().identity_of(principal.clerk_user_id)
+    return found_email, display_name or found_name
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]

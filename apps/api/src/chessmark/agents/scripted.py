@@ -161,11 +161,99 @@ def alternating(
     return _complete
 
 
+def responsive(
+    *, cost: float = 0.0, prefer: str | None = None, reasoning: str | None = None
+) -> CompletionFn:
+    """A scripted opponent that reads the board instead of replaying a list.
+
+    Every other helper here plays a fixed sequence, which is enough for a game whose *other* side is
+    also scripted. It is not enough to answer a **person**: a human plays whatever they like, so a
+    canned reply is illegal within a move or two.
+
+    This one takes the turn in two round-trips, exactly as a real model does — ask for the legal
+    moves, then play one of them. The choice is the alphabetically first SAN, which is arbitrary but
+    **deterministic**: a browser suite that plays a different move each run cannot assert anything
+    about the position afterwards.
+
+    `prefer` names a move to take when it is available, so a test can steer the game somewhere
+    specific — a checkmate, a capture — without scripting every ply around it.
+
+    `reasoning` makes it think out loud. Without it there is nothing for invariant 8 to be about:
+    a test that reasoning is hidden mid-game proves nothing against a model that never produced
+    any, and would pass just as happily if the gate were removed.
+    """
+
+    async def _complete(**kwargs: Any) -> Any:
+        moves = _legal_moves_in(kwargs.get("messages") or [])
+
+        if moves is None:
+            # Nothing has been read yet this turn, so read.
+            return step(tool_call("get_legal_moves"), cost=cost)
+
+        if not moves:
+            # A result *was* there and could not be read. Asking again would produce the same
+            # unreadable answer, so this would loop until the runtime's own cap stopped it —
+            # which is what happened once, quietly, for twenty calls. Fail loudly instead.
+            raise RuntimeError(
+                "scripted opponent read a get_legal_moves result it could not parse; "
+                "the tool-result shape has changed"
+            )
+
+        chosen = prefer if prefer in moves else sorted(moves)[0]
+        return step(tool_call("make_move", move=chosen), cost=cost, reasoning=reasoning)
+
+    return _complete
+
+
+def _text_of(content: Any) -> str:
+    """The text of a message whose content may have been wrapped into blocks.
+
+    By the time a message reaches the provider its content is often no longer a plain string: the
+    prompt-caching path wraps it into `[{"type": "text", "text": ...}]` so a `cache_control` marker
+    can ride along (ADR-0003). Reading `str(content)` then yields the repr of a list, `json.loads`
+    raises, and this opponent silently falls back to asking for the legal moves again — forever.
+    That is exactly what happened, and it cost a whole game of 20 identical tool calls.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(str(block.get("text", "")) for block in content if isinstance(block, dict))
+    return ""
+
+
+def _legal_moves_in(messages: list[dict[str, Any]]) -> list[str] | None:
+    """The moves from the most recent `get_legal_moves` result, if this turn has asked.
+
+    `None` means this turn has not asked yet; an empty list means it asked and the answer could
+    not be read. The caller needs to tell those apart — treating both as "ask again" is what turns
+    a parsing bug into an unbounded loop.
+
+    Scans backwards and stops at the turn prompt, so a result from an *earlier* turn — the
+    transcript is the whole game (ADR-0003) — cannot be mistaken for this one and produce a move
+    that was legal several plies ago.
+    """
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return None
+        if message.get("role") != "tool" or message.get("name") != "get_legal_moves":
+            continue
+        try:
+            payload = json.loads(_text_of(message.get("content")))
+        except ValueError:
+            return []
+        found = payload.get("moves")
+        if not isinstance(found, list):
+            return []
+        return [m["san"] for m in found if isinstance(m, dict) and "san" in m]
+    return None
+
+
 __all__ = [
     "alternating",
     "plays",
     "prose",
     "raw_tool_call",
+    "responsive",
     "says",
     "scripted",
     "step",

@@ -36,6 +36,7 @@ from chessmark.db.base import (
 )
 from chessmark.db.enums import (
     AnalysisStatus,
+    CreditReason,
     EventType,
     GameStatus,
     ModerationStatus,
@@ -60,6 +61,12 @@ class User(Base):
     email: Mapped[str | None] = mapped_column(sa.Text)
     display_name: Mapped[str | None] = mapped_column(sa.Text)
     is_admin: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+
+    #: Credits held, spent to start a game (ADR-0016). **Zero by default and granted by an
+    #: administrator** — it does not regenerate, so a new account cannot play until someone says
+    #: so. Deliberate for the testing phase; a signup grant changes this default and nothing else.
+    credit_balance: Mapped[int] = mapped_column(default=0, server_default="0")
+
     created_at: Mapped[dt.datetime] = created_at()
     updated_at: Mapped[dt.datetime] = updated_at()
 
@@ -68,7 +75,7 @@ class ModelRegistry(Base):
     """Playable models and their pricing.
 
     Pricing is load-bearing: it feeds the budget caps in ADR-0011, so stale numbers mean wrong
-    caps. Refreshed from OpenRouter by `scripts/refresh_model_seed.py`.
+    caps. Refreshed from OpenRouter by `make seed-models`.
     """
 
     __tablename__ = "model_registry"
@@ -84,6 +91,22 @@ class ModelRegistry(Base):
     supports_tools: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
     is_free: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     enabled: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
+
+    #: What a seat against this model costs to start, in credits (ADR-0016). **Derived** from the
+    #: model's own prices at catalogue sync, so it is rewritten on every `make seed-models`.
+    credit_cost: Mapped[int] = mapped_column(default=1, server_default="1")
+
+    #: An administrator's price for this model, which wins over the derived one. Separate column
+    #: precisely so re-seeding cannot silently undo a deliberate exception.
+    credit_cost_override: Mapped[int | None] = mapped_column(sa.Integer)
+
+    @property
+    def credits(self) -> int:
+        """What this model actually costs. The override if there is one, else the derived tier."""
+        return (
+            self.credit_cost_override if self.credit_cost_override is not None else self.credit_cost
+        )
+
     created_at: Mapped[dt.datetime] = created_at()
     updated_at: Mapped[dt.datetime] = updated_at()
 
@@ -547,6 +570,53 @@ class AnalysisJob(Base):
     created_at: Mapped[dt.datetime] = created_at()
     started_at: Mapped[dt.datetime | None] = mapped_column()
     completed_at: Mapped[dt.datetime | None] = mapped_column()
+
+
+class CreditLedger(Base):
+    """Every movement of a credit balance, append-only (AUTH-13, ADR-0016).
+
+    `users.credit_balance` stays the enforcement point — the charge has to be one statement whose
+    `WHERE` clause is the check, and a balance summed from history on every request could not do
+    that. This is the *account* of how it got there, and the two are asserted to agree.
+
+    Append-only in the same sense the game event log is: a revocation is a negative row, never an
+    edit, so a balance's history cannot be rewritten to hide a mistake. Rows outlive the thing they
+    reference — `game_id` is `SET NULL`, because a deleted game must not erase the record that
+    somebody paid for it.
+
+    Deliberately shaped so a future top-up writes here too. Why a balance moved should not depend
+    on who moved it, and `reason` already distinguishes a grant from a refund.
+    """
+
+    __tablename__ = "credit_ledger"
+
+    id: Mapped[int] = bigint_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(_fk("users.id", ondelete="CASCADE"), index=True)
+
+    #: Signed. Negative spends, positive grants — so the balance is the plain sum of the column.
+    delta: Mapped[int] = mapped_column(sa.Integer)
+
+    #: The balance immediately after this row, recorded rather than derived. It makes a divergence
+    #: between the ledger and `users.credit_balance` visible at the row that caused it, instead of
+    #: only in the total.
+    balance_after: Mapped[int] = mapped_column(sa.Integer)
+
+    reason: Mapped[CreditReason] = mapped_column(enum_column(CreditReason), index=True)
+
+    #: The game this paid for, when the reason is a charge.
+    game_id: Mapped[uuid.UUID | None] = mapped_column(
+        _fk("games.id", ondelete="SET NULL"), index=True
+    )
+
+    #: The administrator who did it, when a person did. Null for a charge, which nobody decides.
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        _fk("users.id", ondelete="SET NULL"), index=True
+    )
+
+    #: Free text from whoever granted. The "why" a reason code cannot carry.
+    note: Mapped[str | None] = mapped_column(sa.Text)
+
+    created_at: Mapped[dt.datetime] = created_at()
 
 
 class UsageLedger(Base):

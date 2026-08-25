@@ -38,6 +38,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | AGENT-11 | Agents may call read-only tools (`get_board`, `get_legal_moves`, `get_move_history`) any number of times per turn, up to the turn budget. | M |
 | AGENT-12 | Configurable personas / custom system prompts, flagged as non-ranked. | S |
 | AGENT-13 | Context strategy (full-history vs. windowed) is a recorded per-game parameter, enabling ablation studies. | C |
+| AGENT-14 | Only models that can complete a game **and say what played it** are registered. Excluded: no tool calling; asynchronous `:batch` variants; a context window too small to hold a game; and floating aliases like `-latest`, whose weights change under a fixed name. The first three fail as a **forfeit**, recording a loss against a model that never had a chance. The fourth plays fine but leaves a record that cannot be reproduced (BENCH-04). | M |
 
 ## 3. Trash talk (TALK)
 
@@ -47,7 +48,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | TALK-02 | Opponent messages are injected into the receiving agent's history, enabling genuine back-and-forth. | M |
 | TALK-03 | Trash talk is disabled by default for ranked benchmark games, and recorded as a game flag. | M |
 | TALK-04 | Messages are length-capped and rate-limited per turn. | M |
-| TALK-05 | Model-generated messages pass a moderation check before being shown publicly; blocked messages are still stored, flagged, for research integrity. | M |
+| TALK-05 | Model-generated messages pass a moderation check before being shown publicly; blocked messages are still stored, flagged, for research integrity. **Deferred to the backlog** — until it exists, no message channel may be reachable publicly (see Phase 17's launch conditions). | M |
 | TALK-06 | Humans can chat back during human-vs-model games. | S |
 | TALK-07 | Spectator chat. | W |
 
@@ -59,7 +60,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | HUMAN-02 | The board rejects illegal human moves client-side for responsiveness, and the server re-validates authoritatively. | M |
 | HUMAN-03 | Human games persist across page reloads and can be resumed. | M |
 | HUMAN-04 | Optional clock; abandoned games auto-expire after a configured idle period. | S |
-| HUMAN-05 | Human results feed the same rating pool as model-vs-model games. | S |
+| HUMAN-05 | ~~Human results feed the same rating pool as model-vs-model games.~~ **Reversed.** A person is not a contestant, so human games are never ranked (`is_ranked = false`, asserted). A rating computed partly from them would not measure what the leaderboard claims — see BENCH-03/04 and [ADR-0016](adr/0016-credits-as-a-granted-balance.md). | S |
 | HUMAN-06 | Post-game review: the model's full reasoning per move, revealed after the game ends. | S |
 | HUMAN-07 | Reasoning is never exposed mid-game — it would leak the model's plan. | M |
 
@@ -100,7 +101,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | UI-04 | Replay view: ply-by-ply scrubber with reasoning, tool calls, and chat synced to the selected ply. | M |
 | UI-05 | Leaderboard page. | M |
 | UI-06 | Public, unauthenticated, shareable game URLs with social preview cards. | S |
-| UI-07 | Model picker showing cost, context window, and reasoning support. | M |
+| UI-07 | Model picker showing cost, context window, and reasoning support. Context window is a playability signal rather than a spec line: the transcript grows ~1.6k tokens a ply, so a small window decides whether a game can finish at all. | M |
 | UI-08 | Cost/token dashboard, per game and aggregate. | S |
 | UI-09 | Accessible: keyboard-navigable board, ARIA move announcements, WCAG AA contrast. | S |
 | UI-10 | Reconnect gracefully — an SSE drop resyncs from a stored cursor without losing plies. | M |
@@ -111,12 +112,17 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | --- | --- | --- |
 | AUTH-01 | Clerk authentication; the FastAPI backend verifies JWTs via JWKS on every protected request. | M |
 | AUTH-02 | Watching games and viewing replays requires no account. Starting a game does. | M |
-| AUTH-03 | Per-user daily quotas on games started and USD spent. | M |
+| AUTH-03 | ~~Per-user daily quotas on games started and USD spent.~~ Superseded by AUTH-10 ([ADR-0016](adr/0016-credits-as-a-granted-balance.md)); the ledger survives as a record, not a limit. | M |
 | AUTH-04 | A per-game hard USD cap; exceeding it ends the game as `budget_exceeded`. | M |
 | AUTH-05 | A global daily USD kill switch that halts all new LLM calls when tripped. | M |
 | AUTH-06 | Rate limiting on game creation and all model-triggering endpoints. | M |
 | AUTH-07 | Server-held API keys only; keys are never sent to the client. | M |
 | AUTH-08 | An admin surface to inspect spend, cancel games, and reset quotas. | S |
+| AUTH-10 | A user holds a **credit balance**, granted rather than accrued, spent to start a game and not regenerating. New accounts hold zero. | M |
+| AUTH-11 | An administrator can grant and revoke credits. It is the only way a balance rises. | M |
+| AUTH-12 | Each model carries a credit price in four tiers, derived from its own token prices and overridable per model. A game costs the sum of its seats. | M |
+| AUTH-13 | Every credit movement is recorded append-only: who, how many, why, and by which administrator. A balance must be reconstructible from its history. | M |
+| AUTH-14 | A user carries an identifier an administrator can act on — an email or equivalent — captured at provisioning, not only an opaque provider id. | M |
 | AUTH-09 | Bring-your-own OpenRouter key to unlock expensive models. | W |
 
 ## 9. Platform & operations (OPS)
@@ -131,6 +137,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | OPS-06 | Health and readiness endpoints covering database and Redis connectivity. | M |
 | OPS-07 | Error tracking (Sentry or equivalent) in production. | S |
 | OPS-08 | Automated database backups. | S |
+| OPS-09 | The model catalogue is refreshed on a schedule, not by hand. Prices set the spend caps *and* what users are charged, so a stale price is a wrong cap and a wrong charge. A refresh that cannot reach the provider fails without touching the registry. | M |
 
 ---
 
@@ -145,6 +152,8 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | NFR-05 | Cost per ranked model-vs-model game | < $0.50 median |
 | NFR-06 | Prompt cache hit rate on turns after the first | > 80% |
 | NFR-07 | Backend test coverage on `game/` and `agents/` | > 85% |
+| NFR-10 | Frontend logic in `lib/` covered by unit tests | > 85% |
+| NFR-11 | An automated browser suite covers the paths a person actually takes: start a game, move, resign, reload mid-game, and read a replay | exists and runs in CI |
 | NFR-08 | A partial outage must never corrupt a stored game record | zero tolerance |
 | NFR-09 | Time from `git push` to deployed | < 10 min |
 

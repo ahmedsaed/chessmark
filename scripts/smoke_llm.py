@@ -23,6 +23,7 @@ sys.path.insert(0, str(API_ROOT / "src"))
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
 from chessmark.agents.redaction import contains_secret  # noqa: E402
+from chessmark.db.session import get_sessionmaker  # noqa: E402
 
 DEFAULT_MODEL = "openai/gpt-oss-20b:free"
 
@@ -54,7 +55,9 @@ async def main() -> int:
         return 2
 
     model = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
-    pricing = PricingTable.from_seed_file(API_ROOT / "seeds" / "models.json")
+
+    async with get_sessionmaker()() as session:
+        pricing = await PricingTable.from_registry(session)
     gateway = LlmGateway(api_key=api_key, pricing=pricing)
 
     messages = [

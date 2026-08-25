@@ -85,6 +85,17 @@ class Settings(BaseSettings):
     max_usd_per_user_per_day: float = 5.00
     global_daily_usd_budget: float = 25.00
 
+    #: The smallest context window a model may be registered with (AGENT-14).
+    #:
+    #: Measured, not guessed: the transcript is resent whole every turn and grows **~1,818 tokens
+    #: per ply**, so a turn's prompt *is* the context it needs. 128k covers roughly 70 plies,
+    #: against a real-game median of 39.
+    #:
+    #: A floor, not a guarantee. No threshold makes a 300-ply game safe — that would need ~545k and
+    #: would exclude almost the whole field. This removes models that cannot get started; the ply
+    #: cap and the spend cap still bound the rest. 0 disables the check.
+    min_context_tokens: int = 128_000
+
     #: Rate limiting on money-spending endpoints. 0 disables it.
     rate_limit_per_window: int = 10
     rate_limit_window_seconds: float = 60.0

@@ -16,12 +16,20 @@ from decimal import Decimal
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, status
 
-from chessmark.api.deps import AdminUser, BudgetDep, SessionDep, SettingsDep
-from chessmark.api.schemas import AdminSpend, AdminUsage
+from chessmark.api.deps import AdminUser, BudgetDep, SessionDep, SettingsDep, get_directory
+from chessmark.api.schemas import (
+    AdminSpend,
+    AdminUsage,
+    CreditEntryOut,
+    CreditGrantOut,
+    CreditGrantRequest,
+)
+from chessmark.db.credits import grant, history_of
 from chessmark.db.enums import GameStatus
 from chessmark.db.models import Game, User
 from chessmark.db.quotas import reset_quota, usage_for
 from chessmark.db.repositories import get_game
+from chessmark.db.users import get_by_clerk_id, get_user, upsert_user
 from chessmark.game import GameResult, Termination
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -94,6 +102,97 @@ async def reset_user_quota(session: SessionDep, user_id: uuid.UUID, admin: Admin
         games_started=usage.games_started,
         usd_spent=usage.usd_spent,
     )
+
+
+async def _resolve_user(session: SessionDep, identifier: str) -> User:
+    """Find a user from whatever an administrator actually has to hand (AUTH-14).
+
+    Three shapes, tried in order of certainty: our own UUID, a Clerk `user_...` id, an email
+    address. Anything else is a 404 rather than a guess.
+
+    **An email we do not hold is asked of Clerk**, and the row is provisioned if they know them.
+    Our `users` row is created on a person's first request, so without that step credits could only
+    be granted to someone who had already visited — and pre-granting an invitation is exactly what
+    a private beta needs to do.
+    """
+    identifier = identifier.strip()
+
+    try:
+        found = await get_user(session, uuid.UUID(identifier))
+    except ValueError:
+        found = None
+    if found is not None:
+        return found
+
+    if identifier.startswith("user_"):
+        by_clerk = await get_by_clerk_id(session, identifier)
+        if by_clerk is not None:
+            return by_clerk
+
+    if "@" in identifier:
+        by_email = await session.scalar(sa.select(User).where(User.email == identifier))
+        if by_email is not None:
+            return by_email
+
+        clerk_id = await get_directory().find_by_email(identifier)
+        if clerk_id is not None:
+            email, display_name = await get_directory().identity_of(clerk_id)
+            return await upsert_user(
+                session,
+                clerk_user_id=clerk_id,
+                email=email or identifier,
+                display_name=display_name,
+            )
+
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=(
+            f"No user matching {identifier!r}. Give an email address, a Clerk user id, "
+            "or a Chessmark user id."
+        ),
+    )
+
+
+@router.post("/credits", response_model=CreditGrantOut)
+async def grant_credits(
+    session: SessionDep,
+    request: CreditGrantRequest,
+    admin: AdminUser,
+) -> CreditGrantOut:
+    """Give a user credits, or take them back (AUTH-11, AUTH-13, ADR-0016).
+
+    The only way a balance goes up. New accounts hold zero and there is no request flow in the
+    product, so this is the whole granting mechanism during the testing phase — deliberately, to
+    keep an unattended account from consuming provider spend.
+
+    `user` is whatever you have: an email, a Clerk id, or ours. It used to be our internal UUID
+    alone, which meant granting credits began with a database query.
+
+    A negative `credits` removes them, clamped at zero: a negative balance would be a debt to work
+    off before playing again, which is not what anyone means by taking credits away.
+
+    Every movement is recorded against the administrator who made it (AUTH-13), so a balance can be
+    explained afterwards rather than merely observed.
+    """
+    user = await _resolve_user(session, request.user)
+
+    balance = await grant(
+        session, user.id, request.credits, actor_user_id=admin.id, note=request.note
+    )
+    await session.commit()
+
+    return CreditGrantOut(
+        user_id=user.id, email=user.email, credit_balance=balance, granted=request.credits
+    )
+
+
+@router.get("/users/{user_id}/credits", response_model=list[CreditEntryOut])
+async def credit_history(
+    session: SessionDep, user_id: uuid.UUID, admin: AdminUser
+) -> list[CreditEntryOut]:
+    """How a balance got to where it is (AUTH-13)."""
+    del admin
+    return [CreditEntryOut.from_model(row) for row in await history_of(session, user_id)]
 
 
 @router.post("/games/{game_id}/cancel", status_code=status.HTTP_204_NO_CONTENT)

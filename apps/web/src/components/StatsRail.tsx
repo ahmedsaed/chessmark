@@ -7,6 +7,11 @@
  * The move list used to live here and now sits in the conversation as a filter — a move is an
  * event in the same timeline as everything else, and keeping a second copy beside it meant two
  * places to look and two things to keep in sync.
+ *
+ * **A player's token count is prompt + completion**, the same sum the game's own total is built
+ * from (`Game.total_tokens`). It read `prompt_tokens` alone, which was wrong in a way only a human
+ * game made obvious: a person burns no tokens, so the one model's card should have matched the
+ * game total exactly, and it was short by precisely the completion count.
  */
 
 import type { GameDetail, Player } from "@/lib/types";
@@ -18,6 +23,13 @@ function usd(value: string): string {
   return amount < 0.001 ? `$${amount.toFixed(6)}` : `$${amount.toFixed(3)}`;
 }
 
+/**
+ * Cached share of the **prompt**, not of every token.
+ *
+ * Deliberately a different denominator from the Tokens stat beside it: only prompt tokens can be
+ * cached, so dividing by the total would quietly report a lower rate than the provider achieved
+ * and make NFR-06's ">80%" unreachable by arithmetic.
+ */
 function cacheRate(player: Player): string {
   if (!player.prompt_tokens) return "—";
   return `${Math.round((player.cached_tokens / player.prompt_tokens) * 100)}%`;
@@ -35,6 +47,7 @@ export function StatsRail({
 }) {
   const white = game.players.find((p) => p.colour === "white");
   const black = game.players.find((p) => p.colour === "black");
+  const hasHuman = game.players.some((p) => p.kind === "human");
 
   return (
     <aside aria-label="Game statistics" className="flex min-w-0 flex-col gap-2.5">
@@ -49,11 +62,18 @@ export function StatsRail({
           }
         />
         <Row label="Status" value={game.status} />
-        <Row
-          label="Ranked"
-          value={game.is_ranked ? "yes" : `no · talk ${game.trash_talk_enabled ? "on" : "off"}`}
-          muted
-        />
+        {/* A game with a person in it can never be ranked — a person is not a contestant — so the
+            row would read "no" for the whole game and tell the player nothing they did not choose.
+            Whether chat is on is still worth stating, because they chose that too. */}
+        {hasHuman ? (
+          <Row label="Talk" value={game.trash_talk_enabled ? "on" : "off"} muted />
+        ) : (
+          <Row
+            label="Ranked"
+            value={game.is_ranked ? "yes" : `no · talk ${game.trash_talk_enabled ? "on" : "off"}`}
+            muted
+          />
+        )}
       </div>
 
       {white && <PlayerCard player={white} active={toMove === "white"} />}
@@ -100,7 +120,7 @@ function PlayerCard({ player, active }: { player: Player; active: boolean }) {
       <Endpoint player={player} />
 
       <dl className="grid grid-cols-2 gap-px border border-line-soft bg-line-soft">
-        <Stat label="Tokens" value={player.prompt_tokens.toLocaleString()} />
+        <Stat label="Tokens" value={(player.prompt_tokens + player.completion_tokens).toLocaleString()} />
         <Stat label="Cached" value={cacheRate(player)} />
         <Stat label="Cost" value={usd(player.total_cost_usd)} />
         <Stat

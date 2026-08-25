@@ -12,12 +12,15 @@
  * means an out-of-order or duplicated event cannot desync the board.
  */
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { Chess } from "chess.js";
 
 import { Board } from "@/components/Board";
 import { Conversation } from "@/components/Conversation";
+import { PlayerBar } from "@/components/PlayerBar";
 import { StatsRail } from "@/components/StatsRail";
+import { legalTargets } from "@/lib/board";
+import { captures } from "@/lib/captures";
 import { useGameDetail } from "@/hooks/useGameDetail";
 import { useGameStream } from "@/hooks/useGameStream";
 import { foldEvents } from "@/lib/turns";
@@ -53,10 +56,17 @@ export function LiveGame({
   /** Resign, draw, and chat controls. Rendered under the board so they sit near the action. */
   controls?: React.ReactNode;
 }) {
+  /* Subscribe from the last event we actually hold, not from the cursor on the game record.
+     The page fetches the record and the event list as two requests, so an event appended between
+     them leaves `event_seq` behind what `initialEvents` already contains — and the stream then
+     replays events the panel is holding. `foldEvents` dedupes regardless, but starting from the
+     right cursor means those events are never sent twice in the first place. */
+  const afterSeq = Math.max(initial.event_seq, initialEvents.at(-1)?.seq ?? 0);
+
   const { events, status } = useGameStream({
     gameId: initial.id,
     apiUrl,
-    afterSeq: initial.event_seq,
+    afterSeq,
     enabled: !TERMINAL.has(initial.status),
   });
 
@@ -120,6 +130,28 @@ export function LiveGame({
     }
   }
 
+  /* Near is the seat at the bottom of the board, which is the viewer's own when they hold one. */
+  const nearColour = seat ?? "white";
+  const farColour = nearColour === "white" ? "black" : "white";
+  const near = game.players.find((p) => p.colour === nearColour);
+  const far = game.players.find((p) => p.colour === farColour);
+
+  const { taken, advantage } = useMemo(() => {
+    const { white, black, advantage: lead } = captures(fen);
+    return {
+      taken: { white, black },
+      // Only the side that is ahead shows a number; +0 beside both names says nothing twice.
+      advantage: { white: Math.max(0, lead), black: Math.max(0, -lead) },
+    };
+  }, [fen]);
+
+  /* Where the piece on a square may go, for the dots and for click-to-move. Handed to the board
+     rather than derived inside it: the position lives here, and the board knows no chess. */
+  const targetsFor = useCallback(
+    (square: string) => (yourMove ? legalTargets(fen, square) : []),
+    [yourMove, fen],
+  );
+
   return (
     <div className="flex flex-col gap-4">
       <Header game={game} status={status} outcome={outcome} actions={actions} />
@@ -141,15 +173,16 @@ export function LiveGame({
         </div>
 
         <div className="order-1 flex min-h-0 min-w-0 flex-col gap-2 lg:order-none">
-          <div className="flex flex-none items-baseline justify-between gap-3 font-mono text-[11px] uppercase tracking-[0.08em] text-ink-faint">
-            <span className="truncate">
-              {game.players.find((p) => p.colour === "white")?.display_name} —{" "}
-              {game.players.find((p) => p.colour === "black")?.display_name}
-            </span>
-            <span className="flex-none text-accent">
-              {outcome ? outcome.result : toMove ? `${toMove} to move` : ""}
-            </span>
-          </div>
+          {/* Each player sits on the side of the board their pieces are on: the near seat below,
+              the far seat above. A viewer playing Black has the board turned round, so the two
+              swap with it. */}
+          <PlayerBar
+            player={far}
+            taken={taken[farColour]}
+            advantage={advantage[farColour]}
+            active={toMove === farColour}
+            toMoveLabel={outcome ? outcome.result : toMove === farColour ? "to move" : null}
+          />
           <Board
             fen={fen}
             lastMove={lastMove}
@@ -157,12 +190,22 @@ export function LiveGame({
                possible and unpleasant, and nobody plays well doing it. */
             orientation={seat ?? "white"}
             onDrop={yourMove ? handleDrop : undefined}
+            targetsFor={yourMove ? targetsFor : undefined}
           />
-          {controls}
+          <PlayerBar
+            player={near}
+            taken={taken[nearColour]}
+            advantage={advantage[nearColour]}
+            active={toMove === nearColour}
+            toMoveLabel={toMove === nearColour && !outcome ? "to move" : null}
+          />
         </div>
 
         <div className="order-2 flex min-h-[24rem] min-w-0 flex-col lg:order-none lg:min-h-0">
-          <Conversation turns={turns} />
+          {/* Resign, draw and chat live here rather than under the board. They are things said to
+              an opponent, and this is the column where everything said to an opponent already is —
+              under the board they crowded the one element that wants the room. */}
+          <Conversation turns={turns} players={game.players} footer={controls} />
         </div>
       </div>
     </div>

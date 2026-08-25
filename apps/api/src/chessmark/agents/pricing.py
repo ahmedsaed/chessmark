@@ -10,12 +10,14 @@ Invariant 4: cost is never estimated. Two consequences shape this module —
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from decimal import Decimal
-from pathlib import Path
+
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.types import CostSource, TokenUsage
+from chessmark.db.models import ModelRegistry
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,16 +73,27 @@ class PricingTable:
         self._pricing[self._normalise(pricing.model)] = pricing
 
     @classmethod
-    def from_seed_file(cls, path: Path) -> PricingTable:
-        """Load pricing from `seeds/models.json` — the file `refresh_model_seed.py` writes."""
-        entries = json.loads(path.read_text(encoding="utf-8"))
+    async def from_registry(cls, session: AsyncSession) -> PricingTable:
+        """Load pricing from `model_registry`.
+
+        The database, not a file. Pricing used to be read from the committed seed snapshot, which
+        meant the worker costed calls against whatever the catalogue looked like when someone last
+        ran a script — and the registry rows it was costing *against* could say something else
+        entirely. One source, refreshed by `make seed-models`.
+
+        Only a fallback either way: when OpenRouter reports what it charged, that figure wins
+        (`compute_cost`). This is what answers when it does not.
+        """
+        rows = await session.scalars(
+            sa.select(ModelRegistry).where(ModelRegistry.enabled.is_(True))
+        )
         table = cls()
-        for entry in entries:
+        for row in rows:
             table.add(
                 ModelPricing(
-                    model=entry["openrouter_id"],
-                    prompt_usd_per_token=Decimal(str(entry.get("prompt_usd_per_token", 0))),
-                    completion_usd_per_token=Decimal(str(entry.get("completion_usd_per_token", 0))),
+                    model=row.openrouter_id,
+                    prompt_usd_per_token=row.prompt_usd_per_token,
+                    completion_usd_per_token=row.completion_usd_per_token,
                 )
             )
         return table
