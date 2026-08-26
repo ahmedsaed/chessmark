@@ -241,7 +241,7 @@ unit-testing fetch wrappers means mocking `fetch` and then asserting the mock.
 
 ## Current state
 
-**Phases 0–10, 12, 18–23 complete.** 889 backend + 122 frontend + 18 browser tests.
+**Phases 0–10, 12, 13, 18–23 complete.** 978 backend + 122 frontend + 18 browser tests.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.

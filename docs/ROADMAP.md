@@ -884,19 +884,56 @@ precision can be served at a different one between games.
 **Goal:** the leaderboard fills itself overnight.
 
 **Objectives**
-1. Tournament model: round robin and Swiss
-2. A scheduler generating pairings and enqueueing games with bounded concurrency
-3. Tournament budget caps, independent of user quotas
-4. Tournament standings pages
-5. Recurring scheduled tournaments
+1. ✅ Tournament model: round robin and Swiss
+2. ✅ A scheduler generating pairings and enqueueing games with bounded concurrency
+3. ✅ Tournament budget caps, independent of user quotas
+4. ✅ Tournament standings pages
+5. 🅿️ Recurring scheduled tournaments — **backlog.** Events are started by hand for now, which is
+   what a single operator actually wants; a recurring one needs something supervising it, so it
+   belongs after Phase 17a rather than before.
 
 **Exit criteria**
-- [ ] An 8-model double round robin (56 games) completes unattended within its budget
-- [ ] A crash mid-tournament resumes without replaying completed games
-- [ ] Standings match a hand-computed result for a fixed fixture set
-- [ ] Total spend stays within the configured cap, asserted by a test
+- [x] An 8-model double round robin (56 games) completes unattended within its budget
+- [x] A crash mid-tournament resumes without replaying completed games
+- [x] Standings match a hand-computed result for a fixed fixture set
+- [x] Total spend stays within the configured cap, asserted by a test
 
 **Covers:** BENCH-05
+
+**Delivered.** A tournament is a **format, a field, and a set of bounds**. The field is a
+`FieldFilter`, never a list, so every bracket is one query with different arguments: the free
+models, open weights against closed (`model_registry.hugging_face_id`, which splits the catalogue
+126/150), a vendor bracket, a price bracket. Hard-coding a field would have meant a new code path
+per idea, and the ideas are the point.
+
+Pairing and standings are pure, in `chessmark.tournament`, enforced by the same AST test `game/`
+uses. `advance` holds no state between calls — that *is* the resume criterion, rather than
+recovery logic that could be got wrong: a restart asks the table what has been played. A round
+robin schedules its whole fixture list up front; a Swiss round is written one at a time, because
+round two depends on round one, which is also why a crash cannot desynchronise it.
+
+Colours are assigned greedily and then repaired by local search. Every obvious parity rule is badly
+lopsided — slot parity gave one entrant White twice and Black eleven times in a field of twelve —
+and this reaches the floor: one for an even field, zero for a double round robin by construction.
+
+Two things the phase did not ask for but needed. **`Retry-After` backoff**: a 429 is a provider
+saying when to come back, and treating it as an ordinary transient error capped backoff at eight
+seconds, costing ~20 doomed requests and then abandoning the game — which is what killed the first
+two free-model validation games. **Management commands**: `pause --abort-live`, `resume`,
+`abandon`, `withdraw`, because stopping an event is not one `UPDATE` — a game left running holds a
+job a later worker would pick up.
+
+Three bugs found by using the thing rather than by tests. `rounds.extend()` over a generator
+reading the same list looped forever and took an editor down with it. A *live* game counted as
+decisive, because its result is `ongoing` and the filter asked for "not a draw" — the page claimed
+a game won while saying none had been played. And a **paused event restarted on the next tick**,
+including one its own budget had stopped, which would have spent straight past the ceiling it had
+just halted at.
+
+The field is frozen at creation, deliberately: a round robin schedules its fixtures from it, and a
+table whose rows played different opponents means different things per row. `withdraw` is the path
+for a model that has to leave, and it abandons the unplayed pairings rather than awarding them —
+a walkover is not a finding about the opponent.
 
 ---
 
