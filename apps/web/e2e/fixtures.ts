@@ -8,6 +8,8 @@ export interface Fixtures {
   replayGame: string;
   result: string;
   plyCount: number;
+  /** The slug of the seeded tournament, or null if the catalogue was too small to field one. */
+  tournament: string | null;
 }
 
 /** The ids written by the seed project. Read per call so a test never holds a stale one. */

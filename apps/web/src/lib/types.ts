@@ -307,3 +307,83 @@ export interface Leaderboard {
   prompt_version: string | null;
   periods: number;
 }
+
+// ---------------------------------------------------------------- tournaments
+
+/** One row of a tournament table. */
+export interface Standing {
+  place: number;
+  key: string;
+  display_name: string;
+  seed: number;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  byes: number;
+  score: number;
+  sonneborn_berger: number;
+}
+
+/**
+ * A scheduled pairing.
+ *
+ * `state` is derived by the API from the row rather than stored, so the page describes what is
+ * actually happening rather than what a scheduler last wrote down.
+ */
+export type PairingState = "waiting" | "live" | "played" | "abandoned";
+
+export interface TournamentPairing {
+  id: string;
+  round_number: number;
+  white_key: string;
+  black_key: string | null;
+  white_score: number | null;
+  state: PairingState;
+  game_id: string | null;
+  abandoned_reason: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+}
+
+export interface TournamentStats {
+  /** Every pairing written down — the sum of the four states, not a state itself. */
+  pairings: number;
+  played: number;
+  live: number;
+  /** Written down, not yet started. Not "queued": nothing is in the job queue for these. */
+  waiting: number;
+  abandoned: number;
+  total_cost_usd: string;
+  total_tokens: number;
+  total_plies: number;
+  mean_plies: number | null;
+  illegal_attempts: number;
+  decisive: number;
+  draws: number;
+}
+
+export interface TournamentSummary {
+  id: string;
+  slug: string;
+  name: string;
+  status: string;
+  format: string;
+  double: boolean;
+  rounds: number;
+  is_ranked: boolean;
+  max_concurrent: number;
+  max_usd: string | null;
+  entrant_count: number;
+  field_description: string;
+  created_at: string;
+  started_at: string | null;
+  ended_at: string | null;
+  stats: TournamentStats;
+}
+
+export interface TournamentDetail extends TournamentSummary {
+  standings: Standing[];
+  pairings: TournamentPairing[];
+  games: GameSummary[];
+}

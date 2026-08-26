@@ -15,6 +15,7 @@ from chessmark.api.routes import (
     leaderboard,
     me,
     models,
+    tournaments,
     webhooks,
 )
 from chessmark.core.config import get_settings
@@ -72,6 +73,7 @@ def create_app() -> FastAPI:
     app.include_router(events.router)
     app.include_router(me.router)
     app.include_router(leaderboard.router)
+    app.include_router(tournaments.router)
     app.include_router(admin.router)
     app.include_router(webhooks.router)
 

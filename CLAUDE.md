@@ -110,6 +110,56 @@ rather than marking it complete.
 
 ---
 
+## Tournaments (Phase 13)
+
+A tournament is a **format, a field, and a set of bounds**. The field is a `FieldFilter`, never a
+list, so every bracket is the same machinery: `--free`, `--open-weights`, `--provider anthropic`,
+`--max-credits 1` all resolve through one query.
+
+```
+make tournament ARGS="field --free"                 # who would enter; costs nothing
+make tournament ARGS="create --name '…' --slug x --free --format pool"   # never ends
+make tournament ARGS="create --name '…' --slug y --free --format swiss --rounds 5"
+make worker                                          # exactly one; run schedules, it does not play
+make tournament ARGS="run x"                         # ticks until finished or paused
+make tournament ARGS="pause x --abort-live"          # stop; --abort-live frees queued jobs
+make tournament ARGS="resume x --max-usd 5"          # raise the ceiling that stopped it
+make tournament ARGS="withdraw x vendor/model:free"
+make tournament ARGS="standings x"
+```
+
+**A pool is the open case.** `--format pool` never ends, re-resolves its field every tick so a
+newly listed model joins by itself, and ranks by Glicko-2 rather than points — which is what makes
+an open population rankable at all. Its matchmaker follows what the rating actually measures: the
+least-known entrant plays first, against the nearest-rated opponent who is not a rematch. It pairs
+only what it can run, because scheduling ahead would freeze that information at the moment it was
+written, and a pool never runs out of fixtures.
+
+Pools are **ranked** (an unranked one would play forever and measure nothing) and a pool over paid
+models is **refused without `--max-usd`** — with no end, the ceiling is the only thing that ever
+stops it. Raise it with `resume --max-usd`; nothing resets on its own.
+
+A model that leaves the catalogue is **not** auto-withdrawn from a pool. Its games are real results
+and its rating is real; dropping it because an endpoint went quiet for an afternoon would rewrite
+history.
+
+**A closed event's field is frozen when it is created.** `resolve_field` runs once and writes
+`tournament_entrants`; a model registered afterwards does not join, and one that disappears
+upstream does not leave. That is deliberate — a round robin schedules its whole fixture list from
+the field, so admitting a latecomer would invalidate it, and a table whose rows played different
+opponents means different things per row. To change a running field, `withdraw` an entrant or
+create a second event.
+
+A model that becomes unplayable mid-event is **not** handled gracefully by itself: its games are
+attempted, fail at ply 0, and are marked *abandoned* — honest, but it wastes pairings. `withdraw`
+is the deliberate path, and it abandons the unplayed pairings rather than awarding them, because a
+walkover is not a finding about the opponent.
+
+`advance` holds no state between calls, which is the whole of the resume criterion: a restart asks
+the table what has been played rather than trusting a dead process. A **paused** event returns
+early from `advance` — without that it restarts on the next tick, including one its own budget
+stopped, which would then spend past the ceiling it had just halted at.
+
 ## Available MCP servers
 
 Configured in `.mcp.json` (project-scoped):
@@ -207,7 +257,7 @@ unit-testing fetch wrappers means mocking `fetch` and then asserting the mock.
 
 ## Current state
 
-**Phases 0–10, 12, 18–23 complete.** 889 backend + 122 frontend + 18 browser tests.
+**Phases 0–10, 12, 13, 18–23 complete.** 993 backend + 122 frontend + 18 browser tests.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -276,7 +326,8 @@ Paid models work and are cheap. Two benchmark games so far:
 
 The second is the first decisive result, and both sides played nine moves of correct Richter-Rauzer
 theory. Across two games, **every** illegal attempt has been `not_reachable` — board-state tracking,
-never rule knowledge. Free models cannot finish a game at all: too slow, too verbose, no caching.
+never rule knowledge. Free models were long recorded as unable to finish a game at all; that
+turned out to be an endpoint bug rather than the models — see below.
 
 **Reasoning must be handed back, not just recorded.** Gemini 3 rejects a function call missing its
 `thought_signature`; DeepSeek rejects a thinking-mode history missing `reasoning_content`.
@@ -287,6 +338,27 @@ replays verbatim. LiteLLM files it under `provider_specific_fields`, not at the 
 markup instead of tool calls on 9 of 63 calls via StreamLake and 0 of 40 via Baidu and DeepInfra —
 same model, same fp8. Provider is recorded per call for exactly this reason
 ([ADR-0014 amendment](docs/adr/0014-provider-routing-and-quantization.md)).
+
+**Free models can play — the note that said otherwise was measuring a bug.** `fetch_endpoints`
+stripped the `:free` suffix before asking OpenRouter which providers serve a model, on the belief
+that the endpoints route did not accept it. It does. A free variant is served by an entirely
+different — usually *single* — provider from the paid one, so the paid variant's 29 providers were
+stored against the free slug, the seat pinned the highest-uptime one (ADR-0015), and every free
+game died at ply 0 with a 404 naming a provider we had never chosen. Two tests pin the path now,
+both verified to fail when the strip returns.
+
+With that fixed, `poolside/laguna-s-2.1:free` vs `nvidia/nemotron-3.5-lightning:free` played 22
+plies of the Giuoco Piano — five moves of correct theory, both sides castled, a real bishop
+sacrifice on f7 — with **zero illegal attempts**. What remains true is that they are slow and
+verbose: 17s and 38s mean latency against 2.6s for paid models, worst call 442s, ~1,100–1,950
+output tokens per call, and 2.95 calls per ply.
+
+**The free tier is a shared pool, and it is patchy.** 429s carry
+`limit_source: upstream_provider_shared_pool` and arrive from first-party providers too — a probe
+of six free models returned four 200s, one 429 and one 403. Our `RetryPolicy` backs off a maximum
+of **8 seconds** and reads nothing from the provider's `Retry-After`, so a hot provider costs ~20
+doomed requests and then abandons the game. A tournament has no deadline and should wait minutes;
+fixing that is a prerequisite for Phase 13, not an optimisation.
 
 **The ply cap is a cost bound, not a rules bound** — threefold and the fifty-move rule are applied
 automatically, so games terminate on their own. 300 plies is the standard; 80 sat at the median of

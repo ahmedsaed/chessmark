@@ -79,6 +79,9 @@ def to_registry_entry(model: dict[str, Any]) -> dict[str, Any]:
         "supports_tools": "tools" in supported,
         "is_free": model_id.endswith(":free"),
         "enabled": True,
+        # Present for roughly 40% of the catalogue. See the column's note: it is the only
+        # open-weights signal OpenRouter offers, and it is evidence rather than a declaration.
+        "hugging_face_id": model.get("hugging_face_id") or None,
     }
 
 
@@ -240,6 +243,7 @@ async def sync_model_registry(
             "supports_reasoning": bool(entry.get("supports_reasoning", False)),
             "supports_tools": bool(entry.get("supports_tools", True)),
             "is_free": bool(entry.get("is_free", slug.endswith(":free"))),
+            "hugging_face_id": entry.get("hugging_face_id"),
             "enabled": bool(entry.get("enabled", True)),
             # Derived, and rewritten on every sync so a vendor's price change moves the tier with
             # it. `credit_cost_override` is deliberately absent from this dict: an administrator's
@@ -360,11 +364,16 @@ async def fetch_endpoints(client: Any, openrouter_id: str) -> list[dict[str, Any
     """Every provider serving a model, and at what precision.
 
     The chat response names the provider but never its quantization, so this is the only way to
-    answer "what precision was that game actually played at". The `:free` suffix is not part of
-    the endpoints path.
+    answer "what precision was that game actually played at".
+
+    **The `:free` suffix is part of the path and must be kept.** It was stripped here, on the
+    belief that the endpoints route did not accept it — it does, and a free variant is served by
+    an entirely different (usually single) provider from the paid one. Stripping it stored the
+    paid variant's providers against the free slug, and the seat then pinned the highest-uptime
+    one of those (ADR-0015), which does not serve the free model at all: every free game died at
+    ply 0 with a 404 saying the only allowed provider was one we had never heard of.
     """
-    slug = openrouter_id.split(":", 1)[0]
-    response = await client.get(ENDPOINTS_URL.format(slug=slug))
+    response = await client.get(ENDPOINTS_URL.format(slug=openrouter_id))
     response.raise_for_status()
     payload: dict[str, Any] = response.json()
     endpoints = (payload.get("data") or {}).get("endpoints") or []

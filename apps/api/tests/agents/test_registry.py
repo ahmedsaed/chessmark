@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.registry import (
     fetch_catalogue,
+    fetch_endpoints,
     fits_a_game,
     is_batch,
     is_floating_alias,
@@ -345,3 +346,51 @@ async def test_a_floating_alias_is_never_registered() -> None:
     entries = await fetch_catalogue(FakeClient())  # type: ignore[arg-type]
 
     assert [entry["openrouter_id"] for entry in entries] == ["vendor/model-3.7"]
+
+
+# ====================================================================== endpoints
+
+
+class _RecordingClient:
+    """Captures the URL asked for, and answers with one endpoint."""
+
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+
+    async def get(self, url: str) -> _RecordingResponse:
+        self.urls.append(url)
+        return _RecordingResponse()
+
+
+class _RecordingResponse:
+    @staticmethod
+    def raise_for_status() -> None:
+        return None
+
+    @staticmethod
+    def json() -> dict:
+        return {"data": {"endpoints": [{"provider_name": "Decart", "quantization": "fp4"}]}}
+
+
+async def test_the_free_suffix_is_kept_in_the_endpoints_path() -> None:
+    """The regression that made every free model unplayable.
+
+    A `:free` variant is served by an entirely different — usually single — provider from the paid
+    one. The suffix was stripped here on the belief that the endpoints route rejected it, so the
+    paid variant's providers were stored against the free slug; the seat then pinned the
+    highest-uptime one of those (ADR-0015), which does not serve the free model at all, and every
+    free game died at ply 0 with a 404 naming a provider we had never selected.
+    """
+    client = _RecordingClient()
+
+    await fetch_endpoints(client, "z-ai/glm-5.2:free")
+
+    assert client.urls == ["https://openrouter.ai/api/v1/models/z-ai/glm-5.2:free/endpoints"]
+
+
+async def test_a_paid_slug_is_unchanged() -> None:
+    client = _RecordingClient()
+
+    await fetch_endpoints(client, "google/gemini-3.7-flash")
+
+    assert client.urls == ["https://openrouter.ai/api/v1/models/google/gemini-3.7-flash/endpoints"]

@@ -885,3 +885,91 @@ class Leaderboard(Schema):
     prompt_version: str | None = None
     #: Rating periods that contributed. One per UTC day.
     periods: int = 0
+
+
+# ---------------------------------------------------------------------- tournaments
+
+
+class StandingOut(Schema):
+    """One row of the table."""
+
+    place: int
+    key: str
+    display_name: str
+    seed: int
+    played: int
+    wins: int
+    draws: int
+    losses: int
+    byes: int
+    score: float
+    sonneborn_berger: float
+
+
+class TournamentPairingOut(Schema):
+    """One scheduled pairing, in whatever state it is in.
+
+    The state is derived rather than stored: a pairing with a score is `played`, one with a game
+    and no score is `live`, one with neither is `queued`. That keeps the page honest about what is
+    actually happening rather than about what a scheduler last wrote down.
+    """
+
+    id: uuid.UUID
+    round_number: int
+    white_key: str
+    black_key: str | None
+    white_score: float | None
+    state: str
+    game_id: uuid.UUID | None
+    abandoned_reason: str | None
+    started_at: dt.datetime | None
+    ended_at: dt.datetime | None
+
+
+class TournamentStats(Schema):
+    """What the event has cost and produced so far.
+
+    Money and tokens come from `llm_calls` by way of the games, so a tournament page cannot print
+    a figure the call log disagrees with (invariant 4).
+    """
+
+    #: Every pairing written down — the sum of the four states below, not a state itself.
+    pairings: int
+    played: int
+    live: int
+    #: Written down, not yet started. Deliberately not "queued": nothing is in the job queue for
+    #: these, and only the live game has one. What holds them back is the concurrency bound.
+    waiting: int
+    abandoned: int
+    total_cost_usd: Decimal
+    total_tokens: int
+    total_plies: int
+    mean_plies: float | None
+    illegal_attempts: int
+    decisive: int
+    draws: int
+
+
+class TournamentSummary(Schema):
+    id: uuid.UUID
+    slug: str
+    name: str
+    status: str
+    format: str
+    double: bool
+    rounds: int
+    is_ranked: bool
+    max_concurrent: int
+    max_usd: Decimal | None
+    entrant_count: int
+    field_description: str
+    created_at: dt.datetime
+    started_at: dt.datetime | None
+    ended_at: dt.datetime | None
+    stats: TournamentStats
+
+
+class TournamentDetail(TournamentSummary):
+    standings: list[StandingOut] = Field(default_factory=list)
+    pairings: list[TournamentPairingOut] = Field(default_factory=list)
+    games: list[GameSummary] = Field(default_factory=list)

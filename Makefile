@@ -68,6 +68,10 @@ play: ## Play a full game and watch it. ARGS="--scripted" needs no API key
 resume: ## Reopen a game the harness stopped: make resume GAME=<id> USD=1.50
 	cd $(API) && uv run python ../../scripts/resume_game.py $(GAME) $(if $(USD),--max-usd $(USD),) $(if $(PLIES),--max-plies $(PLIES),)
 
+# Schedules; does not play. A worker must be running for the games to advance.
+tournament: ## Tournaments: field / create / run / standings. make tournament ARGS="field --free"
+	cd $(API) && uv run python ../../scripts/tournament.py $(ARGS)
+
 worker: ## Run a standalone turn worker
 	cd $(API) && uv run python ../../scripts/worker.py
 
