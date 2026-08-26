@@ -15,6 +15,8 @@ import type {
   ModelInfo,
   Leaderboard,
   MyGameSummary,
+  TournamentDetail,
+  TournamentSummary,
   TurnSummary,
 } from "@/lib/types";
 
@@ -149,6 +151,16 @@ export function getContestantGames(
 ): Promise<GameSummary[]> {
   const query = quantization ? `?quantization=${encodeURIComponent(quantization)}` : "";
   return getOrEmpty<GameSummary>(`/leaderboard/${modelSlug}/games${query}`);
+}
+
+/** Recent tournaments, newest first. Never throws: an empty list is the honest state. */
+export function listTournaments(limit = 20): Promise<TournamentSummary[]> {
+  return getOrEmpty<TournamentSummary>(`/tournaments?limit=${limit}`);
+}
+
+/** One tournament with its table, pairings and games, or null for an unknown slug. */
+export function getTournament(slug: string): Promise<TournamentDetail | null> {
+  return getOrNull<TournamentDetail>(`/tournaments/${slug}`);
 }
 
 /** The PGN download URL. Handed to the browser as a link so the file arrives with its filename. */

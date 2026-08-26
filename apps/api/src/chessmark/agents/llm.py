@@ -14,7 +14,9 @@ Two design choices carry most of the weight:
 from __future__ import annotations
 
 import asyncio
+import logging
 import random
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -60,6 +62,9 @@ class ProviderDeadlineError(TimeoutError):
     """
 
 
+log = logging.getLogger(__name__)
+
+
 #: Never retried: the same request will fail the same way, and each attempt costs money.
 FATAL_EXCEPTION_NAMES = frozenset(
     {
@@ -87,6 +92,47 @@ def _status_code(error: BaseException) -> int | None:
     response = getattr(error, "response", None)
     status = getattr(response, "status_code", None)
     return status if isinstance(status, int) else None
+
+
+def is_rate_limit(error: BaseException) -> bool:
+    """Whether a provider is asking us to slow down, rather than failing.
+
+    Worth telling apart, because it is the one failure where the provider says *when* to come
+    back and where waiting is the correct response rather than a hedge.
+    """
+    if _status_code(error) == 429:
+        return True
+    return "RateLimit" in type(error).__name__
+
+
+#: `"retry_after_seconds":5` and `"Retry-After":"5"`, as they appear in a provider's error body.
+_RETRY_AFTER = re.compile(r'"?[Rr]etry[-_][Aa]fter(?:_seconds)?"?\s*[:=]\s*"?(\d+(?:\.\d+)?)"?')
+
+
+def retry_after_seconds(error: BaseException) -> float | None:
+    """How long the provider asked us to wait, if it said.
+
+    OpenRouter puts it in three places at once — a `Retry-After` header, and both
+    `retry_after_seconds` and a nested `headers` object in the error body — so this looks at the
+    response headers first and falls back to reading the message, which is where it actually
+    arrives once LiteLLM has wrapped the error.
+    """
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is not None:
+        for name in ("retry-after", "Retry-After"):
+            try:
+                value = headers.get(name)
+            except (AttributeError, TypeError):  # pragma: no cover - exotic header objects
+                value = None
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    pass
+
+    match = _RETRY_AFTER.search(str(error))
+    return float(match.group(1)) if match else None
 
 
 def is_retryable(error: BaseException) -> bool:
@@ -138,9 +184,35 @@ class RetryPolicy:
     max_delay: float = 8.0
     jitter: float = 0.25
 
-    def delay_for(self, attempt: int) -> float:
-        """Exponential backoff with jitter, so concurrent workers do not retry in lockstep."""
-        delay = min(self.base_delay * (2 ** (attempt - 1)), self.max_delay)
+    #: Rate limits get their own budget, because they are a different kind of failure. A 500 is
+    #: the provider being broken and retrying hard is reasonable; a 429 is the provider telling us
+    #: when to come back, and the right answer is to wait that long.
+    #:
+    #: The free tier makes this concrete: its models come from a shared pool that rate-limits
+    #: constantly, and backing off a maximum of eight seconds meant ~20 doomed requests in a
+    #: minute and then abandoning the game. A tournament has no deadline; patience is free.
+    rate_limit_attempts: int = 8
+    rate_limit_max_delay: float = 300.0
+
+    def attempts_for(self, error: BaseException | None = None) -> int:
+        """How many tries this kind of failure gets."""
+        if error is not None and is_rate_limit(error):
+            return max(self.max_attempts, self.rate_limit_attempts)
+        return self.max_attempts
+
+    def delay_for(self, attempt: int, error: BaseException | None = None) -> float:
+        """How long to wait before the next attempt.
+
+        Exponential backoff with jitter, so concurrent workers do not retry in lockstep — except
+        when the provider has told us how long to wait, which is better information than any
+        formula and is honoured up to `rate_limit_max_delay`.
+        """
+        if error is not None and is_rate_limit(error):
+            asked = retry_after_seconds(error)
+            base = asked if asked is not None else self.base_delay * (2 ** (attempt - 1))
+            delay = min(max(base, self.base_delay), self.rate_limit_max_delay)
+        else:
+            delay = min(self.base_delay * (2 ** (attempt - 1)), self.max_delay)
         return float(delay + random.uniform(0, self.jitter * delay))
 
 
@@ -252,7 +324,13 @@ class LlmGateway:
         deadline = deadline_seconds if deadline_seconds is not None else self.timeout
         last_error: BaseException | None = None
 
-        for attempt in range(1, self.retry.max_attempts + 1):
+        # The budget depends on what goes wrong, so it is recomputed as failures arrive rather
+        # than fixed before the first attempt.
+        allowed = self.retry.max_attempts
+        attempt = 0
+
+        while True:
+            attempt += 1
             started = time.perf_counter()
             try:
                 # Enforced here rather than trusted to the provider library. `timeout` is passed
@@ -269,7 +347,8 @@ class LlmGateway:
                 ) from error
             except Exception as error:
                 last_error = error
-                if not is_retryable(error) or attempt == self.retry.max_attempts:
+                allowed = self.retry.attempts_for(error)
+                if not is_retryable(error) or attempt >= allowed:
                     raise LlmError(
                         message=str(error),
                         status_code=_status_code(error),
@@ -278,7 +357,15 @@ class LlmGateway:
                         request=redacted_request,
                     ) from error
 
-                await self._sleep(self.retry.delay_for(attempt))
+                wait = self.retry.delay_for(attempt, error)
+                if is_rate_limit(error):
+                    log.info(
+                        "rate limited by the provider; waiting %.0fs before attempt %d of %d",
+                        wait,
+                        attempt + 1,
+                        allowed,
+                    )
+                await self._sleep(wait)
                 continue
 
             latency_ms = int((time.perf_counter() - started) * 1000)
@@ -290,12 +377,12 @@ class LlmGateway:
                 attempts=attempt,
             )
 
-        # Unreachable: the loop either returns or raises.
-        raise LlmError(  # pragma: no cover
-            message=str(last_error),
-            attempts=self.retry.max_attempts,
-            request=redacted_request,
-        )
+            # Unreachable: the loop either returns or raises.
+            raise LlmError(  # pragma: no cover
+                message=str(last_error),
+                attempts=allowed,
+                request=redacted_request,
+            )
 
     def _build_completion(
         self,
