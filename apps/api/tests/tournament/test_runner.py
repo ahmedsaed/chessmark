@@ -56,16 +56,25 @@ async def seed_models(db: AsyncSession, count: int, *, free: bool = False) -> li
         model_id = await db.scalar(
             sa.select(ModelRegistry.id).where(ModelRegistry.openrouter_id == slug)
         )
-        db.add(
-            ModelEndpoint(
-                model_id=model_id,
-                provider_name="TestProvider",
-                quantization="fp8",
-                context_length=200_000,
-                supports_tools=True,
-                is_active=True,
+        # Idempotent: a pool test grows the catalogue by calling this again with a larger count,
+        # and the endpoint table is unique on (model, provider).
+        already = await db.scalar(
+            sa.select(ModelEndpoint.id).where(
+                ModelEndpoint.model_id == model_id,
+                ModelEndpoint.provider_name == "TestProvider",
             )
         )
+        if already is None:
+            db.add(
+                ModelEndpoint(
+                    model_id=model_id,
+                    provider_name="TestProvider",
+                    quantization="fp8",
+                    context_length=200_000,
+                    supports_tools=True,
+                    is_active=True,
+                )
+            )
     await db.commit()
     return slugs
 
@@ -494,3 +503,106 @@ async def test_a_withdrawn_entrant_is_dropped_from_future_pairings(
 
     results = await repo.results_so_far(db, tournament_id)
     assert all(leaving not in (r.white, r.black) for r in results), "no walkover was awarded"
+
+
+# ====================================================================== pools
+
+
+async def test_a_pool_admits_a_model_listed_after_it_started(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """The whole reason pools exist.
+
+    A closed event's field is frozen because its fixture list is computed from it. A pool has no
+    fixture list, and Glicko-2 is built for an open population — so a model listed today starts at
+    1500 ± 350 and settles by playing, rather than waiting for the next event.
+    """
+    tournament_id, _ = await make_tournament(
+        db,
+        models=3,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    assert len(await repo.entrants_of(db, tournament_id)) == 3
+
+    await seed_models(db, 5)  # two more appear in the catalogue
+    db.expire_all()
+
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    assert len(step.admitted) == 2
+    assert len(await repo.entrants_of(db, tournament_id)) == 5
+
+
+async def test_a_pool_never_finishes(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """There is no round count to reach and no fixture list to exhaust."""
+    tournament_id, _ = await make_tournament(
+        db,
+        models=4,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+
+    for _ in range(8):
+        step = await advance(sessionmaker, queue, tournament_id=tournament_id)
+        db.expire_all()
+        assert step.status is not TournamentStatus.FINISHED
+        await finish_all_in_flight(db, tournament_id)
+        db.expire_all()
+
+    results = await repo.results_so_far(db, tournament_id)
+    assert len(results) >= 4, "it kept finding games to play"
+
+
+async def test_a_pool_pairs_only_what_it_can_run(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """Scheduling ahead would freeze the matchmaker's information at the moment it was written —
+    and a pool always has another fixture available, so the queue would grow without limit."""
+    tournament_id, _ = await make_tournament(
+        db,
+        models=6,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=2, field=FieldFilter()),
+    )
+
+    for _ in range(3):
+        await advance(sessionmaker, queue, tournament_id=tournament_id)
+        db.expire_all()
+        pending = len(await repo.unplayed(db, tournament_id)) + len(
+            await repo.in_flight(db, tournament_id)
+        )
+        assert pending <= 2, f"{pending} games pending against a bound of 2"
+
+
+async def test_a_pool_stops_at_its_budget_like_any_other_event(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """A pool has no end, so the ceiling is the only thing that ever stops it."""
+    tournament_id, _ = await make_tournament(
+        db,
+        models=4,
+        config=TournamentConfig(
+            format=Format.POOL,
+            max_concurrent=1,
+            max_usd=Decimal("0.10"),
+            field=FieldFilter(),
+        ),
+    )
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    rows = await repo.in_flight(db, tournament_id)
+    game = await db.get(Game, rows[0].game_id)
+    assert game is not None
+    game.status = GameStatus.FINISHED
+    game.result = GameResult.DRAW
+    game.total_cost_usd = Decimal("0.50")
+    await db.commit()
+
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id)
+
+    assert step.status is TournamentStatus.PAUSED
+    assert "budget" in step.detail

@@ -16,6 +16,8 @@ from enum import StrEnum
 class Format(StrEnum):
     """How the field is paired.
 
+    `POOL` is the open case: no schedule, no winner, no end. See `matchmaking.py`.
+
     `ROUND_ROBIN` is exact and quadratic: everyone plays everyone, which settles the order beyond
     argument and costs `n(n-1)/2` games — 56 for eight models played twice, 65,280 for the whole
     catalogue. `SWISS` pairs players on similar scores for a fixed number of rounds, which is what
@@ -25,6 +27,10 @@ class Format(StrEnum):
 
     ROUND_ROBIN = "round_robin"
     SWISS = "swiss"
+    #: A ladder that never ends. Its field is re-resolved as the catalogue changes, so a newly
+    #: listed model joins by itself, and its "standings" are Glicko-2 ratings rather than points —
+    #: which is what lets an open population be ranked at all (BENCH-01).
+    POOL = "pool"
 
 
 class Colour(StrEnum):

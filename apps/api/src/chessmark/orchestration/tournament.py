@@ -16,16 +16,18 @@ import logging
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from chessmark.bench.service import compute_ratings
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import TournamentStatus
 from chessmark.db.models import Game, ModelRegistry, Tournament, TournamentGame
 from chessmark.orchestration.match import Seat, create_match, start_match
 from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
-from chessmark.tournament import Format, round_robin, swiss_round
+from chessmark.tournament import Form, Format, matchmake, round_robin, swiss_round
 
 log = logging.getLogger(__name__)
 
@@ -37,12 +39,14 @@ class Step:
     started: int = 0
     settled: int = 0
     scheduled_round: int | None = None
+    #: Models a pool admitted this tick, having appeared in the catalogue since the last one.
+    admitted: tuple[str, ...] = ()
     status: TournamentStatus = TournamentStatus.RUNNING
     detail: str = ""
 
     @property
     def idle(self) -> bool:
-        return not (self.started or self.settled or self.scheduled_round)
+        return not (self.started or self.settled or self.scheduled_round or self.admitted)
 
 
 async def advance(
@@ -73,6 +77,14 @@ async def advance(
 
         settled = await _settle_finished(session, tournament)
 
+        admitted: list[str] = []
+        if tournament.format == str(Format.POOL):
+            # Before pairing, not after: a model listed this morning should be eligible for the
+            # game chosen this afternoon, and the matchmaker prioritises whoever is least known.
+            admitted = await repo.admit_new_entrants(
+                session, tournament, repo.filter_from_json(tournament.field_filter)
+            )
+
         over_budget = await _budget_reached(session, tournament)
         if over_budget is not None:
             tournament.status = TournamentStatus.PAUSED
@@ -82,7 +94,8 @@ async def advance(
 
         scheduled = await _schedule_next_round(session, tournament)
 
-        if await _is_complete(session, tournament):
+        # A pool has no end to reach.
+        if tournament.format != str(Format.POOL) and await _is_complete(session, tournament):
             tournament.status = TournamentStatus.FINISHED
             tournament.ended_at = sa.func.now()
             await session.commit()
@@ -103,7 +116,9 @@ async def advance(
     for job in jobs:
         await queue.enqueue(job)
 
-    return Step(started=started, settled=settled, scheduled_round=scheduled)
+    return Step(
+        started=started, settled=settled, scheduled_round=scheduled, admitted=tuple(admitted)
+    )
 
 
 async def _settle_finished(session: AsyncSession, tournament: Tournament) -> int:
@@ -162,6 +177,9 @@ async def _schedule_next_round(session: AsyncSession, tournament: Tournament) ->
     )
     highest = int(played or 0)
 
+    if tournament.format == str(Format.POOL):
+        return await _schedule_pool(session, tournament, entrants)
+
     if tournament.format == str(Format.ROUND_ROBIN):
         if highest:
             return None
@@ -183,6 +201,77 @@ async def _schedule_next_round(session: AsyncSession, tournament: Tournament) ->
     results = await repo.results_so_far(session, tournament.id)
     await repo.record_round(session, tournament.id, swiss_round(entrants, results, highest + 1))
     return highest + 1
+
+
+async def _schedule_pool(
+    session: AsyncSession, tournament: Tournament, entrants: list[Any]
+) -> int | None:
+    """Pair as many games as there is room to run, and no more.
+
+    A pool never runs out of fixtures, so scheduling ahead would write a queue nobody asked for and
+    freeze the matchmaker's information at the moment it was written. Pairing only what can start
+    now means every choice is made with the latest ratings — including for a model admitted on
+    this same tick.
+    """
+    waiting = len(await repo.unplayed(session, tournament.id))
+    running = len(await repo.in_flight(session, tournament.id))
+    room = tournament.max_concurrent - waiting - running
+    if room <= 0:
+        return None
+
+    highest = await session.scalar(
+        sa.select(sa.func.coalesce(sa.func.max(TournamentGame.round_number), 0)).where(
+            TournamentGame.tournament_id == tournament.id
+        )
+    )
+    round_number = int(highest or 0) + 1
+
+    games = matchmake(
+        entrants,
+        await repo.results_so_far(session, tournament.id),
+        await _form(session, tournament),
+        count=room,
+        round_number=round_number,
+    )
+    if not games:
+        return None
+
+    await repo.record_round(session, tournament.id, games)
+    return round_number
+
+
+async def _form(session: AsyncSession, tournament: Tournament) -> dict[str, Form]:
+    """What is known about each entrant, for the matchmaker.
+
+    Ratings come from the leaderboard over *ranked* games (BENCH-03) rather than from this pool's
+    own results: a model that arrives already rated is not unknown, and pairing it as though it
+    were would spend games rediscovering what is already measured.
+    """
+    run = await compute_ratings(session)
+
+    # A contestant is `(model, quantization)`, but a pool's entrants are usually keyed by slug
+    # alone — the precision is decided per game by the router. Both are looked up, so a pool that
+    # does pin one still finds its rating.
+    by_key: dict[str, Any] = {}
+    by_slug: dict[str, Any] = {}
+    for contestant, rating in run.ratings.items():
+        by_key[f"{contestant.model_slug}@{contestant.quantization}"] = rating
+        # If a model is served at several precisions, the least certain of them stands in: it is
+        # the one a game would tell us most about.
+        current = by_slug.get(contestant.model_slug)
+        if current is None or rating.rd > current.rd:
+            by_slug[contestant.model_slug] = rating
+
+    form: dict[str, Form] = {}
+    for entrant in await repo.entrants_of(session, tournament.id):
+        known = by_key.get(entrant.key) or by_slug.get(entrant.key.split("@", 1)[0])
+        if known is not None:
+            form[entrant.key] = Form(
+                key=entrant.key,
+                rating=float(known.rating),
+                deviation=float(known.rd),
+            )
+    return form
 
 
 async def _is_complete(session: AsyncSession, tournament: Tournament) -> bool:

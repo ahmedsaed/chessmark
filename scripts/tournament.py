@@ -92,9 +92,25 @@ async def cmd_create(args: argparse.Namespace) -> int:
         max_usd=Decimal(str(args.max_usd)) if args.max_usd else None,
         max_plies_per_game=args.max_plies,
         max_usd_per_game=Decimal(str(args.max_usd_per_game)) if args.max_usd_per_game else None,
-        is_ranked=not args.unranked,
+        # A pool exists to produce ratings, so it is ranked unless explicitly told otherwise —
+        # an unranked pool would play indefinitely and measure nothing.
+        is_ranked=(args.format == str(Format.POOL) or args.ranked) and not args.unranked,
         field=field_from(args),
     )
+
+    # A pool has no end, so its ceiling is the only thing that will ever stop it. A free one
+    # cannot spend, and is allowed to run uncapped; anything that touches paid models must say
+    # what it is willing to spend before it starts, not after.
+    if (
+        config.format is Format.POOL
+        and config.max_usd is None
+        and config.field.free_only is not True
+    ):
+        print(
+            f"{RED}a pool over paid models needs --max-usd: nothing else would ever stop it{OFF}",
+            file=sys.stderr,
+        )
+        return 1
 
     async with sessionmaker() as session:
         entrants = await repo.resolve_field(session, config.field)
@@ -115,6 +131,9 @@ async def cmd_create(args: argparse.Namespace) -> int:
     print(f"  format      : {config.format}{' (double)' if config.double else ''}")
     if config.format is Format.SWISS:
         print(f"  rounds      : {config.rounds}")
+    if config.format is Format.POOL:
+        print(f"  {DIM}a pool never ends; its budget is what stops it{OFF}")
+    print(f"  ranked      : {'yes' if config.is_ranked else 'no'}")
     print(f"  concurrency : {config.max_concurrent}")
     print(f"  budget      : {f'${config.max_usd}' if config.max_usd else 'uncapped'}")
     print(f'\n{DIM}Start a worker, then: make tournament ARGS="run {args.slug}"{OFF}')
@@ -162,6 +181,8 @@ async def cmd_run(args: argparse.Namespace) -> int:
             else:
                 quiet = 0
                 bits = []
+                if step.admitted:
+                    bits.append(f"admitted {len(step.admitted)}: {', '.join(step.admitted)}")
                 if step.scheduled_round:
                     bits.append(f"scheduled round {step.scheduled_round}")
                 if step.started:
@@ -332,6 +353,11 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--format", choices=[str(f) for f in Format], default=str(Format.SWISS))
     create.add_argument("--double", action="store_true", help="round robin: play every pair twice")
     create.add_argument("--rounds", type=int, default=5, help="swiss only")
+    create.add_argument(
+        "--ranked",
+        action="store_true",
+        help="feed the leaderboard. Implied by --format pool, whose whole point is ratings",
+    )
     create.add_argument("--max-concurrent", type=int, default=1)
     create.add_argument("--max-usd", type=float, help="the event's own ceiling")
     create.add_argument("--max-usd-per-game", type=float)

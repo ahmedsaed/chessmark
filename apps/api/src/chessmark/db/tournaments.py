@@ -183,6 +183,81 @@ def _filter_as_json(field: FieldFilter) -> dict[str, Any]:
     }
 
 
+async def admit_new_entrants(
+    session: AsyncSession, tournament: Tournament, field: FieldFilter
+) -> list[str]:
+    """Re-resolve a pool's field and seat anybody new. Returns the keys admitted.
+
+    Only pools do this. A closed event's field is frozen because its fixture list is computed from
+    it — a latecomer would invalidate the schedule, and a table whose rows played different
+    opponents means different things per row. A pool has neither problem: Glicko-2 is built for an
+    open population, so a model listed today can start at 1500 +/- 350 and settle by playing.
+
+    A model that has *left* the catalogue is not withdrawn here. Its games are real results and its
+    rating is real; dropping it automatically would rewrite history because an endpoint went quiet
+    for an afternoon. `withdraw` stays a deliberate act.
+    """
+    seated = set(
+        await session.scalars(
+            sa.select(TournamentEntrant.key).where(TournamentEntrant.tournament_id == tournament.id)
+        )
+    )
+    eligible = await resolve_field(session, field)
+    newcomers = [entrant for entrant in eligible if entrant.key not in seated]
+    if not newcomers:
+        return []
+
+    highest = await session.scalar(
+        sa.select(sa.func.coalesce(sa.func.max(TournamentEntrant.seed), 0)).where(
+            TournamentEntrant.tournament_id == tournament.id
+        )
+    )
+    slugs = [key.split("@", 1)[0] for key in (e.key for e in newcomers)]
+    known = {
+        row.openrouter_id: row
+        for row in await session.scalars(
+            sa.select(ModelRegistry).where(ModelRegistry.openrouter_id.in_(slugs))
+        )
+    }
+
+    for offset, entrant in enumerate(newcomers, start=1):
+        model_slug, _, quantization = entrant.key.partition("@")
+        row = known.get(model_slug)
+        session.add(
+            TournamentEntrant(
+                tournament_id=tournament.id,
+                model_id=row.id if row else None,
+                key=entrant.key,
+                model_slug=model_slug,
+                quantization=quantization or None,
+                display_name=entrant.label or model_slug,
+                seed=int(highest or 0) + offset,
+            )
+        )
+
+    await session.flush()
+    return [entrant.key for entrant in newcomers]
+
+
+def filter_from_json(stored: dict[str, Any]) -> FieldFilter:
+    """The stored filter, back as the thing that resolved it.
+
+    A pool re-runs its own selection every tick, so the description written at creation has to be
+    executable again rather than merely readable.
+    """
+    return FieldFilter(
+        slugs=tuple(stored.get("slugs") or ()),
+        providers=tuple(stored.get("providers") or ()),
+        free_only=stored.get("free_only"),
+        open_weights=stored.get("open_weights"),
+        min_credit_cost=stored.get("min_credit_cost"),
+        max_credit_cost=stored.get("max_credit_cost"),
+        min_context_tokens=stored.get("min_context_tokens"),
+        requires_reasoning=stored.get("requires_reasoning"),
+        limit=stored.get("limit"),
+    )
+
+
 async def entrants_of(session: AsyncSession, tournament_id: uuid.UUID) -> list[Entrant]:
     rows = await session.scalars(
         sa.select(TournamentEntrant)

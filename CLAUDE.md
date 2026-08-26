@@ -118,7 +118,8 @@ list, so every bracket is the same machinery: `--free`, `--open-weights`, `--pro
 
 ```
 make tournament ARGS="field --free"                 # who would enter; costs nothing
-make tournament ARGS="create --name '…' --slug x --free --format swiss --rounds 5"
+make tournament ARGS="create --name '…' --slug x --free --format pool"   # never ends
+make tournament ARGS="create --name '…' --slug y --free --format swiss --rounds 5"
 make worker                                          # exactly one; run schedules, it does not play
 make tournament ARGS="run x"                         # ticks until finished or paused
 make tournament ARGS="pause x --abort-live"          # stop; --abort-live frees queued jobs
@@ -127,7 +128,22 @@ make tournament ARGS="withdraw x vendor/model:free"
 make tournament ARGS="standings x"
 ```
 
-**The field is frozen when the event is created.** `resolve_field` runs once and writes
+**A pool is the open case.** `--format pool` never ends, re-resolves its field every tick so a
+newly listed model joins by itself, and ranks by Glicko-2 rather than points — which is what makes
+an open population rankable at all. Its matchmaker follows what the rating actually measures: the
+least-known entrant plays first, against the nearest-rated opponent who is not a rematch. It pairs
+only what it can run, because scheduling ahead would freeze that information at the moment it was
+written, and a pool never runs out of fixtures.
+
+Pools are **ranked** (an unranked one would play forever and measure nothing) and a pool over paid
+models is **refused without `--max-usd`** — with no end, the ceiling is the only thing that ever
+stops it. Raise it with `resume --max-usd`; nothing resets on its own.
+
+A model that leaves the catalogue is **not** auto-withdrawn from a pool. Its games are real results
+and its rating is real; dropping it because an endpoint went quiet for an afternoon would rewrite
+history.
+
+**A closed event's field is frozen when it is created.** `resolve_field` runs once and writes
 `tournament_entrants`; a model registered afterwards does not join, and one that disappears
 upstream does not leave. That is deliberate — a round robin schedules its whole fixture list from
 the field, so admitting a latecomer would invalidate it, and a table whose rows played different
@@ -241,7 +257,7 @@ unit-testing fetch wrappers means mocking `fetch` and then asserting the mock.
 
 ## Current state
 
-**Phases 0–10, 12, 13, 18–23 complete.** 978 backend + 122 frontend + 18 browser tests.
+**Phases 0–10, 12, 13, 18–23 complete.** 993 backend + 122 frontend + 18 browser tests.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
