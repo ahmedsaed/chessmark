@@ -683,6 +683,19 @@ class Tournament(Base):
     max_usd_per_game: Mapped[Decimal | None] = mapped_column(USD)
     is_ranked: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
 
+    #: The hours, in UTC, during which this event may start games. Null for either means always.
+    #:
+    #: Not a rate limiter — the free-tier counter is that. This is about *when* games happen: a
+    #: site whose whole appeal is watching models play should have something to watch at the hours
+    #: people are awake, rather than spending its daily allowance overnight. A window that wraps
+    #: midnight (22:00 to 04:00) is supported and is why this is compared rather than subtracted.
+    active_from: Mapped[dt.time | None] = mapped_column(sa.Time)
+    active_until: Mapped[dt.time | None] = mapped_column(sa.Time)
+
+    #: Games this event may start per UTC day. Null for no limit. Distinct from the account-wide
+    #: free-tier allowance: this is how an operator divides that allowance between events.
+    max_games_per_day: Mapped[int | None] = mapped_column(sa.Integer)
+
     total_cost_usd: Mapped[Decimal] = mapped_column(USD, default=Decimal(0), server_default="0")
 
     created_at: Mapped[dt.datetime] = created_at()
