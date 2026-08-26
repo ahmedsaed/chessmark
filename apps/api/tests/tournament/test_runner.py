@@ -358,3 +358,75 @@ async def test_a_completed_event_reports_finished_and_a_full_table(
 
     table = standings(entrants, await repo.results_so_far(db, tournament_id))
     assert sum(s.played for s in table) == 12, "six games, two seats each"
+
+
+# ====================================================================== a whole event
+
+
+async def test_a_double_round_robin_runs_to_completion_unattended(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """The headline criterion: 56 games, no operator, and it stops by itself.
+
+    Driven by repeated `advance` calls, which is exactly what a supervised worker or a cron tick
+    would do — the runner is not given a loop of its own precisely so that the caller can be
+    anything. Games are settled here rather than played, because what is under test is the
+    scheduler: that every pairing runs once, concurrency holds, and the event terminates.
+    """
+    tournament_id, entrants = await make_tournament(
+        db,
+        models=8,
+        config=TournamentConfig(format=Format.ROUND_ROBIN, double=True, max_concurrent=4),
+    )
+
+    ticks = 0
+    for ticks in range(1, 200):  # noqa: B007 - the bound is a guard, not the loop's purpose
+        step = await advance(sessionmaker, queue, tournament_id=tournament_id)
+        db.expire_all()
+        if step.status is TournamentStatus.FINISHED:
+            break
+        assert len(await repo.in_flight(db, tournament_id)) <= 4, "concurrency bound broken"
+        await finish_all_in_flight(db, tournament_id)
+        db.expire_all()
+    else:  # pragma: no cover - only on a runner that never terminates
+        raise AssertionError("the tournament never finished")
+
+    tournament = await db.get(Tournament, tournament_id)
+    assert tournament is not None and tournament.status is TournamentStatus.FINISHED
+
+    results = await repo.results_so_far(db, tournament_id)
+    assert len(results) == 56, "every pairing played exactly once"
+
+    table = standings(entrants, results)
+    assert sum(s.played for s in table) == 112, "56 games, two seats each"
+    assert all(s.played == 14 for s in table), "each model meets seven others twice"
+    assert sum(s.score for s in table) == 56.0, "one point is awarded per game"
+
+
+async def test_a_swiss_event_plays_its_configured_rounds_and_stops(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """Swiss is scheduled a round at a time, so "finished" means the round count is reached —
+    not that every pairing exists, because most of them never will."""
+    tournament_id, entrants = await make_tournament(
+        db,
+        models=8,
+        config=TournamentConfig(format=Format.SWISS, rounds=3, max_concurrent=4),
+    )
+
+    for _ in range(60):
+        step = await advance(sessionmaker, queue, tournament_id=tournament_id)
+        db.expire_all()
+        if step.status is TournamentStatus.FINISHED:
+            break
+        await finish_all_in_flight(db, tournament_id)
+        db.expire_all()
+    else:  # pragma: no cover
+        raise AssertionError("the Swiss event never finished")
+
+    results = await repo.results_so_far(db, tournament_id)
+    assert len(results) == 12, "three rounds of four games"
+
+    table = standings(entrants, results)
+    assert all(s.played == 3 for s in table), "everyone plays every round"
+    assert max(s.score for s in table) == 3.0, "an undefeated leader emerges"
