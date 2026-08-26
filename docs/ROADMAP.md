@@ -1359,21 +1359,43 @@ project, and only the last rewrite was ever checked.
 **Goal:** it's public, and it stays up.
 
 **Objectives**
-1. Production Compose stack on the VPS, behind Caddy with TLS
+1. ✅ Production Compose stack — **no proxy**. The API and web ports are published for a reverse
+   proxy managed outside the stack, so TLS, domains and redirects are not its business.
 2. CI/CD from `main`
-3. Sentry, uptime monitoring, alerting
+3. 🅿️ Sentry, uptime monitoring, alerting — **backlog.** Worth having once there is traffic to
+   observe; a site with one operator learns more from `docker compose logs`.
 4. Automated Postgres backups with a **tested restore**
-5. Load test at target concurrency (NFR-03, NFR-04)
+5. 🅿️ Load test at target concurrency (NFR-03, NFR-04) — **backlog.** The binding constraint today
+   is a provider's rate limit, not our concurrency: the free tier allows ~340 plies a day and a
+   paid game costs money per ply, so a 50-game load test would measure our own budget.
 6. Security review: dependency audit, headers, CORS, rate limits
 7. Launch content: an about page, the methodology page, seeded games
 
 **Exit criteria**
-- [ ] Push to `main` deploys within 10 minutes (NFR-09)
-- [ ] 50 concurrent games and 200 spectators sustained without degradation
-- [ ] A backup is restored to a scratch database and verified — not just taken
-- [ ] Zero high-severity findings in the dependency audit
-- [ ] Deliberately killing each container in turn causes no data loss and recovers automatically
-- [ ] The site is live on its domain with valid TLS
+- [~] Push to `main` deploys within 10 minutes (NFR-09) — **publishing works; deploying is
+      untested.** Every commit on `main` gets a `:latest` and an immutable `:sha` image in GHCR.
+      The deploy job SSHes, pulls, migrates and waits on readiness, but there is no host to point
+      it at, so it is skipped rather than run. It stays open until a server proves it.
+- [x] A backup is restored to a scratch database and verified — not just taken
+- [x] Zero high-severity findings in the dependency audit
+- [x] Deliberately killing each container in turn causes no data loss and recovers automatically
+- [ ] ~~50 concurrent games and 200 spectators sustained~~ — moved to the backlog with objective 5
+- [ ] ~~Live on its domain with valid TLS~~ — outside this stack, which has no proxy by design
+
+**What the drill actually proves.** A restart policy covers a **crash**, not an operator: a
+process that exits is restarted by `unless-stopped` — demonstrated accidentally, when the
+tournament container exit-looped before it learned to wait through a pause — while a container
+removed with `docker kill` is left stopped by *every* policy including `always`, which was measured
+rather than assumed. Killing PID 1 from inside is no help either: the kernel discards an
+in-namespace SIGKILL to PID 1. So the drill tests the property that is true and that matters —
+losing any one container costs no data and the stack returns to full function. All six pass, 63
+games intact throughout.
+
+**The web image is environment-specific.** `NEXT_PUBLIC_API_URL` is baked into the client bundle at
+build time, so an image built for one origin cannot serve another, and CI reads it from a
+repository variable rather than defaulting. Serving the API under the same origin as the web app
+would remove the constraint by making the URL relative — worth weighing when the proxy is
+configured.
 
 **Covers:** OPS-04, OPS-07, OPS-08, NFR-03, NFR-04, NFR-09
 

@@ -64,6 +64,10 @@ class ProviderDeadlineError(TimeoutError):
 
 log = logging.getLogger(__name__)
 
+#: Called once per provider attempt, with the model slug. Used to count a request allowance
+#: that no response header reports — see `core.budget.FreeTierBudget`.
+AttemptFn = Callable[[str], Awaitable[None]]
+
 
 #: Never retried: the same request will fail the same way, and each attempt costs money.
 FATAL_EXCEPTION_NAMES = frozenset(
@@ -229,6 +233,7 @@ class LlmGateway:
         retry: RetryPolicy | None = None,
         completion_fn: CompletionFn | None = None,
         sleep_fn: SleepFn | None = None,
+        on_attempt: AttemptFn | None = None,
         timeout: float = 180.0,
     ) -> None:
         self.api_key = api_key
@@ -238,6 +243,7 @@ class LlmGateway:
         self.retry = retry or RetryPolicy()
         self._complete = completion_fn or _default_completion
         self._sleep = sleep_fn or asyncio.sleep
+        self._on_attempt = on_attempt
         self.timeout = timeout
 
     def build_request(
@@ -331,6 +337,12 @@ class LlmGateway:
 
         while True:
             attempt += 1
+            # Counted here, before the call rather than after it, because this is the only place
+            # that sees *every* attempt. A failure never reaches `llm_calls` — the row is written
+            # from a completion — so a count derived from the database misses exactly the retries
+            # and 429s that the provider is charging against a request allowance.
+            if self._on_attempt is not None:
+                await self._on_attempt(model)
             started = time.perf_counter()
             try:
                 # Enforced here rather than trusted to the provider library. `timeout` is passed

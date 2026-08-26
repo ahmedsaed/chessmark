@@ -138,6 +138,8 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | OPS-07 | Error tracking (Sentry or equivalent) in production. | S |
 | OPS-08 | Automated database backups. | S |
 | OPS-09 | The model catalogue is refreshed on a schedule, not by hand. Prices set the spend caps *and* what users are charged, so a stale price is a wrong cap and a wrong charge. A refresh that cannot reach the provider fails without touching the registry. | M |
+| OPS-10 | The free tier's daily request allowance is counted and respected. It is per account, reported by no header or endpoint, and shared by every pool, every human game against a free model and every manual run — so the only way to stay under it is to count our own attempts, including the failed ones a rate limit produces, and stop early. Exceeding it does not fail loudly: the provider refuses with a 429 indistinguishable from a hot shared pool, so games back off politely and then abandon, and an unattended pool spends the rest of the day producing nothing. | M |
+| OPS-11 | An automated event may be confined to an active window, so a site whose appeal is watching models play has something to watch at the hours people are awake rather than spending its allowance overnight. Windows are stored in UTC and may wrap midnight. | S |
 
 ---
 

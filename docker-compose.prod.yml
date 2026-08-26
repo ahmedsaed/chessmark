@@ -1,0 +1,149 @@
+# The production stack.
+#
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Datastores come from `docker-compose.yml`; this adds the four application containers. **No proxy
+# and no TLS** — the API and web ports are published for a reverse proxy managed outside this
+# file, so certificates, domains and redirects are not this stack's business.
+#
+# **A restart policy covers a crash, not an operator.** A process that exits — an unhandled
+# exception, an OOM — is restarted by `unless-stopped`; that is proven, because this file's own
+# tournament container exit-looped for exactly that reason before it learned to wait through a
+# pause. A container removed with `docker kill` is *not* restarted, by any policy including
+# `always`: Docker reads it as intent. So `make recovery-drill` tests what is actually true — that
+# losing a container costs no data and the stack comes back — rather than an auto-restart that
+# Docker deliberately does not perform.
+#
+# **`image:` alongside `build:` on purpose.** A server pulls the tag that CI published; a laptop
+# runs `up --build` and builds it locally under the same name. Without the tag there is nothing
+# for `docker compose pull` to fetch, and the deploy would have to build on the host — which is
+# slower, needs the toolchain there, and can produce an image nobody has tested.
+#
+# Four services, one backend image. The worker and the tournament runner are the API's own code
+# under different entrypoints: building them separately would give them three chances to drift
+# apart at exactly the point where they must not.
+
+name: chessmark
+
+# The datastore URLs as seen **from inside the network**, and deliberately not read from `.env`.
+#
+# `.env` holds the URLs a developer's machine uses — `localhost:5433`, `localhost:6380` — and
+# Compose interpolates `${DATABASE_URL}` from that same file. Writing `${DATABASE_URL:-...}` here
+# would therefore hand every container a `localhost` address meaning *the container itself*, and
+# the default would never apply. They are built from the same variables the `postgres` service
+# uses instead, so the two cannot disagree about the credentials.
+#
+# `env_file: [.env]` still injects the host-shaped values; the explicit `environment:` below
+# overrides them, which is the precedence Compose guarantees.
+x-database-url: &database_url >-
+  postgresql+asyncpg://${POSTGRES_USER:-chessmark}:${POSTGRES_PASSWORD:-chessmark}@postgres:5432/${POSTGRES_DB:-chessmark}
+
+x-redis-url: &redis_url redis://redis:6379/0
+
+services:
+  api:
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      DATABASE_URL: *database_url
+      REDIS_URL: *redis_url
+    ports:
+      - "${API_PORT:-8010}:8000"
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request;urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # Migrations run once, before anything serves. Separate from `api` so a restart of the API is
+  # not also a schema change, and so a failed migration stops the deploy rather than crash-looping
+  # a web server.
+  migrate:
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: [.env]
+    environment:
+      DATABASE_URL: *database_url
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
+  # The piece that has never had a home. Without it the board never moves, which is the most
+  # confusing possible failure: the site is up, games exist, and nothing happens.
+  worker:
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      DATABASE_URL: *database_url
+      REDIS_URL: *redis_url
+    command: ["python", "/app/scripts/worker.py"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    # **Exactly one.** A job goes to whichever worker reaches it first, so a second is not
+    # redundancy — it is a coin toss over who plays each turn.
+    deploy:
+      replicas: 1
+
+  # Ticks whichever event is named. A pool is *meant* to run indefinitely, which is precisely why
+  # it cannot live in somebody's terminal.
+  tournament:
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      DATABASE_URL: *database_url
+      REDIS_URL: *redis_url
+    # The entrypoint is the script, so management reads as
+    #   docker compose run --rm tournament create --name '…' --slug x --free --format pool
+    # rather than a path into the image.
+    entrypoint: ["python", "/app/scripts/tournament.py"]
+    command: ["run", "${TOURNAMENT_SLUG:-pool-free}", "--interval", "${TOURNAMENT_INTERVAL:-30}"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/ahmedsaed/chessmark-web:latest}
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Baked into the client bundle at build time — it cannot be supplied at run time. This must
+        # be the URL a *browser* uses, not a container name, and it must match the API's single
+        # allowed CORS origin or every browser-side fetch is refused.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8010}
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+    restart: unless-stopped
+    # Clerk needs *both* keys and they arrive by different routes. The publishable key is baked
+    # into the client bundle at build time; `CLERK_SECRET_KEY` is a server-side secret that must
+    # never be, so it comes in at run time — and without it `clerkMiddleware()` throws, which
+    # takes every route with it and turns the whole site into a 500.
+    env_file: [.env]
+    environment:
+      # Server-rendered pages fetch from inside the network, where the public URL does not
+      # resolve. Not `NEXT_PUBLIC_`, so it never reaches a browser — which is what lets one
+      # constant in `lib/api.ts` serve both sides safely.
+      INTERNAL_API_URL: http://api:8000
+    ports:
+      - "${WEB_PORT:-3010}:3000"
+    depends_on:
+      api: {condition: service_healthy}

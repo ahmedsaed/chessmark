@@ -12,6 +12,7 @@ recovery logic, but never having depended on process memory in the first place.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
 import uuid
 from dataclasses import dataclass
@@ -22,14 +23,34 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from chessmark.bench.service import compute_ratings
+from chessmark.core.budget import FreeTierBudget
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import TournamentStatus
-from chessmark.db.models import Game, ModelRegistry, Tournament, TournamentGame
+from chessmark.db.models import (
+    Game,
+    ModelRegistry,
+    Tournament,
+    TournamentEntrant,
+    TournamentGame,
+)
 from chessmark.orchestration.match import Seat, create_match, start_match
 from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
 from chessmark.tournament import Form, Format, matchmake, round_robin, swiss_round
 
 log = logging.getLogger(__name__)
+
+
+def within_window(active_from: dt.time | None, active_until: dt.time | None, now: dt.time) -> bool:
+    """Whether the clock is inside an event's active hours.
+
+    Compared rather than subtracted so a window that wraps midnight works: 22:00 to 04:00 means
+    "late evening through the small hours", not an empty range.
+    """
+    if active_from is None or active_until is None:
+        return True
+    if active_from <= active_until:
+        return active_from <= now < active_until
+    return now >= active_from or now < active_until
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +62,9 @@ class Step:
     scheduled_round: int | None = None
     #: Models a pool admitted this tick, having appeared in the catalogue since the last one.
     admitted: tuple[str, ...] = ()
+    #: Why nothing started, when something otherwise would have — outside its hours, or out of
+    #: free-tier allowance. Reported so a quiet tick is explicable rather than mysterious.
+    holding: str = ""
     status: TournamentStatus = TournamentStatus.RUNNING
     detail: str = ""
 
@@ -54,6 +78,8 @@ async def advance(
     queue: TurnQueue,
     *,
     tournament_id: uuid.UUID,
+    free_tier: FreeTierBudget | None = None,
+    now: dt.datetime | None = None,
 ) -> Step:
     """Do one step: settle what finished, schedule what is next, start what fits.
 
@@ -103,6 +129,17 @@ async def advance(
                 settled=settled, status=TournamentStatus.FINISHED, detail="every round played"
             )
 
+        holding = await _holding(session, tournament, free_tier, now)
+        if holding:
+            await session.commit()
+            return Step(
+                settled=settled,
+                admitted=tuple(admitted),
+                scheduled_round=scheduled,
+                detail=holding,
+                holding=holding,
+            )
+
         started, jobs = await _start_games(session, queue, tournament)
 
         if tournament.status is TournamentStatus.PENDING and started:
@@ -119,6 +156,64 @@ async def advance(
     return Step(
         started=started, settled=settled, scheduled_round=scheduled, admitted=tuple(admitted)
     )
+
+
+async def _holding(
+    session: AsyncSession,
+    tournament: Tournament,
+    free_tier: FreeTierBudget | None,
+    now: dt.datetime | None,
+) -> str:
+    """Why no new game may start right now, or an empty string if one may.
+
+    Checked before starting rather than after, like every other bound here: a game begun outside
+    its window, or on an allowance that has run out, cannot be un-begun.
+    """
+    clock = (now or dt.datetime.now(dt.UTC)).time()
+    if not within_window(tournament.active_from, tournament.active_until, clock):
+        return (
+            f"outside its active hours "
+            f"({tournament.active_from:%H:%M}-{tournament.active_until:%H:%M} UTC)"
+        )
+
+    if tournament.max_games_per_day is not None:
+        since = (now or dt.datetime.now(dt.UTC)).date()
+        started_today = await session.scalar(
+            sa.select(sa.func.count(TournamentGame.id)).where(
+                TournamentGame.tournament_id == tournament.id,
+                TournamentGame.started_at >= since,
+            )
+        )
+        if int(started_today or 0) >= tournament.max_games_per_day:
+            return f"its daily cap of {tournament.max_games_per_day} games is reached"
+
+    # The free tier is limited by a request count nobody reports back to us, so the only way to
+    # stay under it is to count our own calls and stop early. Account-wide: every pool, every
+    # human game against a free model and every `make play` draw on the same allowance.
+    if (
+        free_tier is not None
+        and await _uses_free_models(session, tournament)
+        and await free_tier.tripped()
+    ):
+        used = await free_tier.used_today()
+        return f"the free-tier allowance is spent ({used} of {free_tier.usable} usable today)"
+
+    return ""
+
+
+async def _uses_free_models(session: AsyncSession, tournament: Tournament) -> bool:
+    """Whether any entrant is a free variant, and so draws on the shared daily allowance."""
+    found = await session.scalar(
+        sa.select(TournamentEntrant.id)
+        .join(ModelRegistry, ModelRegistry.id == TournamentEntrant.model_id)
+        .where(
+            TournamentEntrant.tournament_id == tournament.id,
+            TournamentEntrant.withdrawn.is_(False),
+            ModelRegistry.is_free.is_(True),
+        )
+        .limit(1)
+    )
+    return found is not None
 
 
 async def _settle_finished(session: AsyncSession, tournament: Tournament) -> int:

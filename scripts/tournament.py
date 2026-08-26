@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime as dt
 import sys
 from decimal import Decimal
 from pathlib import Path
@@ -36,6 +37,7 @@ sys.path.insert(0, str(API_ROOT / "src"))
 import sqlalchemy as sa  # noqa: E402
 from redis.asyncio import Redis  # noqa: E402
 
+from chessmark.core.budget import FreeTierBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db import tournaments as repo  # noqa: E402
 from chessmark.db.enums import GameStatus, TournamentStatus  # noqa: E402
@@ -48,6 +50,17 @@ from chessmark.tournament import FieldFilter, Format, TournamentConfig, standing
 
 DIM, BOLD, OFF = "\033[2m", "\033[1m", "\033[0m"
 AMBER, GREEN, RED = "\033[38;5;179m", "\033[38;5;108m", "\033[38;5;167m"
+
+
+def _time(value: str | None) -> dt.time | None:
+    """`HH:MM`, in UTC. The database stores UTC and the page renders local."""
+    if not value:
+        return None
+    try:
+        hour, _, minute = value.partition(":")
+        return dt.time(int(hour), int(minute or 0))
+    except ValueError as error:
+        raise SystemExit(f"could not read {value!r} as a UTC time like 06:00") from error
 
 
 def field_from(args: argparse.Namespace) -> FieldFilter:
@@ -123,6 +136,9 @@ async def cmd_create(args: argparse.Namespace) -> int:
         tournament = await repo.create_tournament(
             session, name=args.name, slug=args.slug, config=config, entrants=entrants
         )
+        tournament.active_from = _time(args.active_from)
+        tournament.active_until = _time(args.active_until)
+        tournament.max_games_per_day = args.max_games_per_day
         await session.commit()
         created = tournament.id
 
@@ -136,6 +152,10 @@ async def cmd_create(args: argparse.Namespace) -> int:
     print(f"  ranked      : {'yes' if config.is_ranked else 'no'}")
     print(f"  concurrency : {config.max_concurrent}")
     print(f"  budget      : {f'${config.max_usd}' if config.max_usd else 'uncapped'}")
+    if args.active_from and args.active_until:
+        print(f"  hours       : {args.active_from}-{args.active_until} UTC")
+    if args.max_games_per_day:
+        print(f"  daily games : {args.max_games_per_day}")
     print(f'\n{DIM}Start a worker, then: make tournament ARGS="run {args.slug}"{OFF}')
     return 0
 
@@ -153,6 +173,7 @@ async def cmd_run(args: argparse.Namespace) -> int:
     redis: Redis[Any] = Redis.from_url(str(settings.redis_url))
     queue = TurnQueue(redis)
     await queue.ensure_group()
+    free_tier = FreeTierBudget(redis)
     sessionmaker = get_sessionmaker()
 
     try:
@@ -162,16 +183,37 @@ async def cmd_run(args: argparse.Namespace) -> int:
 
         print(f"{BOLD}{name}{OFF} {DIM}{tournament_id}{OFF}")
         quiet = 0
+        paused_announced = False
 
         while True:
-            step = await advance(sessionmaker, queue, tournament_id=tournament_id)
+            step = await advance(
+                sessionmaker, queue, tournament_id=tournament_id, free_tier=free_tier
+            )
 
             if step.status is TournamentStatus.FINISHED:
                 print(f"{GREEN}finished{OFF} — {step.detail}")
                 return 0
             if step.status is TournamentStatus.PAUSED:
-                print(f"{AMBER}paused{OFF} — {step.detail}")
-                return 0
+                # Waited through rather than exited on. A paused event is temporary, and this is
+                # what a supervised container runs: exiting would have it restarted immediately,
+                # print the same line, and exit again — which is exactly what it did.
+                if not paused_announced:
+                    print(f"{AMBER}paused{OFF} — {step.detail}; waiting for a resume")
+                    paused_announced = True
+                if args.once:
+                    return 0
+                await asyncio.sleep(args.interval)
+                continue
+
+            paused_announced = False
+
+            if step.holding:
+                # Not idle and not an error: the event is deliberately waiting.
+                print(f"  {DIM}holding — {step.holding}{OFF}")
+                if args.once:
+                    return 0
+                await asyncio.sleep(args.interval)
+                continue
 
             if step.idle:
                 quiet += 1
@@ -362,6 +404,16 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--max-usd", type=float, help="the event's own ceiling")
     create.add_argument("--max-usd-per-game", type=float)
     create.add_argument("--max-plies", type=int, default=300)
+    create.add_argument(
+        "--active-from",
+        help="UTC time this event may start games, e.g. 06:00. Wraps midnight if later than --active-until",
+    )
+    create.add_argument("--active-until", help="UTC time it stops, e.g. 20:00")
+    create.add_argument(
+        "--max-games-per-day",
+        type=int,
+        help="how this event's share of the daily allowance is divided",
+    )
     create.add_argument("--unranked", action="store_true")
     add_field_options(create)
     create.set_defaults(run=cmd_create)

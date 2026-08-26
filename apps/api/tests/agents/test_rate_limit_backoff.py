@@ -182,3 +182,73 @@ async def test_the_gateway_gives_up_after_the_rate_limit_budget() -> None:
 
     assert caught.value.attempts == 5, "the rate-limit budget, not the ordinary one"
     assert caught.value.status_code == 429
+
+
+# ====================================================================== counting attempts
+
+
+async def test_every_attempt_is_counted_including_the_ones_that_failed() -> None:
+    """The whole basis of the free-tier guard.
+
+    OpenRouter charges a request allowance for attempts, not for successes, and a failed call
+    never reaches `llm_calls` — that row is written from a completion. So a count taken from the
+    database misses exactly the retries a rate limit produces, which is why this is counted in the
+    gateway instead. If it fired only on success the guard would be decorative.
+    """
+    counted: list[str] = []
+    attempts = 0
+
+    async def flaky(**_: object) -> dict[str, object]:
+        nonlocal attempts
+        attempts += 1
+        if attempts <= 2:
+            raise RateLimitedError()
+        return {
+            "id": "gen-1",
+            "model": "vendor/model:free",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+
+    async def record(model: str) -> None:
+        counted.append(model)
+
+    async def instant(_: float) -> None:
+        return None
+
+    gateway = LlmGateway(
+        completion_fn=flaky,
+        retry=RetryPolicy(jitter=0.0, rate_limit_attempts=8),
+        sleep_fn=instant,
+        on_attempt=record,
+    )
+
+    await gateway.complete(model="vendor/model:free", messages=[{"role": "user"}])
+
+    assert counted == ["vendor/model:free"] * 3, "two failures and the success all cost a request"
+
+
+async def test_attempts_are_counted_even_when_the_call_never_succeeds() -> None:
+    """A game abandoned to rate limits still spent the allowance getting there."""
+    counted: list[str] = []
+
+    async def always_limited(**_: object) -> dict[str, object]:
+        raise RateLimitedError()
+
+    async def record(model: str) -> None:
+        counted.append(model)
+
+    async def instant(_: float) -> None:
+        return None
+
+    gateway = LlmGateway(
+        completion_fn=always_limited,
+        retry=RetryPolicy(max_attempts=2, rate_limit_attempts=4, jitter=0.0),
+        sleep_fn=instant,
+        on_attempt=record,
+    )
+
+    with pytest.raises(LlmError):
+        await gateway.complete(model="vendor/model:free", messages=[{"role": "user"}])
+
+    assert len(counted) == 4, "every doomed attempt was still a request"

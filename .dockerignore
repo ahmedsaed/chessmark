@@ -1,0 +1,42 @@
+# **This is the only `.dockerignore` that is read.**
+#
+# Both images build with the repo root as their context, and Docker looks for `.dockerignore` at
+# the *context* root — not beside the Dockerfile. `apps/web/.dockerignore` and
+# `apps/api/.dockerignore` are inert, which is why the host's `node_modules` was reaching the web
+# image and colliding with the flat tree installed inside it: pnpm's store is symlinks, the image's
+# is real directories, and Docker cannot replace one with the other.
+
+.git/
+.github/
+
+# Node
+**/node_modules/
+**/.next/
+**/out/
+**/coverage/
+**/test-results/
+**/playwright-report/
+**/blob-report/
+apps/web/e2e/.auth/
+apps/web/e2e/.fixtures.json
+
+# Python
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/htmlcov/
+**/.coverage
+
+# Secrets and local state. `.env` is mounted at run time, never baked into an image.
+.env
+.env.*
+!.env.example
+**/.env.local
+
+# Docs and scratch
+*.md
+!apps/api/README.md
+*.png
