@@ -6,6 +6,19 @@
 # and no TLS** — the API and web ports are published for a reverse proxy managed outside this
 # file, so certificates, domains and redirects are not this stack's business.
 #
+# **A restart policy covers a crash, not an operator.** A process that exits — an unhandled
+# exception, an OOM — is restarted by `unless-stopped`; that is proven, because this file's own
+# tournament container exit-looped for exactly that reason before it learned to wait through a
+# pause. A container removed with `docker kill` is *not* restarted, by any policy including
+# `always`: Docker reads it as intent. So `make recovery-drill` tests what is actually true — that
+# losing a container costs no data and the stack comes back — rather than an auto-restart that
+# Docker deliberately does not perform.
+#
+# **`image:` alongside `build:` on purpose.** A server pulls the tag that CI published; a laptop
+# runs `up --build` and builds it locally under the same name. Without the tag there is nothing
+# for `docker compose pull` to fetch, and the deploy would have to build on the host — which is
+# slower, needs the toolchain there, and can produce an image nobody has tested.
+#
 # Four services, one backend image. The worker and the tournament runner are the API's own code
 # under different entrypoints: building them separately would give them three chances to drift
 # apart at exactly the point where they must not.
@@ -29,6 +42,7 @@ x-redis-url: &redis_url redis://redis:6379/0
 
 services:
   api:
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -53,6 +67,7 @@ services:
   # not also a schema change, and so a failed migration stops the deploy rather than crash-looping
   # a web server.
   migrate:
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -67,6 +82,7 @@ services:
   # The piece that has never had a home. Without it the board never moves, which is the most
   # confusing possible failure: the site is up, games exist, and nothing happens.
   worker:
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -87,6 +103,7 @@ services:
   # Ticks whichever event is named. A pool is *meant* to run indefinitely, which is precisely why
   # it cannot live in somebody's terminal.
   tournament:
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -105,6 +122,7 @@ services:
       redis: {condition: service_healthy}
 
   web:
+    image: ${WEB_IMAGE:-ghcr.io/ahmedsaed/chessmark-web:latest}
     build:
       context: .
       dockerfile: apps/web/Dockerfile

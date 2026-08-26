@@ -51,3 +51,6 @@ logs/
 # stray screenshots from browser-driven checks
 *.png
 !apps/web/public/**/*.png
+
+# Database dumps. Local operational state, and they contain real data.
+/backups/

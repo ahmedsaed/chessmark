@@ -69,6 +69,20 @@ resume: ## Reopen a game the harness stopped: make resume GAME=<id> USD=1.50
 	cd $(API) && uv run python ../../scripts/resume_game.py $(GAME) $(if $(USD),--max-usd $(USD),) $(if $(PLIES),--max-plies $(PLIES),)
 
 # Schedules; does not play. A worker must be running for the games to advance.
+# A backup nobody has restored is a hypothesis. `--verify` restores into a scratch database and
+# compares every table's row count with the source, then drops it.
+backup: ## Back the database up. ARGS=--verify restores it and compares; ARGS=--list shows them
+	cd $(API) && uv run python ../../scripts/backup.py $(ARGS)
+
+audit: ## Dependency audit, both halves. Fails on any known vulnerability
+	cd $(API) && uv export --frozen --no-dev --no-emit-project > /tmp/chessmark-requirements.txt \
+		&& uvx pip-audit --disable-pip -r /tmp/chessmark-requirements.txt
+	cd $(WEB) && pnpm audit --prod
+
+# Kills each container in turn and checks the stack comes back with its data intact (OPS-05).
+recovery-drill: ## Prove the stack survives losing any one container
+	./scripts/recovery_drill.sh
+
 tournament: ## Tournaments: field / create / run / standings. make tournament ARGS="field --free"
 	cd $(API) && uv run python ../../scripts/tournament.py $(ARGS)
 

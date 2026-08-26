@@ -121,6 +121,33 @@ And one command that had to change: the web build calls `node_modules/.bin/next`
 than `pnpm exec next`. `pnpm exec` re-verifies the install first and, finding a tree it did not
 create, tries to remove `node_modules` — which it refuses to do without a TTY.
 
+## Backups, audits and drills
+
+```
+make backup ARGS=--verify   # dump, restore into a scratch database, compare, drop it
+make audit                  # pip-audit over the production lockfile, plus pnpm audit
+make recovery-drill         # lose each container in turn, check nothing was lost
+```
+
+`--verify` compares **row counts per table**, not `pg_dump`'s exit code. The failure worth catching
+is a dump that runs happily for months and turns out to be missing a schema.
+
+The drill kills each container and brings it back. It does not test auto-restart, because no
+restart policy covers `docker kill` — Docker reads that as operator intent, and the same is true of
+`always`. Policies cover *crashes*, which is the case that actually happens.
+
+## Continuous deployment
+
+Push to `main` publishes `ghcr.io/<repo>-api` and `-web`, each tagged `:latest` and `:<sha>`. The
+deploy job then SSHes to `vars.DEPLOY_HOST`, pulls, runs `migrate` to completion, restarts, and
+waits on `/ready`. With no host configured it is **skipped rather than failed**.
+
+Set repository variables `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, `HEALTH_URL`,
+`NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and the secret `DEPLOY_SSH_KEY`.
+
+**The deploy half has never run.** It is written from the documented behaviour of the actions it
+uses and stays unproven until a server exists.
+
 ## First deploy
 
 1. `.env` at the repo root, with `DATABASE_URL`, `REDIS_URL`, Clerk keys and `OPENROUTER_API_KEY`.

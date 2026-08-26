@@ -1,0 +1,117 @@
+name: Deploy
+
+# Push to `main` publishes images, and deploys them if a host is configured (NFR-09).
+#
+# Split in two on purpose. Publishing needs nothing but the repository's own token, so it works
+# today and gives every commit on `main` a pullable, immutable image. Deploying needs a server,
+# so it is **skipped rather than failed** when the secrets are absent — the same bargain the
+# signed-in browser tests strike, and for the same reason: a step that depends on something
+# external should never be silently green.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # One deploy at a time, and never cancel one midway: a half-applied migration is worse than a
+  # queued deploy.
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  images:
+    name: Publish images
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # One image serves api, worker, tournament and migrate — they share every line of code, so
+      # publishing them separately would give them separate chances to drift.
+      - name: Backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}-api:latest
+            ${{ env.REGISTRY }}/${{ github.repository }}-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # The web image is **environment-specific**: `NEXT_PUBLIC_API_URL` is baked into the client
+      # bundle at build time and cannot be supplied at run time. An image built for one origin
+      # cannot serve another, which is why this reads a repository variable rather than a default.
+      - name: Web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: true
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}-web:latest
+            ${{ env.REGISTRY }}/${{ github.repository }}-web:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to the host
+    needs: images
+    runs-on: ubuntu-latest
+    # Skipped, not failed, when no host is configured. `vars` rather than `secrets` in the `if`
+    # because secrets are not readable in a job-level condition.
+    if: vars.DEPLOY_HOST != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy over SSH
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -m 600 /dev/null key
+          printf '%s' "$DEPLOY_KEY" > key
+          ssh-keyscan -H "$DEPLOY_HOST" >> known_hosts 2>/dev/null
+
+          # `migrate` runs to completion *before* anything is restarted, so a failed migration
+          # stops the deploy rather than crash-looping a web server against a schema it cannot use.
+          ssh -i key -o UserKnownHostsFile=known_hosts "$DEPLOY_USER@$DEPLOY_HOST" bash -euo pipefail <<'REMOTE'
+            cd "${DEPLOY_PATH:-/srv/chessmark}"
+            git fetch --all && git reset --hard origin/main
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm migrate
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans
+            docker image prune -f
+          REMOTE
+
+      - name: Wait for it to answer
+        env:
+          HEALTH_URL: ${{ vars.HEALTH_URL }}
+        run: |
+          # Readiness, not health: readiness covers the database and Redis, and a deploy that
+          # brought the app up against a broken datastore should not be reported as a success.
+          for _ in $(seq 1 30); do
+            curl -sf --max-time 10 "$HEALTH_URL" && exit 0
+            sleep 10
+          done
+          echo "the deployed stack never became ready" >&2
+          exit 1
