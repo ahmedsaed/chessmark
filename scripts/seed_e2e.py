@@ -38,8 +38,15 @@ from redis.asyncio import Redis  # noqa: E402
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.registry import sync_model_registry  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
+from chessmark.db import tournaments as repo  # noqa: E402
 from chessmark.db.enums import GameStatus  # noqa: E402
-from chessmark.db.models import Game, ModelEndpoint, ModelRegistry, Player  # noqa: E402
+from chessmark.db.models import (  # noqa: E402
+    Game,
+    ModelEndpoint,
+    ModelRegistry,
+    Player,
+    Tournament,
+)
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.orchestration import (  # noqa: E402
     Seat,
@@ -47,6 +54,12 @@ from chessmark.orchestration import (  # noqa: E402
     TurnWorker,
     create_match,
     start_match,
+)
+from chessmark.tournament import (  # noqa: E402
+    FieldFilter,
+    Format,
+    TournamentConfig,
+    round_robin,
 )
 
 #: Marks a seat as belonging to the suite. The white seat of a seeded game carries it, which is
@@ -191,11 +204,60 @@ async def play_scripted_game() -> str:
         await redis.aclose()
 
 
+#: A tournament for the browser suite to render. Four models, one round robin round, two results
+#: recorded — enough for a standings table, a schedule with more than one state, and the metrics
+#: row. No games are played: what the page is being tested on is how it *renders* an event.
+E2E_TOURNAMENT = "e2e-cup"
+
+
+async def ensure_tournament(session: Any) -> str | None:
+    """Create the suite's tournament if it is not already there. Returns its slug."""
+    existing = await session.scalar(
+        sa.select(Tournament.id).where(Tournament.slug == E2E_TOURNAMENT)
+    )
+    if existing:
+        return E2E_TOURNAMENT
+
+    config = TournamentConfig(
+        format=Format.ROUND_ROBIN,
+        is_ranked=False,
+        max_concurrent=1,
+        field=FieldFilter(limit=4),
+    )
+    entrants = await repo.resolve_field(session, config.field)
+    if len(entrants) < 2:
+        return None
+
+    tournament = await repo.create_tournament(
+        session,
+        name="E2E Cup",
+        slug=E2E_TOURNAMENT,
+        config=config,
+        entrants=entrants,
+    )
+    for games in round_robin(entrants):
+        await repo.record_round(session, tournament.id, games)
+
+    # Two settled pairings and one abandoned, so the page has every state to render except live.
+    pairings = await repo.unplayed(session, tournament.id)
+    for index, row in enumerate(pairings[:3]):
+        if index < 2:
+            row.white_score = 1.0 if index == 0 else 0.5
+        else:
+            row.abandoned_reason = "no provider could be reached"
+
+    await session.commit()
+    return E2E_TOURNAMENT
+
+
 async def main() -> int:
     sessionmaker = get_sessionmaker()
     try:
         async with sessionmaker() as session:
             models = await ensure_catalogue(session)
+
+        async with sessionmaker() as session:
+            tournament_slug = await ensure_tournament(session)
 
         async with sessionmaker() as session:
             game_id = await existing_replay_game(session)
@@ -217,6 +279,7 @@ async def main() -> int:
                 "result": str(game.result),
                 "plyCount": game.ply_count,
                 "models": models,
+                "tournament": tournament_slug,
             }
 
         print(json.dumps(fixtures, indent=2))

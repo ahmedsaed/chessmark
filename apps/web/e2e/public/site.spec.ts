@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { fixtures } from "../fixtures";
+
 /**
  * The shell and the public reading surface (Phases 7, 18, 20 — AUTH-02).
  *
@@ -15,7 +17,7 @@ test("every public page renders with the shell and no console errors", async ({ 
     if (message.type() === "error") errors.push(message.text());
   });
 
-  for (const path of ["/", "/about", "/leaderboard", "/models", "/play"]) {
+  for (const path of ["/", "/about", "/leaderboard", "/models", "/play", "/tournaments"]) {
     const response = await page.goto(path);
     expect(response?.status(), `${path} should not be an error page`).toBeLessThan(400);
 
@@ -81,6 +83,49 @@ test("a model page reaches the games behind its numbers", async ({ page }) => {
 
 test("an unknown model is a 404, not a crash", async ({ page }) => {
   const response = await page.goto("/models/nobody/nothing");
+
+  expect(response?.status()).toBe(404);
+});
+
+
+// ====================================================================== tournaments
+
+test("the tournaments index lists what has been run", async ({ page }) => {
+  await page.goto("/tournaments");
+
+  await expect(page.getByRole("heading", { level: 1, name: /tournaments/i })).toBeVisible();
+  await expect(page.getByRole("link", { name: /E2E Cup/ })).toBeVisible();
+});
+
+test("a tournament page shows its table, its schedule and what it cost", async ({ page }) => {
+  const slug = fixtures().tournament;
+  test.skip(!slug, "the catalogue was too small to field a tournament");
+
+  await page.goto(`/tournaments/${slug}`);
+
+  await expect(page.getByRole("heading", { level: 1, name: "E2E Cup" })).toBeVisible();
+
+  // The table. Four entrants, and the seeded results mean somebody is ahead of somebody.
+  const standings = page.getByRole("link", { name: /^[a-z0-9.\-]+/ });
+  await expect(page.getByText("Standings")).toBeVisible();
+  await expect(standings.first()).toBeVisible();
+
+  // The schedule, with more than one state represented — the seed settles two pairings and
+  // abandons a third precisely so this cannot pass against a page that renders only one.
+  await expect(page.getByText("Schedule")).toBeVisible();
+  await expect(page.getByText(/Round 1/)).toBeVisible();
+  await expect(page.getByTitle("played").first()).toBeVisible();
+  await expect(page.getByTitle("abandoned").first()).toBeVisible();
+
+  // Every figure on the page traces to the call log (invariant 4); these are the labels it
+  // prints them under.
+  for (const label of ["Cost", "Tokens", "Plies", "Decisive", "Illegal"]) {
+    await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
+  }
+});
+
+test("an unknown tournament is a 404, not a crash", async ({ page }) => {
+  const response = await page.goto("/tournaments/never-happened");
 
   expect(response?.status()).toBe(404);
 });
