@@ -79,6 +79,9 @@ def to_registry_entry(model: dict[str, Any]) -> dict[str, Any]:
         "supports_tools": "tools" in supported,
         "is_free": model_id.endswith(":free"),
         "enabled": True,
+        # Present for roughly 40% of the catalogue. See the column's note: it is the only
+        # open-weights signal OpenRouter offers, and it is evidence rather than a declaration.
+        "hugging_face_id": model.get("hugging_face_id") or None,
     }
 
 
@@ -240,6 +243,7 @@ async def sync_model_registry(
             "supports_reasoning": bool(entry.get("supports_reasoning", False)),
             "supports_tools": bool(entry.get("supports_tools", True)),
             "is_free": bool(entry.get("is_free", slug.endswith(":free"))),
+            "hugging_face_id": entry.get("hugging_face_id"),
             "enabled": bool(entry.get("enabled", True)),
             # Derived, and rewritten on every sync so a vendor's price change moves the tier with
             # it. `credit_cost_override` is deliberately absent from this dict: an administrator's

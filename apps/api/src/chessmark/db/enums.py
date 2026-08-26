@@ -91,3 +91,22 @@ class CreditReason(StrEnum):
     #: Given back for a game that never ran. Distinct from a grant because it undoes rather than
     #: decides — a refund is our mistake being corrected, not a decision about a person.
     REFUND = "refund"
+
+
+class TournamentStatus(StrEnum):
+    """Where a tournament is in its life.
+
+    `PAUSED` is deliberately distinct from `FINISHED`: a tournament stopped by its own budget or
+    by an operator still has rounds left to play, and saying so is what lets it be resumed rather
+    than restarted.
+    """
+
+    #: Created, field resolved, nothing enqueued yet.
+    PENDING = "pending"
+    RUNNING = "running"
+    #: Stopped with games left — budget reached, or halted by hand.
+    PAUSED = "paused"
+    #: Every round played.
+    FINISHED = "finished"
+    #: Abandoned. Its games stay readable; its standings are final but incomplete.
+    ABANDONED = "abandoned"

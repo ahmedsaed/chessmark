@@ -41,6 +41,7 @@ from chessmark.db.enums import (
     GameStatus,
     ModerationStatus,
     PlayerKind,
+    TournamentStatus,
     TurnStatus,
 )
 from chessmark.game import Colour, GameResult, Termination
@@ -91,6 +92,15 @@ class ModelRegistry(Base):
     supports_tools: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
     is_free: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     enabled: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
+
+    #: The model's HuggingFace repository, when OpenRouter names one.
+    #:
+    #: The closest thing to a fact about open weights that the catalogue actually carries — 169 of
+    #: 418 models declare it. A published repository is strong evidence the weights are open; its
+    #: absence is weaker evidence they are closed, since a vendor may simply not have linked one.
+    #: Stored rather than curated so an "open weights against closed" bracket is a query rather
+    #: than a hand-maintained list that rots.
+    hugging_face_id: Mapped[str | None] = mapped_column(sa.Text)
 
     #: What a seat against this model costs to start, in credits (ADR-0016). **Derived** from the
     #: model's own prices at catalogue sync, so it is rewritten on every `make seed-models`.
@@ -632,3 +642,141 @@ class UsageLedger(Base):
     updated_at: Mapped[dt.datetime] = updated_at()
 
     __table_args__ = (sa.UniqueConstraint("user_id", "day", name="uq_usage_ledger_user_id_day"),)
+
+
+class Tournament(Base):
+    """An automated event: a format, a field, and a set of bounds (BENCH-05).
+
+    The configuration is stored rather than derived so a standings page can say what it selected
+    and a finished event stays explicable after the registry has moved on — the same reason a game
+    records its prompt version and routing policy (BENCH-04). `field_filter` is the description of
+    who was invited; `tournament_entrants` is who actually turned up.
+    """
+
+    __tablename__ = "tournaments"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    name: Mapped[str] = mapped_column(sa.Text)
+    slug: Mapped[str] = mapped_column(sa.Text, unique=True, index=True)
+    status: Mapped[TournamentStatus] = mapped_column(
+        enum_column(TournamentStatus), default=TournamentStatus.PENDING, index=True
+    )
+
+    #: `round_robin` or `swiss`, and the knobs each needs.
+    format: Mapped[str] = mapped_column(sa.Text)
+    double: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    rounds: Mapped[int] = mapped_column(default=5, server_default="5")
+
+    #: Who was invited (`tournament.FieldFilter`), stored verbatim so the selection can be
+    #: explained and replayed even after the catalogue changes underneath it.
+    field_filter: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+
+    # --- bounds ---
+    #: How many games may be in flight. One is not a placeholder: free models come from a shared
+    #: pool that rate-limits, and the daily free allowance is consumed at about the rate a single
+    #: game generates it.
+    max_concurrent: Mapped[int] = mapped_column(default=1, server_default="1")
+    #: The event's own ceiling, independent of any user's quota — this is the harness spending on
+    #: its own initiative rather than a person spending theirs (ADR-0011).
+    max_usd: Mapped[Decimal | None] = mapped_column(USD)
+    max_plies_per_game: Mapped[int] = mapped_column(default=300, server_default="300")
+    max_usd_per_game: Mapped[Decimal | None] = mapped_column(USD)
+    is_ranked: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
+
+    total_cost_usd: Mapped[Decimal] = mapped_column(USD, default=Decimal(0), server_default="0")
+
+    created_at: Mapped[dt.datetime] = created_at()
+    started_at: Mapped[dt.datetime | None] = mapped_column()
+    ended_at: Mapped[dt.datetime | None] = mapped_column()
+
+    entrants: Mapped[list[TournamentEntrant]] = relationship(
+        back_populates="tournament", cascade="all, delete-orphan"
+    )
+    games: Mapped[list[TournamentGame]] = relationship(
+        back_populates="tournament", cascade="all, delete-orphan"
+    )
+
+
+class TournamentEntrant(Base):
+    """One contestant in the field.
+
+    `key` is the contestant identity the pure module pairs on — `(model, quantization)` rendered
+    as a string (ADR-0015), so the same weights served at two precisions enter separately, exactly
+    as they are rated separately.
+
+    `model_id` may be null if a model is later removed from the registry; the entrant row stays so
+    the games it played remain explicable.
+    """
+
+    __tablename__ = "tournament_entrants"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tournament_id: Mapped[uuid.UUID] = mapped_column(
+        _fk("tournaments.id", ondelete="CASCADE"), index=True
+    )
+    model_id: Mapped[uuid.UUID | None] = mapped_column(
+        _fk("model_registry.id", ondelete="SET NULL"), index=True
+    )
+
+    key: Mapped[str] = mapped_column(sa.Text)
+    model_slug: Mapped[str] = mapped_column(sa.Text)
+    quantization: Mapped[str | None] = mapped_column(sa.Text)
+    display_name: Mapped[str] = mapped_column(sa.Text)
+    seed: Mapped[int] = mapped_column(default=0, server_default="0")
+    withdrawn: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+
+    created_at: Mapped[dt.datetime] = created_at()
+
+    tournament: Mapped[Tournament] = relationship(back_populates="entrants")
+
+    __table_args__ = (
+        sa.UniqueConstraint("tournament_id", "key", name="uq_tournament_entrants_key"),
+    )
+
+
+class TournamentGame(Base):
+    """One scheduled pairing, and the game that played it.
+
+    The row exists **before** the game does. That is what makes a tournament resumable without
+    replaying anything: the schedule is written down, and restarting asks "which of these has no
+    finished game yet" rather than trusting a crashed process's memory. `game_id` stays null for a
+    bye, which is a scheduled point rather than a game.
+    """
+
+    __tablename__ = "tournament_games"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    tournament_id: Mapped[uuid.UUID] = mapped_column(
+        _fk("tournaments.id", ondelete="CASCADE"), index=True
+    )
+    game_id: Mapped[uuid.UUID | None] = mapped_column(
+        _fk("games.id", ondelete="SET NULL"), index=True
+    )
+
+    round_number: Mapped[int] = mapped_column(index=True)
+    white_key: Mapped[str] = mapped_column(sa.Text)
+    #: Null for a bye.
+    black_key: Mapped[str | None] = mapped_column(sa.Text)
+
+    #: White's score once known: 1, 0.5 or 0. Null while the game is unplayed or in flight.
+    white_score: Mapped[float | None] = mapped_column(sa.Float)
+    #: Why this pairing has no usable result — a provider that could not be reached, a model
+    #: withdrawn mid-event. Recorded rather than retried forever.
+    abandoned_reason: Mapped[str | None] = mapped_column(sa.Text)
+
+    created_at: Mapped[dt.datetime] = created_at()
+    started_at: Mapped[dt.datetime | None] = mapped_column()
+    ended_at: Mapped[dt.datetime | None] = mapped_column()
+
+    tournament: Mapped[Tournament] = relationship(back_populates="games")
+
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "tournament_id",
+            "round_number",
+            "white_key",
+            "black_key",
+            name="uq_tournament_games_pairing",
+        ),
+        sa.Index("ix_tournament_games_round", "tournament_id", "round_number"),
+    )
