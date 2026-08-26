@@ -22,6 +22,7 @@ from chessmark.db.models import (
     ModelEndpoint,
     ModelRegistry,
     Tournament,
+    TournamentEntrant,
     TournamentGame,
 )
 from chessmark.game import GameResult, Termination
@@ -430,3 +431,66 @@ async def test_a_swiss_event_plays_its_configured_rounds_and_stops(
     table = standings(entrants, results)
     assert all(s.played == 3 for s in table), "everyone plays every round"
     assert max(s.score for s in table) == 3.0, "an undefeated leader emerges"
+
+
+# ====================================================================== managing an event
+
+
+async def test_a_paused_event_stays_paused(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """Without this it restarts on the next tick — including one its own budget stopped, which
+    would then spend straight past the ceiling it had just halted at."""
+    tournament_id, _ = await make_tournament(
+        db, models=4, config=TournamentConfig(format=Format.ROUND_ROBIN, max_concurrent=1)
+    )
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    tournament = await db.get(Tournament, tournament_id)
+    assert tournament is not None
+    tournament.status = TournamentStatus.PAUSED
+    await db.commit()
+
+    before = len(await repo.unplayed(db, tournament_id))
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    assert step.status is TournamentStatus.PAUSED
+    assert step.started == 0, "a paused event must not start anything"
+    assert len(await repo.unplayed(db, tournament_id)) == before
+
+
+async def test_a_withdrawn_entrant_is_dropped_from_future_pairings(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """Their played games stand — those are real results — but nothing new is scheduled for them.
+
+    The unplayed pairings are abandoned rather than awarded: a walkover is not a finding about the
+    opponent, and handing out free points would distort the table more than a missing game does.
+    """
+    tournament_id, entrants = await make_tournament(
+        db, models=4, config=TournamentConfig(format=Format.ROUND_ROBIN, max_concurrent=1)
+    )
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    leaving = entrants[0].key
+    row = await db.scalar(
+        sa.select(TournamentEntrant).where(
+            TournamentEntrant.tournament_id == tournament_id, TournamentEntrant.key == leaving
+        )
+    )
+    assert row is not None
+    row.withdrawn = True
+    for pairing in await repo.unplayed(db, tournament_id):
+        if leaving in (pairing.white_key, pairing.black_key):
+            pairing.abandoned_reason = f"{leaving} withdrew"
+    await db.commit()
+    db.expire_all()
+
+    remaining = await repo.entrants_of(db, tournament_id)
+    assert leaving not in {e.key for e in remaining}
+
+    results = await repo.results_so_far(db, tournament_id)
+    assert all(leaving not in (r.white, r.black) for r in results), "no walkover was awarded"

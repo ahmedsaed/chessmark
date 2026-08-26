@@ -110,6 +110,40 @@ rather than marking it complete.
 
 ---
 
+## Tournaments (Phase 13)
+
+A tournament is a **format, a field, and a set of bounds**. The field is a `FieldFilter`, never a
+list, so every bracket is the same machinery: `--free`, `--open-weights`, `--provider anthropic`,
+`--max-credits 1` all resolve through one query.
+
+```
+make tournament ARGS="field --free"                 # who would enter; costs nothing
+make tournament ARGS="create --name '…' --slug x --free --format swiss --rounds 5"
+make worker                                          # exactly one; run schedules, it does not play
+make tournament ARGS="run x"                         # ticks until finished or paused
+make tournament ARGS="pause x --abort-live"          # stop; --abort-live frees queued jobs
+make tournament ARGS="resume x --max-usd 5"          # raise the ceiling that stopped it
+make tournament ARGS="withdraw x vendor/model:free"
+make tournament ARGS="standings x"
+```
+
+**The field is frozen when the event is created.** `resolve_field` runs once and writes
+`tournament_entrants`; a model registered afterwards does not join, and one that disappears
+upstream does not leave. That is deliberate — a round robin schedules its whole fixture list from
+the field, so admitting a latecomer would invalidate it, and a table whose rows played different
+opponents means different things per row. To change a running field, `withdraw` an entrant or
+create a second event.
+
+A model that becomes unplayable mid-event is **not** handled gracefully by itself: its games are
+attempted, fail at ply 0, and are marked *abandoned* — honest, but it wastes pairings. `withdraw`
+is the deliberate path, and it abandons the unplayed pairings rather than awarding them, because a
+walkover is not a finding about the opponent.
+
+`advance` holds no state between calls, which is the whole of the resume criterion: a restart asks
+the table what has been played rather than trusting a dead process. A **paused** event returns
+early from `advance` — without that it restarts on the next tick, including one its own budget
+stopped, which would then spend past the ceiling it had just halted at.
+
 ## Available MCP servers
 
 Configured in `.mcp.json` (project-scoped):

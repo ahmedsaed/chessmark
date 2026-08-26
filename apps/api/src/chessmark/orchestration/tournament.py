@@ -65,6 +65,12 @@ async def advance(
         if tournament.status in {TournamentStatus.FINISHED, TournamentStatus.ABANDONED}:
             return Step(status=tournament.status, detail="already over")
 
+        # A paused event stays paused until somebody says otherwise. Without this it would
+        # restart on the next tick — including one paused by its own budget, which would then
+        # spend straight past the ceiling it had just stopped at.
+        if tournament.status is TournamentStatus.PAUSED:
+            return Step(status=tournament.status, detail="paused; resume to continue")
+
         settled = await _settle_finished(session, tournament)
 
         over_budget = await _budget_reached(session, tournament)

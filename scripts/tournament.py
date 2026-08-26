@@ -38,9 +38,10 @@ from redis.asyncio import Redis  # noqa: E402
 
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db import tournaments as repo  # noqa: E402
-from chessmark.db.enums import TournamentStatus  # noqa: E402
-from chessmark.db.models import Tournament  # noqa: E402
+from chessmark.db.enums import GameStatus, TournamentStatus  # noqa: E402
+from chessmark.db.models import Game, Tournament, TournamentEntrant  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
+from chessmark.game import Termination  # noqa: E402
 from chessmark.orchestration import TurnQueue  # noqa: E402
 from chessmark.orchestration.tournament import advance  # noqa: E402
 from chessmark.tournament import FieldFilter, Format, TournamentConfig, standings  # noqa: E402
@@ -176,6 +177,111 @@ async def cmd_run(args: argparse.Namespace) -> int:
         await redis.aclose()
 
 
+async def cmd_pause(args: argparse.Namespace) -> int:
+    """Stop starting new games. Games already in flight are left alone unless asked otherwise."""
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        tournament = await resolve_slug(session, args.slug)
+        if tournament.status in {TournamentStatus.FINISHED, TournamentStatus.ABANDONED}:
+            print(f"{AMBER}{tournament.slug} is already over ({tournament.status}){OFF}")
+            return 0
+
+        tournament.status = TournamentStatus.PAUSED
+        aborted = 0
+        if args.abort_live:
+            # A game left running holds a job in the queue; a worker starting later would pick it
+            # up and play a round of a tournament nobody meant to continue.
+            for row in await repo.in_flight(session, tournament.id):
+                game = await session.get(Game, row.game_id)
+                if game is None:
+                    continue
+                game.status = GameStatus.ABORTED
+                game.termination = Termination.ABANDONED
+                game.termination_detail = "the tournament was paused"
+                game.ended_at = sa.func.now()
+                row.abandoned_reason = "the tournament was paused"
+                row.ended_at = sa.func.now()
+                aborted += 1
+        await session.commit()
+
+    print(
+        f"{AMBER}paused{OFF} {args.slug}" + (f" · aborted {aborted} in flight" if aborted else "")
+    )
+    print(f'{DIM}resume with: make tournament ARGS="resume {args.slug}"{OFF}')
+    return 0
+
+
+async def cmd_resume(args: argparse.Namespace) -> int:
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        tournament = await resolve_slug(session, args.slug)
+        if tournament.status in {TournamentStatus.FINISHED, TournamentStatus.ABANDONED}:
+            print(f"{RED}{args.slug} is over and cannot be resumed{OFF}", file=sys.stderr)
+            return 1
+        if args.max_usd is not None:
+            tournament.max_usd = Decimal(str(args.max_usd))
+        tournament.status = TournamentStatus.RUNNING
+        tournament.ended_at = None
+        await session.commit()
+
+    print(f"{GREEN}resumed{OFF} {args.slug}")
+    return 0
+
+
+async def cmd_abandon(args: argparse.Namespace) -> int:
+    """End an event for good. Its games stay readable; its table is final but incomplete."""
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        tournament = await resolve_slug(session, args.slug)
+        tournament.status = TournamentStatus.ABANDONED
+        tournament.ended_at = sa.func.now()
+        for row in await repo.in_flight(session, tournament.id):
+            game = await session.get(Game, row.game_id)
+            if game is not None:
+                game.status = GameStatus.ABORTED
+                game.termination = Termination.ABANDONED
+                game.termination_detail = "the tournament was abandoned"
+                game.ended_at = sa.func.now()
+            row.abandoned_reason = "the tournament was abandoned"
+            row.ended_at = sa.func.now()
+        await session.commit()
+
+    print(f"{RED}abandoned{OFF} {args.slug}")
+    return 0
+
+
+async def cmd_withdraw(args: argparse.Namespace) -> int:
+    """Take an entrant out of a running event.
+
+    Their played games stand — those are real results — and their unplayed pairings are marked
+    abandoned rather than awarded, because a walkover is not a finding about the opponent.
+    """
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        tournament = await resolve_slug(session, args.slug)
+        entrant = await session.scalar(
+            sa.select(TournamentEntrant).where(
+                TournamentEntrant.tournament_id == tournament.id,
+                TournamentEntrant.key == args.key,
+            )
+        )
+        if entrant is None:
+            print(f"{RED}{args.key} is not in {args.slug}{OFF}", file=sys.stderr)
+            return 1
+
+        entrant.withdrawn = True
+        dropped = 0
+        for row in await repo.unplayed(session, tournament.id):
+            if args.key in (row.white_key, row.black_key):
+                row.abandoned_reason = f"{args.key} withdrew"
+                row.ended_at = sa.func.now()
+                dropped += 1
+        await session.commit()
+
+    print(f"{AMBER}withdrew{OFF} {args.key} · {dropped} unplayed pairings dropped")
+    return 0
+
+
 async def cmd_standings(args: argparse.Namespace) -> int:
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
@@ -239,6 +345,29 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--interval", type=float, default=20.0, help="seconds between ticks")
     run.add_argument("--once", action="store_true", help="one step, then exit")
     run.set_defaults(run=cmd_run)
+
+    pause = sub.add_parser("pause", help="stop starting new games")
+    pause.add_argument("slug")
+    pause.add_argument(
+        "--abort-live",
+        action="store_true",
+        help="also abort games in flight, so a worker cannot pick them up later",
+    )
+    pause.set_defaults(run=cmd_pause)
+
+    resume = sub.add_parser("resume", help="start again after a pause")
+    resume.add_argument("slug")
+    resume.add_argument("--max-usd", type=float, help="raise the ceiling that stopped it")
+    resume.set_defaults(run=cmd_resume)
+
+    abandon = sub.add_parser("abandon", help="end an event for good")
+    abandon.add_argument("slug")
+    abandon.set_defaults(run=cmd_abandon)
+
+    withdraw = sub.add_parser("withdraw", help="take an entrant out of a running event")
+    withdraw.add_argument("slug")
+    withdraw.add_argument("key", help="the contestant key, e.g. vendor/model:free")
+    withdraw.set_defaults(run=cmd_withdraw)
 
     table = sub.add_parser("standings", help="print the table")
     table.add_argument("slug")
