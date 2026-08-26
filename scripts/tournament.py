@@ -183,6 +183,7 @@ async def cmd_run(args: argparse.Namespace) -> int:
 
         print(f"{BOLD}{name}{OFF} {DIM}{tournament_id}{OFF}")
         quiet = 0
+        paused_announced = False
 
         while True:
             step = await advance(
@@ -193,8 +194,18 @@ async def cmd_run(args: argparse.Namespace) -> int:
                 print(f"{GREEN}finished{OFF} — {step.detail}")
                 return 0
             if step.status is TournamentStatus.PAUSED:
-                print(f"{AMBER}paused{OFF} — {step.detail}")
-                return 0
+                # Waited through rather than exited on. A paused event is temporary, and this is
+                # what a supervised container runs: exiting would have it restarted immediately,
+                # print the same line, and exit again — which is exactly what it did.
+                if not paused_announced:
+                    print(f"{AMBER}paused{OFF} — {step.detail}; waiting for a resume")
+                    paused_announced = True
+                if args.once:
+                    return 0
+                await asyncio.sleep(args.interval)
+                continue
+
+            paused_announced = False
 
             if step.holding:
                 # Not idle and not an error: the event is deliberately waiting.

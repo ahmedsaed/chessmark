@@ -20,7 +20,23 @@ import type {
   TurnSummary,
 } from "@/lib/types";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+/**
+ * The API has **two addresses**, and conflating them is a container-only failure.
+ *
+ * `PUBLIC_API_URL` is what a *browser* must use. It is baked into the client bundle at build time
+ * and has to match the API's single allowed CORS origin.
+ *
+ * `SERVER_API_URL` is what *this process* uses when rendering on the server. In Docker those are
+ * not the same place: `http://localhost:8010` reaches the API from a person's browser and reaches
+ * the web container itself from inside the web container, so server-rendered pages fetched
+ * nothing and rendered their empty states — a site that looked up and had no data on it.
+ *
+ * `INTERNAL_API_URL` is deliberately not `NEXT_PUBLIC_`, so it exists only on the server; in the
+ * browser it is undefined and the public URL is used, which is what makes one constant safe to
+ * read from both sides.
+ */
+const PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+const API_URL = process.env.INTERNAL_API_URL ?? PUBLIC_API_URL;
 
 export class ApiError extends Error {
   constructor(
@@ -165,10 +181,12 @@ export function getTournament(slug: string): Promise<TournamentDetail | null> {
 
 /** The PGN download URL. Handed to the browser as a link so the file arrives with its filename. */
 export function pgnUrl(id: string): string {
-  return `${API_URL}/games/${id}/pgn`;
+  // Rendered as a link for the browser to follow, not fetched here.
+  return `${PUBLIC_API_URL}/games/${id}/pgn`;
 }
 
-export const apiUrl = API_URL;
+/** Handed to client components, which fetch from the browser — so always the public address. */
+export const apiUrl = PUBLIC_API_URL;
 
 // ---------------------------------------------------------------------- human play
 
