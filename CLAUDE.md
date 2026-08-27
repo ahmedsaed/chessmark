@@ -395,6 +395,15 @@ So: `GameStatus.PAUSED` with `resume_after`, one `game_paused` event, **no concu
 (model, endpoint) that the tournament matchmaker reads. Bounded at six pauses; a game with a human
 seat gets two of at most two minutes, because a person will not wait out a shared pool.
 
+**Two corrections to that, both from watching it run.** A *ceiling* on paused games — a pool holding
+once `max_concurrent + 2` were paused — stalled the pool completely and was reverted: the failure it
+guarded against is already prevented by the cooldown, which stops the matchmaker pairing a resting
+provider at all, so the pool holds when there is no game worth starting rather than when a number
+says so. And **resuming has to ask for the concurrency slot back**: `reconcile` is the one path that
+creates running games without going through `_start_games`, so it was the one path where
+`max_concurrent` went unchecked, and three games coming due at once would have played in parallel in
+a pool bounded to one.
+
 **The ply cap is a cost bound, not a rules bound** — threefold and the fifty-move rule are applied
 automatically, so games terminate on their own. 300 plies is the standard; 80 sat at the median of
 real games and let the harness decide half the results.

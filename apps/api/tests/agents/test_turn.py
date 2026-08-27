@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.scripted import plays, prose, raw_tool_call, says, scripted, step, tool_call
 from chessmark.agents.tools import MAX_MESSAGE_LENGTH, MAX_MESSAGES_PER_TURN
-from chessmark.agents.turn import TurnLimits
+from chessmark.agents.turn import MAX_NUDGES, TurnLimits
 from chessmark.db.enums import EventType, TurnStatus
 from chessmark.db.models import GameEvent, LlmCall, Message, Ply, ToolCall, Turn
 from chessmark.game import Colour, GameResult, Termination
@@ -277,22 +277,42 @@ async def test_a_non_string_move_is_rejected_with_the_legal_list(
 # ====================================================================== no tool call
 
 
-async def test_prose_is_nudged_once_then_forfeits(db: AsyncSession, table: Table) -> None:
-    """Exit criterion. AGENT-01 forbids reading a move out of prose."""
+async def test_prose_is_nudged_and_then_forfeits(db: AsyncSession, table: Table) -> None:
+    """Exit criterion. AGENT-01 forbids reading a move out of prose.
+
+    `MAX_NUDGES` nudges, then the next toolless reply ends the turn — the same shape as
+    `MAX_TRUNCATIONS`. It was one nudge, and one instruction turned out to be a thin basis for
+    recording a loss: the first prose reply is often a reasoning model narrating before it acts.
+    """
     result = await play_turn(
         db,
         table,
-        scripted(
-            prose("I'll play knight to f3."),
-            prose("As I said, knight f3."),
-        ),
+        scripted(*[prose(f"Still just talking ({n}).") for n in range(MAX_NUDGES + 1)]),
     )
 
     assert result.status is TurnStatus.FORFEITED
     assert result.outcome is not None
     assert result.outcome.termination is Termination.ERROR_FORFEIT
+    assert f"{MAX_NUDGES + 1} times in a row" in result.outcome.detail
     assert not result.moved
     assert table.referee.is_over
+
+
+async def test_prose_short_of_the_budget_does_not_forfeit(db: AsyncSession, table: Table) -> None:
+    """The point of raising it. A model that talks twice and then plays has not failed at
+    anything — it narrated, was told twice that prose does not move a piece, and moved."""
+    result = await play_turn(
+        db,
+        table,
+        scripted(
+            prose("Let me think about this."),
+            prose("Considering the Italian."),
+            step(tool_call("make_move", move="e4")),
+        ),
+    )
+
+    assert result.status is TurnStatus.COMPLETED
+    assert result.moved
 
 
 async def test_a_nudge_recovers_a_model_that_then_complies(db: AsyncSession, table: Table) -> None:

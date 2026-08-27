@@ -352,27 +352,6 @@ async def unplayed(
     return list(rows)
 
 
-async def paused(session: AsyncSession, tournament_id: uuid.UUID) -> list[TournamentGame]:
-    """Pairings whose game is paused, waiting on a provider.
-
-    Deliberately *not* part of `in_flight`: a paused game is not spending and must not hold a
-    concurrency slot (ADR-0017). It is counted here instead, so a pool can bound how many of them
-    it accumulates — without a bound, a hot provider is absorbed by opening more games rather than
-    by waiting.
-    """
-    rows = await session.scalars(
-        sa.select(TournamentGame)
-        .join(Game, Game.id == TournamentGame.game_id)
-        .where(
-            TournamentGame.tournament_id == tournament_id,
-            TournamentGame.white_score.is_(None),
-            TournamentGame.abandoned_reason.is_(None),
-            Game.status == GameStatus.PAUSED,
-        )
-    )
-    return list(rows)
-
-
 async def in_flight(session: AsyncSession, tournament_id: uuid.UUID) -> list[TournamentGame]:
     """Pairings whose game exists and has not finished — what bounds concurrency."""
     rows = await session.scalars(

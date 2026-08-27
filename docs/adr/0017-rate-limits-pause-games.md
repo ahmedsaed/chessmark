@@ -129,12 +129,8 @@ refusal naming it now rests the **whole provider**, and an entrant is skipped wh
 it has is on a resting provider. "Every" rather than "any": a paid model on nineteen providers is
 not unavailable because one rests, and the router would simply pick another.
 
-**Freeing the concurrency slot needs a ceiling.** Not counting paused games was right — they spend
-nothing — but with nothing bounding the inactive pile, a hot provider is absorbed by opening more
-games rather than by waiting. Four paused games stood against a concurrency of one, and each would
-wake, be refused, and eventually abandon: the original failure at a slower tempo. A pool now holds
-once `max_concurrent + 2` games are paused. The headroom exists so one unlucky pause does not stall
-a healthy pool, not so a provider outage can be spread across the field.
+**Freeing the concurrency slot needs a ceiling.** ~~A pool holds once `max_concurrent + 2` games
+are paused.~~ **Reverted the same day — see the amendment below.**
 
 **And one abandonment was never a rate limit at all.** A game died at ply 10 on a 400: *"maximum
 context length is 65536 tokens, however you requested about 65810"* — `liquid/lfm-2.5-2.6b:free`,
@@ -170,3 +166,27 @@ is destructive and the count is worth seeing first.
 Still open, and stated rather than fixed: `max_completion_tokens` is a flat 64,000 that nothing
 reconciles against the window of the endpoint serving it. The floor keeps models that cannot hold a
 game out of the field; it does not stop the harness asking a 128k model for 64k of output on ply 60.
+
+
+## Amendment — 2026-08-27, later: the paused-game ceiling was wrong
+
+It lasted a few hours. A pool bounded to one game had three paused games on provider cooldowns and
+the ceiling stopped it starting anything at all: **nothing running, nothing starting**, which is the
+exact opposite of what freeing the concurrency slot was for.
+
+The reasoning behind it was that a hot provider would otherwise be absorbed by opening game after
+game until the whole field was paused. That failure is real, and the ceiling was the wrong place to
+stop it — because it was already being stopped one layer down by something that actually knows which
+providers are hot. The cooldown means `matchmake` will not pair a model whose endpoint is resting, so
+a new game is only ever started against providers not known to be refusing. When every entrant is
+resting the matchmaker returns nothing and the pool holds *because there is no game worth starting*,
+which is a better reason than a number chosen in advance.
+
+Both halves of that were written in the same change, which is how the redundancy went unnoticed: the
+ceiling was designed against the failure the cooldown had just been built to prevent.
+
+Spend stays bounded regardless, which is the property that matters. Running games still count
+against `max_concurrent`, and a resumed game asks for its slot back before it plays — so the number
+of games *spending money* at any moment is unchanged. What is unbounded now is the number of games
+sitting paused costing nothing, and each of those resolves on its own: it resumes, or it is abandoned
+after six pauses.

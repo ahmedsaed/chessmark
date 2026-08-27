@@ -41,11 +41,6 @@ from chessmark.tournament import Form, Format, matchmake, round_robin, swiss_rou
 
 log = logging.getLogger(__name__)
 
-#: How many paused games a pool tolerates beyond its concurrency before it stops starting new ones.
-#: Small on purpose: the headroom exists so one unlucky pause does not stall an otherwise healthy
-#: pool, not so a hot provider can be absorbed by opening more games.
-MAX_PAUSED_HEADROOM = 2
-
 
 def within_window(active_from: dt.time | None, active_until: dt.time | None, now: dt.time) -> bool:
     """Whether the clock is inside an event's active hours.
@@ -367,21 +362,20 @@ async def _schedule_pool(
     if room <= 0:
         return None
 
-    # **A ceiling on paused games**, which `in_flight` deliberately does not count. Freeing the
-    # slot is right — a paused game is not spending — but with nothing bounding the *inactive* pile
-    # a broadly hot free tier turns every pairing into a paused game in turn: observed as four
-    # paused games against a concurrency of one, marching through the field. Each would then wake,
-    # be refused again, and eventually abandon, which is the original failure at a slower tempo.
+    # **No ceiling on paused games.** There was one, and it was wrong: it stalled the pool
+    # completely — three paused games against a concurrency of one meant nothing running and
+    # nothing being started, which is the opposite of what a pause is for. A paused game is not
+    # spending, so another game alongside it costs nothing that `max_concurrent` was protecting.
     #
-    # Holding instead means the pool waits for the provider rather than spending the field on it.
-    paused = await repo.paused(session, tournament.id)
-    if len(paused) >= tournament.max_concurrent + MAX_PAUSED_HEADROOM:
-        log.info(
-            "pool %s holding: %d games are paused, waiting for them rather than starting more",
-            tournament.slug,
-            len(paused),
-        )
-        return None
+    # The failure it was meant to prevent — a hot provider absorbed by opening game after game
+    # until the whole field is paused — is already prevented one layer down, and by something that
+    # actually knows: the provider cooldown means the matchmaker will not pair a model whose
+    # endpoint is resting, so a new game is only started against providers not known to be hot.
+    # When every entrant is resting, `matchmake` returns nothing and the pool holds *because there
+    # is no game worth starting*, which is a better reason than a number chosen in advance.
+    #
+    # Spend stays bounded either way: running games still count against `max_concurrent`, and a
+    # resumed game asks for its slot back before it plays.
 
     highest = await session.scalar(
         sa.select(sa.func.coalesce(sa.func.max(TournamentGame.round_number), 0)).where(
