@@ -59,6 +59,9 @@ backfill-identities: ## Ask Clerk for the email of users provisioned without one
 record-llm: ## Re-record LLM test fixtures (spends free-tier requests; never run by CI)
 	cd $(API) && uv run python ../../scripts/record_llm_fixtures.py
 
+models-free: ## List free models that are currently served, tool-capable and playable
+	cd $(API) && uv run python ../../scripts/models_free.py
+
 smoke-llm: ## One real end-to-end LLM call. Manual only — the test suite never calls a provider
 	cd $(API) && uv run python ../../scripts/smoke_llm.py
 

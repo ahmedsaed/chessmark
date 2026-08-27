@@ -31,7 +31,17 @@ pytestmark = [pytest.mark.llm, pytest.mark.integration]
 #: Override with CHESSMARK_LIVE_MODEL to try another. Not all free models can sustain a game:
 #: `openai/gpt-oss-20b:free` plays reasonable chess for a few plies, then spirals into tens of
 #: thousands of reasoning tokens per move and stops finishing turns.
-MODEL = os.environ.get("CHESSMARK_LIVE_MODEL", "nvidia/nemotron-nano-9b-v2:free")
+#:
+#: **A pinned free slug is a perishable thing.** The previous default,
+#: `nvidia/nemotron-nano-9b-v2:free`, was delisted and began answering
+#: `404 No endpoints found`, so this test failed at ply 0 on a stale pin rather than on anything
+#: it exists to measure — and it fails hard, because the ply assertion has no escape hatch by
+#: design. `poolside/laguna-s-2.1:free` replaces it because this repository already has evidence
+#: it can play: 22 plies of the Giuoco Piano, both sides castled, zero illegal attempts.
+#:
+#: When it goes the same way, the fix is one line here. `make models-free` lists what is currently
+#: served and tool-capable.
+MODEL = os.environ.get("CHESSMARK_LIVE_MODEL", "poolside/laguna-s-2.1:free")
 TARGET_PLIES = 10
 
 
@@ -97,9 +107,19 @@ async def test_a_real_model_plays_ten_plies(db: AsyncSession, requires_api_key: 
         # No escape hatch. A forfeit here is a real failure to meet the criterion, and letting
         # `referee.is_over` excuse it would make this test pass while proving nothing — a game
         # cannot legitimately end in a chess result inside ten plies.
+        # A failure at ply 1 is usually not a finding about the model. `MODEL` is a pinned free
+        # slug, and free slugs are withdrawn without notice — so name that possibility here rather
+        # than leaving the next person to read a 404 as a benchmark result.
+        hint = (
+            f"\n\n{MODEL} may no longer be served — a delisted free model answers "
+            "'404 No endpoints found'. Check `make models-free` and update MODEL, or set "
+            "CHESSMARK_LIVE_MODEL."
+            if ply == 1
+            else ""
+        )
         assert result.status is TurnStatus.COMPLETED, (
             f"ply {ply} ended as {result.status.value}: "
-            f"{result.error or (result.outcome.detail if result.outcome else '?')}"
+            f"{result.error or (result.outcome.detail if result.outcome else '?')}{hint}"
         )
         assert result.moved
 
