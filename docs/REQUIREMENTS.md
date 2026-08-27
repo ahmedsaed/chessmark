@@ -75,6 +75,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | LOG-05 | Large raw payloads are offloaded to object storage, referenced by key, keeping the primary tables fast. | S |
 | LOG-06 | A configurable retention policy for raw payloads. | C |
 | LOG-07 | Every stored artefact is reachable from the game replay UI. | M |
+| LOG-08 | Every call of one game carries one OpenRouter `session_id`, so a match is a single grouped conversation on the provider's own dashboard rather than a hundred unrelated generations. The unit is the game, not the turn and not the tournament, and the id is derived from `games.id` rather than stored. It doubles as OpenRouter's sticky routing key, which reinforces the per-seat endpoint pin (BENCH-04) from the provider's side. | S |
 
 ## 6. Benchmark & ratings (BENCH)
 

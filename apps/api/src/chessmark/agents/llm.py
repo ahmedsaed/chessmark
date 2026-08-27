@@ -255,6 +255,7 @@ class LlmGateway:
         tool_choice: str | dict[str, Any] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        session_id: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         # Every OpenRouter id already contains a slash (`nvidia/nemotron-nano-9b-v2:free`), so the
@@ -286,6 +287,20 @@ class LlmGateway:
         if self.routing is not None:
             extra_body["provider"] = self.routing.to_request()
 
+        # Groups every call of one game under one id in OpenRouter's own dashboard, so a whole
+        # match reads as a conversation there rather than as 120 unrelated generations. It rides
+        # in `extra_body` beside `usage` and `provider` because all three are **top-level
+        # OpenRouter body fields** that LiteLLM does not know by name and would otherwise drop.
+        #
+        # It is not only observability. OpenRouter treats `session_id` as its **sticky routing
+        # key** and activates stickiness on the first successful call, rather than waiting for a
+        # cache hit to reveal one — which is the provider-side version of what ADR-0015 pins by
+        # hand, after the router was caught switching endpoint mid-game. A ranked seat still pins
+        # `only=[provider]`, and an explicit constraint outranks a sticky preference, so the two
+        # agree; where a seat is *not* pinned this makes the endpoint hold of its own accord.
+        if session_id:
+            extra_body["session_id"] = session_id
+
         request["extra_body"] = extra_body
 
         if extra:
@@ -301,6 +316,7 @@ class LlmGateway:
         tool_choice: str | dict[str, Any] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        session_id: str | None = None,
         extra: dict[str, Any] | None = None,
         deadline_seconds: float | None = None,
     ) -> Completion:
@@ -317,6 +333,7 @@ class LlmGateway:
             tool_choice=tool_choice,
             temperature=temperature,
             max_tokens=max_tokens,
+            session_id=session_id,
             extra=extra,
         )
         redacted_request = redact(request)

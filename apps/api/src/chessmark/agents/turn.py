@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents import prompts, transcript
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.mangled import ProviderMangledError, mangled_tool_call
+from chessmark.agents.sessions import session_for_game
 from chessmark.agents.tools import ToolDispatcher, ToolName, TurnState, tool_schemas
 from chessmark.agents.types import Completion, LlmError, ToolInvocation
 from chessmark.db.enums import EventType, ModerationStatus, TurnStatus
@@ -261,6 +262,10 @@ class TurnRunner:
                 messages=messages,
                 tools=self._tools,
                 max_tokens=self.limits.max_completion_tokens,
+                # One session per game, both seats included, so a match reads as a conversation
+                # on OpenRouter's own dashboard rather than as a hundred unrelated generations.
+                # See `agents/sessions.py` for why the unit is the game and not the turn.
+                session_id=session_for_game(self.game.id),
                 deadline_seconds=max(remaining, 1.0),
             )
 

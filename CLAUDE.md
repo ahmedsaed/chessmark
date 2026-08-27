@@ -266,7 +266,13 @@ unit-testing fetch wrappers means mocking `fetch` and then asserting the mock.
 - `chessmark.agents` — the LLM gateway and the agent runtime. `LlmGateway` (injectable provider
   call, classified retries), response normalisation, exact `Decimal` costing, credential
   redaction, registry sync, the seven tools, the append-only transcript, and `TurnRunner`.
-  96% coverage.
+  96% coverage. Every call of one game carries **one OpenRouter `session_id`** — `game-<uuid>`,
+  derived and never stored — so a whole match is one grouped conversation on the provider's own
+  dashboard (LOG-08). It rides in `extra_body` beside `usage` and `provider`, because all three
+  are top-level OpenRouter body fields that LiteLLM does not know by name and would otherwise
+  drop. It is also OpenRouter's **sticky routing key**, which is why `agents/sessions.py` argues
+  at length for both seats sharing one id
+  ([ADR-0015 amendment](docs/adr/0015-quantization-as-identity-and-pinned-endpoints.md)).
 
 - `chessmark.orchestration` — the queue, the worker, the reconciler, and `human.py`. Redis Streams
   consumer group, `expected_ply` idempotency, one transaction per turn, ack-after-commit. A turn is
