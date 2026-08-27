@@ -14,6 +14,7 @@ import pytest
 from chessmark.agents.llm import LlmGateway, RetryPolicy, is_retryable
 from chessmark.agents.pricing import ModelPricing, PricingTable
 from chessmark.agents.redaction import REDACTED, contains_secret
+from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.types import CostSource, LlmError
 from tests.agents.cassettes import fails_with, load_all_cassettes, replay, responds_with
 
@@ -86,6 +87,38 @@ def test_usage_accounting_is_requested() -> None:
     """Asking OpenRouter to report its charge is what makes cost measured, not estimated."""
     request = gateway().build_request(model="a/b", messages=[])
     assert request["extra_body"] == {"usage": {"include": True}}
+
+
+def test_a_session_id_rides_in_extra_body() -> None:
+    """`session_id` is a **top-level OpenRouter body field**, and LiteLLM does not know it.
+
+    So it goes where `usage` and `provider` already go. A named kwarg would be dropped before the
+    request left the process, and the grouping would silently never happen.
+    """
+    request = gateway().build_request(model="a/b", messages=[], session_id="game-abc")
+    assert request["extra_body"]["session_id"] == "game-abc"
+    assert request["extra_body"]["usage"] == {"include": True}
+
+
+def test_no_session_id_means_no_field() -> None:
+    """Every non-game call — a smoke test, a fixture recording — sends none, and sending an empty
+    one would ask OpenRouter to make every unrelated generation the same session."""
+    assert "session_id" not in gateway().build_request(model="a/b", messages=[])["extra_body"]
+    assert (
+        "session_id"
+        not in gateway().build_request(model="a/b", messages=[], session_id="")["extra_body"]
+    )
+
+
+def test_a_session_id_does_not_displace_the_provider_pin() -> None:
+    """The two coexist, and must: OpenRouter reads `session_id` as a sticky routing *preference*
+    while `provider.only` is a constraint. A game that lost its pin would be free to change
+    endpoint mid-game, which is the exact failure ADR-0015 exists to prevent."""
+    routed = gateway(routing=ProviderRouting(only=("Baidu",), quantizations=()))
+    body = routed.build_request(model="a/b", messages=[], session_id="game-abc")["extra_body"]
+
+    assert body["session_id"] == "game-abc"
+    assert body["provider"]["only"] == ["Baidu"]
 
 
 def test_tools_imply_a_tool_choice() -> None:

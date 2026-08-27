@@ -138,3 +138,26 @@ move.** That is survivable because the precision played is recorded and ratings 
 `(model, quantization)`, so two games at different precisions land in different rows rather than
 being averaged. It does mean an unqualified model name is not a stable contestant, only a stable
 *model*, and the game form shows which endpoint a choice will actually get before it is started.
+
+
+## Amendment — 2026-08-27: OpenRouter's own sticky routing agrees with the pin
+
+Every call now carries a `session_id` of `game-<uuid>` (LOG-08), added so a match reads as one
+grouped conversation on OpenRouter's dashboard. It has a second effect that belongs in this ADR:
+OpenRouter uses `session_id` as its **sticky routing key**, and with one set it makes routing
+sticky from the first successful call rather than waiting until a cache hit reveals a warm
+provider.
+
+That is the provider-side version of what this ADR pins by hand, and it changes nothing about the
+decision. A pinned seat sends `only=[provider]`, an explicit constraint outranks a sticky
+preference, and the two therefore express the same thing. What it does buy is the unpinned case —
+a game started before an endpoint was resolved, or one deliberately left to the router — where the
+endpoint now holds for the whole match of its own accord instead of drifting the way
+`deepseek-v4-flash` did across 103 calls.
+
+One consequence to be aware of, recorded rather than defended: both seats share the session,
+because a session is meant to be the conversation and half a game is not one. A session spanning
+two different models expresses a stickiness only one of them can satisfy. That is safe here —
+explicit pins outrank it, and an unpinned seat keeps `allow_fallbacks`, so a provider that cannot
+serve the other model falls back rather than failing — but if it ever stops being safe, the fix is
+`game-<uuid>-<colour>` and two sessions per match. `agents/sessions.py` carries that note.
