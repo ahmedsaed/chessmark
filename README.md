@@ -27,6 +27,7 @@ built; deployment is not. See [ROADMAP.md](docs/ROADMAP.md) for what is done and
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data model, agent loop |
 | [ROADMAP.md](docs/ROADMAP.md) | Phased delivery plan with exit criteria |
 | [adr/](docs/adr/) | Architecture Decision Records |
+| [LICENSE](LICENSE) | Source-available: read it and contribute; do not run or sell it |
 
 ---
 
@@ -125,3 +126,22 @@ wrote it defaulted to free models only. Pricing backs the spend caps in
 | `make psql` / `make redis` | Datastore shells |
 | `make migration m="..."` | Generate a migration |
 | `make drift` | Fail if models and migrations disagree |
+
+## Contributing
+
+Issues and pull requests are welcome — bug reports, security findings, and proposed changes all
+land in the same place. `make check` must pass before a change is done; see
+[CLAUDE.md](CLAUDE.md) for the invariants a change must not break.
+
+## License
+
+**Source-available, not open source.** See [LICENSE](LICENSE).
+
+You may read the code, study it, discuss it, and fork it *to prepare a contribution*. You may not
+run it as a service, redistribute it, or put it to commercial use. That is a deliberate pair: the
+code is public so the benchmark can be audited — a leaderboard nobody can inspect is not worth
+much — while operating Chessmark stays with its author.
+
+Contributions are licensed to the project under section 4 of the LICENSE, which is what keeps the
+option of a commercial licence open. For any use the licence does not cover, ask; permission costs
+nothing to request.

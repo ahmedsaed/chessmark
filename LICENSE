@@ -1,0 +1,144 @@
+Chessmark Source-Available License, version 1.0
+
+Copyright (c) 2026 Ahmed Saed. All rights reserved.
+
+This software is SOURCE-AVAILABLE, NOT OPEN SOURCE. You are welcome to read it, learn
+from it, and help improve it. You may not run it as a service, redistribute it, or make
+money from it.
+
+If you want to do something this License does not permit, ask. Permission is often
+granted, and it costs nothing to request: open an issue, or contact the Licensor.
+
+
+1. DEFINITIONS
+
+   "Software" means the contents of this repository, including source code,
+   documentation, configuration, and any accompanying files.
+
+   "Licensor" means Ahmed Saed, the copyright holder.
+
+   "You" means any individual or legal entity exercising the permissions granted here.
+
+   "Contribution" means any change to the Software that You submit to the Licensor for
+   possible inclusion in it — a pull request, a patch, or a suggested edit.
+
+   "Commercial Use" means any use directed toward commercial advantage or monetary
+   compensation, whether direct or indirect. This includes, without limitation, use
+   within a business, use in or alongside a paid product or service, use in advertising
+   or promotion, and offering the Software or any part of it to third parties whether or
+   not a fee is charged.
+
+
+2. WHAT YOU MAY DO
+
+   Subject to Section 3 and to the conditions of this License, the Licensor grants You a
+   worldwide, royalty-free, non-exclusive, non-transferable, revocable licence to:
+
+   (a) VIEW AND STUDY the Software — read it, reference it, quote short excerpts of it
+       with attribution, and discuss it publicly;
+
+   (b) REPORT AND DISCUSS — open issues, report defects and security findings, and
+       propose changes;
+
+   (c) CONTRIBUTE — copy the Software, including by using a source-control fork, modify
+       Your copy, and run it locally, BUT ONLY to the extent reasonably necessary to
+       prepare, test, and submit a Contribution.
+
+   The permission in 2(c) is bounded by its purpose. A copy made under it is a working
+   copy for contributing, not a grant to use the Software for anything else, and it ends
+   as described in Section 6.
+
+
+3. WHAT YOU MAY NOT DO
+
+   Except as Section 2 expressly permits, and except where a right cannot lawfully be
+   restricted, You may NOT:
+
+   (a) USE OR OPERATE the Software, in production or otherwise — including deploying it,
+       hosting it, running it as or within a service, or making its functionality
+       available to any third party;
+
+   (b) put the Software to any COMMERCIAL USE;
+
+   (c) DISTRIBUTE, publish, sublicense, sell, rent, or otherwise make available the
+       Software or any copy or portion of it, including in a competing or derivative
+       product;
+
+   (d) create DERIVATIVE WORKS of the Software, other than a Contribution under 2(c);
+
+   (e) remove, obscure, or alter any copyright, licence, or attribution notice;
+
+   (f) use the name "Chessmark", the Licensor's name, or any associated branding to
+       endorse, promote, or identify any product or service, except to refer accurately
+       to this project.
+
+   A NOTE ON FORKS. This repository is public, and the platform hosting it lets any user
+   create a fork; the Licensor cannot and does not attempt to disable that mechanism.
+   Pressing that button does not enlarge the permissions granted here. What You may do
+   with a copy — however it was made — is governed entirely by Sections 2 and 3, and a
+   fork used for anything beyond preparing a Contribution infringes the Licensor's
+   copyright.
+
+
+4. CONTRIBUTIONS
+
+   (a) By submitting a Contribution, You grant the Licensor a perpetual, worldwide,
+       royalty-free, irrevocable, sublicensable licence to use, reproduce, modify,
+       distribute, publicly perform and display, and commercially exploit that
+       Contribution, in this project or any other, under this License or any other terms
+       the Licensor chooses, including a commercial or proprietary licence.
+
+   (b) You retain copyright in Your Contribution. Nothing here transfers ownership.
+
+   (c) You confirm that the Contribution is Your original work, or that You otherwise
+       have the right to grant the licence in 4(a), and that it is not subject to terms
+       that would conflict with this License.
+
+   (d) The Licensor is under no obligation to accept, merge, or respond to any
+       Contribution.
+
+
+5. RESERVATION OF RIGHTS
+
+   All rights not expressly granted are reserved. No rights are granted by implication,
+   estoppel, or otherwise. No patent licence is granted under this License. Nothing here
+   grants any right in the Licensor's trademarks or service marks.
+
+
+6. TERM AND TERMINATION
+
+   This License applies for as long as You exercise any permission under it, and
+   terminates automatically and immediately if You breach Section 3. The Licensor may
+   also revoke it at any time by written notice.
+
+   On termination You must stop exercising the permissions in Section 2 and destroy any
+   copies made under 2(c). Section 4(a) survives termination for Contributions already
+   submitted; so do Sections 5, 7, and 8.
+
+
+7. NO WARRANTY
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+   INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+   PARTICULAR PURPOSE, TITLE, AND NON-INFRINGEMENT.
+
+
+8. LIMITATION OF LIABILITY
+
+   TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE LICENSOR BE
+   LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
+   TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR ITS
+   USE OR OTHER DEALINGS.
+
+
+9. SEVERABILITY
+
+   If any provision of this License is held unenforceable, it shall be modified only to
+   the minimum extent necessary to make it enforceable, and the remainder shall stay in
+   full force.
+
+
+10. PERMISSION BEYOND THIS LICENSE
+
+   For any use this License does not permit — running an instance, commercial use, or a
+   redistributable copy — contact the Licensor to discuss separate terms.
