@@ -47,6 +47,18 @@ log = logging.getLogger(__name__)
 #: model that cannot act in three attempts, having been told each time, is genuinely stuck.
 MAX_TRUNCATIONS = 3
 
+#: How many times a model may reply without calling a tool before forfeiting the turn (AGENT-05).
+#:
+#: Was one. A single nudge cost two real games — `nemotron-3-nano-omni-30b-a3b-reasoning:free`
+#: forfeited twice, both times having answered in prose — and one instruction is a thin basis for
+#: recording a loss against a model, because the first prose reply is often a reasoning model
+#: narrating before it acts rather than declining to act at all.
+#:
+#: Three, and counted the same way `MAX_TRUNCATIONS` is: three nudges are sent, and the fourth
+#: toolless reply in one turn ends it. A model that has been told four times, in the same turn,
+#: that prose does not move a piece is not going to move one.
+MAX_NUDGES = 3
+
 
 @dataclass(frozen=True, slots=True)
 class TurnLimits:
@@ -206,7 +218,7 @@ class TurnRunner:
         self._tools = tool_schemas(trash_talk_enabled=game.trash_talk_enabled)
         self._llm_sequence = 0
         self._tool_sequence = 0
-        self._nudged = False
+        self._nudges = 0
         #: The prompt size the provider last reported. Exact where an estimate would do, and the
         #: reason compaction fires on measurement rather than on a per-ply guess.
         self._prompt_tokens = 0
@@ -619,16 +631,17 @@ class TurnRunner:
         return True
 
     async def _nudge(self, turn: Turn, result: TurnResult) -> bool:
-        """Tell a silent model to use its tools. Exactly one of these per turn (AGENT-05)."""
-        if self._nudged:
+        """Tell a silent model to use its tools. Up to `MAX_NUDGES` per turn (AGENT-05)."""
+        self._nudges += 1
+        if self._nudges > MAX_NUDGES:
             result.status = TurnStatus.FORFEITED
             result.outcome = self._forfeit(
                 Termination.ERROR_FORFEIT,
-                f"{self.colour.value.capitalize()} replied without calling a tool twice in a row.",
+                f"{self.colour.value.capitalize()} replied without calling a tool "
+                f"{self._nudges} times in a row.",
             )
             return False
 
-        self._nudged = True
         await transcript.append_message(
             self.session,
             player_id=self.player.id,

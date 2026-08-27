@@ -26,7 +26,7 @@ from chessmark.db.models import (
     TournamentGame,
 )
 from chessmark.game import GameResult, Termination
-from chessmark.orchestration.tournament import MAX_PAUSED_HEADROOM, advance
+from chessmark.orchestration.tournament import advance
 from chessmark.tournament import FieldFilter, Format, TournamentConfig, standings
 
 pytestmark = pytest.mark.integration
@@ -696,15 +696,20 @@ async def test_without_a_cooldown_the_pool_behaves_as_it_always_did(
     assert step.started == 1
 
 
-async def test_a_pool_holds_rather_than_piling_up_paused_games(
+async def test_a_pool_starts_another_game_while_others_are_paused(
     db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
 ) -> None:
-    """Freeing the slot is right; freeing it without limit is not.
+    """A paused game must not stall the pool, and for a while it did.
 
-    A paused game does not spend, so it must not hold concurrency — but with nothing bounding the
-    inactive pile, a broadly hot free tier turns every pairing into a paused game in turn. Observed
-    on prod: four paused games against a concurrency of one, marching through the field. Each would
-    then wake, be refused again, and eventually abandon — the original failure at a slower tempo.
+    There used to be a ceiling here — a pool stopped starting games once `max_concurrent + 2` were
+    paused — on the reasoning that a hot provider would otherwise be absorbed by opening game after
+    game. It stalled the pool completely instead: three paused games against a concurrency of one
+    meant nothing running and nothing starting, which is the opposite of what freeing the slot was
+    for.
+
+    The failure it guarded against is handled one layer down by something that actually knows which
+    providers are hot — the cooldown, which stops the matchmaker pairing them at all. So the pool
+    holds when there is no game worth starting, rather than when a number says so.
     """
     tournament_id, _ = await make_tournament(
         db,
@@ -713,14 +718,13 @@ async def test_a_pool_holds_rather_than_piling_up_paused_games(
     )
 
     started: list[uuid.UUID] = []
-    for _ in range(MAX_PAUSED_HEADROOM + 3):
+    for _ in range(4):
         await advance(sessionmaker, queue, tournament_id=tournament_id)
         db.expire_all()
 
         rows = await repo.in_flight(db, tournament_id)
         if not rows:
             break
-        # Pause whatever just started, as a rate-limited provider would.
         for row in rows:
             paused_game = await db.get(Game, row.game_id)
             assert paused_game is not None
@@ -729,9 +733,9 @@ async def test_a_pool_holds_rather_than_piling_up_paused_games(
             started.append(row.game_id)
         await db.commit()
 
-    assert len(started) == 1 + MAX_PAUSED_HEADROOM, (
-        f"the pool opened {len(started)} games while they piled up paused; it should hold at "
-        f"concurrency + {MAX_PAUSED_HEADROOM}"
+    assert len(started) == 4, (
+        f"the pool started {len(started)} games while the others sat paused; a paused game is not "
+        "spending and must not hold the bound"
     )
 
 
