@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+#
+# chessmark — one entry point for running the containerised stack.
+#
+# `make` covers development on a machine with the toolchain installed. This covers a *server*,
+# where the only thing available is Docker: every command here runs inside a container, so it needs
+# no Python, no uv, no node, and no knowledge of which compose files to combine.
+#
+#     ./chessmark help
+#     ./chessmark help <command>
+#
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.prod.yml)
+API=(python)
+
+DIM=$'\033[2m'; BOLD=$'\033[1m'; OFF=$'\033[0m'
+RED=$'\033[31m'; GREEN=$'\033[32m'; AMBER=$'\033[33m'
+
+die() { printf '%s%s%s\n' "$RED" "$*" "$OFF" >&2; exit 1; }
+say() { printf '%s%s%s\n' "$DIM" "$*" "$OFF"; }
+
+# psql and pg_dump read the credentials from inside the container, so this works whatever `.env`
+# set POSTGRES_USER and POSTGRES_DB to — and there is no second copy of them to drift.
+in_postgres() { "${COMPOSE[@]}" exec -T postgres sh -c "$1"; }
+api_script()  { "${COMPOSE[@]}" run --rm api "${API[@]}" "/app/scripts/$1" "${@:2}"; }
+
+# ---------------------------------------------------------------------------- the stack
+
+cmd_up() { # start everything (datastores, api, web, worker, tournament)
+  "${COMPOSE[@]}" up -d --remove-orphans "$@"
+  cmd_status
+}
+
+cmd_down() { # stop everything, leaving the data volumes alone
+  "${COMPOSE[@]}" down "$@"
+}
+
+cmd_deploy() { # pull the published images, migrate, then restart — the whole deploy
+  say "pulling…";        "${COMPOSE[@]}" pull
+  say "migrating…";      "${COMPOSE[@]}" run --rm migrate
+  say "restarting…";     "${COMPOSE[@]}" up -d --remove-orphans api web worker tournament
+  cmd_ready
+}
+
+cmd_status() { # what is running, and whether the API is ready
+  "${COMPOSE[@]}" ps --format 'table {{.Service}}\t{{.Status}}'
+  printf '\n'
+  cmd_ready || true
+}
+
+cmd_ready() { # ask the API whether it can reach Postgres and Redis
+  local url="${HEALTH_URL:-http://localhost:${API_PORT:-8010}/ready}"
+  if out=$(curl -sf --max-time 10 "$url"); then
+    printf '%sready%s %s\n' "$GREEN" "$OFF" "$out"
+  else
+    printf '%snot ready%s — %s did not answer\n' "$RED" "$OFF" "$url"
+    return 1
+  fi
+}
+
+cmd_logs() { # tail a service's log:  ./chessmark logs worker
+  "${COMPOSE[@]}" logs -f --tail="${LINES:-100}" "$@"
+}
+
+cmd_restart() { # recreate a service. Use this, not `start`, after a port clash
+  [ $# -gt 0 ] || die "which service? e.g. ./chessmark restart api"
+  # `--force-recreate`, because a container that failed to bind its port once can come back
+  # running-but-unpublished: healthy inside, unreachable outside, and `docker port` empty.
+  "${COMPOSE[@]}" up -d --force-recreate "$@"
+}
+
+# ---------------------------------------------------------------------------- the catalogue
+
+cmd_catalogue() { # refresh models and endpoints from OpenRouter (OPS-09)
+  api_script refresh_catalogue.py "$@"
+}
+
+cmd_endpoints() { # refresh only which providers serve each model, and at what precision
+  api_script refresh_endpoints.py "$@"
+}
+
+cmd_models() { # list free models that are currently served, tool-capable and playable
+  api_script models_free.py "$@"
+}
+
+cmd_prune() { # report models that cannot finish a game; --apply to disable them and drop their games
+  api_script prune_registry.py "$@"
+}
+
+# ---------------------------------------------------------------------------- tournaments
+
+cmd_tournament() { # any tournament subcommand: field / create / run / pause / standings / withdraw
+  "${COMPOSE[@]}" run --rm tournament "$@"
+}
+
+cmd_standings() { # the table for one event:  ./chessmark standings pool-free
+  [ $# -gt 0 ] || die "which event? e.g. ./chessmark standings pool-free"
+  cmd_tournament standings "$@"
+}
+
+# ---------------------------------------------------------------------------- the database
+
+cmd_psql() { # an interactive psql shell
+  "${COMPOSE[@]}" exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+}
+
+cmd_sql() { # run SQL from a file or stdin:  ./chessmark sql < cleanup.sql
+  # ON_ERROR_STOP so a failed statement aborts the script rather than committing half of it.
+  in_postgres 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1'
+}
+
+cmd_backup() { # dump the database, gzipped, to ./backups/
+  mkdir -p backups
+  local at file
+  at=$(date -u +%Y%m%dT%H%M%SZ)
+  file="backups/chessmark-$at.sql.gz"
+  in_postgres 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$file"
+  # A dump that ran happily and wrote nothing is the failure worth catching.
+  [ -s "$file" ] || die "the dump is empty — $file"
+  printf '%s%s%s  %s\n' "$GREEN" "$file" "$OFF" "$(du -h "$file" | cut -f1)"
+}
+
+cmd_migrate() { # apply migrations, without restarting anything else
+  "${COMPOSE[@]}" run --rm migrate
+}
+
+# ---------------------------------------------------------------------------- help
+
+declare -A EXAMPLES=(
+  [deploy]='./chessmark deploy                      # pull, migrate, restart, check /ready'
+  [up]='./chessmark up
+./chessmark up worker                  # just one service'
+  [logs]='./chessmark logs worker
+LINES=500 ./chessmark logs tournament'
+  [restart]='./chessmark restart api                 # after a port clash, or to pick up a new image'
+  [catalogue]='./chessmark catalogue                   # models + endpoints, honouring the context floor'
+  [prune]='./chessmark prune                       # report only
+./chessmark prune --apply               # disable them and remove their games
+./chessmark prune --apply --keep-finished'
+  [tournament]='./chessmark tournament field --free
+./chessmark tournament create --name "Free Models" --slug pool-free --free --format pool
+./chessmark tournament run pool-free --interval 30
+./chessmark tournament pause pool-free --abort-live
+./chessmark tournament withdraw pool-free vendor/model:free'
+  [standings]='./chessmark standings pool-free'
+  [psql]='./chessmark psql'
+  [sql]='./chessmark sql < cleanup.sql
+echo "select count(*) from games;" | ./chessmark sql'
+  [backup]='./chessmark backup                      # backups/chessmark-<timestamp>.sql.gz'
+  [models]='./chessmark models                      # what a free pool would actually draw from'
+)
+
+cmd_help() {
+  if [ $# -gt 0 ]; then
+    local name="$1"
+    declare -F "cmd_$name" >/dev/null || die "no command '$name'. Try ./chessmark help"
+    printf '%s%s%s — %s\n' "$BOLD" "$name" "$OFF" "$(describe "$name")"
+    if [ -n "${EXAMPLES[$name]:-}" ]; then
+      printf '\n%sExamples%s\n' "$DIM" "$OFF"
+      printf '%s\n' "${EXAMPLES[$name]}" | sed 's/^/  /'
+    fi
+    return 0
+  fi
+
+  cat <<EOF
+${BOLD}chessmark${OFF} — running the stack without a toolchain
+
+  Every command runs inside a container. ${DIM}\`make\` is for a development machine; this is for a
+  server, where Docker is all there is.${OFF}
+
+${AMBER}the stack${OFF}
+$(row up)
+$(row down)
+$(row deploy)
+$(row status)
+$(row ready)
+$(row logs)
+$(row restart)
+
+${AMBER}the catalogue${OFF}
+$(row catalogue)
+$(row endpoints)
+$(row models)
+$(row prune)
+
+${AMBER}tournaments${OFF}
+$(row tournament)
+$(row standings)
+
+${AMBER}the database${OFF}
+$(row psql)
+$(row sql)
+$(row backup)
+$(row migrate)
+
+${DIM}./chessmark help <command>  for examples${OFF}
+EOF
+}
+
+# The one-line description is the comment on the function, so it cannot drift from the code.
+describe() { sed -n "s/^cmd_$1() { # \(.*\)$/\1/p" "${BASH_SOURCE[0]}" | head -1; }
+row() { printf '  %-12s %s\n' "$1" "$(describe "$1")"; }
+
+# ---------------------------------------------------------------------------- dispatch
+
+main() {
+  local name="${1:-help}"
+  shift || true
+  if declare -F "cmd_$name" >/dev/null; then
+    "cmd_$name" "$@"
+  else
+    printf '%sno command %s%s\n\n' "$RED" "'$name'" "$OFF" >&2
+    cmd_help
+    exit 1
+  fi
+}
+
+main "$@"

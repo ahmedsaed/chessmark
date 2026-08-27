@@ -8,8 +8,13 @@ import { Chess } from "chess.js";
  * happens to a move that will not replay. A hook needs a DOM to test; these are functions.
  */
 
-/** How long one ply stays on screen. Slow enough to read a move, quick enough to feel alive. */
-export const PLY_INTERVAL_MS = 750;
+/** How long one ply stays on screen.
+ *
+ * 1.5s, doubled from 750ms: three boards each changing every three quarters of a second read as
+ * flicker rather than as chess, and a visitor cannot follow a move they only see for that long.
+ * The animation is unchanged, so a piece still slides in 280ms and then rests.
+ */
+export const PLY_INTERVAL_MS = 1_500;
 
 /** Piece slide. Must stay under `PLY_INTERVAL_MS` or moves queue up behind the animation. */
 export const PLY_ANIMATION_MS = 280;

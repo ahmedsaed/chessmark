@@ -26,7 +26,7 @@ from chessmark.db.enums import EventType, GameStatus, PlayerKind
 from chessmark.db.models import Game, GameEvent, Player
 from chessmark.game import Termination
 from chessmark.orchestration.reconciler import resume
-from chessmark.orchestration.worker import HUMAN_MAX_PAUSE_SECONDS, MAX_PAUSES, PAUSED
+from chessmark.orchestration.worker import HUMAN_MAX_PAUSE_SECONDS, PAUSE_WINDOW, PAUSED
 from tests.support import Fixture
 
 pytestmark = pytest.mark.integration
@@ -204,38 +204,41 @@ class TestTheCooldown:
 
 
 class TestPatienceRunsOut:
-    async def test_a_game_paused_too_often_is_abandoned(
+    async def test_a_game_still_stuck_after_the_window_is_abandoned(
         self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
     ) -> None:
         """A permanently dead endpoint must not leave a game open forever. Abandoning is the honest
         end: it says the harness gave up, and it keeps the game out of the ratings rather than
         inventing a loss for a model that never got to play.
 
-        Driven through the real pause/resume cycle rather than by planting `game_paused` rows,
-        because the count is read from the event log and `append_event` allocates `seq` from a
-        counter on the game — rows inserted around it collide with the next real append. Which is
-        the point of counting from the log at all.
+        **Patience is a span, not a count.** It was six pauses, which came to a little over three
+        hours on the cooldown ladder — and four real games were abandoned in one afternoon because
+        two free pools stayed hot for longer than that. A count also tied the patience to the
+        ladder's tuning; this is measured from the first pause, so it means what it says.
         """
         worker = make_worker(rate_limited, cooldown=ProviderCooldown(redis))
-        outcomes = []
 
-        for _ in range(MAX_PAUSES + 1):
-            outcomes.append((await worker.handle(game.first_job)).outcome)
+        # First pause: well inside the window, so the game waits.
+        assert (await worker.handle(game.first_job)).outcome == PAUSED
+        db.expunge_all()
+        reloaded = await db.get(Game, game.game.id)
+        assert reloaded is not None and reloaded.status is GameStatus.PAUSED
 
-            # The worker commits in its own session; without this the identity map hands back the
-            # `Game` as this session last saw it, which is `RUNNING` forever.
-            db.expunge_all()
-            reloaded = await db.get(Game, game.game.id)
-            assert reloaded is not None
-            if reloaded.status is not GameStatus.PAUSED:
-                break
-            # What the reconciler does once the wait is over.
-            await resume(db, reloaded)
-            await db.commit()
+        # Backdate that pause to just past the window and let it run again.
+        await db.execute(
+            sa.update(GameEvent)
+            .where(
+                GameEvent.game_id == game.game.id,
+                GameEvent.type == EventType.GAME_PAUSED,
+            )
+            .values(created_at=dt.datetime.now(dt.UTC) - PAUSE_WINDOW - dt.timedelta(minutes=1))
+        )
+        await resume(db, reloaded)
+        await db.commit()
 
-        assert outcomes.count(PAUSED) == MAX_PAUSES, "patient exactly as often as it promises"
-        assert outcomes[-1] == "aborted"
+        handled = await worker.handle(game.first_job)
 
+        assert handled.outcome == "aborted"
         db.expunge_all()
         final = await db.get(Game, game.game.id)
         assert final is not None
@@ -244,6 +247,26 @@ class TestPatienceRunsOut:
         assert final.winner_colour is None, "no model may be blamed for a provider's pool"
         assert final.termination_detail is not None
         assert "pauses" in final.termination_detail
+
+    async def test_a_day_of_patience(self) -> None:
+        """The number itself, asserted because it is a policy rather than an implementation detail:
+        allowances reset daily and a pool hot at 14:00 is usually serving by morning, so a game that
+        cannot get a turn in a day is waiting on something that is not coming back."""
+        assert dt.timedelta(hours=24) == PAUSE_WINDOW
+
+    async def test_many_pauses_inside_the_window_keep_waiting(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """The behaviour the change buys. Six pauses used to be fatal; now only the clock is."""
+        worker = make_worker(rate_limited, cooldown=ProviderCooldown(redis))
+
+        for _ in range(8):
+            assert (await worker.handle(game.first_job)).outcome == PAUSED
+            db.expunge_all()
+            reloaded = await db.get(Game, game.game.id)
+            assert reloaded is not None
+            await resume(db, reloaded)
+            await db.commit()
 
 
 class TestAPersonIsWaiting:

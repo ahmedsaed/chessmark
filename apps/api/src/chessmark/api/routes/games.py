@@ -641,7 +641,14 @@ async def create_human_game(
         )
 
     # Only the machine seat is charged: a person plays for free as themselves (ADR-0016).
-    price = await cost_of(session, [request.model])
+    #
+    # **And a free model costs nothing at all.** Credits bound spend, and a `:free` model spends
+    # nothing — charging a person to sit down against the cheapest thing on the site was charging
+    # for the wrong thing. Scoped to this endpoint rather than to the price itself: making
+    # `ModelRegistry.credits` return 0 for free models opened `POST /games` to any signed-in
+    # account, because credits are also what AUTH-11 uses to gate an unfunded user, and two tests
+    # said so immediately.
+    price = 0 if model.is_free else await cost_of(session, [request.model])
     try:
         entry = await charge(session, user.id, price)
     except InsufficientCreditsError as error:

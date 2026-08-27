@@ -401,3 +401,33 @@ async def test_an_oversized_message_is_refused(client: AsyncClient, db: AsyncSes
         f"/games/{game_id}/say", json={"message": "x" * 501}, headers=as_user()
     )
     assert response.status_code == 422
+
+
+async def test_a_free_model_costs_no_credits(db: AsyncSession, client: AsyncClient) -> None:
+    """Credits bound spend, and a `:free` model spends nothing — so charging a person to sit down
+    against the cheapest thing on the site was charging for the wrong thing.
+
+    Scoped to this endpoint. Pricing free models at zero in `ModelRegistry.credits` also opened
+    `POST /games` to any signed-in account, because credits are what AUTH-11 uses to gate an
+    unfunded user; two tests said so immediately.
+    """
+    await sync_model_registry(
+        db,
+        [
+            {
+                "openrouter_id": "test/opponent:free",
+                "display_name": "Free Opponent",
+                "is_free": True,
+                "context_length": 200_000,
+            }
+        ],
+    )
+    await db.commit()
+
+    response = await client.post(
+        "/games/human",
+        json={"model": "test/opponent:free", "colour": "white"},
+        headers=as_user("user_unfunded_free", email="unfunded@chessmark.test"),
+    )
+
+    assert response.status_code == 201, response.text
