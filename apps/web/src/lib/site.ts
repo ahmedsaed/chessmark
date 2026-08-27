@@ -6,8 +6,15 @@
  * metadata routes.
  */
 
-/** Absolute origin, needed by `metadataBase` and the sitemap — relative URLs are illegal there. */
-export const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3010";
+import { originFromEnv } from "@/lib/env";
+
+/**
+ * Absolute origin, needed by `metadataBase` and the sitemap — relative URLs are illegal there.
+ *
+ * `originFromEnv` rather than `??` for the reason recorded there: an unset build variable arrives
+ * as `""`, and an empty `metadataBase` is a sitemap advertising relative URLs.
+ */
+export const siteUrl = originFromEnv(process.env.NEXT_PUBLIC_SITE_URL, "http://localhost:3010");
 
 export const siteName = "Chessmark";
 

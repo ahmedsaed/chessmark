@@ -5,6 +5,7 @@
  * game page reads fresh data on every request without asking.
  */
 
+import { originFromEnv } from "@/lib/env";
 import type {
   GameDetail,
   GameEvent,
@@ -35,8 +36,19 @@ import type {
  * browser it is undefined and the public URL is used, which is what makes one constant safe to
  * read from both sides.
  */
-const PUBLIC_API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
-const API_URL = process.env.INTERNAL_API_URL ?? PUBLIC_API_URL;
+const PUBLIC_API_URL = originFromEnv(process.env.NEXT_PUBLIC_API_URL, "http://localhost:8010");
+const API_URL = originFromEnv(process.env.INTERNAL_API_URL, PUBLIC_API_URL);
+
+/**
+ * A ceiling on a server-side read, because there is no such thing as a hang that resolves.
+ *
+ * `fetch` has no default timeout. An address that accepts a connection and never answers, or one
+ * that drops packets outright, holds the render open for as long as the platform allows — and
+ * during `next build` that is a *failed page*, not a slow one. Ten seconds is far longer than any
+ * of these endpoints takes and far shorter than Next's own 60-second export budget, so a
+ * misconfigured origin now surfaces as the empty state the callers below already handle.
+ */
+const TIMEOUT_MS = 10_000;
 
 export class ApiError extends Error {
   constructor(
@@ -51,6 +63,7 @@ export class ApiError extends Error {
 async function get<T>(path: string): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(TIMEOUT_MS),
   });
 
   if (!response.ok) {

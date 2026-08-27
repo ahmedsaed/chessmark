@@ -26,9 +26,15 @@ COPY apps/web ./
 # Read at build time and baked into the client bundle, so it cannot be supplied at run time the
 # way a server-side variable can. A wrong value here is a site whose every browser-side fetch is
 # refused by CORS — which the browser suite reports as missing UI, and which cost a debugging pass.
+#
+# `NEXT_PUBLIC_SITE_URL` is the same kind of value pointing the other way: the site's own origin,
+# read by `metadataBase`, the OpenGraph card and the sitemap. Omitting it does not break the
+# build, which is worse — every canonical URL and every indexed link then says `localhost:3010`.
 ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_SITE_URL
 ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 
 # The binaries are called directly rather than through `pnpm exec` / `pnpm build`. `pnpm exec`
