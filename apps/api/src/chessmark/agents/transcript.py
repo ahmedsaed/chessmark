@@ -23,6 +23,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.compaction import live_messages
 from chessmark.db.models import Player, TranscriptMessage
 
 
@@ -42,6 +43,7 @@ async def append_message(
     name: str | None = None,
     reasoning_details: list[dict[str, Any]] | None = None,
     turn_id: int | None = None,
+    is_summary: bool = False,
 ) -> TranscriptMessage:
     """Append one message.
 
@@ -64,6 +66,7 @@ async def append_message(
         turn_id=turn_id,
         seq=seq,
         role=role,
+        is_summary=is_summary,
         content=content,
         tool_calls=tool_calls,
         tool_call_id=tool_call_id,
@@ -134,9 +137,23 @@ def to_provider_message(row: TranscriptMessage) -> dict[str, Any]:
 
 
 async def build_messages(session: AsyncSession, player_id: uuid.UUID) -> list[dict[str, Any]]:
-    """The full message list to send this turn.
+    """The message list to send this turn.
 
-    This is the whole transcript, every turn. See the module docstring for why that is affordable.
+    The whole transcript, every turn — **except what a compaction has folded** (ADR-0018). Folded
+    rows stay in the table and stop being sent, so the record is still verbatim and the request is
+    smaller. An uncompacted game reads exactly as it always did: nothing is superseded, so this is
+    every row in `seq` order.
+    """
+    rows = await live_messages(session, player_id)
+    return [to_provider_message(row) for row in rows]
+
+
+async def full_history(session: AsyncSession, player_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Everything ever sent, folded rows included — the record rather than the request.
+
+    Nothing on the playing path uses this. It exists because "we keep the whole history" should be
+    demonstrable rather than merely asserted, and a test asserts the two differ only by what a
+    compaction folded.
     """
     rows = await session.scalars(
         sa.select(TranscriptMessage)

@@ -231,6 +231,14 @@ class Player(Base):
 
     # --- per-player benchmark metrics ---
     illegal_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
+    compactions: Mapped[int] = mapped_column(default=0, server_default="0")
+    """How many times this seat summarised its own history (ADR-0018).
+
+    Worth showing beside the illegal attempts and the token counts, because it says something about
+    the model: a seat that compacted four times was verbose enough to fill its window four times in
+    one game, and a reader comparing two models wants that visible rather than buried in the event
+    log.
+    """
     forfeited: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     prompt_tokens: Mapped[int] = mapped_column(default=0, server_default="0")
     completion_tokens: Mapped[int] = mapped_column(default=0, server_default="0")
@@ -430,6 +438,24 @@ class TranscriptMessage(Base):
     tool_call_id: Mapped[str | None] = mapped_column(sa.Text)
     name: Mapped[str | None] = mapped_column(sa.Text)
     """Tool name, on tool-result messages."""
+
+    superseded_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    """Set when a compaction folded this message into a summary (ADR-0018).
+
+    **The row is never deleted or rewritten.** This table is the record of what we replayed, and
+    invariant 3 asks that the record be verbatim — so a compacted game keeps every message it ever
+    sent and `build_messages` simply stops sending the folded ones. What changes is the request,
+    not the history.
+    """
+
+    is_summary: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    """This row *is* a compaction summary, written by the model about its own earlier turns.
+
+    Flagged rather than inferred, because it decides *ordering*: `seq` is append-only, so a summary
+    written at ply 60 has the highest sequence number in the table and would replay after the turns
+    it summarises. The builder puts the system prompt first, then the live summary, then the
+    retained turns.
+    """
 
     created_at: Mapped[dt.datetime] = created_at()
 

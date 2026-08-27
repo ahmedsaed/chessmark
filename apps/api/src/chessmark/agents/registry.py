@@ -182,8 +182,13 @@ def fits_a_game(context_length: int | None, minimum: int) -> bool:
     it needs, and it grows about **1,818 tokens per ply** — measured across real games, not
     assumed. A 32k window is therefore exhausted around ply 20 of a possible 300.
 
-    That is not a polite failure. `context_exceeded` is in `FORFEIT_TERMINATIONS`, so the model
-    records a **loss** it never had a chance to avoid, in the number the leaderboard publishes.
+    That was not a polite failure: `context_exceeded` is in `FORFEIT_TERMINATIONS`, so the model
+    recorded a **loss** it never had a chance to avoid, in the number the leaderboard publishes.
+
+    **Compaction changed what this floor is for** (ADR-0018). A model that summarises its own
+    earlier turns does not run out of room at any window, so the floor no longer decides whether a
+    game can be *finished* — it decides whether one can be *started*, and whether there is room for
+    a summary plus the turns kept verbatim around it. Hence 64k rather than 128k.
 
     A model with no declared context length is kept: unknown is not the same as small, and
     excluding on missing metadata would silently drop models over a gap in someone else's data.

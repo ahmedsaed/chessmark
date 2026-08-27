@@ -24,9 +24,15 @@ from chessmark.agents.registry import (
     select_endpoint,
     sync_model_registry,
 )
+from chessmark.core.config import get_settings
 from chessmark.db.models import ModelEndpoint, ModelRegistry
 
-FLOOR = 128_000
+#: Read, never hard-coded. The floor is a policy that has already moved once — 128k when it decided
+#: whether a game could be *finished*, 64k once compaction meant it only decides whether one can be
+#: *started* (ADR-0018) — and a test that pins the number tests the setting rather than the rule.
+FLOOR = get_settings().min_context_tokens
+SMALL = FLOOR // 2
+BIG = FLOOR * 2
 
 
 class TestTheFloorIsTheDefault:
@@ -39,6 +45,7 @@ class TestTheFloorIsTheDefault:
 
     def test_none_means_the_policy_not_no_filter(self) -> None:
         assert context_floor(None) == FLOOR
+        assert FLOOR > 0, "a floor of 0 would make every test below vacuous"
 
     def test_zero_still_disables_it_but_has_to_be_said(self) -> None:
         assert context_floor(0) == 0
@@ -59,7 +66,7 @@ class TestReasons:
             "openrouter_id": "vendor/model",
             "display_name": "Model",
             "provider": "vendor",
-            "context_length": 256_000,
+            "context_length": BIG,
             "supports_tools": True,
         }
         return ModelRegistry(**{**defaults, **kwargs})  # type: ignore[arg-type]
@@ -67,9 +74,9 @@ class TestReasons:
     def test_a_playable_model_has_nothing_against_it(self) -> None:
         assert ineligible_reasons(self._row()) == []
 
-    def test_the_window_that_caused_this(self) -> None:
-        against = ineligible_reasons(self._row(context_length=65_536))
-        assert against == ["context 65,536 < 128,000"]
+    def test_a_window_under_the_floor(self) -> None:
+        against = ineligible_reasons(self._row(context_length=SMALL))
+        assert against == [f"context {SMALL:,} < {FLOOR:,}"]
 
     def test_no_tool_calling(self) -> None:
         assert "no tool calling" in ineligible_reasons(self._row(supports_tools=False))
@@ -85,7 +92,7 @@ class TestReasons:
     def test_every_reason_is_reported_not_the_first(self) -> None:
         """An operator fixing one and discovering the other has been told half the truth."""
         reasons = ineligible_reasons(
-            self._row(openrouter_id="vendor/model-latest", context_length=8_192)
+            self._row(openrouter_id="vendor/model-latest", context_length=SMALL)
         )
         assert len(reasons) == 2
 
@@ -136,13 +143,13 @@ class TestTheEndpointIsTheAuthority:
 
     async def test_a_small_endpoint_is_never_pinned(self, db: AsyncSession) -> None:
         """Even when the model advertises plenty. This is the case that abandoned a game."""
-        slug = await self._seed(db, model_ctx=256_000, endpoint_ctx=65_536)
+        slug = await self._seed(db, model_ctx=BIG, endpoint_ctx=SMALL)
 
         with pytest.raises(NoEndpointError):
             await select_endpoint(db, model_slug=slug)
 
     async def test_a_big_endpoint_is_pinned(self, db: AsyncSession) -> None:
-        slug = await self._seed(db, model_ctx=256_000, endpoint_ctx=256_000)
+        slug = await self._seed(db, model_ctx=BIG, endpoint_ctx=BIG)
 
         endpoint = await select_endpoint(db, model_slug=slug)
 
@@ -152,14 +159,14 @@ class TestTheEndpointIsTheAuthority:
         self, db: AsyncSession
     ) -> None:
         """Same rule as the model's window: unknown is not small."""
-        slug = await self._seed(db, model_ctx=256_000, endpoint_ctx=None)
+        slug = await self._seed(db, model_ctx=BIG, endpoint_ctx=None)
 
         assert await select_endpoint(db, model_slug=slug)
 
     async def test_a_small_model_is_not_playable(self, db: AsyncSession) -> None:
         """`playable_models` checked `enabled` and `supports_tools` and not the window, which is
         how a model too small to finish a game stayed on the list of models a game may use."""
-        slug = await self._seed(db, model_ctx=65_536, endpoint_ctx=65_536)
+        slug = await self._seed(db, model_ctx=SMALL, endpoint_ctx=SMALL)
 
         slugs = [m.openrouter_id for m in await playable_models(db)]
 
@@ -179,7 +186,7 @@ class TestASyncDoesNotReEnable:
         entry = {
             "openrouter_id": "test/disabled-model",
             "display_name": "Disabled",
-            "context_length": 256_000,
+            "context_length": BIG,
             "supports_tools": True,
         }
         await sync_model_registry(db, [entry])
@@ -205,7 +212,7 @@ class TestASyncDoesNotReEnable:
                 {
                     "openrouter_id": "test/brand-new",
                     "display_name": "New",
-                    "context_length": 256_000,
+                    "context_length": BIG,
                     "supports_tools": True,
                 }
             ],

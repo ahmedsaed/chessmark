@@ -128,6 +128,12 @@ function PlayerCard({ player, active }: { player: Player; active: boolean }) {
           value={String(player.illegal_attempts)}
           tone={player.illegal_attempts > 0 ? "bad" : "good"}
         />
+        {/* Only once it has happened. A "Compacted 0" on every game would be a row of noise on the
+            common case, and the number says something about the model when it is not zero: a seat
+            that compacted four times filled its window four times in one game. */}
+        {player.compactions > 0 && (
+          <Stat label="Compacted" value={String(player.compactions)} />
+        )}
       </dl>
     </div>
   );
