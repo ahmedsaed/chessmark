@@ -101,6 +101,21 @@ cmd_standings() { # the table for one event:  ./chessmark standings pool-free
   cmd_tournament standings "$@"
 }
 
+cmd_resume() { # reopen a game the harness stopped:  ./chessmark resume <game-id>
+  [ $# -gt 0 ] || die "which game? e.g. ./chessmark resume 5f8ee937-2e53-49df-877f-6879bcfc56b7"
+  # Only endings *we* imposed can be reopened — a budget, a ply cap, a provider we could not
+  # reach. A checkmate is final and so is a forfeit; the script refuses those, which is the point
+  # of it existing rather than a hand-written UPDATE.
+  api_script resume_game.py "$@"
+}
+
+# ---------------------------------------------------------------------------- people
+
+cmd_credits() { # grant or revoke credits by email, Clerk id, or ours; --show to read a balance
+  [ $# -gt 0 ] || die "who? e.g. ./chessmark credits someone@example.com 50"
+  api_script grant_credits.py "$@"
+}
+
 # ---------------------------------------------------------------------------- the database
 
 cmd_psql() { # an interactive psql shell
@@ -151,6 +166,13 @@ LINES=500 ./chessmark logs tournament'
 echo "select count(*) from games;" | ./chessmark sql'
   [backup]='./chessmark backup                      # backups/chessmark-<timestamp>.sql.gz'
   [models]='./chessmark models                      # what a free pool would actually draw from'
+  [resume]='./chessmark resume 5f8ee937-2e53-49df-877f-6879bcfc56b7
+./chessmark resume <game-id> --max-usd 2.50        # raise the ceiling that stopped it
+./chessmark resume <game-id> --max-plies 400'
+  [credits]='./chessmark credits someone@example.com 50
+./chessmark credits someone@example.com 10 --note "beta invite"
+./chessmark credits user_2abc123 -5              # take them back, clamped at zero
+./chessmark credits someone@example.com --show   # balance and how it got there'
 )
 
 cmd_help() {
@@ -186,9 +208,15 @@ $(row endpoints)
 $(row models)
 $(row prune)
 
+${AMBER}games${OFF}
+$(row resume)
+
 ${AMBER}tournaments${OFF}
 $(row tournament)
 $(row standings)
+
+${AMBER}people${OFF}
+$(row credits)
 
 ${AMBER}the database${OFF}
 $(row psql)

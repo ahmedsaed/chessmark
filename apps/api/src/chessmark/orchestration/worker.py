@@ -201,9 +201,9 @@ class TurnWorker:
         try:
             return await self._advance(job)
         except ProviderFailureError as failure:
-            # A rate limit is not a failure to retry harder at. The provider is working and has
-            # told us to come back; the position is untouched. Burning the job's retry budget on
-            # it spent forty requests a game and then abandoned fourteen games in a row.
+            # An endpoint declining to serve is not a failure to retry harder at — the position is
+            # untouched and the answer is to come back. Burning the job's retry budget on it spent
+            # forty requests a game and then abandoned fourteen games in a row.
             if failure.result.rate_limit is not None:
                 return await self._pause(job, failure.result)
             return await self._retry_or_abandon(job, failure.result)
@@ -365,8 +365,7 @@ class TurnWorker:
             if human:
                 seconds = min(seconds, HUMAN_MAX_PAUSE_SECONDS)
 
-            source = limit.limit_source or "rate limit"
-            reason = f"{model} rate-limited by {provider or 'its provider'} ({source})"
+            reason = limit.describe(model)
 
             # Patience spent. Abandoned rather than left paused, because a game nobody will ever
             # resume is worse open than closed — and abandoning is honest: it says the harness gave

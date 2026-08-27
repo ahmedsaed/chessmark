@@ -363,3 +363,59 @@ async def test_an_ordinary_failure_carries_no_rate_limit() -> None:
         await gateway.complete(model="a/b", messages=[])
 
     assert raised.value.rate_limit is None
+
+
+# ====================================================================== a provider 404
+
+#: A 404 from the provider, mid-game. `raw` is empty and the model plainly exists — this is one
+#: endpoint declining, not a request nobody could serve.
+PROVIDER_404 = (
+    'litellm.NotFoundError: NotFoundError: OpenrouterException - {"error":{"message":'
+    '"Provider returned error","code":404,"metadata":{"raw":"","provider_name":"Nvidia",'
+    '"is_byok":false}}}'
+)
+
+
+class ProviderGoneError(Exception):
+    status_code = 404
+
+    def __init__(self) -> None:
+        super().__init__(PROVIDER_404)
+
+
+def test_a_provider_404_is_unavailability_not_a_bad_request() -> None:
+    """The distinction cost a good game.
+
+    A match between two free models reached **ply 55 and 1.17M tokens** and was abandoned outright
+    on `{"code":404,"provider_name":"Nvidia"}`, because 404 had been classified with 400 and 422 as
+    "the request itself is unacceptable". The request had been fine fifty-five times. Checked
+    afterwards: the model was still listed, the endpoint was still there at 97.8% uptime, and a
+    fresh call to it answered — a blip, and the game was thrown away for it.
+    """
+    from chessmark.agents.llm import is_unavailable, rejects_the_request
+
+    assert not rejects_the_request(ProviderGoneError()), "not a request problem"
+    assert is_unavailable(ProviderGoneError()), "an availability problem, so pause and cool down"
+
+
+def test_a_400_is_still_a_bad_request() -> None:
+    """The narrowing must not go too far: a request too large for the window is genuinely
+    unserviceable, and retrying identical bytes five times is what that fix removed."""
+    from chessmark.agents.llm import rejects_the_request
+
+    class TooLargeError(Exception):
+        status_code = 400
+
+    assert rejects_the_request(TooLargeError())
+
+
+def test_the_reason_says_which_failure_it_was() -> None:
+    """A page that told a reader they had been rate-limited when the endpoint had 404'd would be
+    inventing a cause."""
+    limit = rate_limit_from(ProviderGoneError())
+
+    assert limit.status_code == 404
+    assert limit.provider == "Nvidia"
+    assert not limit.is_upstream_pool, "a 404 says nothing about a shared pool"
+    assert "not being served by Nvidia" in limit.describe("nvidia/model:free")
+    assert "rate-limited" in rate_limit_from(SharedPoolError()).describe("m")

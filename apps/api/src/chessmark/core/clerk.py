@@ -111,3 +111,26 @@ class ClerkDirectory:
         found = payload[0]
         identifier = found.get("id") if isinstance(found, dict) else None
         return identifier if isinstance(identifier, str) else None
+
+
+_directory: ClerkDirectory | None = None
+
+
+def get_directory() -> ClerkDirectory:
+    """One Clerk directory client per process.
+
+    Lives here rather than in `api/deps` because `db.users.resolve_user` needs it too, and `db/`
+    importing `api/` would invert the layering for the sake of one cached object.
+    """
+    global _directory
+    if _directory is None:
+        from chessmark.core.config import get_settings
+
+        _directory = ClerkDirectory(get_settings().clerk_secret_key)
+    return _directory
+
+
+def reset_directory() -> None:
+    """Drop the cached client. For tests and config reloads."""
+    global _directory
+    _directory = None

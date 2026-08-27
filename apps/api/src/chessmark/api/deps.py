@@ -23,7 +23,7 @@ from chessmark.core.auth import (
     bearer_token,
 )
 from chessmark.core.budget import GlobalBudget
-from chessmark.core.clerk import ClerkDirectory
+from chessmark.core.clerk import get_directory
 from chessmark.core.config import Settings, get_settings
 from chessmark.core.ratelimit import RateLimiter
 from chessmark.db.models import Game, User
@@ -153,23 +153,6 @@ async def get_principal(
 
 
 PrincipalDep = Annotated[Principal, Depends(get_principal)]
-
-
-_directory: ClerkDirectory | None = None
-
-
-def get_directory() -> ClerkDirectory:
-    """One Clerk directory client per process."""
-    global _directory
-    if _directory is None:
-        _directory = ClerkDirectory(get_settings().clerk_secret_key)
-    return _directory
-
-
-def reset_directory() -> None:
-    """Drop the cached client. For tests and config reloads."""
-    global _directory
-    _directory = None
 
 
 async def get_current_user(session: SessionDep, principal: PrincipalDep) -> User:

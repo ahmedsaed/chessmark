@@ -166,6 +166,12 @@ stopped, which would then spend past the ceiling it had just halted at.
 everything inside a container: no uv, no node, and no remembering which compose files to combine.
 `./chessmark help` lists the commands and `./chessmark help <command>` gives examples.
 
+`credits` grants or revokes by email, Clerk id, or ours, and `--show` prints a balance with the
+ledger behind it. The resolver is `db.users.resolve_user`, shared with `POST /admin/credits` — an
+email we do not hold is asked of Clerk, so an invitation can be pre-funded for somebody who has
+never signed in. `core.clerk.get_directory` moved out of `api/deps` for that: `db/` importing
+`api/` would invert the layering for one cached client.
+
 `deploy` is the whole sequence — pull, migrate, restart, check `/ready`. `restart` uses
 `--force-recreate` on purpose: a container that once failed to bind its port can come back
 running-but-unpublished, healthy inside and unreachable outside, with `docker port` empty. `sql`
@@ -262,6 +268,13 @@ Four traps, each of which cost a debugging pass:
    it has covered. Scope fold selectors by their text.
 4. **Not every URL containing `/models` is an API call.** Assert against the API origin, or a
    router prefetch counts as a request the page did not make.
+
+**Reasoning, output and tool calls each have their own disclosure**, and output is closed by
+default. One fold per turn meant reading a tool call also unrolled several thousand words of
+reasoning, so the thing you wanted was pushed off screen by the thing you did not. Each trigger
+carries a size hint (`reasoning · 2.4k`) because the question a reader is asking is whether it is a
+glance or a scroll. Illegal attempts unroll with the tools — an illegal move *is* a failed
+`make_move` — and `raw` belongs to the turn, so it is reachable while everything is folded.
 
 **The right-hand column is `EventStream`, not `Conversation`.** It was named for trash talk and
 had long since stopped being that: it carries reasoning, output, tool calls, illegal attempts, and
@@ -393,6 +406,13 @@ causes do not look like the problem:
   backwards: patience inside the retry loop is paid for in requests.
 - The delay ladder was decided by `base_delay = 0.5s`, so eight doublings reached 32 seconds and
   `rate_limit_max_delay = 300` never bound. Rate limits have their own base now.
+- **A provider 404 is unavailability, not a bad request.** It was classified with 400 and 422 as
+  "the request itself is unacceptable", and a game between two free models reached **ply 55 and
+  1.17M tokens** before being abandoned outright on `{"code":404,"provider_name":"Nvidia"}`. The
+  model was still listed, the endpoint still there at 97.8% uptime, and a fresh call answered — a
+  blip, and a good game thrown away for it. Both 429 and provider-404 now pause and cool the
+  endpoint down; `RateLimit.describe` words the reason so a reader is not told they were
+  rate-limited when they were not.
 - `Retry-After` is honoured **when it arrives, which is usually not**: OpenRouter sends one only
   "when every attempted provider returned a retry hint", and a free model is served by exactly one
   endpoint — so the cooldown ladder in `core/cooldown.py` has an opinion of its own.
