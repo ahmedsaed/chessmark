@@ -43,7 +43,7 @@ export function HeroGame({
     enabled: isLive,
   });
 
-  const { moves, ended } = useMemo(
+  const { moves, ended, paused } = useMemo(
     () => foldEvents([...initialEvents, ...events], []),
     [initialEvents, events],
   );
@@ -70,7 +70,15 @@ export function HeroGame({
 
   const white = game.players.find((p) => p.colour === "white");
   const black = game.players.find((p) => p.colour === "black");
-  const running = isLive && ended === null;
+
+  /* **Three states, not two.** A paused game is not terminal, so `isLive` is true for it — and
+     this component read that as "running" and drew a pulsing dot, "Live now", "thinking…" under
+     the side to move, and "Watch live →" over a board that had stopped. Exactly the lie the pause
+     exists to prevent, on the one page most people see first.
+     `paused` comes from the fold rather than `game.status`, because the hero follows the stream:
+     it is picked while running and can pause a second later, without a re-render of the page. */
+  const stopped = paused !== null || game.status === "paused";
+  const running = isLive && ended === null && !stopped;
 
   /* `chess.js` only knows about mate and stalemate, so after a resignation, a forfeit, or the ply
      cap the position is still "playable" and `toMove` resolves to a colour. Showing "thinking…"
@@ -100,11 +108,22 @@ export function HeroGame({
         <div className="border border-line bg-surface-2">
           <div className="flex items-center justify-between gap-3 border-b border-line-soft px-4 py-2.5">
             <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
-              {running ? "Live now" : "Most recent"}
+              {running ? "Live now" : stopped ? "Paused" : "Most recent"}
             </span>
             {running ? (
               <span className="inline-flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-bad">
                 <i aria-hidden className="block h-1.5 w-1.5 animate-pulse rounded-full bg-bad" />
+                ply {moves.length}
+              </span>
+            ) : stopped ? (
+              /* No pulse: nothing is happening. The reason is the tooltip rather than the label —
+                 a provider's limit source is not front-page copy, but it should be one hover away
+                 rather than only on the game page. */
+              <span
+                className="inline-flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint"
+                title={paused?.text ?? game.pause_reason ?? undefined}
+              >
+                <i aria-hidden className="block h-1.5 w-1.5 rounded-full bg-ink-faint" />
                 ply {moves.length}
               </span>
             ) : (
@@ -129,7 +148,7 @@ export function HeroGame({
             href={`/games/${game.id}`}
             className="border border-accent-deep bg-accent px-4 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-on-accent transition-colors hover:bg-accent-dim"
           >
-            {running ? "Watch live →" : "Replay it →"}
+            {running ? "Watch live →" : stopped ? "Watch it →" : "Replay it →"}
           </Link>
           <Link
             href="/leaderboard"
