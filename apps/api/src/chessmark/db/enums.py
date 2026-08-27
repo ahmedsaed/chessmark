@@ -80,6 +80,10 @@ class EventType(StrEnum):
     MESSAGE_SENT = "message_sent"
     DRAW_OFFERED = "draw_offered"
     GAME_ENDED = "game_ended"
+    #: The model summarised its own earlier history to stay inside its context window
+    #: (ADR-0018). Carries what was folded and what it cost, because a compaction changes what the
+    #: model can see and a reader comparing two games needs to know it happened.
+    COMPACTED = "compacted"
     #: The harness stopped the game and means to continue it — today, a provider rate limit.
     #: Carries the reason and when it will be tried again, because the alternative is a board that
     #: stops moving and a page with nothing to say about why.

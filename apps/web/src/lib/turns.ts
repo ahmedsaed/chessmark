@@ -193,6 +193,25 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
         break;
       }
 
+      /* The model summarised its own earlier turns to stay inside its context window. Shown in
+         the stream because it changes what the model can see from here on: a reader wondering why
+         it forgot a plan it announced at move 12 deserves to find the answer in the timeline.
+         It closes the live turn's fold no more than a tool call does — compaction happens *inside*
+         a turn, before the model answers, so the turn stays open. */
+      case "compacted": {
+        notices.push({
+          key: `compacted-${event.seq}`,
+          seq: event.seq,
+          kind: "compacted",
+          text:
+            asNumber(payload.folded) > 0
+              ? `history summarised — ${asNumber(payload.folded)} messages folded, ${asNumber(payload.kept)} turns kept`
+              : "history summarised",
+          resumeAfter: null,
+        });
+        break;
+      }
+
       /* The harness stopped the game and means to continue it — a provider rate limit. Shown
          rather than swallowed, because the alternative is a board that stops moving with nothing
          on the page to say why, which is what it did. */

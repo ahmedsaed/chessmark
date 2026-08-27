@@ -39,6 +39,8 @@ export interface Player {
   quantization: string | null;
 
   illegal_attempts: number;
+  /** How many times this seat summarised its own history to stay inside its window. */
+  compactions: number;
   forfeited: boolean;
   prompt_tokens: number;
   completion_tokens: number;
@@ -170,6 +172,7 @@ export type EventType =
   | "move_made"
   | "message_sent"
   | "draw_offered"
+  | "compacted"
   | "game_paused"
   | "game_resumed"
   | "game_ended";
@@ -228,7 +231,7 @@ export interface TurnView {
 export interface StreamNotice {
   key: string;
   seq: number;
-  kind: "paused" | "resumed";
+  kind: "paused" | "resumed" | "compacted";
   text: string;
   /** When a pause will be retried, if it said. */
   resumeAfter: string | null;

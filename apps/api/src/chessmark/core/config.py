@@ -88,13 +88,18 @@ class Settings(BaseSettings):
     #: The smallest context window a model may be registered with (AGENT-14).
     #:
     #: Measured, not guessed: the transcript is resent whole every turn and grows **~1,818 tokens
-    #: per ply**, so a turn's prompt *is* the context it needs. 128k covers roughly 70 plies,
+    #: per ply**, so a turn's prompt *is* the context it needs. 64k covers roughly 35 plies,
     #: against a real-game median of 39.
     #:
-    #: A floor, not a guarantee. No threshold makes a 300-ply game safe — that would need ~545k and
-    #: would exclude almost the whole field. This removes models that cannot get started; the ply
-    #: cap and the spend cap still bound the rest. 0 disables the check.
-    min_context_tokens: int = 128_000
+    #: **Lowered from 128k once compaction existed** (ADR-0018), and the reasoning changed with it.
+    #: A floor was never a guarantee — no threshold makes a 300-ply game safe, that would need
+    #: ~545k and would exclude almost the whole field — so 128k was buying about seventy plies and
+    #: then forfeiting. A model that summarises its own history does not run out at any window, and
+    #: the floor's job shrinks to what it could always actually do: exclude models that cannot get
+    #: started, and leave enough room for a summary plus the turns kept around it.
+    #:
+    #: 0 disables the check, and has to be typed — see `agents.registry.context_floor`.
+    min_context_tokens: int = 64_000
 
     #: Rate limiting on money-spending endpoints. 0 disables it.
     rate_limit_per_window: int = 10

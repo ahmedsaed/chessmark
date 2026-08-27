@@ -23,6 +23,7 @@ supersedes the old one, rather than an edit.
 | [0015](0015-quantization-as-identity-and-pinned-endpoints.md) | Quantization identifies the contestant; endpoints are pinned per match | Accepted |
 | [0016](0016-credits-as-a-granted-balance.md) | Credits are a granted balance, priced per model | Accepted |
 | [0017](0017-rate-limits-pause-games.md) | A rate limit pauses the game; endpoints cool down between games | Accepted |
+| [0018](0018-context-compaction.md) | The model summarises its own history when the window fills | Accepted |
 
 ## Template
 

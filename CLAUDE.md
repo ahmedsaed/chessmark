@@ -487,9 +487,36 @@ so a row with games cannot be deleted at all, and a game must stay readable howe
 turned out. It does remove those models' games, which is the destructive half and the reason it
 reports first.
 
-Still open: `max_completion_tokens` is a flat **64,000** reconciled against nothing. The floor keeps
-models that cannot hold a game out of the field; it does not stop the harness asking a 128k model
-for 64k of output on ply 60.
+**The floor is 64k, not 128k, because compaction removed the reason for the higher number**
+([ADR-0018](docs/adr/0018-context-compaction.md), AGENT-15). The transcript grows ~1,818 tokens per
+ply, so 128k bought about seventy plies of a possible three hundred and then *forfeited* —
+`context_exceeded` is in `FORFEIT_TERMINATIONS`, so filling the window was recorded as the model
+playing badly. No floor fixes that; ~545k would be needed and would exclude the catalogue.
+
+So at `context - prompt < max(reserve, 10%)` the model **summarises its own earlier turns** and
+plays on. Chess makes this unusually safe: the server owns the board (invariant 1) and
+`get_board_state` is always there, so a lossy summary cannot corrupt play — which is not true of an
+agent whose context *is* its world.
+
+Five things about it that are easy to get wrong:
+
+- **The cut lands on a turn boundary**, not a message boundary. A turn is 3–5 messages and every
+  provider rejects a `tool` result whose `tool_calls` parent is missing.
+- **Nothing is deleted.** Folded rows keep their place in `transcript_messages` with a
+  `superseded_at`; `build_messages` stops sending them. The record stays verbatim (invariant 3) and
+  only the request shrinks — `full_history()` exists to demonstrate that rather than assert it.
+- **`seq` is append-only, so a summary written at ply 60 has the highest sequence number** and would
+  replay *after* the turns it summarises. Ordering is explicit: system prompt, then the live
+  summary, then the retained turns.
+- **The summarising call needs its own small cap.** Sending the near-full history with the usual
+  64,000-token `max_tokens` is refused for exactly the reason compaction exists.
+- **This is the one named exception to invariant 2.** It costs a cache miss per compaction, which is
+  why it cuts deep and happens at most once per turn.
+
+`max_completion_tokens` is now **clamped to the endpoint's window** (AGENT-16). Unclamped it was a
+flat 64,000 reconciled against nothing, which asked a 65,536-token endpoint for 65,810 tokens and
+was refused — the 400 that abandoned a game at ply 10, and a failure a 64k floor would have
+recreated for every model in the new band.
 
 `GET /models` returns only models with an active tool-capable endpoint. It listed everything
 registered for about an hour, which meant the catalogue page advertised 18 models the picker

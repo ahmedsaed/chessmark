@@ -39,6 +39,8 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | AGENT-12 | Configurable personas / custom system prompts, flagged as non-ranked. | S |
 | AGENT-13 | Context strategy (full-history vs. windowed) is a recorded per-game parameter, enabling ablation studies. | C |
 | AGENT-14 | Only models that can complete a game **and say what played it** are registered. Excluded: no tool calling; asynchronous `:batch` variants; a context window too small to hold a game; and floating aliases like `-latest`, whose weights change under a fixed name. The first three fail as a **forfeit**, recording a loss against a model that never had a chance. The fourth plays fine but leaves a record that cannot be reproduced (BENCH-04). | M |
+| AGENT-15 | A model summarises its own earlier turns when its context window fills, rather than forfeiting on `context_exceeded` (ADR-0018). The trigger is measured from the provider's reported prompt size, the cut lands on a turn boundary so tool-call pairs stay intact, the last four turns are kept verbatim, and the folded messages are retained in the transcript and merely stop being sent. The model is told it was compacted and pointed back at the board, which is authoritative. Compacted games remain ranked; the count is published per seat. | M |
+| AGENT-16 | Every request's completion ceiling is clamped to what the *endpoint* serving it will accept. A fixed ceiling reconciled against nothing is refused outright by a smaller endpoint — a 400 that abandons the game rather than shortening the answer. | M |
 
 ## 3. Trash talk (TALK)
 
