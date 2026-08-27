@@ -131,6 +131,8 @@ services:
         # be the URL a *browser* uses, not a container name, and it must match the API's single
         # allowed CORS origin or every browser-side fetch is refused.
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8010}
+        # The site's own origin — `metadataBase`, the OpenGraph card, the sitemap.
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-http://localhost:3010}
         NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
     restart: unless-stopped
     # Clerk needs *both* keys and they arrive by different routes. The publishable key is baked

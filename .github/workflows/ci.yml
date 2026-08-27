@@ -230,6 +230,47 @@ jobs:
             apps/web/test-results
           retention-days: 7
 
+  # The images, built and not pushed.
+  #
+  # This job exists because of what its absence cost: `next build` inside the web image failed on
+  # `main` and nowhere else, so the backend image published and the web image did not — a deploy
+  # with no front end to pull, discovered on the server. Nothing here validated a Dockerfile
+  # before the push that publishes it.
+  #
+  # It is deliberately built with **no build args**, which is the shape that broke: an unset
+  # GitHub Actions variable reaches `docker build` as an empty value, and there is no API to reach
+  # at build time either. So this asserts the case a deploy must survive — a misconfigured
+  # environment and an unreachable API produce an image, not a failed build. The `web` job above
+  # covers the opposite case, a build against a live API, and `lib/env.test.ts` pins the rule.
+  images:
+    name: Images (build only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Scoped per image and shared with the publishing workflow, which builds the same two
+      # contexts from the same Dockerfiles: a merge to `main` then mostly imports what its own
+      # pull request already built.
+      - name: Backend
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      - name: Web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: false
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
   secrets:
     name: Secret scan
     runs-on: ubuntu-latest

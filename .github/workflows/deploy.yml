@@ -50,8 +50,42 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository }}-api:latest
             ${{ env.REGISTRY }}/${{ github.repository }}-api:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Scoped. Both builds used to write `type=gha` with no scope, which is one cache
+          # entry for two unrelated images: each import missed and each export clobbered.
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      # The web image's origins are read at **build** time, so a missing one is baked in rather
+      # than reported. Checked before the build and not after, because an image hard-wired to
+      # `localhost` is not a partial success — it is a site that is up, answers 200, and fetches
+      # nothing at all from a visitor's browser.
+      #
+      # After the backend image and not before it, because that one is environment-independent:
+      # a web origin nobody has configured yet is no reason to withhold an image that would
+      # deploy correctly anywhere.
+      #
+      # `vars` rather than `secrets`: neither of these is one. Both are in the client bundle by
+      # design, which is exactly why they must be right.
+      - name: The web image needs its origins
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_SITE_URL: ${{ vars.NEXT_PUBLIC_SITE_URL }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+        run: |
+          missing=""
+          for name in NEXT_PUBLIC_API_URL NEXT_PUBLIC_SITE_URL; do
+            [ -n "${!name}" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository variables:$missing — set them under Settings, Secrets and variables, Actions, Variables, then re-run."
+            exit 1
+          fi
+          # The Clerk key is genuinely optional — without it the header degrades to no account
+          # controls and reading still works (AUTH-02). Worth saying out loud all the same, since
+          # the symptom is a site nobody can sign in to rather than an error.
+          if [ -z "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" ]; then
+            echo "::warning::No NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY — this web image cannot sign anyone in."
+          fi
 
       # The web image is **environment-specific**: `NEXT_PUBLIC_API_URL` is baked into the client
       # bundle at build time and cannot be supplied at run time. An image built for one origin
@@ -64,12 +98,13 @@ jobs:
           push: true
           build-args: |
             NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_SITE_URL=${{ vars.NEXT_PUBLIC_SITE_URL }}
             NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository }}-web:latest
             ${{ env.REGISTRY }}/${{ github.repository }}-web:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
 
   deploy:
     name: Deploy to the host

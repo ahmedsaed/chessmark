@@ -64,7 +64,7 @@ server-rendered page fetched nothing and rendered its empty state — a site tha
 a browser it is undefined and the public URL is used, which is what lets one constant in
 `lib/api.ts` serve both sides.
 
-## The two URLs that must agree
+## The three URLs that must agree
 
 `NEXT_PUBLIC_API_URL` is **baked into the client bundle at build time** and cannot be supplied at
 run time. It must be the URL a *browser* uses — not `http://api:8000`, which no browser can reach —
@@ -82,6 +82,15 @@ CORS_ORIGINS=https://example.com
 ```
 
 and the proxy sends `example.com` to `web:3000` and `api.example.com` to `api:8000`.
+
+`NEXT_PUBLIC_SITE_URL` is the third, pointing the other way: the site's *own* origin, read by
+`metadataBase`, the OpenGraph card and the sitemap. Unlike the other two it does not break
+anything when it is wrong, which is worse — the site works and every canonical URL, share card and
+indexed link it publishes says `http://localhost:3010`.
+
+```
+NEXT_PUBLIC_SITE_URL=https://example.com
+```
 
 ## Build inputs that are not source files
 
@@ -143,7 +152,30 @@ deploy job then SSHes to `vars.DEPLOY_HOST`, pulls, runs `migrate` to completion
 waits on `/ready`. With no host configured it is **skipped rather than failed**.
 
 Set repository variables `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, `HEALTH_URL`,
-`NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and the secret `DEPLOY_SSH_KEY`.
+`NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and the secret
+`DEPLOY_SSH_KEY`:
+
+```
+gh variable set NEXT_PUBLIC_API_URL  --body https://api.example.com
+gh variable set NEXT_PUBLIC_SITE_URL --body https://example.com
+```
+
+The two `NEXT_PUBLIC_` URLs are **required, and the publish fails without them.** They are read at
+build time and baked in, so an unset one is not a default — it is a web image hard-wired to
+`localhost`, which serves a site that is up, answers 200, and fetches nothing from anybody's
+browser. The check runs after the backend image, which is environment-independent and worth
+publishing either way.
+
+**An unset variable is not absent by the time it arrives.** `${{ vars.X }}` interpolates to `""`,
+`docker build` forwards that as an empty build arg, and `process.env.X ?? "…"` keeps it — an empty
+string is not nullish. That is what broke the first publish from `main`: `next build` inside the web
+image made every server-side fetch a *relative* one, Next's patched fetch neither resolved nor
+rejected it during the prerender but hung, and the build died on a 60-second timeout for
+`/sitemap.xml` that named no URL anywhere. The backend image published; the web image never did, so
+the server had nothing to pull. `lib/env.ts` now treats blank as unset — the same rule Compose's
+`${VAR:-default}` has always followed, which is why nothing local ever showed it — `lib/api.ts`
+gives every server-side read a ten-second ceiling, and CI builds both images on every pull request
+with **no build args at all**, which is the exact shape that failed.
 
 **The deploy half has never run.** It is written from the documented behaviour of the actions it
 uses and stays unproven until a server exists.
