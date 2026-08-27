@@ -304,3 +304,37 @@ describe("compaction", () => {
     expect(notices[0].text).toBe("history summarised");
   });
 });
+
+describe("a resumed game is no longer over", () => {
+  it("clears the ending, because the log keeps it", () => {
+    /* `game_events` is append-only, so a game abandoned and then reopened still carries its
+       `game_ended` for ever. Clearing only the pause left the page showing "abandoned" over a game
+       that was playing — and it survived a refresh, because the stale ending was in the log rather
+       than in any cache. */
+    seq = 0;
+    const events = [
+      ...turn(1, "white", "e4"),
+      event("game_ended", { result: "*", termination: "abandoned", detail: "provider 404" }),
+      event("game_resumed", { detail: "reopened by an operator" }),
+      ...turn(2, "black", "e5"),
+    ];
+
+    const { ended, moves } = foldEvents(events, []);
+
+    expect(ended).toBeNull();
+    expect(moves).toEqual(["e4", "e5"]);
+  });
+
+  it("and an ending after the resume still counts", () => {
+    seq = 0;
+    const events = [
+      event("game_ended", { result: "*", termination: "abandoned", detail: "first" }),
+      event("game_resumed", { detail: "reopened" }),
+      event("game_ended", { result: "1-0", termination: "checkmate", detail: "White mates." }),
+    ];
+
+    const { ended } = foldEvents(events, []);
+
+    expect(ended?.termination).toBe("checkmate");
+  });
+});

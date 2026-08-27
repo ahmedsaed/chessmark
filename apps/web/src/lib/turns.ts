@@ -229,9 +229,13 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
       }
 
       case "game_resumed": {
-        // Clears the pause: the two are a pair, and a page still showing "paused" after play
-        // resumed would be worse than showing nothing at all.
+        /* Clears the pause **and the ending**. The log is append-only (ADR-0008), so a game that
+           was abandoned and then reopened still carries its `game_ended` — and this cleared only
+           the pause, so the page went on showing "abandoned" over a game that was playing. It
+           survived a refresh, because the stale ending was in the log rather than in a cache.
+           A game that ends again appends another `game_ended` after this, which sets it back. */
         paused = null;
+        ended = null;
         notices.push({
           key: `resumed-${event.seq}`,
           seq: event.seq,
