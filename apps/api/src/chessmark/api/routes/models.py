@@ -9,6 +9,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Query, status
 
 from chessmark.agents.prompts import PROMPT_VERSION
+from chessmark.agents.registry import endpoint_is_playable
 from chessmark.api.deps import SessionDep
 from chessmark.api.schemas import LeaderboardRow, ModelDetail, ModelOut, ModelStatsOut
 from chessmark.bench.service import compute_aggregates, compute_ratings
@@ -42,12 +43,10 @@ async def list_models(
     if free_only:
         query = query.where(ModelRegistry.is_free.is_(True))
     if playable:
+        # The same predicate `select_endpoint` pins by, so the catalogue cannot advertise a model
+        # the picker would refuse — including one whose only endpoint's window is under the floor.
         query = query.where(
-            ModelRegistry.id.in_(
-                sa.select(ModelEndpoint.model_id).where(
-                    ModelEndpoint.is_active.is_(True), ModelEndpoint.supports_tools.is_(True)
-                )
-            )
+            ModelRegistry.id.in_(sa.select(ModelEndpoint.model_id).where(*endpoint_is_playable()))
         )
 
     rows = list(await session.scalars(query.order_by(ModelRegistry.openrouter_id)))

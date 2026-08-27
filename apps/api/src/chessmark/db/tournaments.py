@@ -18,6 +18,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.registry import endpoint_is_playable
 from chessmark.db.enums import GameStatus, TournamentStatus
 from chessmark.db.models import (
     Game,
@@ -66,11 +67,10 @@ async def resolve_field(
     query = sa.select(ModelRegistry).where(
         ModelRegistry.enabled.is_(True),
         ModelRegistry.supports_tools.is_(True),
-        ModelRegistry.id.in_(
-            sa.select(ModelEndpoint.model_id).where(
-                ModelEndpoint.is_active.is_(True), ModelEndpoint.supports_tools.is_(True)
-            )
-        ),
+        # One definition of "an endpoint worth seating", shared with `select_endpoint` and the
+        # catalogue. A field that admitted an entrant the picker then refused is how a pool spent
+        # its pairings on a model whose only endpoint could not hold a game (AGENT-14).
+        ModelRegistry.id.in_(sa.select(ModelEndpoint.model_id).where(*endpoint_is_playable())),
     )
 
     if field.slugs:

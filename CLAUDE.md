@@ -464,15 +464,32 @@ playable-but-unrankable and was
 [amended](docs/adr/0015-quantization-as-identity-and-pinned-endpoints.md) once it was clear that
 a game record which cannot name its weights is as useless as a rating across them.
 
-> ⚠️ **"Never registered" was aspirational for the context floor.** There is no
-> `MIN_CONTEXT_TOKENS` constant — the value is `settings.min_context_tokens`, and
-> `fetch_catalogue(min_context=...)` **defaults to 0, which means no filter at all**.
-> `refresh_catalogue.py` passed it and `seed_models.py` did not, so the rule held or not depending
-> on which command was last run. `liquid/lfm-2.5-2.6b:free` (65,536) reached a pool that way and
-> abandoned a game at ply 10: `max_completion_tokens` is a flat 64,000 and is **not clamped to the
-> model's window**, so every call asked for 65,810 tokens of a 65,536-token context and was
-> refused. Both halves are worth knowing — a floor that a caller may forget, and a cap that
-> nothing reconciles against the endpoint serving it.
+**"Never registered" was aspirational, and is now enforced.** Three things had gone wrong, all
+found through one abandoned game:
+
+1. The floor arrived as `min_context: int = 0`, and `fits_a_game` reads 0 as *admit everything* —
+   so a caller who simply forgot the argument opted out of the rule. `refresh_catalogue.py` passed
+   it; `seed_models.py` did not. `context_floor(None)` now resolves to `settings.min_context_tokens`
+   (128k), so **omitting it applies the policy** and `0` is an opt-out somebody has to type.
+2. **A sync re-enabled what a sync had disabled.** `to_registry_entry` stamps `enabled: True` and
+   the upsert wrote it onto existing rows, so `refresh-catalogue` disabled a sub-floor model and
+   the next `seed-models` brought it back — and an administrator's deliberate disable did not
+   survive either. `enabled` is set on **creation only** now.
+3. **The endpoint's own window was never read.** A model advertises a context length and an
+   *endpoint* serves one; the 400 that abandoned the game said "**this endpoint's** maximum context
+   length is 65536". Both numbers were already stored. `endpoint_is_playable()` is now the single
+   predicate shared by `select_endpoint`, `GET /models` and `resolve_field`, so the catalogue, the
+   field and the picker cannot disagree.
+
+`make prune-registry` applies the rule to the registry as it already stands — reports by default,
+`ARGS=--apply` to act. It **disables, never deletes**: `players.model_id` is `ON DELETE RESTRICT`,
+so a row with games cannot be deleted at all, and a game must stay readable however its model
+turned out. It does remove those models' games, which is the destructive half and the reason it
+reports first.
+
+Still open: `max_completion_tokens` is a flat **64,000** reconciled against nothing. The floor keeps
+models that cannot hold a game out of the field; it does not stop the harness asking a 128k model
+for 64k of output on ply 60.
 
 `GET /models` returns only models with an active tool-capable endpoint. It listed everything
 registered for about an hour, which meant the catalogue page advertised 18 models the picker

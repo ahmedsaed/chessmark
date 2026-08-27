@@ -27,6 +27,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.pricing import ModelPricing, PricingTable
+from chessmark.core.config import get_settings
 from chessmark.db.models import ModelEndpoint, ModelRegistry
 
 MODELS_URL = "https://openrouter.ai/api/v1/models"
@@ -159,6 +160,21 @@ def is_batch(openrouter_id: str) -> bool:
     return openrouter_id.endswith(":batch")
 
 
+def context_floor(minimum: int | None = None) -> int:
+    """The minimum context window, resolved from configuration when not given.
+
+    **`None` means "the policy", not "no filter".** That inversion is the whole point. The floor
+    used to arrive as `min_context: int = 0`, and `fits_a_game` reads `0` as *admit everything* — so
+    a caller that simply forgot the argument silently opted out of AGENT-14. `refresh_catalogue.py`
+    passed it and `seed_models.py` did not, and `liquid/lfm-2.5-2.6b:free` (65,536) reached a pool
+    and abandoned a game at ply 10. Passing `0` still disables the check, but now that has to be
+    said out loud.
+    """
+    if minimum is None:
+        return int(get_settings().min_context_tokens)
+    return minimum
+
+
 def fits_a_game(context_length: int | None, minimum: int) -> bool:
     """Whether this model's context window can hold a game worth playing (AGENT-14).
 
@@ -182,7 +198,7 @@ async def fetch_catalogue(
     *,
     tools_only: bool = True,
     free_only: bool = False,
-    min_context: int = 0,
+    min_context: int | None = None,
 ) -> list[dict[str, Any]]:
     """The live catalogue, ready to upsert.
 
@@ -205,7 +221,7 @@ async def fetch_catalogue(
     entries = [to_registry_entry(model) for model in models]
     entries = [entry for entry in entries if not is_batch(entry["openrouter_id"])]
     entries = [e for e in entries if not is_floating_alias(e["openrouter_id"])]
-    entries = [e for e in entries if fits_a_game(e["context_length"], min_context)]
+    entries = [e for e in entries if fits_a_game(e["context_length"], context_floor(min_context))]
     if tools_only:
         entries = [entry for entry in entries if entry["supports_tools"]]
     if free_only:
@@ -244,7 +260,6 @@ async def sync_model_registry(
             "supports_tools": bool(entry.get("supports_tools", True)),
             "is_free": bool(entry.get("is_free", slug.endswith(":free"))),
             "hugging_face_id": entry.get("hugging_face_id"),
-            "enabled": bool(entry.get("enabled", True)),
             # Derived, and rewritten on every sync so a vendor's price change moves the tier with
             # it. `credit_cost_override` is deliberately absent from this dict: an administrator's
             # exception must survive a refresh (ADR-0016).
@@ -261,7 +276,16 @@ async def sync_model_registry(
 
         row = existing.get(slug)
         if row is None:
-            session.add(ModelRegistry(openrouter_id=slug, **values))
+            # `enabled` is set **on creation only**. Asserting it on every sync made the two
+            # catalogue commands fight: `refresh-catalogue` disables a model below the context
+            # floor, and the next `seed-models` re-enabled it — so whether AGENT-14 held depended
+            # on which command ran last, and an administrator's deliberate disable did not survive
+            # a refresh either. Re-enabling is now a decision somebody makes, not a side effect.
+            session.add(
+                ModelRegistry(
+                    openrouter_id=slug, enabled=bool(entry.get("enabled", True)), **values
+                )
+            )
             report.created.append(slug)
             continue
 
@@ -298,11 +322,26 @@ async def load_pricing_table(session: AsyncSession) -> PricingTable:
     return table
 
 
-async def playable_models(session: AsyncSession, *, free_only: bool = False) -> list[ModelRegistry]:
-    """Models a game may actually use: enabled, and able to call tools (AGENT-01)."""
+async def playable_models(
+    session: AsyncSession, *, free_only: bool = False, min_context: int | None = None
+) -> list[ModelRegistry]:
+    """Models a game may actually use: enabled, tool-capable (AGENT-01), and big enough to hold a
+    game (AGENT-14).
+
+    The context floor was missing here, which is how a model too small to finish a game stayed on
+    the list of models a game may use.
+    """
+    floor = context_floor(min_context)
     query = sa.select(ModelRegistry).where(
         ModelRegistry.enabled.is_(True), ModelRegistry.supports_tools.is_(True)
     )
+    if floor > 0:
+        query = query.where(
+            sa.or_(
+                ModelRegistry.context_length.is_(None),
+                ModelRegistry.context_length >= floor,
+            )
+        )
     if free_only:
         query = query.where(ModelRegistry.is_free.is_(True))
 
@@ -480,6 +519,64 @@ class NoEndpointError(LookupError):
         self.quantization = quantization
 
 
+def ineligible_reasons(
+    row: ModelRegistry, *, min_context: int | None = None, has_endpoint: bool = True
+) -> list[str]:
+    """Every reason this model cannot finish a game — AGENT-14, applied to a row we already hold.
+
+    The rule was only ever enforced at *admission*, so it held for models arriving after it and not
+    for the registry as it already stood. Expressed here rather than in the script that prunes, so
+    the thing that admits and the thing that removes cannot disagree about what "playable" means.
+
+    **All the reasons, not the first.** An operator deciding whether to disable a model wants to
+    know it is both too small *and* aliased, rather than fixing one and discovering the other.
+    """
+    floor = context_floor(min_context)
+    against = []
+    if not row.supports_tools:
+        against.append("no tool calling")
+    if is_batch(row.openrouter_id):
+        against.append("batch variant — asynchronous, cannot answer a turn")
+    if is_floating_alias(row.openrouter_id):
+        against.append("floating alias — plays, but cannot say what played")
+    if not fits_a_game(row.context_length, floor):
+        against.append(f"context {row.context_length:,} < {floor:,}")
+    if not has_endpoint:
+        against.append("no active tool-capable endpoint that can hold a game")
+    return against
+
+
+def endpoint_is_playable(min_context: int | None = None) -> tuple[Any, ...]:
+    """What an endpoint must be for a game to use it. One definition, four callers.
+
+    `select_endpoint` pins one of these per seat, `GET /models` advertises models that have one,
+    and `resolve_field` admits entrants that have one — so a disagreement between them shows up as
+    a catalogue offering a model the picker refuses, which has happened.
+
+    **The endpoint's own window is checked here, and that is the addition.** A model advertises a
+    context length and an *endpoint* serves one, and they need not match: the 400 that abandoned a
+    game said "**this endpoint's** maximum context length is 65536". Both numbers were already in
+    the database; only the model's was ever read. A model advertising 256k served by a 64k endpoint
+    passed every gate and failed exactly the same way.
+
+    A NULL window is admitted, consistently with `fits_a_game`: unknown is not the same as small,
+    and excluding on missing metadata drops models over a gap in someone else's data.
+    """
+    floor = context_floor(min_context)
+    clauses: list[Any] = [
+        ModelEndpoint.is_active.is_(True),
+        ModelEndpoint.supports_tools.is_(True),
+    ]
+    if floor > 0:
+        clauses.append(
+            sa.or_(
+                ModelEndpoint.context_length.is_(None),
+                ModelEndpoint.context_length >= floor,
+            )
+        )
+    return tuple(clauses)
+
+
 async def select_endpoint(
     session: AsyncSession,
     *,
@@ -503,15 +600,15 @@ async def select_endpoint(
     `unknown` remains a contestant you can ask for; it is no longer the silent default.
 
     Endpoints that cannot call tools are never selected: an agent that cannot act cannot play
-    (AGENT-01), and picking one would produce a forfeit that says nothing about the model.
+    (AGENT-01), and picking one would produce a forfeit that says nothing about the model. Nor are
+    endpoints whose own context window is under the floor — see `endpoint_is_playable`.
     """
     query = (
         sa.select(ModelEndpoint)
         .join(ModelRegistry, ModelRegistry.id == ModelEndpoint.model_id)
         .where(
             ModelRegistry.openrouter_id == model_slug,
-            ModelEndpoint.is_active.is_(True),
-            ModelEndpoint.supports_tools.is_(True),
+            *endpoint_is_playable(),
         )
         .order_by(
             # A declared precision first, unless one was asked for by name. `unknown` is a real
@@ -546,8 +643,7 @@ async def quantizations_offered(session: AsyncSession, model_slug: str) -> list[
         .join(ModelRegistry, ModelRegistry.id == ModelEndpoint.model_id)
         .where(
             ModelRegistry.openrouter_id == model_slug,
-            ModelEndpoint.is_active.is_(True),
-            ModelEndpoint.supports_tools.is_(True),
+            *endpoint_is_playable(),
         )
         .distinct()
     )

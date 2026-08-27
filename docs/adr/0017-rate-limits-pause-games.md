@@ -145,5 +145,28 @@ gateway classified it as fatal and tried once; **the worker requeued it four mor
 a deadline is fatal to a call and not to a turn, and an auth error must not abandon every game in
 flight, so only request-shape rejections short-circuit.
 
+That last one turned out to have three causes, and fixing the one that admitted the model was not
+enough:
+
+* The floor arrived as `min_context: int = 0`, and `fits_a_game` reads 0 as *admit everything*, so a
+  caller who forgot the argument opted out of AGENT-14. `refresh_catalogue.py` remembered;
+  `seed_models.py` did not. `context_floor(None)` now resolves to the configured floor, so omitting
+  it applies the policy and disabling it has to be typed.
+* **A sync re-enabled what a sync had disabled.** `enabled: True` was written onto every row on
+  every upsert, so `refresh-catalogue` disabled the model and the next `seed-models` restored it —
+  and an administrator's deliberate disable did not survive a refresh either. `enabled` is now set
+  on creation only.
+* **The endpoint's own window was never read.** A model advertises a context length and an endpoint
+  serves one, and the refusal named the *endpoint's*. Both numbers were already stored.
+  `endpoint_is_playable()` is now one predicate shared by `select_endpoint`, `GET /models` and
+  `resolve_field`, so the picker, the catalogue and the field cannot disagree — a disagreement that
+  has shipped before, as a catalogue advertising models the picker refused.
+
+`make prune-registry` applies the rule to the registry as it stands: it disables ineligible rows and
+removes their games. Disables, never deletes — `players.model_id` is `ON DELETE RESTRICT` and a game
+must stay readable however its model turned out. It reports before it acts, because removing games
+is destructive and the count is worth seeing first.
+
 Still open, and stated rather than fixed: `max_completion_tokens` is a flat 64,000 that nothing
-reconciles against the window of the endpoint serving it.
+reconciles against the window of the endpoint serving it. The floor keeps models that cannot hold a
+game out of the field; it does not stop the harness asking a 128k model for 64k of output on ply 60.
