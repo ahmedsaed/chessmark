@@ -25,9 +25,17 @@ export default async function Home() {
     (game) => game.status !== "running" && game.status !== "paused",
   );
 
-  /* The hero wants a running game; the most recent finished one keeps it from being empty
-     between games, which is most of the time on a small deployment. */
-  const featured = live[0] ?? finished[0] ?? null;
+  /* **Running first, then paused, then the past.** Excluding paused from both lists left those
+     games nowhere at all: not "live" because the status filter is exact, not "finished" because
+     the line above drops them — so the front page showed a game from yesterday while two games
+     sat paused mid-position. A paused game is the current state of play and belongs at the top,
+     saying so. */
+  const inPlay = [...live, ...recent.filter((game) => game.status === "paused")];
+
+  /* The hero wants a game in play — running for preference, paused if that is all there is; the
+     most recent finished one keeps it from being empty between games, which is most of the time on
+     a small deployment. */
+  const featured = inPlay[0] ?? finished[0] ?? null;
   const [game, events] = featured
     ? await Promise.all([getGame(featured.id), listEvents(featured.id)])
     : [null, []];
@@ -54,9 +62,11 @@ export default async function Home() {
           apart. Renders nothing at all for a visitor with no games of their own. */}
       <MyGames heading="Your games" />
 
-      {live.length > 1 && (
-        <Strip title="Also live" count={live.length - 1}>
-          {live.slice(1).map((entry) => (
+      {inPlay.length > 1 && (
+        /* "In play" rather than "live": the set now includes paused games, and every card says
+           which it is. Calling a paused game live is the thing this whole change exists to stop. */
+        <Strip title="Also in play" count={inPlay.length - 1}>
+          {inPlay.slice(1).map((entry) => (
             <GameCard key={entry.id} game={entry} />
           ))}
         </Strip>
