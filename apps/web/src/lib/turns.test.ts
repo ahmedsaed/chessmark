@@ -249,3 +249,58 @@ describe("pauses", () => {
     expect(notices[0].seq).toBeGreaterThan(turns[0].seq);
   });
 });
+
+/**
+ * Compaction (ADR-0018).
+ *
+ * Shown in the stream because it changes what the model can see from that point on: a reader
+ * wondering why it abandoned a plan it announced at move 12 should find the answer in the timeline
+ * rather than in the transcript.
+ */
+describe("compaction", () => {
+  it("surfaces a compaction as a notice with what it folded", () => {
+    seq = 0;
+    const events = [
+      ...turn(1, "white", "e4"),
+      event("compacted", { folded: 40, kept: 4, context_tokens: 64_000 }),
+      ...turn(2, "black", "e5"),
+    ];
+
+    const { notices, moves } = foldEvents(events, []);
+
+    expect(notices.map((n) => n.kind)).toEqual(["compacted"]);
+    expect(notices[0].text).toContain("40 messages folded");
+    // Play carries on around it: a compaction is not an interruption of the game.
+    expect(moves).toEqual(["e4", "e5"]);
+  });
+
+  it("is not a pause", () => {
+    /* They share the notice channel and mean opposite things: one is the harness stopping, the
+       other is the model housekeeping mid-turn while play continues. */
+    seq = 0;
+    const { paused } = foldEvents([event("compacted", { folded: 10, kept: 4 })], []);
+
+    expect(paused).toBeNull();
+  });
+
+  it("does not close the live turn", () => {
+    /* Compaction happens *inside* a turn, before the model answers, so the turn is still open —
+       unlike a pause, which stops it. Folding the turn here would collapse the panel mid-think. */
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w" }),
+      event("compacted", { folded: 10, kept: 4 }),
+    ];
+
+    const { turns } = foldEvents(events, []);
+
+    expect(turns[0].live).toBe(true);
+  });
+
+  it("reads without the counts, since an older payload may not carry them", () => {
+    seq = 0;
+    const { notices } = foldEvents([event("compacted", {})], []);
+
+    expect(notices[0].text).toBe("history summarised");
+  });
+});

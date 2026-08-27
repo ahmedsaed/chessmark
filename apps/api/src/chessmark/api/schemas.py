@@ -240,6 +240,8 @@ class PlayerOut(Schema):
         return self.pinned_provider in (None, self.providers_used[0])
 
     illegal_attempts: int
+    #: How many times this seat summarised its own history to stay inside its window (ADR-0018).
+    compactions: int = 0
     forfeited: bool
     prompt_tokens: int
     completion_tokens: int
@@ -269,6 +271,7 @@ class PlayerOut(Schema):
             model=str(model) if model else None,
             persona=row.persona,
             illegal_attempts=row.illegal_attempts,
+            compactions=row.compactions,
             forfeited=row.forfeited,
             prompt_tokens=row.prompt_tokens,
             completion_tokens=row.completion_tokens,

@@ -243,16 +243,25 @@ export function EventStream({
  * `ink-faint` pair for the resume — one is a thing to know about, the other is only the
  * reassurance that it ended. Tokens throughout; no component hard-codes a colour (ADR-0013).
  */
+const NOTICE_LABEL: Record<StreamNotice["kind"], string> = {
+  paused: "paused",
+  resumed: "resumed",
+  compacted: "compacted",
+};
+
 function Notice({ notice }: { notice: StreamNotice }) {
   const paused = notice.kind === "paused";
+  /* A compaction is machinery, not a fault — the model doing its own housekeeping — so it reads in
+     the `machine` register the tool calls use rather than in `bad`. Only a pause is a problem. */
+  const tone = paused
+    ? "border-bad-deep bg-surface text-bad"
+    : notice.kind === "compacted"
+      ? "border-machine-deep bg-surface text-machine"
+      : "border-line bg-surface-3 text-ink-faint";
+
   return (
-    <div
-      role="status"
-      className={`border px-3 py-2 font-mono text-[11px] leading-relaxed ${
-        paused ? "border-bad-deep bg-surface text-bad" : "border-line bg-surface-3 text-ink-faint"
-      }`}
-    >
-      <span className="uppercase tracking-[0.1em]">{paused ? "paused" : "resumed"}</span>
+    <div role="status" className={`border px-3 py-2 font-mono text-[11px] leading-relaxed ${tone}`}>
+      <span className="uppercase tracking-[0.1em]">{NOTICE_LABEL[notice.kind]}</span>
       <span className="text-ink-dim"> · {notice.text}</span>
       {notice.resumeAfter && (
         <span className="text-ink-faint"> · retrying {relativeTime(notice.resumeAfter)}</span>

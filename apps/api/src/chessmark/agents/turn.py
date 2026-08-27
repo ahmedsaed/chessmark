@@ -19,6 +19,7 @@ telling them apart:
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -28,7 +29,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.agents import prompts, transcript
+from chessmark.agents import compaction, prompts, transcript
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.mangled import ProviderMangledError, mangled_tool_call
 from chessmark.agents.sessions import session_for_game
@@ -38,6 +39,8 @@ from chessmark.db.enums import EventType, ModerationStatus, TurnStatus
 from chessmark.db.models import Game, LlmCall, Message, Player, ToolCall, Turn
 from chessmark.db.repositories import append_event, record_ply
 from chessmark.game import Colour, MoveOutcome, Outcome, Referee, Termination
+
+log = logging.getLogger(__name__)
 
 #: How many truncated responses a model may produce in one turn before forfeiting. More than one
 #: because the first truncation is often a model discovering how long its own reasoning runs; a
@@ -74,6 +77,26 @@ class TurnLimits:
     """Total tokens across the whole turn, summed over every round-trip."""
 
     max_completion_tokens: int = 64_000
+    """A ceiling on one answer, **clamped at call time** to what the endpoint will accept.
+
+    Unclamped it was a flat 64,000 reconciled against nothing, which asked a 65,536-token endpoint
+    for 65,810 tokens and was refused — a 400 that abandoned a game at ply 10. See
+    `compaction.Window.completion_cap`.
+    """
+
+    context_reserve_tokens: int = compaction.DEFAULT_RESERVE_TOKENS
+    """Room held back for the next completion, and so the trigger point (ADR-0018).
+
+    Held back rather than spent, which is what lets the summarising call answer at all: compaction
+    fires while the prompt still fits, and this is the space it fits in.
+    """
+
+    keep_turns: int = compaction.DEFAULT_KEEP_TURNS
+    """How many recent turns survive a compaction verbatim (ADR-0018).
+
+    **Turns, not messages.** A turn is three to five messages and every provider rejects a `tool`
+    result whose `tool_calls` parent is missing, so a count of messages would cut mid-turn and 400.
+    """
     """Cap on a *single* response.
 
     The per-turn budget cannot bound this: it is only checked between round-trips, so by the time
@@ -184,6 +207,11 @@ class TurnRunner:
         self._llm_sequence = 0
         self._tool_sequence = 0
         self._nudged = False
+        #: The prompt size the provider last reported. Exact where an estimate would do, and the
+        #: reason compaction fires on measurement rather than on a per-ply guess.
+        self._prompt_tokens = 0
+        self._cached_window: compaction.Window | None = None
+        self._compactions = 0
         self._truncations = 0
         self._move_committed = False
 
@@ -253,6 +281,103 @@ class TurnRunner:
         await self._finalise(turn, result)
         return result
 
+    # ------------------------------------------------------------------ context
+
+    async def _endpoint_window(self) -> compaction.Window:
+        """What the endpoint serving this seat accepts. Resolved once per turn and remembered.
+
+        Once, because the seat is pinned for the whole game (ADR-0015) so the answer cannot change
+        mid-turn — and a query per round-trip would repeat it three to five times a ply.
+        """
+        if self._cached_window is None:
+            only = (self.player.provider_routing or {}).get("only") or []
+            self._cached_window = await compaction.window_for(
+                self.session,
+                model_slug=self.model,
+                provider=str(only[0]) if only else None,
+                reserve=self.limits.context_reserve_tokens,
+            )
+        return self._cached_window
+
+    async def _compact(
+        self, turn: Turn, result: TurnResult, occupied: int, window: compaction.Window
+    ) -> bool:
+        """Ask the model to summarise its own earlier turns. True when the transcript shrank.
+
+        Failure returns False and the turn proceeds on the un-compacted history, which will very
+        likely be refused for exceeding the window — and that is the intended outcome. The turn
+        fails, rolls back, and is retried, which compacts again; a rate limit pauses the game
+        instead. The alternative, carrying on regardless, spends a call to be told the prompt is
+        too large and then abandons the game.
+        """
+        rows = await compaction.live_messages(self.session, self.player.id)
+        plan = compaction.plan_compaction(rows, keep_turns=self.limits.keep_turns)
+        if not plan.worthwhile:
+            # Nothing left to fold: the retained turns alone fill the window. Compacting again
+            # cannot help, so say so rather than looping on it.
+            log.warning(
+                "cannot compact %s: the last %d turns already fill the window",
+                self.player.id,
+                self.limits.keep_turns,
+            )
+            return False
+
+        log.info(
+            "compacting %s at %d of %d tokens: folding %d messages, keeping %d",
+            self.player.id,
+            occupied,
+            window.context,
+            len(plan.fold),
+            len(plan.keep),
+        )
+
+        completion = await self.gateway.complete(
+            model=self.model,
+            messages=compaction.summary_request(plan),
+            # No tools: a model handed its schema mid-summary calls one, and the call would have to
+            # be discarded. And a small cap, which is what keeps this request inside the window it
+            # exists to make room in — the reserve the trigger held back is exactly this space.
+            max_tokens=window.completion_cap(occupied, compaction.SUMMARY_MAX_TOKENS),
+            session_id=session_for_game(self.game.id),
+        )
+        await self._record_llm_call(turn, completion)
+        self._accumulate(result, completion)
+
+        summary = (completion.content or "").strip()
+        if not summary:
+            log.warning(
+                "compaction of %s produced nothing; leaving the transcript alone", self.player.id
+            )
+            return False
+
+        await compaction.apply(
+            self.session,
+            player_id=self.player.id,
+            game_id=self.game.id,
+            plan=plan,
+            summary=summary,
+        )
+        self._compactions += 1
+        self._prompt_tokens = 0  # the next call measures the new prefix rather than the old one
+
+        await append_event(
+            self.session,
+            game_id=self.game.id,
+            type=EventType.COMPACTED,
+            payload={
+                "player_id": str(self.player.id),
+                "colour": self.colour.value,
+                "model": self.model,
+                "folded": len(plan.fold),
+                "kept": len(plan.keep),
+                "occupied_tokens": occupied,
+                "context_tokens": window.context,
+                "summary_tokens": completion.usage.completion,
+                "compaction": self._compactions,
+            },
+        )
+        return True
+
     # ------------------------------------------------------------------ the loop
 
     async def _loop(self, turn: Turn, result: TurnResult, started: float) -> None:
@@ -261,6 +386,26 @@ class TurnRunner:
                 return
 
             messages = await transcript.build_messages(self.session, self.player.id)
+
+            # How full the window is. The provider's own count from the previous round-trip when
+            # there is one — exact, per invariant 4 — and a character estimate before the first,
+            # which is the only point in a turn where nothing exact exists.
+            occupied = self._prompt_tokens or compaction.estimate_tokens(messages)
+            window = await self._endpoint_window()
+
+            # **Once per turn.** A turn is a few round-trips against one transcript, so a second
+            # compaction inside it would be folding what the first just wrote — and on a window
+            # smaller than the reserve the trigger is true even straight after a fold, which would
+            # spend a call per round-trip discovering there is nothing left to fold.
+            if (
+                self._compactions == 0
+                and window.should_compact(occupied)
+                and await self._compact(turn, result, occupied, window)
+            ):
+                # Rebuilt from the summary, so both the message list and its size change.
+                messages = await transcript.build_messages(self.session, self.player.id)
+                occupied = compaction.estimate_tokens(messages)
+
             # The call gets whatever is left of the turn's wall clock, never more. Checking
             # the budget only between round-trips cannot bound a single slow call: one 18-minute
             # call sailed past a 600-second turn limit because nothing was watching while it ran.
@@ -269,7 +414,12 @@ class TurnRunner:
                 model=self.model,
                 messages=messages,
                 tools=self._tools,
-                max_tokens=self.limits.max_completion_tokens,
+                # **Clamped to what the endpoint will accept.** A flat 64,000 reconciled against
+                # nothing asked a 65,536-token endpoint for 65,810 tokens and was refused — a 400
+                # that abandoned a game at ply 10. `max_tokens` is a ceiling on the answer, so
+                # asking for less than the model needs is a truncation and asking for more than
+                # fits is a rejection; this is the largest value that cannot be rejected.
+                max_tokens=window.completion_cap(occupied, self.limits.max_completion_tokens),
                 # One session per game, both seats included, so a match reads as a conversation
                 # on OpenRouter's own dashboard rather than as a hundred unrelated generations.
                 # See `agents/sessions.py` for why the unit is the game and not the turn.
@@ -279,6 +429,7 @@ class TurnRunner:
 
             await self._record_llm_call(turn, completion)
             self._accumulate(result, completion)
+            self._prompt_tokens = completion.usage.prompt or self._prompt_tokens
 
             if completion.reasoning:
                 # Written in full, always. Whether a *reader* may see it is decided on the way out,
@@ -655,6 +806,7 @@ class TurnRunner:
             .where(Player.id == self.player.id)
             .values(
                 illegal_attempts=Player.illegal_attempts + result.illegal_attempts,
+                compactions=Player.compactions + self._compactions,
                 prompt_tokens=Player.prompt_tokens + result.prompt_tokens,
                 completion_tokens=Player.completion_tokens + result.completion_tokens,
                 reasoning_tokens=Player.reasoning_tokens + result.reasoning_tokens,
