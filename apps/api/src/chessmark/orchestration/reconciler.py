@@ -13,19 +13,25 @@ It also **resumes paused games**, which is the same question asked of a differen
 paused for a provider rate limit is waiting on a clock rather than on a worker, and when that clock
 passes somebody has to put it back on the queue. This is that somebody, and it lives here because
 the alternative is a second loop asking Postgres the same thing.
+
+Resuming respects the event's concurrency bound, which is less obvious than it sounds: a paused game
+holds no slot (ADR-0017), so coming back it has to ask for one. Whatever does not fit stays paused
+and is picked up on a later tick.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import logging
+import uuid
 from dataclasses import dataclass, field
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from chessmark.db import tournaments as repo
 from chessmark.db.enums import EventType, GameStatus, PlayerKind
-from chessmark.db.models import Game, GameEvent, Player
+from chessmark.db.models import Game, GameEvent, Player, Tournament, TournamentGame
 from chessmark.db.repositories import append_event, finish_game, rebuild_referee
 from chessmark.game import Colour, GameResult, Outcome, Termination
 from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
@@ -154,12 +160,59 @@ async def find_resumable(session: AsyncSession, *, now: dt.datetime | None = Non
     """
     clock = now or dt.datetime.now(dt.UTC)
     rows = await session.scalars(
-        sa.select(Game).where(
+        sa.select(Game)
+        .where(
             Game.status == GameStatus.PAUSED,
             sa.or_(Game.resume_after.is_(None), Game.resume_after <= clock),
         )
+        # Longest wait first. When several are due at once the order decides who gets a slot, and
+        # "whoever has waited longest" is the only ordering that cannot starve a game.
+        .order_by(Game.resume_after.asc().nulls_first())
     )
     return list(rows)
+
+
+async def with_room_to_run(session: AsyncSession, games: list[Game]) -> list[Game]:
+    """Of these, the ones their event has room to actually play.
+
+    **A pause frees the concurrency slot; resuming has to ask for it back.** It did not. `reconcile`
+    resumed every due game in one pass and enqueued them all, and nothing consulted
+    `max_concurrent` on the way in — so a pool bounded to one game had three paused games come due
+    within a quarter of an hour and would have run them in parallel. The bound was honoured
+    everywhere except the one path that creates running games without going through `_start_games`.
+
+    Games left over stay paused with `resume_after` already behind them, so the next tick picks
+    them up: the effect is that they queue rather than pile in. A game belonging to no event —
+    a human's game, anything started by hand — is bounded by nothing and resumes immediately.
+    """
+    ready: list[Game] = []
+    budget: dict[uuid.UUID, int] = {}
+
+    for game in games:
+        pairing = await session.scalar(
+            sa.select(TournamentGame).where(TournamentGame.game_id == game.id)
+        )
+        if pairing is None:
+            ready.append(game)
+            continue
+
+        if pairing.tournament_id not in budget:
+            tournament = await session.get(Tournament, pairing.tournament_id)
+            if tournament is None:  # pragma: no cover - a pairing without its event
+                ready.append(game)
+                continue
+            running = len(await repo.in_flight(session, tournament.id))
+            budget[pairing.tournament_id] = tournament.max_concurrent - running
+
+        if budget[pairing.tournament_id] > 0:
+            budget[pairing.tournament_id] -= 1
+            ready.append(game)
+        else:
+            log.info(
+                "%s is due to resume but its event is already at its concurrency bound; waiting",
+                game.id,
+            )
+    return ready
 
 
 async def resume(session: AsyncSession, game: Game) -> AdvanceTurn:
@@ -209,7 +262,7 @@ async def reconcile(
 
         # Resumed in the same transaction as the stall sweep, so one pass over the database
         # decides everything and two callers cannot resume the same game twice.
-        resumable = await find_resumable(session)
+        resumable = await with_room_to_run(session, await find_resumable(session))
         for game in resumable:
             log.info("resuming %s at ply %s: %s", game.id, game.ply_count, game.pause_reason)
             jobs.append(await resume(session, game))

@@ -8,6 +8,7 @@ running (ADR-0008), so the reconciler asks it rather than the queue.
 from __future__ import annotations
 
 import datetime as dt
+import uuid
 from typing import Any
 
 import pytest
@@ -16,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.scripted import plays
 from chessmark.db.enums import EventType, GameStatus
-from chessmark.db.models import Game, GameEvent
-from chessmark.orchestration.reconciler import find_stalled, reconcile
+from chessmark.db.models import Game, GameEvent, TournamentGame
+from chessmark.orchestration.reconciler import find_resumable, find_stalled, reconcile
 from chessmark.orchestration.worker import ADVANCED, STALE
 from tests.orchestration.conftest import Fixture, both_sides, run_next, seat_match
 
@@ -202,3 +203,111 @@ async def test_resuming_appends_one_event(
     resumed = list(events)
     assert len(resumed) == 1
     assert "rate-limited" in str(resumed[0].payload.get("detail"))
+
+
+# ====================================================================== resuming within bounds
+
+
+async def test_resuming_respects_the_events_concurrency_bound(
+    db: AsyncSession, sessionmaker: Any, queue: Any
+) -> None:
+    """A pause frees the concurrency slot; resuming has to ask for it back.
+
+    It did not. Every due game was resumed in one pass and enqueued, and nothing consulted
+    `max_concurrent` — so a pool bounded to one game had three come due within a quarter of an hour
+    and would have played them in parallel. The bound was honoured everywhere except the one path
+    that creates running games without going through `_start_games`.
+    """
+    from chessmark.db import tournaments as repo
+    from chessmark.orchestration.reconciler import with_room_to_run
+    from chessmark.tournament import FieldFilter, Format, TournamentConfig
+
+    entrants = await repo.resolve_field(db, FieldFilter())
+    tournament = await repo.create_tournament(
+        db,
+        name="Bounded",
+        slug=f"bounded-{uuid.uuid4().hex[:8]}",
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+        entrants=entrants,
+    )
+
+    # Three games, all paused and all due, all in one event bounded to a single running game.
+    games = []
+    for index in range(3):
+        fixture = await seat_match(db, queue)
+        fixture.game.status = GameStatus.PAUSED
+        fixture.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=3 - index)
+        db.add(
+            TournamentGame(
+                # A distinct round per pairing: the table is unique on
+                # (tournament, round, white, black), so three identical rows are not a shape the
+                # schema allows and faking one would be testing something impossible.
+                tournament_id=tournament.id,
+                round_number=index + 1,
+                white_key="a",
+                black_key="b",
+                game_id=fixture.game.id,
+            )
+        )
+        games.append(fixture.game)
+    await db.commit()
+
+    due = await find_resumable(db)
+    ready = await with_room_to_run(db, due)
+
+    assert len(due) == 3, "all three are due"
+    assert len(ready) == 1, "and exactly one may run"
+    assert ready[0].id == games[0].id, "the one that has waited longest"
+
+
+async def test_the_rest_are_left_paused_for_a_later_tick(
+    db: AsyncSession, sessionmaker: Any, queue: Any
+) -> None:
+    """Left paused rather than dropped: `resume_after` is already behind them, so the next tick
+    finds them again. The effect is that they queue instead of piling in."""
+    from chessmark.db import tournaments as repo
+    from chessmark.tournament import FieldFilter, Format, TournamentConfig
+
+    entrants = await repo.resolve_field(db, FieldFilter())
+    tournament = await repo.create_tournament(
+        db,
+        name="Bounded",
+        slug=f"bounded-{uuid.uuid4().hex[:8]}",
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+        entrants=entrants,
+    )
+    for index in range(2):
+        fixture = await seat_match(db, queue)
+        fixture.game.status = GameStatus.PAUSED
+        fixture.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)
+        db.add(
+            TournamentGame(
+                tournament_id=tournament.id,
+                round_number=index + 1,
+                white_key="a",
+                black_key="b",
+                game_id=fixture.game.id,
+            )
+        )
+    await db.commit()
+
+    report = await reconcile(sessionmaker, queue)
+
+    assert len(report.resumed) == 1
+    db.expunge_all()
+    still_paused = await db.scalars(sa.select(Game).where(Game.status == GameStatus.PAUSED))
+    assert len(list(still_paused)) == 1, "the other waits its turn rather than being forgotten"
+
+
+async def test_a_game_in_no_event_resumes_immediately(
+    db: AsyncSession, game: Fixture, sessionmaker: Any
+) -> None:
+    """A human's game, or anything started by hand, is bounded by nothing. Making it wait on a
+    tournament's slot would be a bound nobody asked for."""
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
+    await db.commit()
+
+    report = await reconcile(sessionmaker, game.queue)
+
+    assert report.resumed == [str(game.game.id)]
