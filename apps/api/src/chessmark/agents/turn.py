@@ -110,6 +110,8 @@ class TurnResult:
     #: reads this rather than the error text: a rate limit is the one provider failure that should
     #: pause the game instead of counting against its retry budget.
     rate_limit: RateLimit | None = None
+    #: The provider rejected the request itself. Requeueing it cannot help.
+    request_rejected: bool = False
 
     @property
     def moved(self) -> bool:
@@ -236,6 +238,7 @@ class TurnRunner:
             result.error = str(error)
             result.outcome = None
             result.rate_limit = error.rate_limit
+            result.request_rejected = error.request_rejected
         except ProviderMangledError as error:
             # The endpoint failed to parse a tool call the model did make (ADR-0015). Same
             # treatment as an outage, for the same reason: the model acted correctly and its host

@@ -86,6 +86,27 @@ FATAL_EXCEPTION_NAMES = frozenset(
 )
 
 
+#: Refusals of the *request itself*. Retrying byte-identical input cannot help, at any level.
+#:
+#: A narrower set than `FATAL_EXCEPTION_NAMES` on purpose, and the exclusions are the point.
+#: `ProviderDeadlineError` is fatal to a *call* — it was generating the whole time — but a fresh
+#: turn with a full budget may well succeed, so the job deserves its retries. `AuthenticationError`
+#: is our configuration being wrong, and a blip must not abandon every game in flight.
+REQUEST_REJECTED_NAMES = frozenset(
+    {
+        "BadRequestError",
+        "ContextWindowExceededError",
+        "InvalidRequestError",
+        "UnprocessableEntityError",
+        "UnsupportedParamsError",
+        "ContentPolicyViolationError",
+    }
+)
+
+#: 400 malformed, 404 no such endpoint, 413 too large, 422 unprocessable.
+REQUEST_REJECTED_STATUS = frozenset({400, 404, 413, 422})
+
+
 def _status_code(error: BaseException) -> int | None:
     for attribute in ("status_code", "http_status", "code"):
         value = getattr(error, attribute, None)
@@ -117,6 +138,20 @@ _RETRY_AFTER = re.compile(r'"?[Rr]etry[-_][Aa]fter(?:_seconds)?"?\s*[:=]\s*"?(\d
 #: LiteLLM stringifies the provider's JSON into the exception text on its way through.
 _LIMIT_SOURCE = re.compile(r'"limit_source"\s*:\s*"([^"]+)"')
 _PROVIDER_NAME = re.compile(r'"provider_name"\s*:\s*"([^"]+)"')
+
+
+def rejects_the_request(error: BaseException) -> bool:
+    """Whether the provider refused the request rather than the moment.
+
+    The distinction cost a game. `liquid/lfm-2.5-2.6b:free` has a 65,536-token window and was asked
+    for 64,000 output tokens, so every call answered *"you requested about 65,810 tokens"* — a 400.
+    The gateway classified it correctly and tried once; the worker then requeued the job four more
+    times, because a `TurnResult` carried only the error's text and nothing that could be reasoned
+    about. Five identical rejections, then the game was abandoned at ply 10 of a real Scotch Game.
+    """
+    if type(error).__name__ in REQUEST_REJECTED_NAMES:
+        return True
+    return _status_code(error) in REQUEST_REJECTED_STATUS
 
 
 def rate_limit_from(error: BaseException) -> RateLimit:
@@ -425,6 +460,7 @@ class LlmGateway:
                         # the only place holding the provider's own exception, and by the time an
                         # orchestrator sees a string the structure is gone.
                         rate_limit=rate_limit_from(error) if is_rate_limit(error) else None,
+                        request_rejected=rejects_the_request(error),
                     ) from error
 
                 wait = self.retry.delay_for(attempt, error)

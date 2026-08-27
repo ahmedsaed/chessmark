@@ -29,6 +29,7 @@ from chessmark.db import tournaments as repo
 from chessmark.db.enums import TournamentStatus
 from chessmark.db.models import (
     Game,
+    ModelEndpoint,
     ModelRegistry,
     Tournament,
     TournamentEntrant,
@@ -39,6 +40,11 @@ from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
 from chessmark.tournament import Form, Format, matchmake, round_robin, swiss_round
 
 log = logging.getLogger(__name__)
+
+#: How many paused games a pool tolerates beyond its concurrency before it stops starting new ones.
+#: Small on purpose: the headroom exists so one unlucky pause does not stall an otherwise healthy
+#: pool, not so a hot provider can be absorbed by opening more games.
+MAX_PAUSED_HEADROOM = 2
 
 
 def within_window(active_from: dt.time | None, active_until: dt.time | None, now: dt.time) -> bool:
@@ -302,6 +308,46 @@ async def _schedule_next_round(
     return highest + 1
 
 
+async def _resting_entrants(
+    session: AsyncSession, cooldown: ProviderCooldown, entrants: list[Any]
+) -> set[str]:
+    """Which entrants cannot be played right now.
+
+    Two reasons, and the second is the one production taught us:
+
+    * the model's own endpoint is resting off a refusal;
+    * **every endpoint it has belongs to a provider resting a shared pool.** `gemma-4-26b` was
+      cooled down and correctly skipped, so the matchmaker paired `gemma-4-31b` — a different model
+      on the same hot Google AI Studio pool — which paused a minute later for the same reason.
+
+    "Every endpoint" and not "any": a paid model served by nineteen providers is not unavailable
+    because one of them is resting, and the router would simply pick another. A free model has
+    exactly one, so for the pool that caused this the two readings coincide.
+    """
+    slugs = [e.key.split("@", 1)[0] for e in entrants]
+    by_model = await cooldown.resting(slugs)
+
+    providers = await cooldown.resting_providers()
+    if providers:
+        rows = (
+            await session.execute(
+                sa.select(ModelRegistry.openrouter_id, ModelEndpoint.provider_name)
+                .join(ModelEndpoint, ModelEndpoint.model_id == ModelRegistry.id)
+                .where(
+                    ModelRegistry.openrouter_id.in_(slugs),
+                    ModelEndpoint.is_active.is_(True),
+                    ModelEndpoint.supports_tools.is_(True),
+                )
+            )
+        ).all()
+        serves: dict[str, set[str]] = {}
+        for slug, provider in rows:
+            serves.setdefault(slug, set()).add(provider)
+        by_model |= {slug for slug, on in serves.items() if on and on.issubset(providers)}
+
+    return {e.key for e in entrants if e.key.split("@", 1)[0] in by_model}
+
+
 async def _schedule_pool(
     session: AsyncSession,
     tournament: Tournament,
@@ -321,6 +367,22 @@ async def _schedule_pool(
     if room <= 0:
         return None
 
+    # **A ceiling on paused games**, which `in_flight` deliberately does not count. Freeing the
+    # slot is right — a paused game is not spending — but with nothing bounding the *inactive* pile
+    # a broadly hot free tier turns every pairing into a paused game in turn: observed as four
+    # paused games against a concurrency of one, marching through the field. Each would then wake,
+    # be refused again, and eventually abandon, which is the original failure at a slower tempo.
+    #
+    # Holding instead means the pool waits for the provider rather than spending the field on it.
+    paused = await repo.paused(session, tournament.id)
+    if len(paused) >= tournament.max_concurrent + MAX_PAUSED_HEADROOM:
+        log.info(
+            "pool %s holding: %d games are paused, waiting for them rather than starting more",
+            tournament.slug,
+            len(paused),
+        )
+        return None
+
     highest = await session.scalar(
         sa.select(sa.func.coalesce(sa.func.max(TournamentGame.round_number), 0)).where(
             TournamentGame.tournament_id == tournament.id
@@ -333,8 +395,7 @@ async def _schedule_pool(
     # ninety minutes rediscovering that a provider is rate-limited — see `core/cooldown.py`.
     resting: set[str] = set()
     if cooldown is not None:
-        resting = await cooldown.resting([e.key.split("@", 1)[0] for e in entrants])
-        resting = {e.key for e in entrants if e.key.split("@", 1)[0] in resting}
+        resting = await _resting_entrants(session, cooldown, entrants)
         if resting:
             log.info("pool %s skipping %d resting entrants", tournament.slug, len(resting))
 

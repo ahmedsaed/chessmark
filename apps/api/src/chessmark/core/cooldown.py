@@ -56,6 +56,22 @@ def _slug(model: str, provider: str | None) -> str:
     return f"{model}|{provider or '*'}"
 
 
+def _provider_slug(provider: str) -> str:
+    """The key a whole provider rests under.
+
+    **A shared pool is a property of the provider, not of the model**, and `limit_source:
+    upstream_provider_shared_pool` says exactly that. Keying only by model let this happen in
+    production: `gemma-4-26b` was cooled down, so the matchmaker skipped it and paired
+    `gemma-4-31b` — a different model on the *same hot Google AI Studio pool* — which paused for
+    the same reason a minute later. Then the next one. Three models, two providers, four paused
+    games, each rediscovering the same fact.
+
+    Kept in a separate keyspace from the per-endpoint cooldowns so `resting()` can match models by
+    prefix without a provider rest ever being mistaken for one.
+    """
+    return provider
+
+
 class ProviderCooldown:
     """How long to leave an endpoint alone, and which models are currently resting."""
 
@@ -80,12 +96,18 @@ class ProviderCooldown:
         *,
         provider: str | None = None,
         retry_after_seconds: float | None = None,
+        shared_pool: bool = False,
     ) -> int:
         """Record a refusal and return how many seconds this endpoint is now resting for.
 
         The provider's own hint wins when there is one; otherwise the strike count picks a rung.
         A hint is still floored at the first rung — a provider that says "retry in 1s" while
         refusing every request is describing its ideal, not our experience.
+
+        `shared_pool` rests the **whole provider** for the same period, on the provider's own strike
+        count. Set it when the refusal named `upstream_provider_shared_pool`: that is a statement
+        about a pool serving many models, and resting one of them leaves the rest to discover it
+        one game at a time.
         """
         until_key, strike_key = self._keys(model, provider)
 
@@ -94,11 +116,40 @@ class ProviderCooldown:
         pipe.expire(strike_key, self._strike_ttl)
         strikes, _ = await pipe.execute()
 
-        rung = self._ladder[min(int(strikes), len(self._ladder)) - 1]
-        seconds = int(min(max(retry_after_seconds or 0, rung), MAX_SECONDS))
-
+        seconds = self._rest_for(int(strikes), retry_after_seconds)
         await self._redis.set(until_key, seconds, ex=seconds)
+
+        if shared_pool and provider:
+            await self._rest_provider(provider, retry_after_seconds)
         return seconds
+
+    def _rest_for(self, strikes: int, retry_after_seconds: float | None) -> int:
+        rung = self._ladder[min(strikes, len(self._ladder)) - 1]
+        return int(min(max(retry_after_seconds or 0, rung), MAX_SECONDS))
+
+    async def _rest_provider(self, provider: str, retry_after_seconds: float | None) -> int:
+        """Rest every model this provider serves, on the provider's own escalation."""
+        key = f"{KEY_PREFIX}:provider:{_provider_slug(provider)}"
+        strike_key = f"{KEY_PREFIX}:provider-strikes:{_provider_slug(provider)}"
+
+        pipe = self._redis.pipeline()
+        pipe.incr(strike_key)
+        pipe.expire(strike_key, self._strike_ttl)
+        strikes, _ = await pipe.execute()
+
+        seconds = self._rest_for(int(strikes), retry_after_seconds)
+        await self._redis.set(key, seconds, ex=seconds)
+        return seconds
+
+    async def resting_providers(self) -> set[str]:
+        """Which providers are resting a whole shared pool right now."""
+        keys = await self._redis.keys(f"{KEY_PREFIX}:provider:*")
+        prefix = f"{KEY_PREFIX}:provider:"
+        found = set()
+        for key in keys:
+            name = key.decode() if isinstance(key, bytes) else str(key)
+            found.add(name[len(prefix) :])
+        return found
 
     async def clear(self, model: str, *, provider: str | None = None) -> None:
         """Forget an endpoint's history, after it serves a call successfully.
@@ -107,7 +158,16 @@ class ProviderCooldown:
         eventually rest for an hour over a single refusal.
         """
         until_key, strike_key = self._keys(model, provider)
-        await self._redis.delete(until_key, strike_key)
+        keys = [until_key, strike_key]
+        if provider:
+            # A provider that just served a whole turn is not resting a shared pool either. Without
+            # this the provider rest outlives the evidence for it and every model it serves stays
+            # skipped while it is in fact answering.
+            keys += [
+                f"{KEY_PREFIX}:provider:{_provider_slug(provider)}",
+                f"{KEY_PREFIX}:provider-strikes:{_provider_slug(provider)}",
+            ]
+        await self._redis.delete(*keys)
 
     async def remaining(self, model: str, *, provider: str | None = None) -> int:
         """Seconds left, or 0 if this endpoint is not resting.

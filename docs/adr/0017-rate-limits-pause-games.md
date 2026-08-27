@@ -114,3 +114,59 @@ game comes back and the shortest cooldown rung is sixty seconds.
 Not addressed here: the same incident showed a call running **561 seconds** against a turn deadline
 that had 40 seconds left, and free models averaging 17–38s per call. Slow free endpoints are a
 separate problem from refused ones.
+
+
+## Amendment — 2026-08-27, hours later: what production added
+
+Deployed within the day, and the pool told us two things the tests could not.
+
+**A shared pool is the provider's, and the cooldown was keyed too narrowly.** `gemma-4-26b` was
+cooled down and correctly skipped — so the matchmaker paired `gemma-4-31b`, a *different model on
+the same hot Google AI Studio pool*, which paused a minute later for the same reason. Then a third,
+on GMICloud. Three models, two providers, four paused games, each rediscovering one fact.
+`limit_source: upstream_provider_shared_pool` is a statement about a pool serving many models, so a
+refusal naming it now rests the **whole provider**, and an entrant is skipped when *every* endpoint
+it has is on a resting provider. "Every" rather than "any": a paid model on nineteen providers is
+not unavailable because one rests, and the router would simply pick another.
+
+**Freeing the concurrency slot needs a ceiling.** Not counting paused games was right — they spend
+nothing — but with nothing bounding the inactive pile, a hot provider is absorbed by opening more
+games rather than by waiting. Four paused games stood against a concurrency of one, and each would
+wake, be refused, and eventually abandon: the original failure at a slower tempo. A pool now holds
+once `max_concurrent + 2` games are paused. The headroom exists so one unlucky pause does not stall
+a healthy pool, not so a provider outage can be spread across the field.
+
+**And one abandonment was never a rate limit at all.** A game died at ply 10 on a 400: *"maximum
+context length is 65536 tokens, however you requested about 65810"* — `liquid/lfm-2.5-2.6b:free`,
+whose window is under the 128k floor AGENT-14 sets, asked for a flat 64,000-token completion. The
+gateway classified it as fatal and tried once; **the worker requeued it four more times**, because a
+`TurnResult` carried the error's text and nothing that could be reasoned about. A refusal of the
+*request* is now abandoned at once. That is deliberately narrower than the gateway's `retryable`:
+a deadline is fatal to a call and not to a turn, and an auth error must not abandon every game in
+flight, so only request-shape rejections short-circuit.
+
+That last one turned out to have three causes, and fixing the one that admitted the model was not
+enough:
+
+* The floor arrived as `min_context: int = 0`, and `fits_a_game` reads 0 as *admit everything*, so a
+  caller who forgot the argument opted out of AGENT-14. `refresh_catalogue.py` remembered;
+  `seed_models.py` did not. `context_floor(None)` now resolves to the configured floor, so omitting
+  it applies the policy and disabling it has to be typed.
+* **A sync re-enabled what a sync had disabled.** `enabled: True` was written onto every row on
+  every upsert, so `refresh-catalogue` disabled the model and the next `seed-models` restored it —
+  and an administrator's deliberate disable did not survive a refresh either. `enabled` is now set
+  on creation only.
+* **The endpoint's own window was never read.** A model advertises a context length and an endpoint
+  serves one, and the refusal named the *endpoint's*. Both numbers were already stored.
+  `endpoint_is_playable()` is now one predicate shared by `select_endpoint`, `GET /models` and
+  `resolve_field`, so the picker, the catalogue and the field cannot disagree — a disagreement that
+  has shipped before, as a catalogue advertising models the picker refused.
+
+`make prune-registry` applies the rule to the registry as it stands: it disables ineligible rows and
+removes their games. Disables, never deletes — `players.model_id` is `ON DELETE RESTRICT` and a game
+must stay readable however its model turned out. It reports before it acts, because removing games
+is destructive and the count is worth seeing first.
+
+Still open, and stated rather than fixed: `max_completion_tokens` is a flat 64,000 that nothing
+reconciles against the window of the endpoint serving it. The floor keeps models that cannot hold a
+game out of the field; it does not stop the harness asking a 128k model for 64k of output on ply 60.

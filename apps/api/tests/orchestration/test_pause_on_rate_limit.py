@@ -57,6 +57,23 @@ async def rate_limited(**_kwargs: object) -> object:
     raise SharedPoolError
 
 
+class ContextTooSmallError(Exception):
+    """A 400 from an endpoint whose window cannot hold what the harness asked for."""
+
+    status_code = 400
+
+    def __init__(self) -> None:
+        super().__init__(
+            "litellm.BadRequestError: OpenrouterException - This endpoint's maximum context "
+            "length is 65536 tokens. However, you requested about 65810 tokens (1430 of text "
+            "input, 380 of tool input, 64000 in the output)."
+        )
+
+
+async def context_too_small(**_kwargs: object) -> object:
+    raise ContextTooSmallError
+
+
 async def _events(db: AsyncSession, game_id: Any, type_: EventType) -> list[GameEvent]:
     rows = await db.scalars(
         sa.select(GameEvent).where(GameEvent.game_id == game_id, GameEvent.type == type_)
@@ -269,3 +286,63 @@ async def _next_seq(db: AsyncSession, game_id: Any) -> int:
         )
     )
     return int(highest or 0) + 1
+
+
+class TestARejectedRequest:
+    """A refusal of the request itself is abandoned at once, not five times.
+
+    The game this comes from played ten plies of a real Scotch Game and then died on:
+
+        This endpoint's maximum context length is 65536 tokens. However, you requested about
+        65810 tokens (1430 of text input, 380 of tool input, 64000 in the output).
+
+    The gateway classified it correctly and tried once. The worker then requeued the job four more
+    times, because a `TurnResult` carried the error's *text* and nothing that could be reasoned
+    about — five identical rejections before it gave up.
+    """
+
+    async def test_it_is_abandoned_without_a_retry(
+        self, db: AsyncSession, game: Fixture, make_worker: Any
+    ) -> None:
+        handled = await make_worker(context_too_small).handle(game.first_job)
+
+        assert handled.outcome == "aborted"
+        assert await game.queue.depth() == await game.queue.depth(), "nothing was requeued"
+
+        db.expunge_all()
+        reloaded = await db.get(Game, game.game.id)
+        assert reloaded is not None
+        assert reloaded.status is GameStatus.ABORTED
+        assert reloaded.termination is Termination.ABANDONED
+        assert reloaded.termination_detail is not None
+        assert "rejected the request" in reloaded.termination_detail
+
+    async def test_it_is_not_a_forfeit(
+        self, db: AsyncSession, game: Fixture, make_worker: Any
+    ) -> None:
+        """The model asked for a completion the *harness* sized. Blaming it for our `max_tokens`
+        would publish a loss for a model that never had a chance to move."""
+        await make_worker(context_too_small).handle(game.first_job)
+
+        db.expunge_all()
+        reloaded = await db.get(Game, game.game.id)
+        assert reloaded is not None
+        assert reloaded.winner_colour is None
+        seats = await db.scalars(sa.select(Player).where(Player.game_id == game.game.id))
+        assert not any(seat.forfeited for seat in seats)
+
+    async def test_an_outage_still_gets_its_retries(
+        self, db: AsyncSession, game: Fixture, make_worker: Any
+    ) -> None:
+        """The distinction that makes this safe. A 503 is a provider having a bad minute and the
+        next attempt may well work; a 400 is the same bytes being refused the same way."""
+
+        class OutageError(Exception):
+            status_code = 503
+
+        async def unavailable(**_kwargs: object) -> object:
+            raise OutageError
+
+        handled = await make_worker(unavailable).handle(game.first_job)
+
+        assert handled.outcome == "turn_failed", "requeued, not abandoned"

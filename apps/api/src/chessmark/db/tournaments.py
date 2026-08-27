@@ -18,6 +18,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.registry import endpoint_is_playable
 from chessmark.db.enums import GameStatus, TournamentStatus
 from chessmark.db.models import (
     Game,
@@ -66,11 +67,10 @@ async def resolve_field(
     query = sa.select(ModelRegistry).where(
         ModelRegistry.enabled.is_(True),
         ModelRegistry.supports_tools.is_(True),
-        ModelRegistry.id.in_(
-            sa.select(ModelEndpoint.model_id).where(
-                ModelEndpoint.is_active.is_(True), ModelEndpoint.supports_tools.is_(True)
-            )
-        ),
+        # One definition of "an endpoint worth seating", shared with `select_endpoint` and the
+        # catalogue. A field that admitted an entrant the picker then refused is how a pool spent
+        # its pairings on a model whose only endpoint could not hold a game (AGENT-14).
+        ModelRegistry.id.in_(sa.select(ModelEndpoint.model_id).where(*endpoint_is_playable())),
     )
 
     if field.slugs:
@@ -349,6 +349,27 @@ async def unplayed(
     if round_number is not None:
         query = query.where(TournamentGame.round_number == round_number)
     rows = await session.scalars(query.order_by(TournamentGame.round_number, TournamentGame.id))
+    return list(rows)
+
+
+async def paused(session: AsyncSession, tournament_id: uuid.UUID) -> list[TournamentGame]:
+    """Pairings whose game is paused, waiting on a provider.
+
+    Deliberately *not* part of `in_flight`: a paused game is not spending and must not hold a
+    concurrency slot (ADR-0017). It is counted here instead, so a pool can bound how many of them
+    it accumulates — without a bound, a hot provider is absorbed by opening more games rather than
+    by waiting.
+    """
+    rows = await session.scalars(
+        sa.select(TournamentGame)
+        .join(Game, Game.id == TournamentGame.game_id)
+        .where(
+            TournamentGame.tournament_id == tournament_id,
+            TournamentGame.white_score.is_(None),
+            TournamentGame.abandoned_reason.is_(None),
+            Game.status == GameStatus.PAUSED,
+        )
+    )
     return list(rows)
 
 

@@ -345,7 +345,13 @@ class TurnWorker:
             seconds = 0
             if self.cooldown is not None:
                 seconds = await self.cooldown.note(
-                    model, provider=provider, retry_after_seconds=limit.retry_after_seconds
+                    model,
+                    provider=provider,
+                    retry_after_seconds=limit.retry_after_seconds,
+                    # A shared pool is the provider's, not this model's. Resting only the model let
+                    # the matchmaker skip it and pair its neighbour on the same hot pool, which
+                    # paused for the same reason a minute later — three models, four paused games.
+                    shared_pool=limit.is_upstream_pool,
                 )
             seconds = max(seconds, 60)
             if human:
@@ -449,6 +455,23 @@ class TurnWorker:
         provider was unavailable. An abandoned game is excluded from ratings rather than counted
         as a loss.
         """
+        # A rejected *request* is not a flaky provider, and the retry budget cannot fix it: the
+        # next attempt sends the same bytes and is refused the same way. One game spent five
+        # attempts being told its 64,000-token completion did not fit a 65,536-token window.
+        if result.request_rejected:
+            log.error(
+                "abandoning %s at ply %s: the provider rejected the request itself: %s",
+                job.game_id,
+                job.expected_ply,
+                result.error,
+            )
+            async with self.sessionmaker() as session, session.begin():
+                game = await get_game(session, job.game_id)
+                await self._abandon(
+                    session, game, f"Abandoned — the provider rejected the request: {result.error}"
+                )
+            return HandledJob(ABORTED, job.game_id, job.expected_ply, result=result)
+
         if job.attempt < MAX_JOB_ATTEMPTS:
             log.warning(
                 "provider failure on %s ply %s (attempt %s/%s), requeueing: %s",
