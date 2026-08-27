@@ -168,6 +168,12 @@ class LlmError(Exception):
     #: endpoint down — and a decision keyed off a substring search of an error string is a decision
     #: waiting to break the next time a provider rewords its 429.
     rate_limit: RateLimit | None = None
+    #: The provider refused the *request*, not the moment — a 400, a context window too small for
+    #: what was asked. Distinct from `retryable`, which asks whether to try this call again now;
+    #: this asks whether trying it ever, in any shape, could work. Nothing about the request will
+    #: differ on a later turn, so a job that requeues it is spending five attempts to be told the
+    #: same thing five times.
+    request_rejected: bool = False
 
     def __str__(self) -> str:
         return f"{self.message} (status={self.status_code}, attempts={self.attempts})"

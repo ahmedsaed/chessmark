@@ -456,12 +456,23 @@ that played itself is one game and two seats.
 
 **Four kinds of model are never registered** (AGENT-14). Three cannot finish a game, and each
 failure is a *forfeit* — a loss against a model that never had a chance: no tool calling; `:batch`
-variants, which are asynchronous; and a context window under `MIN_CONTEXT_TOKENS` (128k, derived —
-the transcript grows **1,818 tokens per ply**, measured, so 128k covers ~70 plies). The fourth is
-different: a **floating alias** (`-latest`, `~vendor/…`) plays fine but cannot say what played, so
-its record is unreproducible (BENCH-04). ADR-0015 originally kept these playable-but-unrankable and
-was [amended](docs/adr/0015-quantization-as-identity-and-pinned-endpoints.md) once it was clear that
+variants, which are asynchronous; and a context window under `settings.min_context_tokens` (128k,
+derived — the transcript grows **1,818 tokens per ply**, measured, so 128k covers ~70 plies). The
+fourth is different: a **floating alias** (`-latest`, `~vendor/…`) plays fine but cannot say what
+played, so its record is unreproducible (BENCH-04). ADR-0015 originally kept these
+playable-but-unrankable and was
+[amended](docs/adr/0015-quantization-as-identity-and-pinned-endpoints.md) once it was clear that
 a game record which cannot name its weights is as useless as a rating across them.
+
+> ⚠️ **"Never registered" was aspirational for the context floor.** There is no
+> `MIN_CONTEXT_TOKENS` constant — the value is `settings.min_context_tokens`, and
+> `fetch_catalogue(min_context=...)` **defaults to 0, which means no filter at all**.
+> `refresh_catalogue.py` passed it and `seed_models.py` did not, so the rule held or not depending
+> on which command was last run. `liquid/lfm-2.5-2.6b:free` (65,536) reached a pool that way and
+> abandoned a game at ply 10: `max_completion_tokens` is a flat 64,000 and is **not clamped to the
+> model's window**, so every call asked for 65,810 tokens of a 65,536-token context and was
+> refused. Both halves are worth knowing — a floor that a caller may forget, and a cap that
+> nothing reconciles against the endpoint serving it.
 
 `GET /models` returns only models with an active tool-capable endpoint. It listed everything
 registered for about an hour, which meant the catalogue page advertised 18 models the picker

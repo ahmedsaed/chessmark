@@ -99,3 +99,60 @@ class TestResting:
 
     async def test_an_empty_field_asks_nothing(self, cooldown: ProviderCooldown) -> None:
         assert await cooldown.resting([]) == set()
+
+
+class TestASharedPool:
+    """A shared pool belongs to the provider, not the model (OPS-13).
+
+    The gap this closes was measured in production. `gemma-4-26b` was cooled down and correctly
+    skipped, so the matchmaker paired `gemma-4-31b` — a different model on the *same hot Google AI
+    Studio pool* — which paused a minute later for the same reason. Then a third. Four paused games
+    against a concurrency of one, each rediscovering the same fact about the same provider.
+    """
+
+    async def test_a_shared_pool_rests_the_whole_provider(self, cooldown: ProviderCooldown) -> None:
+        await cooldown.note(MODEL, provider=PROVIDER, shared_pool=True)
+
+        assert await cooldown.resting_providers() == {PROVIDER}
+
+    async def test_a_model_only_limit_leaves_the_provider_alone(
+        self, cooldown: ProviderCooldown
+    ) -> None:
+        """The default. An account limit or a model-specific refusal says nothing about the pool,
+        and resting a whole provider on it would skip models that are answering perfectly well."""
+        await cooldown.note(MODEL, provider=PROVIDER)
+
+        assert await cooldown.resting_providers() == set()
+        assert await cooldown.remaining(MODEL, provider=PROVIDER) > 0
+
+    async def test_the_provider_escalates_on_its_own_count(
+        self, cooldown: ProviderCooldown
+    ) -> None:
+        """Its own strikes, not the model's: a pool refusing five different models is a pool in
+        worse shape than one refusing the same model five times, and should rest longer."""
+        first = await cooldown.note("a/one:free", provider=PROVIDER, shared_pool=True)
+        await cooldown.note("b/two:free", provider=PROVIDER, shared_pool=True)
+        await cooldown.note("c/three:free", provider=PROVIDER, shared_pool=True)
+
+        # Each model is on its own first rung; the provider has three strikes against it.
+        assert first == LADDER_SECONDS[0]
+        assert await cooldown.note("d/four:free", provider=PROVIDER) == LADDER_SECONDS[0]
+
+    async def test_a_served_turn_clears_the_provider_too(self, cooldown: ProviderCooldown) -> None:
+        """Or the rest outlives the evidence for it, and every model the provider serves stays
+        skipped while it is in fact answering."""
+        await cooldown.note(MODEL, provider=PROVIDER, shared_pool=True)
+
+        await cooldown.clear(MODEL, provider=PROVIDER)
+
+        assert await cooldown.resting_providers() == set()
+
+    async def test_providers_are_kept_apart_from_endpoints(
+        self, cooldown: ProviderCooldown
+    ) -> None:
+        """Separate keyspaces, so a provider rest is never matched as a model by `resting()` —
+        which globs on the model half of the key."""
+        await cooldown.note(MODEL, provider=PROVIDER, shared_pool=True)
+
+        assert await cooldown.resting([PROVIDER]) == set()
+        assert await cooldown.resting([MODEL]) == {MODEL}

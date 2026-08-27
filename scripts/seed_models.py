@@ -34,6 +34,7 @@ from chessmark.agents.registry import (  # noqa: E402
     playable_models,
     sync_model_registry,
 )
+from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.session import dispose_engine, session_scope  # noqa: E402
 
 
@@ -52,9 +53,19 @@ async def main() -> int:
     )
     args = parser.parse_args()
 
+    settings = get_settings()
+
     try:
         async with httpx.AsyncClient(timeout=60) as client:
-            entries = await fetch_catalogue(client, free_only=args.free)
+            # `min_context` is passed **explicitly**, because `fetch_catalogue` defaults it to 0
+            # and 0 means *no filter*. Omitting it here is how `liquid/lfm-2.5-2.6b:free` — a
+            # 65,536-token window, well under the 128k floor AGENT-14 sets — reached the registry,
+            # entered a pool, and abandoned a game at ply 10: every call asked for 64,000 output
+            # tokens and was refused for exceeding the window. `refresh_catalogue.py` passed it;
+            # this did not, so the rule held or not depending on which command was last run.
+            entries = await fetch_catalogue(
+                client, free_only=args.free, min_context=settings.min_context_tokens
+            )
 
         print(f"openrouter: {len(entries)} tool-capable models")
         if not entries:

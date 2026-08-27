@@ -26,7 +26,7 @@ from chessmark.db.models import (
     TournamentGame,
 )
 from chessmark.game import GameResult, Termination
-from chessmark.orchestration.tournament import advance
+from chessmark.orchestration.tournament import MAX_PAUSED_HEADROOM, advance
 from chessmark.tournament import FieldFilter, Format, TournamentConfig, standings
 
 pytestmark = pytest.mark.integration
@@ -661,20 +661,24 @@ async def test_a_resting_entrant_is_not_paired(
     because an abandoned game leaves the rating untouched and the tie-break is alphabetical."""
     from chessmark.core.cooldown import ProviderCooldown
 
-    tournament_id, slugs = await make_tournament(
+    tournament_id, entrants = await make_tournament(
         db,
         models=4,
         config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
     )
+    # `.key`, not the `Entrant` itself. Passing the object cooled down a `repr()` and made the
+    # assertion below unfalsifiable — an `Entrant` is never equal to a `str`, so it passed while
+    # testing nothing at all.
+    resting = entrants[0].key
     cooldown = ProviderCooldown(redis)
-    await cooldown.note(slugs[0], provider="Some Provider")
+    await cooldown.note(resting, provider="TestProvider")
 
     await advance(sessionmaker, queue, tournament_id=tournament_id, cooldown=cooldown)
     db.expire_all()
 
     rows = await repo.in_flight(db, tournament_id)
     assert len(rows) == 1
-    assert slugs[0] not in {rows[0].white_key, rows[0].black_key}
+    assert resting not in {rows[0].white_key, rows[0].black_key}
 
 
 async def test_without_a_cooldown_the_pool_behaves_as_it_always_did(
@@ -688,5 +692,104 @@ async def test_without_a_cooldown_the_pool_behaves_as_it_always_did(
     )
 
     step = await advance(sessionmaker, queue, tournament_id=tournament_id, cooldown=None)
+
+    assert step.started == 1
+
+
+async def test_a_pool_holds_rather_than_piling_up_paused_games(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """Freeing the slot is right; freeing it without limit is not.
+
+    A paused game does not spend, so it must not hold concurrency — but with nothing bounding the
+    inactive pile, a broadly hot free tier turns every pairing into a paused game in turn. Observed
+    on prod: four paused games against a concurrency of one, marching through the field. Each would
+    then wake, be refused again, and eventually abandon — the original failure at a slower tempo.
+    """
+    tournament_id, _ = await make_tournament(
+        db,
+        models=8,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+
+    started: list[uuid.UUID] = []
+    for _ in range(MAX_PAUSED_HEADROOM + 3):
+        await advance(sessionmaker, queue, tournament_id=tournament_id)
+        db.expire_all()
+
+        rows = await repo.in_flight(db, tournament_id)
+        if not rows:
+            break
+        # Pause whatever just started, as a rate-limited provider would.
+        for row in rows:
+            paused_game = await db.get(Game, row.game_id)
+            assert paused_game is not None
+            paused_game.status = GameStatus.PAUSED
+            paused_game.pause_reason = "rate-limited upstream"
+            started.append(row.game_id)
+        await db.commit()
+
+    assert len(started) == 1 + MAX_PAUSED_HEADROOM, (
+        f"the pool opened {len(started)} games while they piled up paused; it should hold at "
+        f"concurrency + {MAX_PAUSED_HEADROOM}"
+    )
+
+
+async def test_a_resting_provider_rests_every_model_it_serves(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue, redis
+) -> None:
+    """The pairing bug behind three of four paused games. Cooling one model down and pairing its
+    neighbour on the same hot pool learns nothing and costs a slot."""
+    from chessmark.core.cooldown import ProviderCooldown
+
+    tournament_id, entrants = await make_tournament(
+        db,
+        models=4,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+    # The fixture seeds every model on one provider, so resting it rests the whole field — exactly
+    # the shape of a shared free pool, and there is then no game worth starting.
+    cooldown = ProviderCooldown(redis)
+    await cooldown.note(entrants[0].key, provider="TestProvider", shared_pool=True)
+
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id, cooldown=cooldown)
+
+    assert step.started == 0
+    assert not await repo.in_flight(db, tournament_id)
+
+
+async def test_one_resting_provider_does_not_ground_a_multi_endpoint_model(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue, redis
+) -> None:
+    """ "Every endpoint", not "any". A paid model served by several providers is not unavailable
+    because one of them is resting — the router would simply pick another."""
+    from chessmark.core.cooldown import ProviderCooldown
+
+    tournament_id, entrants = await make_tournament(
+        db,
+        models=4,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+    # Give every model a second endpoint elsewhere, then rest only the first provider.
+    slugs = [e.key for e in entrants]
+    model_ids = list(
+        await db.scalars(sa.select(ModelRegistry.id).where(ModelRegistry.openrouter_id.in_(slugs)))
+    )
+    for model_id in model_ids:
+        db.add(
+            ModelEndpoint(
+                model_id=model_id,
+                provider_name="Elsewhere",
+                supports_tools=True,
+                is_active=True,
+                uptime_1d=99.0,
+            )
+        )
+    await db.commit()
+
+    cooldown = ProviderCooldown(redis)
+    await cooldown.note(slugs[0], provider="TestProvider", shared_pool=True)
+
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id, cooldown=cooldown)
 
     assert step.started == 1
