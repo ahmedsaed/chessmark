@@ -160,6 +160,18 @@ the table what has been played rather than trusting a dead process. A **paused**
 early from `advance` — without that it restarts on the next tick, including one its own budget
 stopped, which would then spend past the ceiling it had just halted at.
 
+## `./chessmark` — the stack without a toolchain
+
+`make` is for a development machine. On a server, where Docker is all there is, `./chessmark` runs
+everything inside a container: no uv, no node, and no remembering which compose files to combine.
+`./chessmark help` lists the commands and `./chessmark help <command>` gives examples.
+
+`deploy` is the whole sequence — pull, migrate, restart, check `/ready`. `restart` uses
+`--force-recreate` on purpose: a container that once failed to bind its port can come back
+running-but-unpublished, healthy inside and unreachable outside, with `docker port` empty. `sql`
+runs with `ON_ERROR_STOP=1`, and both it and `backup` read the credentials from inside the
+container, so there is no second copy of `POSTGRES_USER` to drift.
+
 ## Available MCP servers
 
 Configured in `.mcp.json` (project-scoped):
@@ -392,8 +404,11 @@ causes do not look like the problem:
 
 So: `GameStatus.PAUSED` with `resume_after`, one `game_paused` event, **no concurrency slot held**
 (`in_flight` counts `PENDING` and `RUNNING`), the reconciler resuming it, and a Redis cooldown per
-(model, endpoint) that the tournament matchmaker reads. Bounded at six pauses; a game with a human
-seat gets two of at most two minutes, because a person will not wait out a shared pool.
+(model, endpoint) that the tournament matchmaker reads. Bounded by a **24-hour span** measured
+from the first pause, not by a pause count: six pauses came to ~3½ hours and four real games were
+abandoned in one afternoon because two free pools stayed hot for longer than that. A count also
+tied the patience to the cooldown ladder's tuning. A game with a human seat gives up after ten
+minutes, because a person will not wait out a shared pool.
 
 **Two corrections to that, both from watching it run.** A *ceiling* on paused games — a pool holding
 once `max_concurrent + 2` were paused — stalled the pool completely and was reverted: the failure it

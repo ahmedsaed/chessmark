@@ -32,9 +32,12 @@ export interface NavLink {
   match?: (pathname: string) => boolean;
 }
 
-/** The header's primary navigation. Kept short on purpose; everything else lives in the footer. */
+/** The header's primary navigation. Kept short on purpose; everything else lives in the footer.
+ *
+ * No "Watch": it went to `/`, which the logo beside it already does — two controls one pixel apart
+ * doing the same thing. The footer keeps it, where there is no logo to duplicate.
+ */
 export const primaryNav: NavLink[] = [
-  { href: "/", label: "Watch", match: (p) => p === "/" || p.startsWith("/games") },
   { href: "/leaderboard", label: "Leaderboard", match: (p) => p.startsWith("/leaderboard") },
   { href: "/tournaments", label: "Tournaments", match: (p) => p.startsWith("/tournaments") },
   { href: "/models", label: "Models", match: (p) => p.startsWith("/models") },

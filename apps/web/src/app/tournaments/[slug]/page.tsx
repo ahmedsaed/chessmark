@@ -220,8 +220,11 @@ function Schedule({
   pairings: TournamentPairing[];
   names: Map<string, string>;
 }) {
+  /* Newest round first. A pool never ends, so its schedule only grows — and the interesting end
+     of a list that grows forever is the end that just changed. Ascending order buried today's
+     games under three hundred played last week. */
   const rounds = new Map<number, TournamentPairing[]>();
-  for (const pairing of pairings) {
+  for (const pairing of [...pairings].sort((a, b) => b.round_number - a.round_number)) {
     const bucket = rounds.get(pairing.round_number) ?? [];
     bucket.push(pairing);
     rounds.set(pairing.round_number, bucket);

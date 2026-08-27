@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as dt
 import json
 import logging
 import uuid
@@ -83,17 +84,23 @@ PAUSED = TurnOutcome("paused")
 #: Rate limits no longer come through here at all; they pause the game instead.
 MAX_JOB_ATTEMPTS = 5
 
-#: How many times one game may be paused for a rate limit before it is abandoned. With the cooldown
-#: ladder in `core/cooldown.py` this is a little over three hours of patience, which is long enough
-#: to outlast a hot shared pool and short enough that a permanently dead endpoint does not leave a
-#: game open forever.
-MAX_PAUSES = 6
+#: How long a game may keep trying before the harness gives up on it.
+#:
+#: **A span, not a count.** It was six pauses, which on the cooldown ladder came to a little over
+#: three hours — and that was not enough: four games were abandoned in one afternoon because
+#: Google AI Studio's and GMICloud's free pools stayed hot for longer than that. Counting pauses
+#: also made the patience depend on the ladder, so tuning one silently moved the other.
+#:
+#: A day is the honest number for a free pool. Allowances reset daily and a provider hot at 14:00
+#: is usually serving again by morning, so a game that cannot get a turn in twenty-four hours is
+#: not waiting on a busy pool — it is waiting on something that is not coming back.
+PAUSE_WINDOW = dt.timedelta(hours=24)
 
-#: A person will not wait out a provider. A game with a human seat pauses briefly, twice, and is
-#: then abandoned rather than left open — the honest outcome, and better than a board that quietly
-#: never moves again. Their opponent's model is not forfeited: nobody played badly.
+#: A person will not wait out a provider. Their game pauses briefly and gives up in minutes, not
+#: hours — the honest outcome, and better than a board that quietly never moves again. Their
+#: opponent's model is not forfeited: nobody played badly.
 HUMAN_MAX_PAUSE_SECONDS = 120
-HUMAN_MAX_PAUSES = 2
+HUMAN_PAUSE_WINDOW = dt.timedelta(minutes=10)
 
 
 def _pinned_provider(player: Player) -> str | None:
@@ -339,8 +346,9 @@ class TurnWorker:
             # A person is not going to wait out a shared pool, so their game gets minutes rather
             # than hours. Everything else about the mechanism is the same.
             human = await self._has_human_seat(session, game.id)
-            max_pauses = HUMAN_MAX_PAUSES if human else MAX_PAUSES
-            pauses = await self._pause_count(session, game.id)
+            window = HUMAN_PAUSE_WINDOW if human else PAUSE_WINDOW
+            pauses, first_pause = await self._pause_history(session, game.id)
+            waited = dt.datetime.now(dt.UTC) - first_pause if first_pause else dt.timedelta()
 
             seconds = 0
             if self.cooldown is not None:
@@ -363,27 +371,37 @@ class TurnWorker:
             # Patience spent. Abandoned rather than left paused, because a game nobody will ever
             # resume is worse open than closed — and abandoning is honest: it says the harness gave
             # up, and it keeps the result out of the ratings rather than inventing a loss.
-            if pauses + 1 > max_pauses:
+            #
+            # Measured from the *first* pause, so the window is wall-clock patience and not a
+            # function of how the cooldown ladder happens to be tuned.
+            if waited >= window:
+                hours = waited.total_seconds() / 3600
                 log.error(
-                    "abandoning %s at ply %s: %s, still rate-limited after %s pauses",
+                    "abandoning %s at ply %s: %s, still rate-limited after %.1fh and %d pauses",
                     game.id,
                     job.expected_ply,
                     reason,
+                    hours,
                     pauses,
                 )
-                await self._abandon(session, game, f"Abandoned after {pauses} pauses: {reason}")
+                await self._abandon(
+                    session,
+                    game,
+                    f"Abandoned after {hours:.1f}h and {pauses} pauses: {reason}",
+                )
                 return HandledJob(ABORTED, game.id, job.expected_ply, result=result)
 
             game.status = GameStatus.PAUSED
             game.resume_after = resume_at(seconds)
             game.pause_reason = reason
             log.warning(
-                "pausing %s at ply %s for %ss (pause %s/%s): %s",
+                "pausing %s at ply %s for %ss (pause %s, %.1fh of %.0fh used): %s",
                 game.id,
                 job.expected_ply,
                 seconds,
                 pauses + 1,
-                max_pauses,
+                waited.total_seconds() / 3600,
+                window.total_seconds() / 3600,
                 reason,
             )
             await append_event(
@@ -401,7 +419,8 @@ class TurnWorker:
                     "resume_after": game.resume_after.isoformat(),
                     "seconds": seconds,
                     "pause": pauses + 1,
-                    "max_pauses": max_pauses,
+                    "waited_seconds": int(waited.total_seconds()),
+                    "window_seconds": int(window.total_seconds()),
                 },
             )
             before_seq = game.event_seq - 1
@@ -412,19 +431,27 @@ class TurnWorker:
         await self._publish(job.game_id, events)
         return HandledJob(PAUSED, job.game_id, job.expected_ply, result=result)
 
-    async def _pause_count(self, session: AsyncSession, game_id: uuid.UUID) -> int:
-        """How many times this game has already been paused.
+    async def _pause_history(
+        self, session: AsyncSession, game_id: uuid.UUID
+    ) -> tuple[int, dt.datetime | None]:
+        """How often this game has been paused, and when it first was.
 
-        Counted from the event log rather than a column on the game. The log is append-only and is
+        Read from the event log rather than a column on the game. The log is append-only and is
         already the authority on what happened (ADR-0008), so a counter beside it would be a second
-        copy of one fact with its own way of being wrong.
+        copy of one fact with its own way of being wrong — and the *first* pause is the one the
+        patience window is measured from, which no counter would have recorded at all.
         """
-        count = await session.scalar(
-            sa.select(sa.func.count(GameEvent.id)).where(
-                GameEvent.game_id == game_id, GameEvent.type == EventType.GAME_PAUSED
+        row = (
+            await session.execute(
+                sa.select(sa.func.count(GameEvent.id), sa.func.min(GameEvent.created_at)).where(
+                    GameEvent.game_id == game_id, GameEvent.type == EventType.GAME_PAUSED
+                )
             )
-        )
-        return int(count or 0)
+        ).one()
+        count, first = int(row[0] or 0), row[1]
+        if first is not None and first.tzinfo is None:
+            first = first.replace(tzinfo=dt.UTC)
+        return count, first
 
     async def _has_human_seat(self, session: AsyncSession, game_id: uuid.UUID) -> bool:
         seats = await session.scalars(sa.select(Player.kind).where(Player.game_id == game_id))

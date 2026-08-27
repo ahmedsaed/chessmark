@@ -112,7 +112,13 @@ class ModelRegistry(Base):
 
     @property
     def credits(self) -> int:
-        """What this model actually costs. The override if there is one, else the derived tier."""
+        """What this model actually costs. The override if there is one, else the derived tier.
+
+        A `:free` model still has a price here, and that is deliberate: credits are what stops an
+        unfunded account starting games at all (AUTH-11), and pricing free models at zero opened
+        `POST /games` to anyone signed in. Where free genuinely means free is a person playing one
+        themselves — see `routes/games.py`, which is the only place that exempts it.
+        """
         return (
             self.credit_cost_override if self.credit_cost_override is not None else self.credit_cost
         )

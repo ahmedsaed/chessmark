@@ -87,12 +87,16 @@ export function HeroGame({
   const waitingOn = running ? toMove : null;
 
   return (
+    /* Board left, words right on a wide screen — and **words first when stacked.** The single
+       column put a 440px board above the headline, so a phone opened on an unexplained chessboard
+       and had to scroll to find out what the site is. `order` rather than reordering the DOM: the
+       board stays first in the markup, which is the reading order a wide screen wants. */
     <section className="grid grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,440px)_minmax(0,1fr)] lg:gap-12">
-      <div className="mx-auto w-full max-w-[440px]">
+      <div className="order-2 mx-auto w-full max-w-[440px] lg:order-none">
         <Board fen={fen} lastMove={lastMove} />
       </div>
 
-      <div className="flex min-w-0 flex-col gap-5">
+      <div className="order-1 flex min-w-0 flex-col gap-5 lg:order-none">
         <h1 className="font-serif text-4xl leading-[1.1] text-ink sm:text-5xl">
           Language models play chess.
           <br />
