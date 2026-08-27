@@ -71,21 +71,16 @@ test("the keyboard drives the scrubber", async ({ page }) => {
   await expect(board).toHaveAttribute("data-fen", /Q/);
 });
 
-test("finished turns are folded, and expanding one reveals its raw payload", async ({ page }) => {
-  // The fold is the live view's, reused (ADR-0008) — finished turns collapse to a tool count.
+test("finished turns are folded, and each one links to its raw payload", async ({ page }) => {
+  // The fold is the live view's, reused (ADR-0008) — finished turns collapse to their disclosures.
   // `aria-expanded`, not the ▸ glyph — that glyph is `aria-hidden`, so it is not part of the
   // button's accessible name and a person using a screen reader never meets it. Filtered by text
   // as well, because the account button in the header is a collapsed disclosure too.
   const folded = page.locator('button[aria-expanded="false"]').filter({ hasText: /\d+ tools/ });
   await expect(folded.first()).toBeVisible();
 
-  // A folded turn offers no `raw` link; only the open one does.
-  const firstTurnRaw = page.getByRole("button", { name: "raw", exact: true });
-  const openCount = await firstTurnRaw.count();
-
-  await folded.first().click();
-  await expect(page.getByRole("button", { name: "raw", exact: true })).toHaveCount(openCount + 1);
-
+  // `raw` belongs to the turn rather than to a disclosure, so it is there while everything is
+  // folded. It used to appear only once a turn was open, back when a turn had one fold to be in.
   await page.getByRole("button", { name: "raw", exact: true }).first().click();
 
   const dialog = page.getByRole("dialog");
@@ -114,10 +109,29 @@ test("finished turns are folded, and expanding one reveals its raw payload", asy
 test("reasoning is readable once the game is over (HUMAN-07, invariant 8)", async ({ page }) => {
   // The scripted Black side is given reasoning precisely so this is assertable. While a game is
   // live the API withholds it entirely (invariant 8); this game is finished, so it must be here.
-  // Black's turns are the two-tool ones: get_board, then make_move.
-  await page.locator('button[aria-expanded="false"]').filter({ hasText: "2 tools" }).first().click();
+  await page
+    .locator('button[aria-expanded="false"]')
+    .filter({ hasText: /reasoning/ })
+    .first()
+    .click();
 
   await expect(page.getByText(/classical reply is e5/i)).toBeVisible();
+});
+
+test("reasoning, output and tools unroll independently", async ({ page }) => {
+  // The complaint this answers: one fold meant reading a tool call also unrolled several thousand
+  // words of reasoning, and the thing you wanted was pushed off screen by the thing you did not.
+  const tools = page.locator("button").filter({ hasText: /\d+ tools/ }).first();
+  const reasoning = page.locator("button").filter({ hasText: /reasoning/ }).first();
+
+  await expect(tools).toHaveAttribute("aria-expanded", "false");
+  await expect(reasoning).toHaveAttribute("aria-expanded", "false");
+
+  await reasoning.click();
+
+  await expect(reasoning).toHaveAttribute("aria-expanded", "true");
+  // The whole point: opening one leaves the others alone.
+  await expect(tools).toHaveAttribute("aria-expanded", "false");
 });
 
 test("the conversation can be filtered down to moves alone", async ({ page }) => {

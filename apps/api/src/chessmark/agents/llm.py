@@ -103,8 +103,16 @@ REQUEST_REJECTED_NAMES = frozenset(
     }
 )
 
-#: 400 malformed, 404 no such endpoint, 413 too large, 422 unprocessable.
-REQUEST_REJECTED_STATUS = frozenset({400, 404, 413, 422})
+#: 400 malformed, 413 too large, 422 unprocessable — the *shape* of the request is unacceptable.
+#:
+#: **404 is deliberately not here, and was.** It reads like "this does not exist", so it looked
+#: like a request problem; it is an availability problem. A game between two free models reached
+#: ply 55 and 1.17M tokens and was then abandoned outright on
+#: `{"code":404,"provider_name":"Nvidia"}` — the request had been fine fifty-five times, and the
+#: endpoint had gone away. That deserves the retry budget, and possibly a cooldown, rather than an
+#: immediate end. A model that genuinely does not exist still fails at ply 0, just five times
+#: instead of once.
+REQUEST_REJECTED_STATUS = frozenset({400, 413, 422})
 
 
 def _status_code(error: BaseException) -> int | None:
@@ -117,6 +125,17 @@ def _status_code(error: BaseException) -> int | None:
     response = getattr(error, "response", None)
     status = getattr(response, "status_code", None)
     return status if isinstance(status, int) else None
+
+
+def is_unavailable(error: BaseException) -> bool:
+    """Whether the endpoint is declining to serve this right now, rather than failing.
+
+    A 429 says so politely and a provider 404 says so bluntly, and both mean "not now" rather than
+    "not ever" — so both pause the game and cool the endpoint down instead of spending the retry
+    budget. Told apart from a *model* that does not exist only by when it happens: that one still
+    fails at ply 0, where a pause simply expires and the game is abandoned honestly.
+    """
+    return is_rate_limit(error) or _status_code(error) == 404
 
 
 def is_rate_limit(error: BaseException) -> bool:
@@ -167,6 +186,7 @@ def rate_limit_from(error: BaseException) -> RateLimit:
         provider=provider.group(1) if provider else None,
         limit_source=limit_source.group(1) if limit_source else None,
         retry_after_seconds=retry_after_seconds(error),
+        status_code=_status_code(error),
     )
 
 
@@ -459,7 +479,7 @@ class LlmGateway:
                         # Carried out of the gateway rather than re-derived downstream: this is
                         # the only place holding the provider's own exception, and by the time an
                         # orchestrator sees a string the structure is gone.
-                        rate_limit=rate_limit_from(error) if is_rate_limit(error) else None,
+                        rate_limit=rate_limit_from(error) if is_unavailable(error) else None,
                         request_rejected=rejects_the_request(error),
                     ) from error
 

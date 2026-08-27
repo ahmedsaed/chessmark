@@ -78,6 +78,54 @@ async def get_user(session: AsyncSession, user_id: uuid.UUID) -> User | None:
     return found
 
 
+async def resolve_user(session: AsyncSession, identifier: str) -> User | None:
+    """Find a user from whatever an administrator actually has to hand (AUTH-14).
+
+    Three shapes, tried in order of certainty: our own UUID, a Clerk `user_...` id, an email
+    address. `None` for anything else, so a caller can refuse rather than guess.
+
+    **An email we do not hold is asked of Clerk**, and the row is provisioned if they know them.
+    Our `users` row is created on a person's first request, so without that step credits could only
+    be granted to someone who had already visited — and pre-granting an invitation is exactly what
+    a private beta needs to do.
+
+    Lives here rather than in the admin route because the CLI grants credits too, and two
+    implementations of "who is this" would eventually disagree about which shapes are accepted.
+    """
+    identifier = identifier.strip()
+
+    try:
+        found = await get_user(session, uuid.UUID(identifier))
+    except ValueError:
+        found = None
+    if found is not None:
+        return found
+
+    if identifier.startswith("user_"):
+        by_clerk = await get_by_clerk_id(session, identifier)
+        if by_clerk is not None:
+            return by_clerk
+
+    if "@" in identifier:
+        by_email = await session.scalar(sa.select(User).where(User.email == identifier))
+        if by_email is not None:
+            return by_email
+
+        from chessmark.core.clerk import get_directory
+
+        clerk_id = await get_directory().find_by_email(identifier)
+        if clerk_id is not None:
+            email, display_name = await get_directory().identity_of(clerk_id)
+            return await upsert_user(
+                session,
+                clerk_user_id=clerk_id,
+                email=email or identifier,
+                display_name=display_name,
+            )
+
+    return None
+
+
 async def delete_by_clerk_id(session: AsyncSession, clerk_user_id: str) -> bool:
     """Remove a user Clerk says is gone.
 

@@ -16,7 +16,7 @@ from decimal import Decimal
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, status
 
-from chessmark.api.deps import AdminUser, BudgetDep, SessionDep, SettingsDep, get_directory
+from chessmark.api.deps import AdminUser, BudgetDep, SessionDep, SettingsDep
 from chessmark.api.schemas import (
     AdminSpend,
     AdminUsage,
@@ -29,7 +29,7 @@ from chessmark.db.enums import GameStatus
 from chessmark.db.models import Game, User
 from chessmark.db.quotas import reset_quota, usage_for
 from chessmark.db.repositories import get_game
-from chessmark.db.users import get_by_clerk_id, get_user, upsert_user
+from chessmark.db.users import resolve_user
 from chessmark.game import GameResult, Termination
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -105,52 +105,17 @@ async def reset_user_quota(session: SessionDep, user_id: uuid.UUID, admin: Admin
 
 
 async def _resolve_user(session: SessionDep, identifier: str) -> User:
-    """Find a user from whatever an administrator actually has to hand (AUTH-14).
-
-    Three shapes, tried in order of certainty: our own UUID, a Clerk `user_...` id, an email
-    address. Anything else is a 404 rather than a guess.
-
-    **An email we do not hold is asked of Clerk**, and the row is provisioned if they know them.
-    Our `users` row is created on a person's first request, so without that step credits could only
-    be granted to someone who had already visited — and pre-granting an invitation is exactly what
-    a private beta needs to do.
-    """
-    identifier = identifier.strip()
-
-    try:
-        found = await get_user(session, uuid.UUID(identifier))
-    except ValueError:
-        found = None
-    if found is not None:
-        return found
-
-    if identifier.startswith("user_"):
-        by_clerk = await get_by_clerk_id(session, identifier)
-        if by_clerk is not None:
-            return by_clerk
-
-    if "@" in identifier:
-        by_email = await session.scalar(sa.select(User).where(User.email == identifier))
-        if by_email is not None:
-            return by_email
-
-        clerk_id = await get_directory().find_by_email(identifier)
-        if clerk_id is not None:
-            email, display_name = await get_directory().identity_of(clerk_id)
-            return await upsert_user(
-                session,
-                clerk_user_id=clerk_id,
-                email=email or identifier,
-                display_name=display_name,
-            )
-
-    raise HTTPException(
-        status_code=status.HTTP_404_NOT_FOUND,
-        detail=(
-            f"No user matching {identifier!r}. Give an email address, a Clerk user id, "
-            "or a Chessmark user id."
-        ),
-    )
+    """`db.users.resolve_user`, with a 404 instead of a `None`."""
+    found = await resolve_user(session, identifier)
+    if found is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                f"No user matching {identifier!r}. Give an email address, a Clerk user id, "
+                "or a Chessmark user id."
+            ),
+        )
+    return found
 
 
 @router.post("/credits", response_model=CreditGrantOut)

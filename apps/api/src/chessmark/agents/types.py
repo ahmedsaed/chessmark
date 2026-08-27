@@ -128,7 +128,16 @@ class Completion:
 
 @dataclass(frozen=True, slots=True)
 class RateLimit:
-    """A provider asking us to come back later, and whatever it said about when.
+    """A provider declining to serve this right now, and whatever it said about when.
+
+    **Two shapes, one meaning.** A 429 is "come back later"; a provider 404 — `{"code":404,
+    "provider_name":"Nvidia"}` with an empty `raw` — is "this endpoint is not serving this model at
+    the moment", which is the same fact stated less politely. A game between two free models reached
+    ply 55 and 1.17M tokens and was abandoned outright on one, because 404 had been classified as a
+    malformed *request*. The request had been fine fifty-five times.
+
+    `status_code` is carried so the reason a reader sees says which happened, rather than telling
+    them they were rate-limited when they were not.
 
     OpenRouter distinguishes two things that arrive as the same status code, and they call for
     different responses:
@@ -147,11 +156,24 @@ class RateLimit:
     provider: str | None = None
     limit_source: str | None = None
     retry_after_seconds: float | None = None
+    status_code: int | None = None
 
     @property
     def is_upstream_pool(self) -> bool:
-        """The provider's shared free pool, rather than a limit on our account."""
+        """The provider's shared free pool, rather than a limit on our account.
+
+        False for a 404, which says nothing about a pool — only that one endpoint is not answering,
+        so only that endpoint is cooled down.
+        """
         return self.limit_source == "upstream_provider_shared_pool"
+
+    def describe(self, model: str) -> str:
+        """One line for the page, honest about which failure this was."""
+        where = self.provider or "its provider"
+        if self.status_code == 404:
+            return f"{model} is not being served by {where} right now (404)"
+        source = f" ({self.limit_source})" if self.limit_source else ""
+        return f"{model} rate-limited by {where}{source}"
 
 
 @dataclass(slots=True)

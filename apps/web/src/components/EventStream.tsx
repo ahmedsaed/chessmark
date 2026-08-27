@@ -37,6 +37,9 @@ import type { Player, StreamNotice, ToolCallView, TurnView } from "@/lib/types";
 
 type Filter = "all" | "moves-talk" | "talk" | "moves";
 
+/** The three registers a turn can be unrolled into, each with its own disclosure. */
+type Section = "reasoning" | "output" | "tools";
+
 /**
  * Ply number to chess notation. Ply 1 is "1.", ply 2 is "1…", ply 3 is "2." — a full move is two
  * plies, and Black's half is written with an ellipsis. Printing the raw ply here would read as
@@ -151,9 +154,21 @@ export function EventStream({
     return entries;
   }, [visible, notices, filter]);
 
-  function isOpen(turn: TurnView): boolean {
-    const explicit = toggled[turn.key];
+  /**
+   * Whether one section of one turn is open.
+   *
+   * **Three disclosures per turn, not one.** A single toggle meant that reading a tool call also
+   * unrolled several thousand words of reasoning, so the thing you wanted was pushed off the
+   * screen by the thing you did not.
+   *
+   * Defaults follow what a reader is there for: on the live turn, reasoning and tools are open so
+   * the panel shows the model working. `output` is closed everywhere — it is the model's prose
+   * *about* its move, which is worth having and not worth being handed unasked.
+   */
+  function isOpen(turn: TurnView, section: Section): boolean {
+    const explicit = toggled[`${turn.key}:${section}`];
     if (explicit !== undefined) return explicit;
+    if (section === "output") return false;
     return turn.live || turn.key === focusKey;
   }
 
@@ -212,11 +227,11 @@ export function EventStream({
                 turn={entry.turn}
                 name={turnName(entry.turn, players)}
                 filter={filter}
-                open={isOpen(entry.turn)}
-                onToggle={() =>
+                isOpen={(section) => isOpen(entry.turn, section)}
+                onToggle={(section) =>
                   setToggled((previous) => ({
                     ...previous,
-                    [entry.turn.key]: !isOpen(entry.turn),
+                    [`${entry.turn.key}:${section}`]: !isOpen(entry.turn, section),
                   }))
                 }
                 onInspect={onInspect && (() => onInspect(entry.turn))}
@@ -230,6 +245,56 @@ export function EventStream({
       {footer && <div className="flex-none border-t border-line bg-surface-3 p-2">{footer}</div>}
     </section>
   );
+}
+
+/**
+ * One disclosure, with a size hint.
+ *
+ * The hint is the point: the complaint that started this was reasoning being *long*, and a reader
+ * deciding whether to unroll it wants to know whether that is two lines or two thousand words
+ * before they find out the hard way.
+ */
+function Disclosure({
+  label,
+  hint,
+  tone,
+  open,
+  onToggle,
+}: {
+  label: string;
+  hint?: string;
+  tone?: "bad";
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      className={`inline-flex items-center gap-1.5 border bg-surface px-2 py-1 font-mono text-[10px] transition-colors hover:text-ink-dim ${
+        open ? "border-machine-dim text-ink-dim" : "border-line text-ink-faint"
+      }`}
+    >
+      <span aria-hidden className="text-machine">
+        {open ? "▾" : "▸"}
+      </span>
+      <span className="text-ink-dim">{label}</span>
+      {hint && <span className={tone === "bad" ? "text-bad" : "text-ink-faint"}>· {hint}</span>}
+    </button>
+  );
+}
+
+/**
+ * How much text is behind a disclosure, in the roundest terms that are still useful.
+ *
+ * Characters rather than tokens: the panel has no token count for a *section* — the turn's total
+ * is on the stats rail — and "2.4k" answers the only question being asked, which is whether this
+ * is a glance or a scroll.
+ */
+function sizeOf(blocks: string[]): string {
+  const characters = blocks.reduce((total, text) => total + text.length, 0);
+  return characters < 1000 ? `${characters}` : `${(characters / 1000).toFixed(1)}k`;
 }
 
 /**
@@ -317,7 +382,7 @@ function Turn({
   turn,
   name,
   filter,
-  open,
+  isOpen,
   onToggle,
   onInspect,
 }: {
@@ -325,12 +390,13 @@ function Turn({
   /** The model slug, or the person's name for a human turn. */
   name: string;
   filter: Filter;
-  open: boolean;
-  onToggle: () => void;
+  isOpen: (section: Section) => boolean;
+  onToggle: (section: Section) => void;
   onInspect?: () => void;
 }) {
   const isWhite = turn.colour === "white";
-  const showDetail = open && filter === "all";
+  const detail = filter === "all";
+  const show = (section: Section) => detail && isOpen(section);
 
   /* White reads from the left, Black from the right — the side is what identifies the player, so
      no bubble needs a name on it. Only the *block* is mirrored: the text inside stays
@@ -369,28 +435,38 @@ function Turn({
 
         {filter !== "talk" && !turn.human && (
           <div className={`flex flex-wrap items-center gap-1.5 ${isWhite ? "" : "justify-end"}`}>
-            <button
-              type="button"
-              onClick={onToggle}
-              aria-expanded={open}
-              className="inline-flex items-center gap-2 border border-line bg-surface px-2 py-1 font-mono text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
-            >
-              <span aria-hidden className="text-machine">
-                {open ? "▾" : "▸"}
-              </span>
-              {turn.illegal.length > 0 && (
-                <span className="text-bad" title="illegal move attempts">
-                  !
-                </span>
-              )}
-              <span className="text-ink-dim">
-                {turn.tools.length} tool{turn.tools.length === 1 ? "" : "s"}
-              </span>
-              {turn.illegal.length > 0 && <span>· {turn.illegal.length} illegal</span>}
-            </button>
+            {turn.reasoning.length > 0 && (
+              <Disclosure
+                label="reasoning"
+                hint={sizeOf(turn.reasoning)}
+                open={isOpen("reasoning")}
+                onToggle={() => onToggle("reasoning")}
+              />
+            )}
 
-            {/* Every number on this page traces to a payload; this is the link (LOG-07). */}
-            {onInspect && open && (
+            {turn.output.length > 0 && (
+              <Disclosure
+                label="output"
+                hint={sizeOf(turn.output)}
+                open={isOpen("output")}
+                onToggle={() => onToggle("output")}
+              />
+            )}
+
+            {(turn.tools.length > 0 || turn.illegal.length > 0) && (
+              <Disclosure
+                label={`${turn.tools.length} tool${turn.tools.length === 1 ? "" : "s"}`}
+                hint={turn.illegal.length > 0 ? `${turn.illegal.length} illegal` : undefined}
+                tone={turn.illegal.length > 0 ? "bad" : undefined}
+                open={isOpen("tools")}
+                onToggle={() => onToggle("tools")}
+              />
+            )}
+
+            {/* Every number on this page traces to a payload; this is the link (LOG-07). Shown
+                whenever it exists rather than only while something is unrolled: it is an action on
+                the turn, and there is no longer one "open" for it to hang off. */}
+            {onInspect && (
               <button
                 type="button"
                 onClick={onInspect}
@@ -402,7 +478,7 @@ function Turn({
           </div>
         )}
 
-        {showDetail &&
+        {show("reasoning") &&
           turn.reasoning.map((text, index) => (
             <p
               key={`${turn.key}-r${index}`}
@@ -413,7 +489,7 @@ function Turn({
             </p>
           ))}
 
-        {showDetail &&
+        {show("output") &&
           turn.output.map((text, index) => (
             <p
               key={`${turn.key}-o${index}`}
@@ -424,12 +500,14 @@ function Turn({
             </p>
           ))}
 
-        {showDetail &&
+        {show("tools") &&
           turn.tools.map((tool, index) => (
             <Tool key={`${turn.key}-t${index}`} tool={tool} align={isWhite ? "left" : "right"} />
           ))}
 
-        {showDetail &&
+        {/* Illegal attempts unroll with the tools: an illegal move *is* a failed `make_move`,
+            and the trigger already carries the count in `bad`. */}
+        {show("tools") &&
           turn.illegal.map((attempt, index) => (
             <p
               key={`${turn.key}-i${index}`}
