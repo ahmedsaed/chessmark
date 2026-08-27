@@ -168,3 +168,84 @@ describe("foldEvents", () => {
     expect(ended?.termination).toBe("resignation");
   });
 });
+
+/**
+ * Pauses (OPS-12, OPS-14).
+ *
+ * A pause is turn-less, which is the whole reason it is carried separately: the failed turn is
+ * rolled back whole, so its `turn_started` never reaches the log. Nothing in the timeline can hang
+ * a notice off a turn that does not exist.
+ */
+describe("pauses", () => {
+  it("surfaces a pause as a notice and as the current state", () => {
+    seq = 0;
+    const events = [
+      ...turn(1, "white", "e4"),
+      event("game_paused", {
+        reason: "gemma:free rate-limited by Google AI Studio (upstream_provider_shared_pool)",
+        resume_after: "2026-08-27T12:00:00Z",
+      }),
+    ];
+
+    const { notices, paused } = foldEvents(events, []);
+
+    expect(notices).toHaveLength(1);
+    expect(notices[0].kind).toBe("paused");
+    expect(notices[0].text).toContain("Google AI Studio");
+    expect(paused?.resumeAfter).toBe("2026-08-27T12:00:00Z");
+  });
+
+  it("closes the live turn, so nothing is left expanded and thinking", () => {
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w" }),
+      event("game_paused", { reason: "rate-limited" }),
+    ];
+
+    const { turns } = foldEvents(events, []);
+
+    expect(turns[0].live).toBe(false);
+  });
+
+  it("a resume clears the pause and leaves both notices in order", () => {
+    seq = 0;
+    const events = [
+      ...turn(1, "white", "e4"),
+      event("game_paused", { reason: "rate-limited" }),
+      event("game_resumed", { detail: "the wait is over" }),
+      ...turn(2, "black", "e5"),
+    ];
+
+    const { notices, paused, moves } = foldEvents(events, []);
+
+    expect(paused).toBeNull();
+    expect(notices.map((n) => n.kind)).toEqual(["paused", "resumed"]);
+    expect(moves).toEqual(["e4", "e5"]);
+  });
+
+  it("a game that ended is never reported as paused", () => {
+    /* The pair can arrive in either order — a game paused past its patience is abandoned, which
+       appends `game_ended` after the last `game_paused` still sitting in the log. A page showing
+       "paused, retrying shortly" over a finished game would be promising something untrue. */
+    seq = 0;
+    const events = [
+      event("game_paused", { reason: "rate-limited" }),
+      event("game_ended", { result: "*", termination: "abandoned", detail: "gave up" }),
+    ];
+
+    const { paused, ended } = foldEvents(events, []);
+
+    expect(paused).toBeNull();
+    expect(ended?.termination).toBe("abandoned");
+  });
+
+  it("carries the seq, so a notice can be placed between the turns it happened between", () => {
+    seq = 0;
+    const events = [...turn(1, "white", "e4"), event("game_paused", { reason: "x" })];
+
+    const { turns, notices } = foldEvents(events, []);
+
+    expect(turns[0].seq).toBe(1);
+    expect(notices[0].seq).toBeGreaterThan(turns[0].seq);
+  });
+});

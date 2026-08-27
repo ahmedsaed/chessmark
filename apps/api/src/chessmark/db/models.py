@@ -132,6 +132,13 @@ class Game(Base):
         enum_column(GameStatus), default=GameStatus.PENDING, index=True
     )
 
+    #: When a `PAUSED` game may run again, and why it stopped. Absolute time rather than a
+    #: duration, so the resumer only ever asks "is it time yet" — see `core/cooldown.py`.
+    resume_after: Mapped[dt.datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    #: One short line, shown on the page. The provider's raw refusal is not it: that is a JSON
+    #: blob carrying an account id, and a reader wants "rate-limited upstream by Google AI Studio".
+    pause_reason: Mapped[str | None] = mapped_column(sa.Text)
+
     start_fen: Mapped[str] = mapped_column(sa.Text)
     result: Mapped[GameResult] = mapped_column(enum_column(GameResult), default=GameResult.ONGOING)
     termination: Mapped[Termination | None] = mapped_column(enum_column(Termination))

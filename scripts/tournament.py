@@ -39,6 +39,7 @@ from redis.asyncio import Redis  # noqa: E402
 
 from chessmark.core.budget import FreeTierBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
+from chessmark.core.cooldown import ProviderCooldown  # noqa: E402
 from chessmark.db import tournaments as repo  # noqa: E402
 from chessmark.db.enums import GameStatus, TournamentStatus  # noqa: E402
 from chessmark.db.models import Game, Tournament, TournamentEntrant  # noqa: E402
@@ -50,6 +51,20 @@ from chessmark.tournament import FieldFilter, Format, TournamentConfig, standing
 
 DIM, BOLD, OFF = "\033[2m", "\033[1m", "\033[0m"
 AMBER, GREEN, RED = "\033[38;5;179m", "\033[38;5;108m", "\033[38;5;167m"
+
+
+def say(text: str) -> None:
+    """Print a line, timestamped when this is a log rather than a terminal.
+
+    `run` is both a command a person watches and the entrypoint of a supervised container, and the
+    two want different things. Interactively a timestamp on every tick is noise. In a container it
+    is the difference between a usable log and forty identical lines: every other component here
+    logs through `logging` and stamps its output, and this one printed `holding — outside its
+    active hours` forty times with no way to tell whether that was at 06:30 or at 11:30. Working
+    out when the event had actually been running took a round trip to the database.
+    """
+    stamp = "" if sys.stdout.isatty() else f"{dt.datetime.now(dt.UTC):%Y-%m-%d %H:%M:%S} "
+    print(f"{stamp}{text}", flush=True)
 
 
 def _time(value: str | None) -> dt.time | None:
@@ -174,6 +189,9 @@ async def cmd_run(args: argparse.Namespace) -> int:
     queue = TurnQueue(redis)
     await queue.ensure_group()
     free_tier = FreeTierBudget(redis)
+    # Read, not written, here: the worker records a cooldown when a provider refuses, and this
+    # reads it to decide who may be paired. Two containers, one Redis, one fact.
+    cooldown = ProviderCooldown(redis)
     sessionmaker = get_sessionmaker()
 
     try:
@@ -181,24 +199,29 @@ async def cmd_run(args: argparse.Namespace) -> int:
             tournament = await resolve_slug(session, args.slug)
             tournament_id, name = tournament.id, tournament.name
 
-        print(f"{BOLD}{name}{OFF} {DIM}{tournament_id}{OFF}")
+        say(f"{BOLD}{name}{OFF} {DIM}{tournament_id}{OFF}")
         quiet = 0
         paused_announced = False
+        holding_announced: str | None = None
 
         while True:
             step = await advance(
-                sessionmaker, queue, tournament_id=tournament_id, free_tier=free_tier
+                sessionmaker,
+                queue,
+                tournament_id=tournament_id,
+                free_tier=free_tier,
+                cooldown=cooldown,
             )
 
             if step.status is TournamentStatus.FINISHED:
-                print(f"{GREEN}finished{OFF} — {step.detail}")
+                say(f"{GREEN}finished{OFF} — {step.detail}")
                 return 0
             if step.status is TournamentStatus.PAUSED:
                 # Waited through rather than exited on. A paused event is temporary, and this is
                 # what a supervised container runs: exiting would have it restarted immediately,
                 # print the same line, and exit again — which is exactly what it did.
                 if not paused_announced:
-                    print(f"{AMBER}paused{OFF} — {step.detail}; waiting for a resume")
+                    say(f"{AMBER}paused{OFF} — {step.detail}; waiting for a resume")
                     paused_announced = True
                 if args.once:
                     return 0
@@ -208,17 +231,23 @@ async def cmd_run(args: argparse.Namespace) -> int:
             paused_announced = False
 
             if step.holding:
-                # Not idle and not an error: the event is deliberately waiting.
-                print(f"  {DIM}holding — {step.holding}{OFF}")
+                # Not idle and not an error: the event is deliberately waiting. Said once per
+                # reason rather than once per tick — the same line every thirty seconds is not
+                # information, and it buried the ticks that were.
+                if step.holding != holding_announced:
+                    say(f"  {DIM}holding — {step.holding}{OFF}")
+                    holding_announced = step.holding
                 if args.once:
                     return 0
                 await asyncio.sleep(args.interval)
                 continue
 
+            holding_announced = None
+
             if step.idle:
                 quiet += 1
                 if args.once:
-                    print(f"{DIM}nothing to do{OFF}")
+                    say(f"{DIM}nothing to do{OFF}")
                     return 0
             else:
                 quiet = 0
@@ -231,7 +260,7 @@ async def cmd_run(args: argparse.Namespace) -> int:
                     bits.append(f"started {step.started}")
                 if step.settled:
                     bits.append(f"settled {step.settled}")
-                print(f"  {' · '.join(bits)}")
+                say(f"  {' · '.join(bits)}")
 
             if args.once:
                 return 0

@@ -1,13 +1,18 @@
 "use client";
 
 /**
- * The conversation panel (ADR-0013).
+ * The event stream (ADR-0013) — the right-hand column of a live game and of a replay.
+ *
+ * **Named for what it is.** It was the "conversation" panel, from when trash talk was the
+ * interesting thing in it, and that name had stopped being true: most of what it shows is
+ * reasoning, tool calls, illegal attempts and now the harness interrupting itself. Calling it a
+ * conversation invited the reading that anything not addressed to the opponent did not belong.
  *
  * A messaging-app timeline: side identifies the player, and the move acts as a date separator
  * closing each turn. Finished turns fold to one line; the open turn shows what the model actually
  * did, which is what keeps move 60 as readable as move 3.
  *
- * **Four registers, deliberately distinct**, because they are four different kinds of thing:
+ * **Five registers, deliberately distinct**, because they are five different kinds of thing:
  *
  * | | |
  * | --- | --- |
@@ -15,15 +20,20 @@
  * | `output` | what it wrote outside a tool call — plain prose |
  * | tools | machinery — monospace, with the arguments and the result |
  * | `say` | addressed to the opponent — the only thing shaped like a message |
+ * | notices | the harness, not a player: a pause and why, spanning the full width |
  *
  * Reasoning and output are separate for a reason found the hard way: DeepSeek puts everything in
  * `reasoning` and Gemini puts everything in `content`, so a panel that renders only one of them
  * makes an entire model look silent.
+ *
+ * Notices are separate from all four because they have no side. A rate limit is not something
+ * either model did, and drawing it as one player's message would attribute the harness's failure
+ * to a contestant.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { Player, ToolCallView, TurnView } from "@/lib/types";
+import type { Player, StreamNotice, ToolCallView, TurnView } from "@/lib/types";
 
 type Filter = "all" | "moves-talk" | "talk" | "moves";
 
@@ -44,8 +54,9 @@ const FILTERS: { id: Filter; label: string; title: string }[] = [
   { id: "moves", label: "Moves", title: "The move list alone" },
 ];
 
-export function Conversation({
+export function EventStream({
   turns,
+  notices = [],
   focusKey,
   onInspect,
   emptyMessage = "Waiting for the first turn…",
@@ -54,6 +65,11 @@ export function Conversation({
   players = [],
 }: {
   turns: TurnView[];
+  /**
+   * Pauses and resumes — the harness interrupting itself. Interleaved with the turns by `seq`
+   * rather than appended, so a game that paused at move 12 reads in the order it happened.
+   */
+  notices?: StreamNotice[];
   /**
    * The turn to open by default. Replay passes the turn that produced the current ply so scrubbing
    * always lands on something readable. It seeds the open set rather than overriding it — a turn
@@ -116,6 +132,25 @@ export function Conversation({
     return turns;
   }, [turns, filter]);
 
+  /* Turns and notices in one list, ordered by `seq`. Built here rather than by the caller so the
+     filters keep working: "talk" hides turns and must hide the notices between them too, or the
+     panel would show a rate limit with no play around it to give it a place. */
+  const timeline = useMemo(() => {
+    const entries: ({ kind: "turn"; turn: TurnView } | { kind: "notice"; notice: StreamNotice })[] =
+      visible.map((turn) => ({ kind: "turn" as const, turn }));
+    if (filter === "all") {
+      for (const notice of notices) {
+        const at = entries.findIndex(
+          (entry) => entry.kind === "turn" && entry.turn.seq > notice.seq,
+        );
+        const item = { kind: "notice" as const, notice };
+        if (at === -1) entries.push(item);
+        else entries.splice(at, 0, item);
+      }
+    }
+    return entries;
+  }, [visible, notices, filter]);
+
   function isOpen(turn: TurnView): boolean {
     const explicit = toggled[turn.key];
     if (explicit !== undefined) return explicit;
@@ -124,7 +159,7 @@ export function Conversation({
 
   return (
     <section
-      aria-label="Conversation"
+      aria-label="Event stream"
       className="flex min-h-0 flex-col border border-line bg-surface-2"
     >
       {header}
@@ -168,19 +203,26 @@ export function Conversation({
         {filter === "moves" ? (
           <MoveList turns={visible} />
         ) : (
-          visible.map((turn) => (
-            <Turn
-              key={turn.key}
-              turn={turn}
-              name={turnName(turn, players)}
-              filter={filter}
-              open={isOpen(turn)}
-              onToggle={() =>
-                setToggled((previous) => ({ ...previous, [turn.key]: !isOpen(turn) }))
-              }
-              onInspect={onInspect && (() => onInspect(turn))}
-            />
-          ))
+          timeline.map((entry) =>
+            entry.kind === "notice" ? (
+              <Notice key={entry.notice.key} notice={entry.notice} />
+            ) : (
+              <Turn
+                key={entry.turn.key}
+                turn={entry.turn}
+                name={turnName(entry.turn, players)}
+                filter={filter}
+                open={isOpen(entry.turn)}
+                onToggle={() =>
+                  setToggled((previous) => ({
+                    ...previous,
+                    [entry.turn.key]: !isOpen(entry.turn),
+                  }))
+                }
+                onInspect={onInspect && (() => onInspect(entry.turn))}
+              />
+            ),
+          )
         )}
         </div>
       </div>
@@ -188,6 +230,48 @@ export function Conversation({
       {footer && <div className="flex-none border-t border-line bg-surface-3 p-2">{footer}</div>}
     </section>
   );
+}
+
+/**
+ * The harness, not a player.
+ *
+ * Full width and sideless, because a pause belongs to neither model. A rate limit is not something
+ * a contestant did, and drawing it as one player's message would attribute the harness's failure to
+ * a model.
+ *
+ * `bad` for the pause, matching how every other fault in this app is drawn, and the quiet `line` /
+ * `ink-faint` pair for the resume — one is a thing to know about, the other is only the
+ * reassurance that it ended. Tokens throughout; no component hard-codes a colour (ADR-0013).
+ */
+function Notice({ notice }: { notice: StreamNotice }) {
+  const paused = notice.kind === "paused";
+  return (
+    <div
+      role="status"
+      className={`border px-3 py-2 font-mono text-[11px] leading-relaxed ${
+        paused ? "border-bad-deep bg-surface text-bad" : "border-line bg-surface-3 text-ink-faint"
+      }`}
+    >
+      <span className="uppercase tracking-[0.1em]">{paused ? "paused" : "resumed"}</span>
+      <span className="text-ink-dim"> · {notice.text}</span>
+      {notice.resumeAfter && (
+        <span className="text-ink-faint"> · retrying {relativeTime(notice.resumeAfter)}</span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * "in 4 minutes", or "shortly" once it is due.
+ *
+ * Rendered client-side on purpose: a server-rendered "in 4 minutes" is wrong by the time anybody
+ * reads it, and this column is already a client component following a live stream.
+ */
+function relativeTime(iso: string): string {
+  const seconds = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
+  if (!Number.isFinite(seconds) || seconds <= 20) return "shortly";
+  if (seconds < 90) return `in ${seconds}s`;
+  return `in ${Math.round(seconds / 60)} min`;
 }
 
 /**

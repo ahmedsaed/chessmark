@@ -21,7 +21,9 @@ export function orderMyGames(games: MyGameSummary[]): MyGameSummary[] {
 
 function band(game: MyGameSummary): number {
   if (game.your_turn) return 0;
-  if (game.status === "running") return 1;
+  // A paused game bands with a running one. It is not over, and dropping it to the bottom would
+  // file it with the games a person is done with.
+  if (game.status === "running" || game.status === "paused") return 1;
   return 2;
 }
 

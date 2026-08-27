@@ -322,6 +322,10 @@ class GameSummary(Schema):
     created_at: dt.datetime
     started_at: dt.datetime | None
     ended_at: dt.datetime | None
+    #: Set only while `status` is `paused`. One short line and a time, because a board that has
+    #: stopped moving needs to say why on the card, not only on the game page.
+    pause_reason: str | None = None
+    resume_after: dt.datetime | None = None
     players: list[PlayerOut] = Field(default_factory=list)
 
     @classmethod
@@ -346,6 +350,8 @@ class GameSummary(Schema):
             created_at=game.created_at,
             started_at=game.started_at,
             ended_at=game.ended_at,
+            pause_reason=game.pause_reason,
+            resume_after=game.resume_after,
             players=sorted(
                 (
                     PlayerOut.from_model(

@@ -251,13 +251,21 @@ Four traps, each of which cost a debugging pass:
 4. **Not every URL containing `/models` is an API call.** Assert against the API origin, or a
    router prefetch counts as a request the page did not make.
 
+**The right-hand column is `EventStream`, not `Conversation`.** It was named for trash talk and
+had long since stopped being that: it carries reasoning, output, tool calls, illegal attempts, and
+now the harness interrupting itself. A pause renders as a **notice** — full width, no side — because
+a rate limit is not something either contestant did, and drawing it as a player's message would
+attribute the harness's failure to a model. Notices belong to no turn (the failed turn is rolled
+back whole, so its `turn_started` never reaches the log) and are interleaved with the turns by
+`seq`.
+
 Frontend `lib/` coverage is measured *and* enforced (`make test-web-coverage`, NFR-10).
 `api.ts` and `site.ts` are excluded from that floor and covered by the browser suite instead:
 unit-testing fetch wrappers means mocking `fetch` and then asserting the mock.
 
 ## Current state
 
-**Phases 0–10, 12, 13, 18–23 complete.** 993 backend + 122 frontend + 18 browser tests.
+**Phases 0–10, 12, 13, 17a, 18–23 complete.** 1052 backend + 133 frontend + 18 browser tests.
 
 - `chessmark.game` — the chess domain. `ChessBoard`, `Referee`, `IllegalMoveError` (reason,
   human-readable detail, full legal move list), PGN export. 99.75% coverage, pure by enforcement.
@@ -361,10 +369,31 @@ output tokens per call, and 2.95 calls per ply.
 
 **The free tier is a shared pool, and it is patchy.** 429s carry
 `limit_source: upstream_provider_shared_pool` and arrive from first-party providers too — a probe
-of six free models returned four 200s, one 429 and one 403. Our `RetryPolicy` backs off a maximum
-of **8 seconds** and reads nothing from the provider's `Retry-After`, so a hot provider costs ~20
-doomed requests and then abandons the game. A tournament has no deadline and should wait minutes;
-fixing that is a prerequisite for Phase 13, not an optimisation.
+of six free models returned four 200s, one 429 and one 403.
+
+**A rate limit pauses the game; it does not retry it** ([ADR-0017](docs/adr/0017-rate-limits-pause-games.md),
+OPS-12..14). This cost a production incident worth remembering in full, because three of its four
+causes do not look like the problem:
+
+- The gateway made **8 attempts** and the worker requeued **5 times with no delay** — 40 requests
+  per game, then *abandoned*. ~560 doomed requests in ninety minutes, all charged against the
+  allowance the retries were protecting. The instinct to make a rate limit *more* patient is
+  backwards: patience inside the retry loop is paid for in requests.
+- The delay ladder was decided by `base_delay = 0.5s`, so eight doublings reached 32 seconds and
+  `rate_limit_max_delay = 300` never bound. Rate limits have their own base now.
+- `Retry-After` is honoured **when it arrives, which is usually not**: OpenRouter sends one only
+  "when every attempted provider returned a retry hint", and a free model is served by exactly one
+  endpoint — so the cooldown ladder in `core/cooldown.py` has an opinion of its own.
+- **The pool then re-paired the same dead model fourteen times.** An abandoned game is excluded
+  from ratings, so the failing entrant's deviation never moved, so it stayed the least-known
+  entrant the matchmaker most wants to play — and `Form.games` was never populated, so the
+  tie-break fell to the *alphabetical key*. A deterministic loop. `matchmake(unavailable=...)` is
+  the half that breaks it, and it is the fix that mattered most.
+
+So: `GameStatus.PAUSED` with `resume_after`, one `game_paused` event, **no concurrency slot held**
+(`in_flight` counts `PENDING` and `RUNNING`), the reconciler resuming it, and a Redis cooldown per
+(model, endpoint) that the tournament matchmaker reads. Bounded at six pauses; a game with a human
+seat gets two of at most two minutes, because a person will not wait out a shared pool.
 
 **The ply cap is a cost bound, not a rules bound** — threefold and the fifty-move rule are applied
 automatically, so games terminate on their own. 300 plies is the standard; 80 sat at the median of

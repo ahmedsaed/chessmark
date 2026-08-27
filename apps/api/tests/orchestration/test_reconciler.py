@@ -8,13 +8,14 @@ running (ADR-0008), so the reconciler asks it rather than the queue.
 from __future__ import annotations
 
 import datetime as dt
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.scripted import plays
-from chessmark.db.enums import GameStatus
+from chessmark.db.enums import EventType, GameStatus
 from chessmark.db.models import Game, GameEvent
 from chessmark.orchestration.reconciler import find_stalled, reconcile
 from chessmark.orchestration.worker import ADVANCED, STALE
@@ -119,3 +120,85 @@ async def test_reconcile_reports_what_it_did(db: AsyncSession, sessionmaker, gam
 
     assert report.checked >= 0
     assert "requeued" in str(report)
+
+
+# ====================================================================== resuming a pause
+
+
+async def test_a_paused_game_is_resumed_once_its_wait_is_over(
+    db: AsyncSession, game: Fixture, sessionmaker: Any
+) -> None:
+    """The other half of pausing. A game waiting on a clock rather than on a worker needs somebody
+    to put it back on the queue, and this is that somebody — the alternative is a game that pauses
+    correctly and never plays again."""
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
+    game.game.pause_reason = "rate-limited by Google AI Studio"
+    await db.commit()
+
+    report = await reconcile(sessionmaker, game.queue)
+
+    assert report.resumed == [str(game.game.id)]
+
+    db.expunge_all()
+    reloaded = await db.get(Game, game.game.id)
+    assert reloaded is not None
+    assert reloaded.status is GameStatus.RUNNING
+    assert reloaded.resume_after is None
+    assert reloaded.pause_reason is None, "or the page keeps saying paused after play resumed"
+
+
+async def test_a_pause_that_is_not_over_is_left_alone(
+    db: AsyncSession, game: Fixture, sessionmaker: Any
+) -> None:
+    """Resuming early is worse than waiting: it spends a request to be refused again, which is the
+    whole thing the pause exists to avoid."""
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=30)
+    await db.commit()
+
+    report = await reconcile(sessionmaker, game.queue)
+
+    assert report.resumed == []
+    db.expunge_all()
+    reloaded = await db.get(Game, game.game.id)
+    assert reloaded is not None
+    assert reloaded.status is GameStatus.PAUSED
+
+
+async def test_a_pause_with_no_time_on_it_is_resumed_rather_than_stranded(
+    db: AsyncSession, game: Fixture, sessionmaker: Any
+) -> None:
+    """It should not happen — the worker always sets one — but a row without it would otherwise
+    wait forever, and the failure mode of a stuck game is silence."""
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = None
+    await db.commit()
+
+    report = await reconcile(sessionmaker, game.queue)
+
+    assert report.resumed == [str(game.game.id)]
+
+
+async def test_resuming_appends_one_event(
+    db: AsyncSession, game: Fixture, sessionmaker: Any
+) -> None:
+    """Invariant 7, and what makes the pause disappear from the page: the panel clears its notice
+    on `game_resumed`, so a resume the log does not carry leaves the page reading "paused" over a
+    game that is playing."""
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
+    game.game.pause_reason = "rate-limited"
+    await db.commit()
+
+    await reconcile(sessionmaker, game.queue)
+
+    db.expunge_all()
+    events = await db.scalars(
+        sa.select(GameEvent).where(
+            GameEvent.game_id == game.game.id, GameEvent.type == EventType.GAME_RESUMED
+        )
+    )
+    resumed = list(events)
+    assert len(resumed) == 1
+    assert "rate-limited" in str(resumed[0].payload.get("detail"))

@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from chessmark.bench.service import compute_ratings
 from chessmark.core.budget import FreeTierBudget
+from chessmark.core.cooldown import ProviderCooldown
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import TournamentStatus
 from chessmark.db.models import (
@@ -79,6 +80,7 @@ async def advance(
     *,
     tournament_id: uuid.UUID,
     free_tier: FreeTierBudget | None = None,
+    cooldown: ProviderCooldown | None = None,
     now: dt.datetime | None = None,
 ) -> Step:
     """Do one step: settle what finished, schedule what is next, start what fits.
@@ -118,7 +120,7 @@ async def advance(
             await session.commit()
             return Step(settled=settled, status=TournamentStatus.PAUSED, detail=over_budget)
 
-        scheduled = await _schedule_next_round(session, tournament)
+        scheduled = await _schedule_next_round(session, tournament, cooldown)
 
         # A pool has no end to reach.
         if tournament.format != str(Format.POOL) and await _is_complete(session, tournament):
@@ -253,7 +255,9 @@ async def _budget_reached(session: AsyncSession, tournament: Tournament) -> str 
     return f"Stopped after ${used} of a ${tournament.max_usd} budget."
 
 
-async def _schedule_next_round(session: AsyncSession, tournament: Tournament) -> int | None:
+async def _schedule_next_round(
+    session: AsyncSession, tournament: Tournament, cooldown: ProviderCooldown | None = None
+) -> int | None:
     """Write the next round's pairings down, if the current one is done.
 
     Round robin is scheduled in full the first time, because it can be: the whole fixture list is
@@ -273,7 +277,7 @@ async def _schedule_next_round(session: AsyncSession, tournament: Tournament) ->
     highest = int(played or 0)
 
     if tournament.format == str(Format.POOL):
-        return await _schedule_pool(session, tournament, entrants)
+        return await _schedule_pool(session, tournament, entrants, cooldown)
 
     if tournament.format == str(Format.ROUND_ROBIN):
         if highest:
@@ -299,7 +303,10 @@ async def _schedule_next_round(session: AsyncSession, tournament: Tournament) ->
 
 
 async def _schedule_pool(
-    session: AsyncSession, tournament: Tournament, entrants: list[Any]
+    session: AsyncSession,
+    tournament: Tournament,
+    entrants: list[Any],
+    cooldown: ProviderCooldown | None = None,
 ) -> int | None:
     """Pair as many games as there is room to run, and no more.
 
@@ -321,12 +328,23 @@ async def _schedule_pool(
     )
     round_number = int(highest or 0) + 1
 
+    # Whoever cannot play right now is skipped rather than paired. This is the difference between
+    # a pool that spends its one concurrency slot on a model that can move and one that spends
+    # ninety minutes rediscovering that a provider is rate-limited — see `core/cooldown.py`.
+    resting: set[str] = set()
+    if cooldown is not None:
+        resting = await cooldown.resting([e.key.split("@", 1)[0] for e in entrants])
+        resting = {e.key for e in entrants if e.key.split("@", 1)[0] in resting}
+        if resting:
+            log.info("pool %s skipping %d resting entrants", tournament.slug, len(resting))
+
     games = matchmake(
         entrants,
         await repo.results_so_far(session, tournament.id),
         await _form(session, tournament),
         count=room,
         round_number=round_number,
+        unavailable=resting,
     )
     if not games:
         return None

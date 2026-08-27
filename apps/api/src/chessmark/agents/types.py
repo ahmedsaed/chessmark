@@ -126,6 +126,34 @@ class Completion:
         return next((call for call in self.tool_calls if call.name == name), None)
 
 
+@dataclass(frozen=True, slots=True)
+class RateLimit:
+    """A provider asking us to come back later, and whatever it said about when.
+
+    OpenRouter distinguishes two things that arrive as the same status code, and they call for
+    different responses:
+
+    * `limit_source: "upstream_provider_shared_pool"` — the provider's own free pool is hot. Ours
+      to wait out; the model and the account are fine.
+    * an account limit — 20 requests a minute, or the day's allowance. Waiting helps only if we
+      also stop making requests.
+
+    `retry_after_seconds` is populated when the provider said. It usually does not: OpenRouter
+    sends `Retry-After` only "when every attempted provider returned a retry hint", and a free
+    model served by a single endpoint that returned none carries nothing at all. So the absence of
+    a hint is the normal case, and a cooldown has to have an opinion of its own.
+    """
+
+    provider: str | None = None
+    limit_source: str | None = None
+    retry_after_seconds: float | None = None
+
+    @property
+    def is_upstream_pool(self) -> bool:
+        """The provider's shared free pool, rather than a limit on our account."""
+        return self.limit_source == "upstream_provider_shared_pool"
+
+
 @dataclass(slots=True)
 class LlmError(Exception):
     """A provider call that could not be completed."""
@@ -135,6 +163,11 @@ class LlmError(Exception):
     retryable: bool = False
     attempts: int = 1
     request: dict[str, Any] = field(default_factory=dict)
+    #: Set when the failure was the provider asking us to come back later. Structured rather than
+    #: left in `message`, because the orchestrator has to *act* on it — pause this game, cool this
+    #: endpoint down — and a decision keyed off a substring search of an error string is a decision
+    #: waiting to break the next time a provider rewords its 429.
+    rate_limit: RateLimit | None = None
 
     def __str__(self) -> str:
         return f"{self.message} (status={self.status_code}, attempts={self.attempts})"

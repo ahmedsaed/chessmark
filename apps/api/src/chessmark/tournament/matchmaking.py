@@ -16,6 +16,13 @@ Two facts drive it:
 So: take the least-known entrant, and give them the closest-rated opponent who is not a rematch.
 Pure, like the rest of this package — ratings are handed in rather than read, so the policy can be
 tested against fixtures without a database or a rating engine.
+
+**And skip whoever cannot play right now**, which is not a refinement of the policy but a
+correction to it. The two facts above pull toward whoever we know least about, and a model whose
+games keep failing is *permanently* the one we know least about: an abandoned game is excluded from
+ratings, so its deviation never moves, so it is chosen again. One free model went dark for ninety
+minutes and the pool paired it fourteen consecutive times, each pairing dying at ply 0. Nothing in
+"least known first" can escape that on its own — the policy has to be told who is unavailable.
 """
 
 from __future__ import annotations
@@ -54,11 +61,22 @@ def matchmake(
     *,
     count: int = 1,
     round_number: int = 1,
+    unavailable: frozenset[str] | set[str] = frozenset(),
 ) -> list[Pairing]:
     """The next `count` games to play.
 
     Nobody is paired twice in one batch — those games would run concurrently, and a model cannot
     play itself in two places at once.
+
+    `unavailable` names entrants that cannot be played at this moment — today, models whose only
+    endpoint is resting off a rate limit (`core/cooldown.py`). They are **skipped, not withdrawn**:
+    the distinction is the whole point. A withdrawal is a statement about the event, and it
+    abandons that entrant's remaining pairings; this is a statement about the next few minutes, and
+    the entrant returns by itself when its cooldown expires. A pool has no deadline, so the cost of
+    waiting is nothing and the cost of pairing a model that cannot play is a wasted slot.
+
+    Fewer than two available entrants returns no games rather than pairing regardless. The pool
+    holds for a tick, which is correct: there is no game worth starting.
     """
     field = [e.key for e in ordered(entrants)]
     if len(field) < 2:
@@ -66,9 +84,12 @@ def matchmake(
 
     met = _meetings(results)
     balance = _colour_balance(results)
+    # Form is built over the whole field, not the available subset. A resting entrant's rating is
+    # still real and is still what an opponent is chosen for proximity to; only its own turn to
+    # play is deferred.
     known = {key: form.get(key, Form(key=key)) for key in field}
 
-    available = set(field)
+    available = set(field) - set(unavailable)
     games: list[Pairing] = []
 
     for _ in range(count):

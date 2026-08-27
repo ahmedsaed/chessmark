@@ -33,7 +33,7 @@ from chessmark.agents.llm import LlmGateway
 from chessmark.agents.mangled import ProviderMangledError, mangled_tool_call
 from chessmark.agents.sessions import session_for_game
 from chessmark.agents.tools import ToolDispatcher, ToolName, TurnState, tool_schemas
-from chessmark.agents.types import Completion, LlmError, ToolInvocation
+from chessmark.agents.types import Completion, LlmError, RateLimit, ToolInvocation
 from chessmark.db.enums import EventType, ModerationStatus, TurnStatus
 from chessmark.db.models import Game, LlmCall, Message, Player, ToolCall, Turn
 from chessmark.db.repositories import append_event, record_ply
@@ -106,6 +106,10 @@ class TurnResult:
     cost_usd: Decimal = Decimal(0)
     latency_ms: int = 0
     error: str | None = None
+    #: Set when the turn failed because a provider asked us to come back later. The orchestrator
+    #: reads this rather than the error text: a rate limit is the one provider failure that should
+    #: pause the game instead of counting against its retry budget.
+    rate_limit: RateLimit | None = None
 
     @property
     def moved(self) -> bool:
@@ -231,6 +235,7 @@ class TurnRunner:
             result.status = TurnStatus.FAILED
             result.error = str(error)
             result.outcome = None
+            result.rate_limit = error.rate_limit
         except ProviderMangledError as error:
             # The endpoint failed to parse a tool call the model did make (ADR-0015). Same
             # treatment as an outage, for the same reason: the model acted correctly and its host
