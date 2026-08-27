@@ -15,6 +15,17 @@ class GameStatus(StrEnum):
     """Created, not yet started. No LLM call has been made."""
 
     RUNNING = "running"
+
+    PAUSED = "paused"
+    """Stopped by something outside the game, and expected to continue.
+
+    A provider rate limit is the case this exists for. It is not a result and not a failure of
+    either model: nobody played badly and the position is untouched, so recording it as `ABORTED`
+    published a claim about a game that had simply not happened yet. A paused game keeps its
+    transcript, holds no concurrency slot, and is picked up again by the reconciler once
+    `resume_after` passes.
+    """
+
     FINISHED = "finished"
     ABORTED = "aborted"
     """Cancelled by an admin or abandoned. Distinct from a game that reached a chess result."""
@@ -69,6 +80,10 @@ class EventType(StrEnum):
     MESSAGE_SENT = "message_sent"
     DRAW_OFFERED = "draw_offered"
     GAME_ENDED = "game_ended"
+    #: The harness stopped the game and means to continue it — today, a provider rate limit.
+    #: Carries the reason and when it will be tried again, because the alternative is a board that
+    #: stops moving and a page with nothing to say about why.
+    GAME_PAUSED = "game_paused"
     #: A game stopped by the harness — a budget, a ply cap, a provider outage — was reopened with
     #: room to continue. Never a chess result: those are final.
     GAME_RESUMED = "game_resumed"

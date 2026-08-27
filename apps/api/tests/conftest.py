@@ -221,6 +221,11 @@ async def queue(redis: Any) -> Any:
     return turn_queue
 
 
+async def _instant(_seconds: float) -> None:
+    """No backoff in tests. A retry ladder measured in seconds would be measured in the suite."""
+    return None
+
+
 @pytest.fixture
 def make_worker(sessionmaker: async_sessionmaker[AsyncSession], queue: Any, redis: Any) -> Any:
     from chessmark.agents.llm import LlmGateway
@@ -232,14 +237,17 @@ def make_worker(sessionmaker: async_sessionmaker[AsyncSession], queue: Any, redi
         limits: Any = None,
         consumer: str = "test-worker",
         publish: bool = False,
+        retry: Any = None,
+        cooldown: Any = None,
     ) -> TurnWorker:
         return TurnWorker(
             sessionmaker=sessionmaker,
             queue=queue,
-            gateway=LlmGateway(completion_fn=completion_fn),
+            gateway=LlmGateway(completion_fn=completion_fn, retry=retry, sleep_fn=_instant),
             redis=redis if publish else None,
             limits=limits,
             consumer=consumer,
+            cooldown=cooldown,
         )
 
     return _make

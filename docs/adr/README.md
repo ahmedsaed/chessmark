@@ -21,6 +21,8 @@ supersedes the old one, rather than an edit.
 | [0013](0013-design-system.md) | Design system: Board & Amber, dark only, conversation-led | Accepted |
 | [0014](0014-provider-routing-and-quantization.md) | Pin provider routing and exclude sub-8-bit quantization | Superseded in part by [0015](0015-quantization-as-identity-and-pinned-endpoints.md) |
 | [0015](0015-quantization-as-identity-and-pinned-endpoints.md) | Quantization identifies the contestant; endpoints are pinned per match | Accepted |
+| [0016](0016-credits-as-a-granted-balance.md) | Credits are a granted balance, priced per model | Accepted |
+| [0017](0017-rate-limits-pause-games.md) | A rate limit pauses the game; endpoints cool down between games | Accepted |
 
 ## Template
 

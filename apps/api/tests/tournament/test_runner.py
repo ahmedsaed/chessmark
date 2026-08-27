@@ -606,3 +606,87 @@ async def test_a_pool_stops_at_its_budget_like_any_other_event(
 
     assert step.status is TournamentStatus.PAUSED
     assert "budget" in step.detail
+
+
+# ====================================================================== rate-limited entrants
+#
+# The failure this section exists for: a pool with a concurrency of one, and one entrant whose only
+# endpoint is rate-limited. Fourteen consecutive games died at ply 0 because neither half of the
+# system knew — the matchmaker kept choosing the model it knew least about, and it stayed the model
+# it knew least about precisely *because* its games kept failing.
+
+
+async def test_a_paused_game_does_not_hold_the_concurrency_slot(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """Concurrency counts games that can actually move.
+
+    A paused game is waiting on a clock, not on a worker, and it is not spending: holding the slot
+    would stop a pool with `max_concurrent=1` dead for as long as one provider was hot, which is
+    exactly what happened. Deliberately looser than "never more than one game exists" — it means
+    "never more than one game is *running*".
+    """
+    tournament_id, _ = await make_tournament(
+        db,
+        models=4,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    first = await repo.in_flight(db, tournament_id)
+    assert len(first) == 1
+
+    paused_id = first[0].game_id
+    paused = await db.get(Game, paused_id)
+    assert paused is not None
+    paused.status = GameStatus.PAUSED
+    paused.pause_reason = "rate-limited upstream"
+    await db.commit()
+
+    # The slot is free, so the next tick starts something else rather than holding.
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    assert step.started == 1
+    running = await repo.in_flight(db, tournament_id)
+    assert len(running) == 1, "one *running* game, and the paused one is not it"
+    assert running[0].game_id != paused_id
+
+
+async def test_a_resting_entrant_is_not_paired(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue, redis
+) -> None:
+    """The half that broke the loop. Without it the pool re-pairs the model it cannot play, forever,
+    because an abandoned game leaves the rating untouched and the tie-break is alphabetical."""
+    from chessmark.core.cooldown import ProviderCooldown
+
+    tournament_id, slugs = await make_tournament(
+        db,
+        models=4,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+    cooldown = ProviderCooldown(redis)
+    await cooldown.note(slugs[0], provider="Some Provider")
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id, cooldown=cooldown)
+    db.expire_all()
+
+    rows = await repo.in_flight(db, tournament_id)
+    assert len(rows) == 1
+    assert slugs[0] not in {rows[0].white_key, rows[0].black_key}
+
+
+async def test_without_a_cooldown_the_pool_behaves_as_it_always_did(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """Optional everywhere, so a closed event and a test suite need not wire one."""
+    tournament_id, _ = await make_tournament(
+        db,
+        models=4,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id, cooldown=None)
+
+    assert step.started == 1

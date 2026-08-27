@@ -8,6 +8,11 @@ Postgres is the authority on what should be running (ADR-0008), so the reconcile
 than the queue: any game marked `running` whose last event is older than a threshold is stalled,
 and gets a fresh `advance_turn` for wherever it actually is. Enqueuing one for a game that turns
 out to be fine is harmless — `expected_ply` makes the duplicate a no-op.
+
+It also **resumes paused games**, which is the same question asked of a different status: a game
+paused for a provider rate limit is waiting on a clock rather than on a worker, and when that clock
+passes somebody has to put it back on the queue. This is that somebody, and it lives here because
+the alternative is a second loop asking Postgres the same thing.
 """
 
 from __future__ import annotations
@@ -41,12 +46,15 @@ class ReconcileReport:
     abandoned: list[str] = field(default_factory=list)
     #: Waiting on a person, inside the idle window. Neither stalled nor abandoned.
     waiting: list[str] = field(default_factory=list)
+    #: Paused for a provider rate limit, and put back on the queue because the wait is over.
+    resumed: list[str] = field(default_factory=list)
     checked: int = 0
 
     def __str__(self) -> str:
         return (
             f"checked {self.checked} running games, requeued {len(self.requeued)}, "
-            f"abandoned {len(self.abandoned)}, waiting on a person {len(self.waiting)}"
+            f"abandoned {len(self.abandoned)}, waiting on a person {len(self.waiting)}, "
+            f"resumed {len(self.resumed)}"
         )
 
 
@@ -137,6 +145,38 @@ async def abandon(session: AsyncSession, game: Game) -> None:
     await session.flush()
 
 
+async def find_resumable(session: AsyncSession, *, now: dt.datetime | None = None) -> list[Game]:
+    """Paused games whose wait is over.
+
+    A pause with no `resume_after` is included deliberately. It should not happen — the worker
+    always sets one — but a game paused by a version that did not, or by a hand-edited row, would
+    otherwise wait forever, and the failure mode of a stuck game is silence.
+    """
+    clock = now or dt.datetime.now(dt.UTC)
+    rows = await session.scalars(
+        sa.select(Game).where(
+            Game.status == GameStatus.PAUSED,
+            sa.or_(Game.resume_after.is_(None), Game.resume_after <= clock),
+        )
+    )
+    return list(rows)
+
+
+async def resume(session: AsyncSession, game: Game) -> AdvanceTurn:
+    """Put a paused game back into play. Appends one event, like every other state change."""
+    was = game.pause_reason
+    game.status = GameStatus.RUNNING
+    game.resume_after = None
+    game.pause_reason = None
+    await append_event(
+        session,
+        game_id=game.id,
+        type=EventType.GAME_RESUMED,
+        payload={"detail": f"the wait is over: {was}" if was else "resumed after a pause"},
+    )
+    return AdvanceTurn(game_id=game.id, expected_ply=game.ply_count)
+
+
 async def reconcile(
     sessionmaker: async_sessionmaker[AsyncSession],
     queue: TurnQueue,
@@ -167,10 +207,19 @@ async def reconcile(
 
             jobs.append(AdvanceTurn(game_id=game.id, expected_ply=game.ply_count))
 
+        # Resumed in the same transaction as the stall sweep, so one pass over the database
+        # decides everything and two callers cannot resume the same game twice.
+        resumable = await find_resumable(session)
+        for game in resumable:
+            log.info("resuming %s at ply %s: %s", game.id, game.ply_count, game.pause_reason)
+            jobs.append(await resume(session, game))
+            report.resumed.append(str(game.id))
+
     for job in jobs:
         await queue.enqueue(job)
-        report.requeued.append(str(job.game_id))
-        log.info("requeued stalled game %s at ply %s", job.game_id, job.expected_ply)
+        if str(job.game_id) not in report.resumed:
+            report.requeued.append(str(job.game_id))
+            log.info("requeued stalled game %s at ply %s", job.game_id, job.expected_ply)
 
     return report
 

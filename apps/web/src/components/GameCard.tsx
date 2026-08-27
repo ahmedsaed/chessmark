@@ -27,6 +27,10 @@ export function GameCard({
   const white = game.players.find((p) => p.colour === "white");
   const black = game.players.find((p) => p.colour === "black");
   const running = game.status === "running";
+  /* A paused game is still live — it keeps its transcript and resumes on its own — so it belongs
+     on the card rather than falling through to the result branch, which would have printed the
+     `*` of an unfinished game as though it were a result. */
+  const paused = game.status === "paused";
   const illegal = game.players.reduce((total, p) => total + p.illegal_attempts, 0);
 
   return (
@@ -46,6 +50,14 @@ export function GameCard({
           {yourTurn ? (
             <span className="flex-none border border-accent-deep bg-accent px-1.5 py-px font-mono text-[9px] uppercase tracking-[0.14em] text-on-accent">
               your move
+            </span>
+          ) : paused ? (
+            <span
+              className="inline-flex flex-none items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint"
+              title={game.pause_reason ?? undefined}
+            >
+              <i aria-hidden className="block h-1.5 w-1.5 rounded-full bg-ink-faint" />
+              paused
             </span>
           ) : running ? (
             <span className="inline-flex flex-none items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-bad">

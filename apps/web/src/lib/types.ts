@@ -11,7 +11,12 @@
 
 export type Colour = "white" | "black";
 
-export type GameStatus = "pending" | "running" | "finished" | "aborted";
+/**
+ * `paused` is a live game that has stopped for something outside it — today, a provider rate
+ * limit. Not terminal: it keeps its transcript and resumes on its own, which is why it is grouped
+ * with `running` everywhere a page asks "is this game over".
+ */
+export type GameStatus = "pending" | "running" | "paused" | "finished" | "aborted";
 
 export type GameResult = "1-0" | "0-1" | "1/2-1/2" | "*";
 
@@ -56,6 +61,9 @@ export interface GameSummary {
   created_at: string;
   started_at: string | null;
   ended_at: string | null;
+  /** Both set only while `status` is `paused`: one short line, and when it will be tried again. */
+  pause_reason: string | null;
+  resume_after: string | null;
   players: Player[];
 }
 
@@ -162,6 +170,8 @@ export type EventType =
   | "move_made"
   | "message_sent"
   | "draw_offered"
+  | "game_paused"
+  | "game_resumed"
   | "game_ended";
 
 export interface GameEvent {
@@ -187,6 +197,8 @@ export interface ToolCallView {
 /** One agent turn, assembled from the event stream. */
 export interface TurnView {
   key: string;
+  /** The event `seq` that opened this turn. Used to interleave notices, which belong to no turn. */
+  seq: number;
   ply: number;
   colour: Colour;
   playerId: string;
@@ -203,6 +215,23 @@ export interface TurnView {
   san: string | null;
   /** True until the move lands — the live turn stays expanded (ADR-0013). */
   live: boolean;
+}
+
+/**
+ * Something that happened to the game rather than inside a turn.
+ *
+ * A pause is the case this exists for, and it is genuinely turn-less: the failed turn is rolled
+ * back whole (`ProviderFailureError`), so its `turn_started` never reaches the log and there is no
+ * turn for the notice to hang off. Carried separately and interleaved by `seq`, which is what keeps
+ * a game that paused at move 12 reading in order rather than with its interruptions at the end.
+ */
+export interface StreamNotice {
+  key: string;
+  seq: number;
+  kind: "paused" | "resumed";
+  text: string;
+  /** When a pause will be retried, if it said. */
+  resumeAfter: string | null;
 }
 
 /** A turn as `/games/{id}/turns` returns it. Replay needs the id to fetch raw payloads. */

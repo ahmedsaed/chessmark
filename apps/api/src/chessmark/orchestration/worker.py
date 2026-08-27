@@ -34,6 +34,7 @@ from chessmark.agents.llm import LlmGateway
 from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.turn import TurnLimits, TurnResult, TurnRunner
 from chessmark.core.budget import GlobalBudget
+from chessmark.core.cooldown import ProviderCooldown, resume_at
 from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
 from chessmark.db.models import Game, GameEvent, Player
 from chessmark.db.quotas import record_spend
@@ -73,10 +74,37 @@ GLOBAL_BUDGET = TurnOutcome("global_budget_halted")
 #: else would run an LLM turn on a human's behalf and play their move for them.
 AWAITING_HUMAN = TurnOutcome("awaiting_human")
 ABORTED = TurnOutcome("aborted")
+#: The provider asked us to come back later. The game is paused with a time to resume at, holds no
+#: concurrency slot while it waits, and is picked up again by the reconciler.
+PAUSED = TurnOutcome("paused")
 
 #: How many times a turn may be retried after a provider failure before the game is abandoned.
-#: Generous, because the failures this covers — rate limits, outages — are usually temporary.
+#: Generous, because the failures this covers — outages, mangled responses — are usually temporary.
+#: Rate limits no longer come through here at all; they pause the game instead.
 MAX_JOB_ATTEMPTS = 5
+
+#: How many times one game may be paused for a rate limit before it is abandoned. With the cooldown
+#: ladder in `core/cooldown.py` this is a little over three hours of patience, which is long enough
+#: to outlast a hot shared pool and short enough that a permanently dead endpoint does not leave a
+#: game open forever.
+MAX_PAUSES = 6
+
+#: A person will not wait out a provider. A game with a human seat pauses briefly, twice, and is
+#: then abandoned rather than left open — the honest outcome, and better than a board that quietly
+#: never moves again. Their opponent's model is not forfeited: nobody played badly.
+HUMAN_MAX_PAUSE_SECONDS = 120
+HUMAN_MAX_PAUSES = 2
+
+
+def _pinned_provider(player: Player) -> str | None:
+    """The endpoint this seat is pinned to, if it is (ADR-0015).
+
+    Derived from `provider_routing.only` rather than stored, which is the same thing the API does.
+    Used only as a fallback: the provider named in the refusal itself is better evidence, because
+    it is the endpoint that actually answered.
+    """
+    only = (player.provider_routing or {}).get("only") or []
+    return str(only[0]) if only else None
 
 
 class ProviderFailureError(Exception):
@@ -114,6 +142,7 @@ class TurnWorker:
         limits: TurnLimits | None = None,
         consumer: str | None = None,
         budget: GlobalBudget | None = None,
+        cooldown: ProviderCooldown | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
         self.queue = queue
@@ -122,6 +151,10 @@ class TurnWorker:
         self.limits = limits
         #: Layer 1 of ADR-0011. Optional so scripted tests, which spend nothing, need not wire it.
         self.budget = budget
+        #: What is remembered between games about an endpoint that refused. Optional for the same
+        #: reason: a scripted provider never rate-limits anything. Without it a game still pauses
+        #: — it just pauses on the first rung every time, and the matchmaker learns nothing.
+        self.cooldown = cooldown
         self.consumer = consumer or f"worker-{uuid.uuid4().hex[:8]}"
         self._stopping = asyncio.Event()
 
@@ -161,6 +194,11 @@ class TurnWorker:
         try:
             return await self._advance(job)
         except ProviderFailureError as failure:
+            # A rate limit is not a failure to retry harder at. The provider is working and has
+            # told us to come back; the position is untouched. Burning the job's retry budget on
+            # it spent forty requests a game and then abandoned fourteen games in a row.
+            if failure.result.rate_limit is not None:
+                return await self._pause(job, failure.result)
             return await self._retry_or_abandon(job, failure.result)
 
     async def _advance(self, job: AdvanceTurn) -> HandledJob:
@@ -244,6 +282,12 @@ class TurnWorker:
             if result.status is TurnStatus.FAILED and result.outcome is None:
                 raise ProviderFailureError(result)
 
+            # It served a whole turn, so whatever it refused earlier is over. Without this the
+            # cooldown ladder only ever climbs, and an endpoint that was briefly hot last night
+            # would rest for an hour over its next single refusal.
+            if self.cooldown is not None:
+                await self.cooldown.clear(model_for(player), provider=_pinned_provider(player))
+
             if referee.is_over:
                 await self._conclude(session, game, referee.outcome)
 
@@ -266,6 +310,136 @@ class TurnWorker:
             referee.ply,
             result=result,
             game_outcome=referee.outcome,
+        )
+
+    async def _pause(self, job: AdvanceTurn, result: TurnResult) -> HandledJob:
+        """Stop the game until the provider will serve it again.
+
+        Three things happen, and the order is not arbitrary. The **cooldown** is recorded first,
+        because it is what stops the next game from rediscovering this at full price — a pool
+        paired one dark model fourteen times because nothing between the games remembered. Then the
+        game is **paused**, which frees the concurrency slot it was holding: `in_flight` counts
+        games that are `PENDING` or `RUNNING`, so a pool with a concurrency of one can get on with
+        an entrant that can actually play. Finally the pause is **appended to the event log**, so
+        the page can say why the board stopped instead of simply stopping (ADR-0008, invariant 7).
+
+        The turn itself was already rolled back by `ProviderFailureError`, so the transcript is
+        exactly as it was before the attempt and resuming is indistinguishable from a first try.
+        """
+        limit = result.rate_limit
+        assert limit is not None  # only reached from the rate-limit branch of `handle`
+
+        async with self.sessionmaker() as session, session.begin():
+            game = await get_game(session, job.game_id)
+            colour = Colour(("white", "black")[job.expected_ply % 2])
+            player = await self._player(session, game.id, colour)
+            model = model_for(player)
+            provider = limit.provider or _pinned_provider(player)
+
+            # A person is not going to wait out a shared pool, so their game gets minutes rather
+            # than hours. Everything else about the mechanism is the same.
+            human = await self._has_human_seat(session, game.id)
+            max_pauses = HUMAN_MAX_PAUSES if human else MAX_PAUSES
+            pauses = await self._pause_count(session, game.id)
+
+            seconds = 0
+            if self.cooldown is not None:
+                seconds = await self.cooldown.note(
+                    model, provider=provider, retry_after_seconds=limit.retry_after_seconds
+                )
+            seconds = max(seconds, 60)
+            if human:
+                seconds = min(seconds, HUMAN_MAX_PAUSE_SECONDS)
+
+            source = limit.limit_source or "rate limit"
+            reason = f"{model} rate-limited by {provider or 'its provider'} ({source})"
+
+            # Patience spent. Abandoned rather than left paused, because a game nobody will ever
+            # resume is worse open than closed — and abandoning is honest: it says the harness gave
+            # up, and it keeps the result out of the ratings rather than inventing a loss.
+            if pauses + 1 > max_pauses:
+                log.error(
+                    "abandoning %s at ply %s: %s, still rate-limited after %s pauses",
+                    game.id,
+                    job.expected_ply,
+                    reason,
+                    pauses,
+                )
+                await self._abandon(session, game, f"Abandoned after {pauses} pauses: {reason}")
+                return HandledJob(ABORTED, game.id, job.expected_ply, result=result)
+
+            game.status = GameStatus.PAUSED
+            game.resume_after = resume_at(seconds)
+            game.pause_reason = reason
+            log.warning(
+                "pausing %s at ply %s for %ss (pause %s/%s): %s",
+                game.id,
+                job.expected_ply,
+                seconds,
+                pauses + 1,
+                max_pauses,
+                reason,
+            )
+            await append_event(
+                session,
+                game_id=game.id,
+                type=EventType.GAME_PAUSED,
+                payload={
+                    "reason": reason,
+                    "player_id": str(player.id),
+                    "colour": colour.value,
+                    "model": model,
+                    "provider": provider,
+                    "limit_source": limit.limit_source,
+                    "retry_after_seconds": limit.retry_after_seconds,
+                    "resume_after": game.resume_after.isoformat(),
+                    "seconds": seconds,
+                    "pause": pauses + 1,
+                    "max_pauses": max_pauses,
+                },
+            )
+            before_seq = game.event_seq - 1
+            events = await load_events(session, game.id, after_seq=before_seq)
+
+        # Published after the commit, like every other event: a subscriber must never be told about
+        # a state the database has not accepted.
+        await self._publish(job.game_id, events)
+        return HandledJob(PAUSED, job.game_id, job.expected_ply, result=result)
+
+    async def _pause_count(self, session: AsyncSession, game_id: uuid.UUID) -> int:
+        """How many times this game has already been paused.
+
+        Counted from the event log rather than a column on the game. The log is append-only and is
+        already the authority on what happened (ADR-0008), so a counter beside it would be a second
+        copy of one fact with its own way of being wrong.
+        """
+        count = await session.scalar(
+            sa.select(sa.func.count(GameEvent.id)).where(
+                GameEvent.game_id == game_id, GameEvent.type == EventType.GAME_PAUSED
+            )
+        )
+        return int(count or 0)
+
+    async def _has_human_seat(self, session: AsyncSession, game_id: uuid.UUID) -> bool:
+        seats = await session.scalars(sa.select(Player.kind).where(Player.game_id == game_id))
+        return any(PlayerKind(kind) is not PlayerKind.MODEL for kind in seats)
+
+    async def _abandon(self, session: AsyncSession, game: Game, detail: str) -> None:
+        """Close a game the harness could not finish. Never a chess result, never a forfeit."""
+        game.status = GameStatus.ABORTED
+        game.termination = Termination.ABANDONED
+        game.termination_detail = detail
+        game.ended_at = sa.func.now()
+        await append_event(
+            session,
+            game_id=game.id,
+            type=EventType.GAME_ENDED,
+            payload={
+                "result": str(GameResult.ONGOING),
+                "termination": str(Termination.ABANDONED),
+                "detail": detail,
+                "winner": None,
+            },
         )
 
     async def _retry_or_abandon(self, job: AdvanceTurn, result: TurnResult) -> HandledJob:
@@ -296,22 +470,10 @@ class TurnWorker:
         )
         async with self.sessionmaker() as session, session.begin():
             game = await get_game(session, job.game_id)
-            game.status = GameStatus.ABORTED
-            game.termination = Termination.ABANDONED
-            game.termination_detail = (
-                f"Abandoned after {job.attempt} failed provider attempts: {result.error}"
-            )
-            game.ended_at = sa.func.now()
-            await append_event(
+            await self._abandon(
                 session,
-                game_id=game.id,
-                type=EventType.GAME_ENDED,
-                payload={
-                    "result": str(GameResult.ONGOING),
-                    "termination": str(Termination.ABANDONED),
-                    "detail": game.termination_detail,
-                    "winner": None,
-                },
+                game,
+                f"Abandoned after {job.attempt} failed provider attempts: {result.error}",
             )
 
         return HandledJob(ABORTED, job.game_id, job.expected_ply, result=result)

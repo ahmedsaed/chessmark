@@ -19,7 +19,11 @@ export default async function Home() {
     getLeaderboard(),
   ]);
 
-  const finished = recent.filter((game) => game.status !== "running");
+  /* `paused` is excluded alongside `running`: it is a live game waiting on a provider, and a
+     paused game listed among the finished ones would show a `*` where a result belongs. */
+  const finished = recent.filter(
+    (game) => game.status !== "running" && game.status !== "paused",
+  );
 
   /* The hero wants a running game; the most recent finished one keeps it from being empty
      between games, which is most of the time on a small deployment. */

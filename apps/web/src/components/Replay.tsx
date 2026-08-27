@@ -17,7 +17,7 @@ import { useMemo, useState } from "react";
 import { Chess } from "chess.js";
 
 import { Board } from "@/components/Board";
-import { Conversation } from "@/components/Conversation";
+import { EventStream } from "@/components/EventStream";
 import { captures } from "@/lib/captures";
 import { RawTranscript } from "@/components/RawTranscript";
 import { Scrubber } from "@/components/Scrubber";
@@ -50,7 +50,7 @@ export function Replay({
   const [speed, setSpeed] = useState(1);
   const [inspecting, setInspecting] = useState<TurnView | null>(null);
 
-  const { turns, moves, ended } = useMemo(
+  const { turns, moves, ended, notices } = useMemo(
     () => foldEvents(eventsThroughPly(events, ply), []),
     [events, ply],
   );
@@ -136,8 +136,9 @@ export function Replay({
         </div>
 
         <div className="order-2 flex min-h-[24rem] min-w-0 flex-col lg:order-none lg:min-h-0">
-          <Conversation
+          <EventStream
             turns={turns}
+            notices={notices}
             players={game.players}
             emptyMessage="The starting position — step forward to begin."
             focusKey={focus?.key ?? null}

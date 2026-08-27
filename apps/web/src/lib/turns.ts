@@ -6,7 +6,7 @@
  * has to be derived here, because the event log is flat.
  */
 
-import type { Colour, GameEvent, TurnView } from "@/lib/types";
+import type { Colour, GameEvent, StreamNotice, TurnView } from "@/lib/types";
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -49,6 +49,10 @@ export interface StreamState {
   turns: TurnView[];
   moves: string[];
   ended: { result: string; termination: string; detail: string } | null;
+  /** Pauses and resumes, in `seq` order. The panel interleaves them with the turns. */
+  notices: StreamNotice[];
+  /** The pause the game is currently sitting in, if it has not resumed. */
+  paused: StreamNotice | null;
 }
 
 /**
@@ -61,7 +65,9 @@ export interface StreamState {
 export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamState {
   const turns: TurnView[] = [];
   const moves = [...initialMoves];
+  const notices: StreamNotice[] = [];
   let ended: StreamState["ended"] = null;
+  let paused: StreamNotice | null = null;
   let current: TurnView | null = null;
 
   /**
@@ -79,6 +85,7 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
   const openTurn = (event: GameEvent, payload: Record<string, unknown>): TurnView => {
     const turn: TurnView = {
       key: `turn-${event.seq}`,
+      seq: event.seq,
       ply: asNumber(payload.ply),
       colour: (asString(payload.colour) || "white") as Colour,
       playerId: asString(payload.player_id),
@@ -110,6 +117,7 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
       case "turn_started": {
         current = {
           key: `turn-${event.seq}`,
+          seq: event.seq,
           ply: asNumber(payload.ply),
           colour: (asString(payload.colour) || "white") as Colour,
           playerId: asString(payload.player_id),
@@ -185,6 +193,36 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
         break;
       }
 
+      /* The harness stopped the game and means to continue it — a provider rate limit. Shown
+         rather than swallowed, because the alternative is a board that stops moving with nothing
+         on the page to say why, which is what it did. */
+      case "game_paused": {
+        if (current) current.live = false;
+        paused = {
+          key: `paused-${event.seq}`,
+          seq: event.seq,
+          kind: "paused",
+          text: asString(payload.reason) || "paused by the harness",
+          resumeAfter: asString(payload.resume_after) || null,
+        };
+        notices.push(paused);
+        break;
+      }
+
+      case "game_resumed": {
+        // Clears the pause: the two are a pair, and a page still showing "paused" after play
+        // resumed would be worse than showing nothing at all.
+        paused = null;
+        notices.push({
+          key: `resumed-${event.seq}`,
+          seq: event.seq,
+          kind: "resumed",
+          text: asString(payload.detail) || "resumed",
+          resumeAfter: null,
+        });
+        break;
+      }
+
       case "game_ended": {
         if (current) current.live = false;
         ended = {
@@ -200,5 +238,6 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
     }
   }
 
-  return { turns, moves, ended };
+  // A game that reached a result is not paused, whatever order the events arrived in.
+  return { turns, moves, ended, notices, paused: ended ? null : paused };
 }

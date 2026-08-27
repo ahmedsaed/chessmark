@@ -16,7 +16,7 @@ import { useCallback, useMemo } from "react";
 import { Chess } from "chess.js";
 
 import { Board } from "@/components/Board";
-import { Conversation } from "@/components/Conversation";
+import { EventStream } from "@/components/EventStream";
 import { PlayerBar } from "@/components/PlayerBar";
 import { StatsRail } from "@/components/StatsRail";
 import { legalTargets } from "@/lib/board";
@@ -73,7 +73,7 @@ export function LiveGame({
   // History first, then whatever has streamed in since. The move list is rebuilt from
   // `move_made` events rather than from `game.moves`, so there is exactly one source of truth and
   // no chance of counting a move twice.
-  const { turns, moves, ended } = useMemo(
+  const { turns, moves, ended, notices, paused } = useMemo(
     () => foldEvents([...initialEvents, ...events], []),
     [initialEvents, events],
   );
@@ -205,7 +205,15 @@ export function LiveGame({
           {/* Resign, draw and chat live here rather than under the board. They are things said to
               an opponent, and this is the column where everything said to an opponent already is —
               under the board they crowded the one element that wants the room. */}
-          <Conversation turns={turns} players={game.players} footer={controls} />
+          <EventStream
+            turns={turns}
+            notices={notices}
+            players={game.players}
+            footer={controls}
+            emptyMessage={
+              paused ? `Paused — ${paused.text}` : undefined
+            }
+          />
         </div>
       </div>
     </div>
@@ -244,6 +252,17 @@ function Header({
           {outcome?.result || game.result}
           {(outcome?.termination || game.termination) &&
             ` · ${outcome?.termination || game.termination}`}
+        </span>
+      ) : game.status === "paused" ? (
+        /* Not live and not over. The dot does not pulse, because nothing is happening — a pulsing
+           "live" over a board that has stopped moving is the thing this whole change exists to
+           stop. The reason travels with it: a stopped game with no explanation reads as broken. */
+        <span
+          className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-bad"
+          title={game.pause_reason ?? undefined}
+        >
+          <i aria-hidden className="block h-1.5 w-1.5 rounded-full bg-bad" />
+          paused
         </span>
       ) : (
         <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-bad">

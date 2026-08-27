@@ -107,3 +107,60 @@ def test_an_entrant_with_no_recorded_form_is_treated_as_unknown() -> None:
     games = matchmake(FIELD, [], form(A=(1500, 40), B=(1500, 40), C=(1500, 40)))
 
     assert "D" in games[0].pair, "the one with no form is the least known"
+
+
+# ====================================================================== who cannot play right now
+
+
+class TestUnavailable:
+    """Skipping entrants whose endpoint is resting (OPS-13).
+
+    This is a correction to the policy above, not a refinement of it. "Least known first" cannot
+    escape a model that keeps failing: an abandoned game is excluded from ratings, so its deviation
+    never moves, so it is *permanently* the least-known entrant and is chosen again. In production
+    that paired one dark model fourteen consecutive times, each pairing dying at ply 0.
+    """
+
+    def test_an_unavailable_entrant_is_not_paired(self) -> None:
+        """Even when it is the one the policy most wants to play — which it always is, because a
+        model whose games keep failing is the one nothing is known about."""
+        unknown = {**SETTLED, "D": Form(key="D", rating=1500, deviation=350)}
+
+        games = matchmake(FIELD, [], unknown, unavailable={"D"})
+
+        assert games
+        assert all("D" not in (g.white, g.black) for g in games)
+
+    def test_the_slot_goes_to_somebody_who_can_play(self) -> None:
+        """The point of skipping rather than holding. A pool with a concurrency of one spent ninety
+        minutes rediscovering that a provider was rate-limited; the fix is not to wait more
+        politely, it is to play a different game."""
+        unknown = {**SETTLED, "D": Form(key="D", rating=1500, deviation=350)}
+
+        games = matchmake(FIELD, [], unknown, unavailable={"D"}, count=1)
+
+        assert len(games) == 1
+
+    def test_a_resting_entrant_is_still_a_rating_to_pair_against(self) -> None:
+        """Skipped, not withdrawn. Its rating is real and is still what an opponent is chosen for
+        proximity to; only its own turn to play is deferred."""
+        games = matchmake(FIELD, [], SETTLED, unavailable={"A"}, count=1)
+
+        assert games
+        pair = {games[0].white, games[0].black}
+        assert "A" not in pair
+        assert pair == {"B", "C"} or pair == {"B", "D"} or pair == {"C", "D"}
+
+    def test_too_few_left_pairs_nothing_rather_than_pairing_anyway(self) -> None:
+        """The pool holds for a tick, which is correct: there is no game worth starting. Pairing
+        regardless would put a game against a model that cannot answer."""
+        assert matchmake(FIELD, [], SETTLED, unavailable={"A", "B", "C"}) == []
+
+    def test_all_resting_is_not_an_error(self) -> None:
+        assert matchmake(FIELD, [], SETTLED, unavailable={"A", "B", "C", "D"}) == []
+
+    def test_nothing_unavailable_behaves_exactly_as_before(self) -> None:
+        """The default has to be inert, or every closed format pays for a pool's problem."""
+        assert matchmake(FIELD, [], SETTLED, count=2) == matchmake(
+            FIELD, [], SETTLED, count=2, unavailable=set()
+        )

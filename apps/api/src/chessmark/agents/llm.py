@@ -28,7 +28,7 @@ from chessmark.agents.normalise import normalise_response
 from chessmark.agents.pricing import PricingTable, compute_cost
 from chessmark.agents.redaction import redact
 from chessmark.agents.routing import ProviderRouting
-from chessmark.agents.types import Completion, CostSource, LlmError
+from chessmark.agents.types import Completion, CostSource, LlmError, RateLimit
 
 CompletionFn = Callable[..., Awaitable[Any]]
 SleepFn = Callable[[float], Awaitable[None]]
@@ -112,6 +112,28 @@ def is_rate_limit(error: BaseException) -> bool:
 #: `"retry_after_seconds":5` and `"Retry-After":"5"`, as they appear in a provider's error body.
 _RETRY_AFTER = re.compile(r'"?[Rr]etry[-_][Aa]fter(?:_seconds)?"?\s*[:=]\s*"?(\d+(?:\.\d+)?)"?')
 
+#: `"limit_source":"upstream_provider_shared_pool"` and `"provider_name":"Google AI Studio"`.
+#: Read out of the message rather than a parsed body because that is where they actually arrive:
+#: LiteLLM stringifies the provider's JSON into the exception text on its way through.
+_LIMIT_SOURCE = re.compile(r'"limit_source"\s*:\s*"([^"]+)"')
+_PROVIDER_NAME = re.compile(r'"provider_name"\s*:\s*"([^"]+)"')
+
+
+def rate_limit_from(error: BaseException) -> RateLimit:
+    """What the provider said, in a form the orchestrator can act on.
+
+    Every field is optional because every field is optional in practice. A shared-pool 429 from a
+    single-endpoint free model carries a provider name and a `limit_source` and no retry hint at
+    all, which is precisely the case this exists to describe.
+    """
+    limit_source = _LIMIT_SOURCE.search(str(error))
+    provider = _PROVIDER_NAME.search(str(error))
+    return RateLimit(
+        provider=provider.group(1) if provider else None,
+        limit_source=limit_source.group(1) if limit_source else None,
+        retry_after_seconds=retry_after_seconds(error),
+    )
+
 
 def retry_after_seconds(error: BaseException) -> float | None:
     """How long the provider asked us to wait, if it said.
@@ -192,16 +214,31 @@ class RetryPolicy:
     #: the provider being broken and retrying hard is reasonable; a 429 is the provider telling us
     #: when to come back, and the right answer is to wait that long.
     #:
-    #: The free tier makes this concrete: its models come from a shared pool that rate-limits
-    #: constantly, and backing off a maximum of eight seconds meant ~20 doomed requests in a
-    #: minute and then abandoning the game. A tournament has no deadline; patience is free.
-    rate_limit_attempts: int = 8
-    rate_limit_max_delay: float = 300.0
+    #: **Deliberately few attempts.** The instinct is to make a rate limit *more* patient, and it
+    #: is wrong: 8 attempts here produced 8 doomed requests, the worker requeued 5 times, and one
+    #: game spent 40 requests over 6½ minutes before being abandoned — 560 across one incident,
+    #: all of them counting against the very allowance the retries were trying to protect. A
+    #: request is the scarce thing; waiting is free. So the gateway tries a few times in case the
+    #: pool clears in seconds, and then gives up and lets the *game* be paused, which costs
+    #: nothing while it waits.
+    #:
+    #: `rate_limit_base_delay` is separate from `base_delay` for the same reason it exists at all:
+    #: 0.5s doubling reached only 32s in eight attempts, so `rate_limit_max_delay` never bound and
+    #: the ladder was decided by a constant meant for connection errors.
+    rate_limit_attempts: int = 3
+    rate_limit_base_delay: float = 5.0
+    rate_limit_max_delay: float = 60.0
 
     def attempts_for(self, error: BaseException | None = None) -> int:
-        """How many tries this kind of failure gets."""
+        """How many tries this kind of failure gets.
+
+        The rate-limit budget is returned as it stands, not `max`ed with the default. It used to be
+        the larger of the two and the `max` expressed that; now that it is deliberately the smaller,
+        the same expression would quietly discard it and keep retrying a provider that has just
+        said no.
+        """
         if error is not None and is_rate_limit(error):
-            return max(self.max_attempts, self.rate_limit_attempts)
+            return self.rate_limit_attempts
         return self.max_attempts
 
     def delay_for(self, attempt: int, error: BaseException | None = None) -> float:
@@ -213,8 +250,8 @@ class RetryPolicy:
         """
         if error is not None and is_rate_limit(error):
             asked = retry_after_seconds(error)
-            base = asked if asked is not None else self.base_delay * (2 ** (attempt - 1))
-            delay = min(max(base, self.base_delay), self.rate_limit_max_delay)
+            base = asked if asked is not None else self.rate_limit_base_delay * (2 ** (attempt - 1))
+            delay = min(max(base, self.rate_limit_base_delay), self.rate_limit_max_delay)
         else:
             delay = min(self.base_delay * (2 ** (attempt - 1)), self.max_delay)
         return float(delay + random.uniform(0, self.jitter * delay))
@@ -384,6 +421,10 @@ class LlmGateway:
                         retryable=is_retryable(error),
                         attempts=attempt,
                         request=redacted_request,
+                        # Carried out of the gateway rather than re-derived downstream: this is
+                        # the only place holding the provider's own exception, and by the time an
+                        # orchestrator sees a string the structure is gone.
+                        rate_limit=rate_limit_from(error) if is_rate_limit(error) else None,
                     ) from error
 
                 wait = self.retry.delay_for(attempt, error)

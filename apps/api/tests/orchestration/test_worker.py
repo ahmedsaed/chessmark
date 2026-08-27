@@ -277,6 +277,21 @@ async def test_the_ply_cap_ends_the_game(db: AsyncSession, queue, make_worker) -
 
 
 # ====================================================================== provider failures
+#
+# **An outage, not a rate limit.** These used to raise a 429 as a convenient stand-in for "the
+# provider is having a bad day", and a 429 no longer travels this path at all: it pauses the game
+# instead of spending its retry budget (see `test_pause_on_rate_limit.py`). A 503 is what this
+# branch is actually for — a provider that is broken rather than one that has told us to come back.
+
+
+class OutageError(Exception):
+    """Shaped like the provider library's error, which carries its status on the exception."""
+
+    status_code = 503
+
+
+async def unavailable(**_kwargs: object) -> object:
+    raise OutageError
 
 
 async def test_a_provider_failure_requeues_the_same_ply(
@@ -284,13 +299,7 @@ async def test_a_provider_failure_requeues_the_same_ply(
 ) -> None:
     """AGENT-09: our outage is not the model's failure, so the game is untouched and retried."""
 
-    class RateLimitError(Exception):
-        status_code = 429
-
-    async def rate_limited(**_kwargs: object) -> object:
-        raise RateLimitError
-
-    handled = await run_next(make_worker(rate_limited), game.queue)
+    handled = await run_next(make_worker(unavailable), game.queue)
 
     assert handled.outcome == TURN_FAILED
 
@@ -309,13 +318,7 @@ async def test_a_provider_failure_leaves_the_transcript_untouched(
 
     before = await transcript.build_messages(db, game.white.id)
 
-    class RateLimitError(Exception):
-        status_code = 429
-
-    async def rate_limited(**_kwargs: object) -> object:
-        raise RateLimitError
-
-    await make_worker(rate_limited).handle(game.first_job)
+    await make_worker(unavailable).handle(game.first_job)
 
     db.expunge_all()
     after = await transcript.build_messages(db, game.white.id)
@@ -330,13 +333,7 @@ async def test_repeated_provider_failure_abandons_rather_than_forfeits(
     """Nobody played badly — our provider was unavailable. An abandoned game is excluded from
     ratings, not counted as a loss."""
 
-    class RateLimitError(Exception):
-        status_code = 429
-
-    async def rate_limited(**_kwargs: object) -> object:
-        raise RateLimitError
-
-    handled = await make_worker(rate_limited).handle(
+    handled = await make_worker(unavailable).handle(
         AdvanceTurn(game_id=game.game.id, expected_ply=0, attempt=MAX_JOB_ATTEMPTS)
     )
 
