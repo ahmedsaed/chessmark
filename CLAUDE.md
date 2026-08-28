@@ -309,6 +309,14 @@ unit-testing fetch wrappers means mocking `fetch` and then asserting the mock.
   at length for both seats sharing one id
   ([ADR-0015 amendment](docs/adr/0015-quantization-as-identity-and-pinned-endpoints.md)).
 
+**`game_events.created_at` is the *transaction* timestamp.** It defaults to `now()`, which in
+Postgres is constant for a transaction, and a turn commits everything it produced in one (NFR-08) —
+so a turn's `turn_started` and its `move_made` carry the identical instant. Any timing derived from
+the log *within* a turn measures nothing, and "move landed → next turn started" reads back the
+previous turn's duration, plausibly enough to be believed. The reliable clocks are `latency_ms` on
+`turns` and `llm_calls`, both `perf_counter` in-process. `./chessmark latency <game-id>` does the
+decomposition properly: provider, harness, and the queue wait derived by subtraction.
+
 - `chessmark.orchestration` — the queue, the worker, the reconciler, and `human.py`. Redis Streams
   consumer group, `expected_ply` idempotency, one transaction per turn, ack-after-commit.
   **A worker plays one turn at a time, start to finish**, so a free model's turn — 17–38s typical,

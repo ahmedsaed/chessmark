@@ -113,6 +113,11 @@ cmd_standings() { # the table for one event:  ./chessmark standings pool-free
   cmd_tournament standings "$@"
 }
 
+cmd_latency() { # where a game's time goes: the model, the harness, or the queue
+  [ $# -gt 0 ] || die "which game? e.g. ./chessmark latency <game-id>"
+  api_script latency.py "$@"
+}
+
 cmd_resume() { # reopen a game the harness stopped:  ./chessmark resume <game-id>
   [ $# -gt 0 ] || die "which game? e.g. ./chessmark resume 5f8ee937-2e53-49df-877f-6879bcfc56b7"
   # Only endings *we* imposed can be reopened — a budget, a ply cap, a provider we could not
@@ -182,6 +187,8 @@ LINES=500 ./chessmark logs tournament'
 echo "select count(*) from games;" | ./chessmark sql'
   [backup]='./chessmark backup                      # backups/chessmark-<timestamp>.sql.gz'
   [models]='./chessmark models                      # what a free pool would actually draw from'
+  [latency]='./chessmark latency 7213c4d0-0172-4ef1-a6a8-9685966fe323
+./chessmark latency <game-id> --all      # every turn, not just the tail'
   [resume]='./chessmark resume 5f8ee937-2e53-49df-877f-6879bcfc56b7
 ./chessmark resume <game-id> --max-usd 2.50        # raise the ceiling that stopped it
 ./chessmark resume <game-id> --max-plies 400'
@@ -226,6 +233,7 @@ $(row models)
 $(row prune)
 
 ${AMBER}games${OFF}
+$(row latency)
 $(row resume)
 
 ${AMBER}tournaments${OFF}
