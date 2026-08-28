@@ -7,6 +7,7 @@ LLMs, databases, or HTTP, and must stay that way — `tests/game/test_purity.py`
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 import chess
@@ -67,6 +68,18 @@ class BoardView:
     material: Material
     legal_move_count: int
     move_history_san: list[str] = field(default_factory=list)
+
+
+def _destination_square(san: str) -> int | None:
+    """The square a piece of algebraic notation lands on, or None if it names none.
+
+    Deliberately forgiving: it is reading a move somebody already got wrong, so `e8+`, `Qe8!?` and
+    `exd8` all have to give up their last file-and-rank rather than be parsed properly.
+    """
+    match = re.search(r"([a-h][1-8])(?!.*[a-h][1-8])", san)
+    if match is None:
+        return None
+    return chess.parse_square(match.group(1))
 
 
 def _colour_name(colour: chess.Color) -> str:
@@ -282,6 +295,39 @@ class ChessBoard:
             legal_moves_san=self.legal_moves_san(),
         )
 
+    def _promotion_options(self, to_square: int, from_square: int | None = None) -> list[str]:
+        """Which pieces a pawn may become on this square, if any legal move promotes there."""
+        return sorted(
+            {
+                chess.piece_symbol(legal.promotion).upper()
+                for legal in self._board.legal_moves
+                if legal.promotion
+                and legal.to_square == to_square
+                and (from_square is None or legal.from_square == from_square)
+            }
+        )
+
+    def _missing_promotion(
+        self, text: str, destination: str, options: list[str]
+    ) -> IllegalMoveError:
+        """The move is right; only the piece it becomes is missing.
+
+        Its own reason and its own sentence, because every other explanation here would be false:
+        the pawn *can* go there. `NOT_REACHABLE` told a model that had found the move that its pawn
+        could not make it, and charged it an illegal attempt for the privilege.
+
+        Queen leads the UCI example — under-promotion is the rarity, and the example should show
+        the answer somebody most likely wants.
+        """
+        listed = ", ".join(f"{destination}={piece}" for piece in options)
+        uci = "q" if "Q" in options else options[0].lower()
+        return self._reject(
+            text,
+            IllegalMoveReason.MISSING_PROMOTION,
+            f"{text} reaches the last rank — say which piece the pawn becomes: {listed} "
+            f"(or append {uci!r} in UCI).",
+        )
+
     def _explain_san(self, san: str) -> IllegalMoveError:
         """Explain a well-formed algebraic move that isn't legal here.
 
@@ -299,6 +345,14 @@ class ChessBoard:
                     f"{san} would leave your king in check.",
                 )
             break
+
+        # A pawn move written without the piece it becomes — `e8` rather than `e8=Q`. Checked
+        # here rather than left to the generic answer, which would deny a move the player found.
+        square = _destination_square(san)
+        if square is not None:
+            options = self._promotion_options(square)
+            if options:
+                return self._missing_promotion(san, chess.square_name(square), options)
 
         return self._reject(
             san,
@@ -324,6 +378,14 @@ class ChessBoard:
                 f"the {name} on {origin} is {_colour_name(piece.color).capitalize()}'s, "
                 f"and it is {self.side_to_move.capitalize()}'s turn.",
             )
+
+        # A pawn arriving on the last rank without saying what it becomes. Checked before the
+        # generic explanations, because every one of them would be wrong: the move is legal apart
+        # from the missing qualifier, and the player has already found it.
+        if move.promotion is None:
+            options = self._promotion_options(move.to_square, move.from_square)
+            if options:
+                return self._missing_promotion(text, destination, options)
 
         if move in board.generate_pseudo_legal_moves() and board.is_into_check(move):
             return self._reject(

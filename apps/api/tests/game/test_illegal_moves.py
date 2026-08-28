@@ -135,3 +135,74 @@ def test_a_rejected_move_does_not_change_the_board() -> None:
     assert board.fen == before
     assert board.ply == 0
     assert board.history_san() == []
+
+
+# ====================================================================== promotions
+
+
+class TestAMissingPromotion:
+    """A pawn reaching the last rank without saying what it becomes.
+
+    Its own reason, because every other explanation is false: the pawn *can* go there. It used to
+    answer `not_reachable` — "the pawn on e7 cannot move to e8" — to a player that had found the
+    move and left out a qualifier, and charged it an illegal attempt for the privilege.
+    """
+
+    BOARD = "8/4P3/8/8/8/8/8/K6k w - - 0 1"
+
+    def test_uci_without_a_piece_says_which_are_available(self) -> None:
+        board = ChessBoard(fen=self.BOARD)
+
+        with pytest.raises(IllegalMoveError) as raised:
+            board.push("e7e8")
+
+        assert raised.value.reason is IllegalMoveReason.MISSING_PROMOTION
+        for option in ("e8=Q", "e8=R", "e8=B", "e8=N"):
+            assert option in raised.value.detail
+
+    def test_algebraic_without_a_piece_says_the_same(self) -> None:
+        """The likelier mistake of the two: a model writing `e8` rather than `e8=Q`."""
+        board = ChessBoard(fen=self.BOARD)
+
+        with pytest.raises(IllegalMoveError) as raised:
+            board.push("e8")
+
+        assert raised.value.reason is IllegalMoveReason.MISSING_PROMOTION
+
+    def test_the_uci_hint_names_a_queen(self) -> None:
+        """Under-promotion is the rarity; the example should show the answer most players want."""
+        board = ChessBoard(fen=self.BOARD)
+
+        with pytest.raises(IllegalMoveError) as raised:
+            board.push("e7e8")
+
+        assert "'q'" in raised.value.detail
+
+    def test_the_full_legal_list_still_comes_with_it(self) -> None:
+        """ADR-0002 holds for this reason like every other: an illegal result carries the moves."""
+        board = ChessBoard(fen=self.BOARD)
+
+        with pytest.raises(IllegalMoveError) as raised:
+            board.push("e8")
+
+        assert "e8=Q" in raised.value.legal_moves_san
+
+    def test_a_named_promotion_is_played(self) -> None:
+        assert ChessBoard(fen=self.BOARD).push("e8=Q").san == "e8=Q"
+        assert ChessBoard(fen=self.BOARD).push("e7e8n").san == "e8=N"
+
+    def test_an_ordinary_move_to_the_last_rank_is_not_a_promotion(self) -> None:
+        """A rook reaching the eighth rank is just a move, and must not be asked what it becomes."""
+        board = ChessBoard(fen="8/8/8/8/8/8/R7/K6k w - - 0 1")
+
+        assert board.push("Ra8").san == "Ra8"
+
+    def test_a_genuinely_unreachable_square_still_says_so(self) -> None:
+        """The new branch must not swallow the old answer: a pawn that cannot reach the rank at
+        all is `not_reachable`, and telling it to name a piece would be nonsense."""
+        board = ChessBoard(fen="8/8/8/8/4P3/8/8/K6k w - - 0 1")
+
+        with pytest.raises(IllegalMoveError) as raised:
+            board.push("e8")
+
+        assert raised.value.reason is IllegalMoveReason.NOT_REACHABLE

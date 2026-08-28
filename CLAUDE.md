@@ -482,8 +482,20 @@ off entirely (see Phase 17's launch conditions).
 blocking a message today hides it from nobody. The check has to run *before* the event is appended
 and before the opponent's transcript is written, because both are append-only and the transcript is
 byte-stable for caching (invariant 2).
-The other deliberate limitations stand — no clock, advisory-only human draw offers, promotion
-always to a queen.
+The other deliberate limitations stand — no clock, advisory-only human draw offers.
+
+**Promotion is chosen, not assumed.** It used to be a queen either way, which is right almost every
+time and wrong in exactly the position that matters: the one where a rook or a knight wins and the
+player cannot say so. A human drag to the last rank opens a picker; a model that names no piece gets
+`MISSING_PROMOTION` — its own reason, because every other explanation was false. `not_reachable`
+told a model that had found the move that its pawn could not make it, and charged an illegal attempt
+for the privilege.
+
+**A withheld reasoning trace is not an absent one.** `api/redaction.py` strips the text from a game
+its reader is playing and keeps the token count (invariant 8), and the panel rendered that
+identically to a model that had said nothing — a turn showing only its tool calls, with no hint that
+anything was held back. `withheldReasoning` carries the count, and the turn says `thinking · 801`
+without saying what about.
 
 **The site would not load at all without Clerk keys.** `src/proxy.ts` called `clerkMiddleware()`
 unconditionally and it throws without a publishable key; a throwing proxy takes every route with

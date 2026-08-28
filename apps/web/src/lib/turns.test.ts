@@ -338,3 +338,49 @@ describe("a resumed game is no longer over", () => {
     expect(ended?.termination).toBe("checkmate");
   });
 });
+
+describe("withheld reasoning", () => {
+  it("counts the tokens when the text is held back", () => {
+    /* A game you are *playing* strips the reasoning text on the way out (invariant 8) and keeps
+       the count. An absent `reasoning` with a count is "you may not read this yet", not "the model
+       said nothing" — and the two looked identical on the page. */
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w" }),
+      event("thinking", { tokens: 801 }),
+      event("move_made", { ply: 1, colour: "white", san: "e4" }),
+    ];
+
+    const { turns } = foldEvents(events, []);
+
+    expect(turns[0].reasoning).toEqual([]);
+    expect(turns[0].withheldReasoning).toBe(801);
+  });
+
+  it("stays zero when the text is published", () => {
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w" }),
+      event("thinking", { tokens: 801, reasoning: "The Italian looks right." }),
+    ];
+
+    const { turns } = foldEvents(events, []);
+
+    expect(turns[0].reasoning).toEqual(["The Italian looks right."]);
+    expect(turns[0].withheldReasoning).toBe(0);
+  });
+
+  it("stays zero for a model that does not reason at all", () => {
+    /* Gemini says everything in `content` and emits no reasoning. A "thinking" badge on a model
+       that never thinks aloud would be inventing a state. */
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w" }),
+      event("output", { content: "I'll play e4." }),
+    ];
+
+    const { turns } = foldEvents(events, []);
+
+    expect(turns[0].withheldReasoning).toBe(0);
+  });
+});
