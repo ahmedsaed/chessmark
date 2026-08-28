@@ -7,12 +7,6 @@ plain — five of twelve completed games carried a verdict neither model had ear
 
 from __future__ import annotations
 
-import time
-import uuid
-from types import SimpleNamespace
-
-from chessmark.agents.turn import TurnLimits, TurnResult, TurnRunner
-from chessmark.db.enums import TurnStatus
 from chessmark.game import FORFEIT_TERMINATIONS, RESUMABLE_TERMINATIONS, Termination
 
 
@@ -55,41 +49,3 @@ class TestWhatCountsAsAFinding:
     def test_a_real_forfeit_is_never_reopened(self) -> None:
         """Un-ending a finding would let a bad result be replayed until it improved."""
         assert not (FORFEIT_TERMINATIONS & RESUMABLE_TERMINATIONS)
-
-
-class TestTheClockMustLeaveRoomToAsk:
-    """A call that cannot succeed must not be made (AGENT-17, continued).
-
-    `deadline_seconds` is whatever is left of the turn's clock, and `_over_budget` only stopped the
-    turn once that clock had *run out* — so with 583 of 600 seconds spent it said "carry on", and
-    the call it then made got a 17-second deadline. A free model's mean latency is 17-38 seconds.
-
-    The failure surfaced as `provider call exceeded 17s`: an `LlmError`, not a rate limit, so the
-    worker took the abandon path and spent five retries on it. A real game died at ply 10 with a
-    message blaming the provider for our own clock.
-
-    `_over_budget` reads nothing but `self.limits`, so it is called unbound rather than standing up
-    a whole runner with a session, a game and two players.
-    """
-
-    def test_a_turn_with_no_room_left_fails_rather_than_asking(self) -> None:
-        limits = TurnLimits(max_seconds=600.0, min_call_seconds=30.0)
-        result = TurnResult(turn_id=uuid.uuid4(), status=TurnStatus.RUNNING)
-        started = time.perf_counter() - 583.0  # 17 seconds left
-
-        over = TurnRunner._over_budget(SimpleNamespace(limits=limits), result, started)  # type: ignore[arg-type]
-
-        assert over
-        assert result.status is TurnStatus.FAILED, "retried, never forfeited"
-        assert result.outcome is None, "which is what makes the worker try again"
-        assert result.error is not None
-        assert "17s left" in result.error, f"it must name our clock: {result.error!r}"
-        assert "30s a call needs" in result.error, f"and the floor it fell under: {result.error!r}"
-
-    def test_a_turn_with_room_left_carries_on(self) -> None:
-        limits = TurnLimits(max_seconds=600.0, min_call_seconds=30.0)
-        result = TurnResult(turn_id=uuid.uuid4(), status=TurnStatus.RUNNING)
-        started = time.perf_counter() - 500.0  # 100 seconds left
-
-        assert not TurnRunner._over_budget(SimpleNamespace(limits=limits), result, started)  # type: ignore[arg-type]
-        assert result.status is not TurnStatus.FAILED

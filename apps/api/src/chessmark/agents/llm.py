@@ -161,7 +161,12 @@ def is_unavailable(error: BaseException) -> bool:
     budget. Told apart from a *model* that does not exist only by when it happens: that one still
     fails at ply 0, where a pause simply expires and the game is abandoned honestly.
     """
-    return is_rate_limit(error) or _status_code(error) in {403, 404} or endpoint_is_unhealthy(error)
+    return (
+        is_rate_limit(error)
+        or isinstance(error, TimeoutError)
+        or _status_code(error) in {403, 404}
+        or endpoint_is_unhealthy(error)
+    )
 
 
 def is_rate_limit(error: BaseException) -> bool:
@@ -369,7 +374,7 @@ class LlmGateway:
         completion_fn: CompletionFn | None = None,
         sleep_fn: SleepFn | None = None,
         on_attempt: AttemptFn | None = None,
-        timeout: float = 180.0,
+        timeout: float = 600.0,
         attribution: dict[str, str] | None = None,
     ) -> None:
         self.api_key = api_key
@@ -517,11 +522,27 @@ class LlmGateway:
                 # only the callee honours is not a deadline.
                 raw = await asyncio.wait_for(self._complete(**call_kwargs), timeout=deadline)
             except TimeoutError as error:
+                # **Unavailability, and paused rather than retried.** A provider that will not
+                # answer inside ten minutes is not serving us, which is the same thing a 429, a
+                # 403 and a provider-404 say — so it takes the same path: pause the game, cool the
+                # endpoint down, come back. ADR-0019 already held that a clock measures the
+                # provider and not the player; this is the half that acts on it.
+                #
+                # Retrying first would be the most expensive possible response. A retry means
+                # waiting the whole timeout again, so one costs ten more minutes of a worker held
+                # against an endpoint that has just failed to answer — the 429 lesson (patience
+                # inside the retry loop is paid for in requests) with a much larger unit.
                 raise LlmError(
-                    message=f"provider call exceeded {deadline:.0f}s",
+                    message=f"provider did not answer within {deadline:.0f}s",
                     retryable=False,
                     attempts=attempt,
                     request=redacted_request,
+                    rate_limit=RateLimit(
+                        provider=(
+                            self.routing.only[0] if self.routing and self.routing.only else None
+                        ),
+                        timed_out=True,
+                    ),
                 ) from error
             except Exception as error:
                 last_error = error

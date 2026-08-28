@@ -149,9 +149,10 @@ def is_batch(openrouter_id: str) -> bool:
     runs out the clock.
 
     Running out the clock is the reason this is a registration filter rather than a warning in the
-    UI. A turn that times out **forfeits the model** (`TurnLimits.max_seconds`), so an unplayable
-    model does not fail politely — it records a loss against a model that never got to move, in the
-    one number this project exists to publish.
+    UI. A batch model cannot answer a synchronous call at all, so every turn against it times out —
+    which now *pauses* the game and rests the endpoint (ADR-0017) rather than forfeiting the model as
+    it once did. Politer, and still useless: the game pauses, resumes, times out again, and is
+    abandoned a day later having wasted the pairing. Better never to seat it.
 
     Nothing in the data marks them. They declare `tools`, they carry active endpoints, and ours
     report 99% uptime; only the slug says what they are. 60 of the 61 in the catalogue have a

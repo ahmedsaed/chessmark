@@ -61,7 +61,10 @@ def requires_api_key() -> None:
 #: Free models are slow, so the wall clock is raised here and only here — otherwise this test
 #: would measure provider latency rather than the turn loop. The token cap is left at the
 #: production default on purpose: unbounded reasoning is exactly the failure this test found.
-LIVE_LIMITS = TurnLimits(max_seconds=900.0)
+#: A real model on a free endpoint is slow, and the bound that matters is now per *call*, in the
+#: gateway (`LlmGateway(timeout=...)`), not per turn. The default 600s already covers the worst call
+#: observed (442s), so there is nothing left to raise here.
+LIVE_LIMITS = TurnLimits()
 
 
 async def test_a_real_model_plays_ten_plies(db: AsyncSession, requires_api_key: None) -> None:

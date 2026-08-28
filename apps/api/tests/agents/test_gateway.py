@@ -354,12 +354,16 @@ async def test_a_call_that_overruns_the_deadline_is_cut_off() -> None:
             model="x/y", messages=[], deadline_seconds=0.05
         )
 
-    assert "exceeded" in str(caught.value)
+    assert "did not answer" in str(caught.value)
 
 
-async def test_an_overrun_is_not_retried() -> None:
-    """A call that ran to the deadline was producing tokens the whole time, not stalled. Retrying
-    spends the same wall clock to reach the same place."""
+async def test_an_overrun_is_not_retried_but_is_unavailability() -> None:
+    """Not retried, and **paused** instead.
+
+    A retry means waiting the whole timeout again — with the bound now ten minutes per call, that is
+    ten more minutes of a worker held against an endpoint that has just failed to answer. So a
+    timeout carries a `rate_limit`, which is what routes it to the pause ladder rather than to five
+    doomed attempts and an abandoned game (ADR-0017 amendment)."""
     import asyncio
 
     calls = {"n": 0}
@@ -373,6 +377,9 @@ async def test_an_overrun_is_not_retried() -> None:
 
     assert calls["n"] == 1
     assert not caught.value.retryable
+    assert caught.value.rate_limit is not None, "so the worker pauses instead of abandoning"
+    assert caught.value.rate_limit.timed_out
+    assert not caught.value.request_rejected, "the request was fine; the provider was not"
 
 
 async def test_a_call_inside_the_deadline_is_untouched() -> None:

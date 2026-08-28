@@ -245,19 +245,36 @@ is 65536 tokens. However, you requested about 65810"`, which is our own arithmet
 sends the same bytes and is refused the same way, so it must keep failing fast rather than being
 retried and cooled down. Both halves have a test naming the verbatim body.
 
-## Amendment — 2026-08-28, later still: our clock, reported as their failure
+## Amendment — 2026-08-28, later still: the bound belongs on the call, not the turn
 
 A game died at ply 10 with `Abandoned after 5 failed provider attempts: provider call exceeded 17s`.
 
-The 17 seconds were **ours**. `deadline_seconds` is whatever is left of the turn's 600-second clock,
-and the gate that stopped a turn only fired once that clock had run out — so with 583 seconds spent
-it said "carry on", and the call it then made got 17 seconds. A free model's *mean* latency is 17–38
-seconds, so the call could not succeed, and it surfaced as an `LlmError` rather than a rate limit:
-the abandon path, five retries, each one hitting the same wall.
+The 17 seconds were **ours**. `TurnLimits.max_seconds` was 600 seconds *per turn*, and the turn's
+remaining seconds were handed to each call as that call's deadline — so with 583 spent, the next call
+was asked for a completion in 17. A free model's *mean* latency is 17–38 seconds. The call could not
+succeed, and because a timeout is not a rate limit it took the abandon path: five retries, each
+replaying the same near-exhausted turn into the same wall.
 
-`_over_budget` now asks the question it was always being used for — *is there enough clock left to be
-worth asking?* — with a `min_call_seconds` floor of 30. Below that the turn is **failed and retried**
-(AGENT-17), and the message names our limit rather than the provider.
+**The per-turn clock measured the wrong thing and is gone.** A turn makes an unknown number of calls
+— 2.95 per ply for free models — so a shared time budget punishes a slow-but-healthy sequence and
+blames whichever call happens to exhaust it. And it was redundant: a turn is already bounded by
+`max_tool_iterations` (how many calls it may make) and `max_completion_budget` (how much it may
+generate), and each call by the gateway's own `asyncio.wait_for`. Seconds-per-turn added nothing to
+those three and contradicted the last one.
 
-Slicing the budget per call was considered and rejected: it caps a single slow-but-succeeding call
-for no reason. The floor only refuses to start a call that cannot finish.
+So: **ten minutes per call**, in the gateway, and **a provider that does not answer inside it is
+unavailability** — the same conclusion a 429, a 403 and a provider-404 reach by other routes. It
+takes the same path: pause, cool the endpoint down, come back, abandon honestly when the 24-hour span
+runs out.
+
+**Paused on the first timeout, never retried first.** This is the 429 lesson with a much larger unit:
+patience inside the retry loop is paid for in requests, and here one retry costs *ten more minutes*
+of a worker held against an endpoint that has just failed to answer. The cooldown ladder decides when
+to come back, which is the whole reason it exists.
+
+Ten minutes is chosen against measurement, not taste: the worst call observed was 442 seconds, so a
+tighter bound would pause on calls that were going to succeed.
+
+An interim fix — a `min_call_seconds` floor, so a turn stopped rather than making a call it could not
+finish — was written and then removed by this change. It was a patch on the arithmetic that should
+not have existed.

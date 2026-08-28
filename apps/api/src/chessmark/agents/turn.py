@@ -80,24 +80,18 @@ class TurnLimits:
     can legitimately use ten or more. This bounds a loop that never terminates, nothing tighter.
     """
 
-    max_seconds: float = 600.0
-
-    #: The least time a call needs for its answer to be worth waiting for.
+    #: **There is no per-turn clock, deliberately.** There was one — 600 seconds — and it measured
+    #: the wrong thing: a turn makes an unknown number of calls (2.95 per ply for free models), so a
+    #: shared time budget punished a slow-but-healthy sequence and blamed whichever call happened to
+    #: exhaust it. Worse, the turn's *remaining* seconds were handed to each call as its deadline, so
+    #: a turn with 583 of 600 spent asked for a completion in 17 — below a free model's mean latency
+    #: — and the doomed call was reported as `provider call exceeded 17s`, took the abandon path, and
+    #: cost a real game at ply 10.
     #:
-    #: **A call that cannot succeed must not be made.** `deadline_seconds` is whatever is left of
-    #: the turn's clock, so a turn with 583 of 600 seconds spent asked for a completion in 17 —
-    #: less than a free model's *mean* latency of 17-38s. It failed, as it always would, and the
-    #: failure surfaced as `provider call exceeded 17s`: an `LlmError`, not a rate limit, so the
-    #: worker retried the job five times and then abandoned a real game at ply 10. Every retry hit
-    #: the same wall, and every message blamed the provider for our clock.
-    #:
-    #: This is not a slice of the budget per call — that was considered and rejected, because it
-    #: caps a single slow-but-succeeding call for no reason. It is a floor below which the turn
-    #: stops asking and reports honestly that *we* ran out of time.
-    min_call_seconds: float = 30.0
-    """Wall clock. Slow is not wrong: a reasoning model taking two minutes on a critical position
-    is working, not stuck. Observed legitimate turns ran to 80s on a small free model, and
-    frontier reasoning models are slower still."""
+    #: A turn is already bounded by `max_tool_iterations` (how many calls) and
+    #: `max_completion_budget` (how much it may generate), and each call is bounded by the gateway's
+    #: own ten-minute timeout — which now *pauses* the game rather than abandoning it (ADR-0017).
+    #: Seconds-per-turn added nothing to those three and contradicted the last one.
 
     max_completion_budget: int = 400_000
     """**Completion** tokens across the whole turn, summed over every round-trip.
@@ -288,7 +282,7 @@ class TurnRunner:
         )
 
         try:
-            await self._loop(turn, result, started)
+            await self._loop(turn, result)
         except LlmError as error:
             # A provider failure is **our** problem, not the model's, so the game is left open.
             # AGENT-09 says transient provider errors must not count against a model, and
@@ -417,9 +411,9 @@ class TurnRunner:
 
     # ------------------------------------------------------------------ the loop
 
-    async def _loop(self, turn: Turn, result: TurnResult, started: float) -> None:
+    async def _loop(self, turn: Turn, result: TurnResult) -> None:
         for _iteration in range(self.limits.max_tool_iterations):
-            if self._over_budget(result, started):
+            if self._over_budget(result):
                 return
 
             messages = await transcript.build_messages(self.session, self.player.id)
@@ -443,10 +437,6 @@ class TurnRunner:
                 messages = await transcript.build_messages(self.session, self.player.id)
                 occupied = compaction.estimate_tokens(messages)
 
-            # The call gets whatever is left of the turn's wall clock, never more. Checking
-            # the budget only between round-trips cannot bound a single slow call: one 18-minute
-            # call sailed past a 600-second turn limit because nothing was watching while it ran.
-            remaining = self.limits.max_seconds - (time.perf_counter() - started)
             completion = await self.gateway.complete(
                 model=self.model,
                 messages=messages,
@@ -461,7 +451,6 @@ class TurnRunner:
                 # on OpenRouter's own dashboard rather than as a hundred unrelated generations.
                 # See `agents/sessions.py` for why the unit is the game and not the turn.
                 session_id=session_for_game(self.game.id),
-                deadline_seconds=max(remaining, 1.0),
             )
 
             await self._record_llm_call(turn, completion)
@@ -878,31 +867,14 @@ class TurnRunner:
         result.cached_tokens += completion.usage.cached
         result.cost_usd += completion.cost_usd
 
-    def _over_budget(self, result: TurnResult, started: float) -> bool:
-        """Whether this turn may make another provider call.
+    def _over_budget(self, result: TurnResult) -> bool:
+        """Whether this turn has generated more than it may.
 
-        Asked at the top of every iteration, so "over budget" means *there is not enough clock left
-        to be worth asking* — not merely that the clock has run out. Those were the same check, and
-        the difference cost a game: with 583 of 600 seconds spent it said "carry on", and the call
-        it then made got a 17-second deadline it could never meet.
+        It used to police a wall clock too, and that clock is gone (see `TurnLimits`). What is left
+        is the one bound that measures the model rather than the provider: **completion** tokens, not
+        the prompt, because the prompt is re-sent every round-trip (ADR-0003) and counting it made
+        the ceiling a function of transcript size times round-trips.
         """
-        elapsed = time.perf_counter() - started
-        remaining = self.limits.max_seconds - elapsed
-        if remaining < self.limits.min_call_seconds:
-            # **Failed, not forfeited, and never reported as the provider's fault.** The turn is
-            # discarded and retried, because running out of wall clock says nothing about the play:
-            # one model lost a game at ply 1 having never been served a completion at all.
-            # `outcome` stays None, which is what makes `_advance` raise `ProviderFailureError` and
-            # the worker try again — and abandon honestly if it never gets through.
-            result.status = TurnStatus.FAILED
-            result.error = (
-                f"the turn had {max(remaining, 0.0):.0f}s left of its "
-                f"{self.limits.max_seconds:.0f}s limit, less than the "
-                f"{self.limits.min_call_seconds:.0f}s a call needs; "
-                f"{result.llm_calls} calls completed"
-            )
-            return True
-
         if result.completion_tokens > self.limits.max_completion_budget:
             result.status = TurnStatus.FORFEITED
             result.outcome = self._forfeit(
