@@ -376,28 +376,54 @@ _SCORES = {
 
 
 async def settle(session: AsyncSession, row: TournamentGame, game: Game) -> bool:
-    """Record a finished game's result against its pairing. Returns whether it settled.
+    """Make a pairing agree with its game. Returns whether anything changed.
 
     A game the harness stopped — its budget, its ply cap, a provider it could not reach — is
     **not** a result about the players, so it is marked abandoned rather than scored. That
     distinction is the same one the rating rules make (`bench/ratable.py`), and for the same
     reason: a forfeit is a finding, a harness failure is ours.
+
+    **It reconciles rather than records, and that difference is load-bearing.** The first version
+    only ever wrote to a pairing that had nothing yet, on the reasoning that a result is written
+    once. A game can be *resumed*, though, and then the pairing holds a verdict its own game has
+    outgrown — and because the caller skipped anything already scored, the stale verdict was
+    permanent and blocked the real one. Seen on one page: a pairing scored 0-1 from an overturned
+    forfeit whose game then drew by threefold repetition at ply 100, so the standings recorded a
+    loss where there was a draw and no later tick would ever correct it.
+
+    The game record is the authority (invariant 1), so this is the direction the disagreement is
+    always resolved. Returning False when the pairing already agrees keeps it idempotent, which is
+    what lets the caller offer every pairing on every tick.
     """
     if game.status is GameStatus.ABORTED:
+        if row.abandoned_reason and row.white_score is None:
+            return False
         row.abandoned_reason = game.termination_detail or "the game was abandoned"
+        row.white_score = None
         row.ended_at = sa.func.now()
         await session.flush()
         return False
 
     score = _SCORES.get(game.result)
     if game.status is not GameStatus.FINISHED or score is None:
+        # In flight, whatever the pairing may still say. `white_score` means *decided* — the
+        # column's own comment is "null while the game is unplayed or in flight" — so a leftover
+        # score here is what drew four running games as **played** and reported `live: 0` while
+        # four boards moved.
+        if row.white_score is None:
+            return False
+        row.white_score = None
+        row.ended_at = None
+        await session.flush()
+        return False
+
+    if row.white_score == score and row.abandoned_reason is None:
         return False
 
     row.white_score = score
-    # **A real result overrides a recorded abandonment**, because the game record is the authority
-    # (invariant 1) and the two cannot both be true. A game abandoned on a provider 404 was
-    # resumed, played on to checkmate at ply 120 — and its pairing stayed "abandoned, no score",
-    # because this function was only ever reached for pairings that were not already abandoned.
+    # **A real result overrides a recorded abandonment**, because the two cannot both be true. A
+    # game abandoned on a provider 404 was resumed, played on to checkmate at ply 120 — and its
+    # pairing stayed "abandoned, no score" for ever.
     row.abandoned_reason = None
     row.ended_at = sa.func.now()
     await session.flush()
