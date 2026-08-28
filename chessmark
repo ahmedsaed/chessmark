@@ -175,7 +175,8 @@ LINES=500 ./chessmark logs tournament'
   [catalogue]='./chessmark catalogue                   # models + endpoints, honouring the context floor'
   [prune]='./chessmark prune                       # report only
 ./chessmark prune --apply               # disable them and remove their games
-./chessmark prune --apply --keep-finished'
+./chessmark prune --apply --keep-finished
+./chessmark prune --model vendor/model:free --apply   # one named model, whatever the catalogue says'
   [tournament]='./chessmark tournament field --free
 ./chessmark tournament create --name "Free Models" --slug pool-free --free --format pool
 ./chessmark tournament run pool-free --interval 30

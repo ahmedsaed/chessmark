@@ -608,6 +608,12 @@ found through one abandoned game:
    predicate shared by `select_endpoint`, `GET /models` and `resolve_field`, so the catalogue, the
    field and the picker cannot disagree.
 
+`prune --model <slug>` names one explicitly, bypassing the eligibility test — the rule is a
+prediction from metadata and a distribution gate is invisible to it, so the operator supplies the
+finding the catalogue cannot. It includes already-disabled rows, because disabling is what the
+worker does on the refusal and the games it left behind still need clearing. **`--apply` acts on
+everything in the report**, named and predicted alike; run it without `--apply` first.
+
 `make prune-registry` applies the rule to the registry as it already stands — reports by default,
 `ARGS=--apply` to act. It **disables, never deletes**: `players.model_id` is `ON DELETE RESTRICT`,
 so a row with games cannot be deleted at all, and a game must stay readable however its model
