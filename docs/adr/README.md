@@ -24,6 +24,7 @@ supersedes the old one, rather than an edit.
 | [0016](0016-credits-as-a-granted-balance.md) | Credits are a granted balance, priced per model | Accepted |
 | [0017](0017-rate-limits-pause-games.md) | A rate limit pauses the game; endpoints cool down between games | Accepted |
 | [0018](0018-context-compaction.md) | The model summarises its own history when the window fills | Accepted |
+| [0019](0019-harness-bounds-are-not-findings.md) | A harness bound is not a finding about a player | Accepted |
 
 ## Template
 

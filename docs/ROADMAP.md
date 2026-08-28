@@ -52,6 +52,25 @@ flowchart LR
 
 ---
 
+## Known gaps
+
+Recorded rather than quietly carried. None of these blocks a deploy; the first two block a public
+launch.
+
+| Gap | Where |
+| --- | --- |
+| Clerk's `user.deleted` route has **no test over the handler**, and the endpoint is not registered in the Clerk dashboard. Only signature verification is covered. | Phase 9 |
+| **No moderation.** The launch condition is "no unmoderated channel is reachable" — satisfied by building Phase 11 or by shipping with conversation off. | Phase 11 |
+| Phase 7's **Lighthouse score is unverified** — no Lighthouse in this environment. | Phase 7 |
+| NFR-06's **>80% cache rate is met in aggregate but not by Gemini individually.** | Phase 3 |
+| PGN is verified against `chess.js` but **not against Lichess or SCID themselves**. | Phase 8 |
+| The browser suite's **signed-in half does not run in CI** — it needs a real Clerk instance. CI asserts the public pages only; the playing flow is asserted locally by `make test-e2e-all`. | Phase 23 |
+| **A closed event cannot be resumed cleanly.** Abandoning its last pairing completes it, `advance` returns *already over*, and no later tick settles anything. A pool never finishes, so this has not bitten. | Phase 13 |
+
+Deliberate limitations, not gaps: no clock, and human draw offers are advisory only.
+
+---
+
 ## Phase 0 — Foundations ✅ COMPLETE
 
 **Goal:** a developer can clone the repo and have every dependency running in one command.
@@ -756,6 +775,16 @@ moment anyone else can read a game.
 **This is a launch gate, not a nice-to-have.** Chessmark must not be public while any message
 channel is unmoderated. Two ways to satisfy that: build this, or ship with conversation off. See
 the launch conditions in Phase 17.
+
+**A trap for whoever picks this up.** `moderation_status` is filtered by
+`GET /games/{id}/messages`, which the UI does not read. The live conversation is built from
+`game_events`, and `_record_said` appends the message content into the event payload **unfiltered** —
+so blocking a message today hides it from nobody. The check has to run *before* the event is appended
+and before the opponent's transcript is written, because both are append-only and the transcript is
+byte-stable for caching (invariant 2).
+
+Human→model chat is off by default and opt-in per game for this reason: messages are stored
+`PENDING` and delivered verbatim.
 
 **Objectives** (unchanged, for when it is picked up)
 1. A moderation check on every message before public display
