@@ -99,9 +99,13 @@ by the cooldown. See [ADR-0017](adr/0017-rate-limits-pause-games.md).
 
 ## Bounds
 
-The **ply cap is a cost bound, not a rules bound** — threefold repetition and the fifty-move rule are
-applied automatically, so games terminate on their own. 300 plies is the standard; 80 sat at the
-median of real games and let the harness decide half the results.
+The **ply cap is a cost bound, not a rules bound.** Games terminate on their own because the hard
+draw backstops always apply — a fivefold repetition, and seventy-five moves without progress
+([ADR-0020](adr/0020-claimable-draws.md)). 300 plies is the standard; 80 sat at the median of real
+games and let the harness decide half the results.
+
+Expect **longer games** than before ADR-0020: a threefold repetition no longer ends a game unless a
+player claims it.
 
 A **harness bound is never a finding about a player**. See
 [ADR-0019](adr/0019-harness-bounds-are-not-findings.md).

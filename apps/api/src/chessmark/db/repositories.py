@@ -248,7 +248,15 @@ async def rebuild_referee(session: AsyncSession, game: Game) -> Referee:
     Terminations that are not moves — resignation, forfeit, adjudication — are not in the ply
     record, so they are re-applied from the stored outcome afterwards.
     """
-    referee = Referee(start_fen=game.start_fen, max_plies=game.max_plies)
+    referee = Referee(
+        start_fen=game.start_fen,
+        max_plies=game.max_plies,
+        # Read from the game, so a rebuilt referee applies the same rules the game was created
+        # under. These columns existed from Phase 1 and were never read by anything — a game
+        # asking not to be auto-drawn was auto-drawn anyway.
+        auto_threefold_draw=game.auto_threefold_draw,
+        auto_fifty_move_draw=game.auto_fifty_move_draw,
+    )
     for san in await load_moves_san(session, game.id):
         referee.play(san)
 

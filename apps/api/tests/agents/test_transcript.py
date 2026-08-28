@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 
 import pytest
 import sqlalchemy as sa
@@ -130,10 +131,32 @@ async def test_the_system_prompt_contains_nothing_that_changes_per_turn(
     )
 
     # A FEN, a ply counter, or a move list here would break caching for every subsequent turn.
-    for forbidden in ("ply ", "move number", "rnbqkbnr", "fen", "1.", "current position"):
-        assert forbidden.lower() not in prompt.lower(), (
-            f"the system prompt mentions {forbidden!r}, which changes per turn"
+    #
+    # **Word boundaries, not substrings.** The first version matched `"ply "`, which is inside
+    # `"apply "` — so documenting the draw rules tripped a guard about move counters. A guard that
+    # fires on unrelated prose gets loosened by whoever hits it next, and this one is protecting
+    # invariant 2, so it is worth stating precisely instead.
+    forbidden = {
+        r"\bply\s+\d": "a ply number",
+        r"\bmove\s+number\b": "a move number",
+        r"\b[rnbqkpRNBQKP1-8]{8}/[rnbqkpRNBQKP1-8/]{7,}": "a FEN",
+        r"\bfen\s*[:=]": "a FEN",
+        r"^\s*1\.\s": "a move list",
+        r"\bcurrently\b|\bso far\b|\bright now\b": "per-turn state",
+    }
+    for pattern, what in forbidden.items():
+        assert not re.search(pattern, prompt, re.MULTILINE), (
+            f"the system prompt contains {what} ({pattern!r}), which changes per turn"
         )
+
+    # And the positive half: whatever it says, it must be identical for two different turns of the
+    # same game. The only inputs are fixed for the game, so this is a check on that staying true.
+    assert prompt == prompts.build_system_prompt(
+        colour=Colour.WHITE,
+        opponent="black-model",
+        max_illegal_retries=5,
+        trash_talk_enabled=True,
+    )
 
 
 # ====================================================================== structure
