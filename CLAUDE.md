@@ -88,6 +88,9 @@ These are the rules that, if broken, quietly ruin the project. Each traces to an
 10. **No API key ever reaches the client.** All provider calls originate in the worker tier.
 11. **A harness bound is never a finding about a player.** Our ceilings fail a turn; they do not
     forfeit a model. ([ADR-0019](docs/adr/0019-harness-bounds-are-not-findings.md))
+12. **A rule that decides a game must be stated in the prompt.** A model cannot be scored against a
+    condition it was never told about. Threefold repetition ended a game for a model a queen up that
+    had never been told the rule existed. ([ADR-0020](docs/adr/0020-claimable-draws.md))
 
 ---
 

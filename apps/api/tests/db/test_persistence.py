@@ -13,6 +13,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.db.enums import GameStatus, PlayerKind
 from chessmark.db.models import Game, Ply
 from chessmark.db.repositories import (
@@ -69,7 +70,9 @@ STARTING_FEN = ChessBoard().fen
 
 async def _persist_full_game(db: AsyncSession) -> tuple[Game, Referee]:
     """Play a real game through the referee, writing every ply as it happens."""
-    game = await create_game(db, start_fen=STARTING_FEN, is_ranked=True, prompt_version="v1")
+    game = await create_game(
+        db, start_fen=STARTING_FEN, is_ranked=True, prompt_version=PROMPT_VERSION
+    )
     await add_player(
         db,
         game_id=game.id,
@@ -166,9 +169,11 @@ async def test_benchmark_configuration_is_recorded(db: AsyncSession) -> None:
     assert reloaded.prompt_version == "v3"
     assert reloaded.max_illegal_retries == 5
     assert reloaded.max_plies == 300
-    # GAME-09: rule flags present from the first migration, defaulting to automatic.
-    assert reloaded.auto_threefold_draw is True
-    assert reloaded.auto_fifty_move_draw is True
+    # GAME-09: the rule flags. **They default off**, and they used to default on and be read by
+    # nothing at all — the referee auto-drew regardless. Threefold and the fifty-move rule are a
+    # claim (ADR-0020), so applying them unasked is the exception now, not the rule.
+    assert reloaded.auto_threefold_draw is False
+    assert reloaded.auto_fifty_move_draw is False
 
 
 @pytest.mark.integration

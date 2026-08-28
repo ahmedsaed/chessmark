@@ -163,8 +163,15 @@ class Game(Base):
     max_plies: Mapped[int] = mapped_column(default=300, server_default="300")
 
     #: GAME-09. Both default on; the referee will honour these in a later phase.
-    auto_threefold_draw: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
-    auto_fifty_move_draw: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
+    #: Apply a *claimable* draw rule without waiting for a claim. **Off**, and it used to be both
+    #: on and unread: the referee auto-drew regardless of what these said.
+    #:
+    #: FIDE makes threefold and the fifty-move rule a claim by the player having the move (9.2,
+    #: 9.3) because a repetition usually favours one side — deciding for both is not neutral. The
+    #: hard backstops (fivefold, seventy-five moves) are not switchable and always apply, so a game
+    #: still cannot loop for ever. See ADR-0020.
+    auto_threefold_draw: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+    auto_fifty_move_draw: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
 
     prompt_version: Mapped[str | None] = mapped_column(sa.Text)
     tool_schema_version: Mapped[str | None] = mapped_column(sa.Text)

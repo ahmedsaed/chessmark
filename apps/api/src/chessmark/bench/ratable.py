@@ -62,6 +62,11 @@ RATED_TERMINATIONS = frozenset(
         Termination.INSUFFICIENT_MATERIAL,
         Termination.RESIGNATION,
         Termination.AGREED_DRAW,
+        # The hard backstops are real chess results: a fivefold repetition or seventy-five moves
+        # without progress is a draw under the rules, not a ceiling we imposed. A model that draws
+        # a won game by shuffling has told us something true about itself (ADR-0020).
+        Termination.FIVEFOLD_REPETITION,
+        Termination.SEVENTY_FIVE_MOVE_RULE,
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
         Termination.TRUNCATED,

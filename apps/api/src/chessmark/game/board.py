@@ -67,6 +67,21 @@ class BoardView:
     in_check: bool
     material: Material
     legal_move_count: int
+
+    #: How many times the current position has already occurred, this one included. At 3 the game
+    #: is drawn automatically.
+    #:
+    #: **A raw `halfmove_clock` was the only hint about either draw rule, and it is not a hint.**
+    #: A model would have to know the FEN convention, know the threshold is 100 rather than 50, and
+    #: infer that we apply the rule at all — none of which was stated anywhere it could read. One
+    #: game was drawn by threefold at ply 100 with a model a queen and a knight up, chasing the
+    #: king with checks, having never been told the rule existed. Reported plainly instead.
+    repetition_count: int = 1
+
+    #: Plies until the fifty-move rule draws the game, from `halfmove_clock`. Named for the
+    #: consequence rather than the counter, because the counter is what nobody read.
+    plies_until_fifty_move_draw: int = 100
+
     move_history_san: list[str] = field(default_factory=list)
 
 
@@ -185,6 +200,8 @@ class ChessBoard:
             in_check=board.is_check(),
             material=self.material(),
             legal_move_count=board.legal_moves.count(),
+            repetition_count=self.repetition_count(),
+            plies_until_fifty_move_draw=max(0, 100 - board.halfmove_clock),
             move_history_san=self.history_san(),
         )
 
@@ -246,11 +263,36 @@ class ChessBoard:
     def is_insufficient_material(self) -> bool:
         return self._board.is_insufficient_material()
 
+    def repetition_count(self) -> int:
+        """How many times this exact position has occurred, including now.
+
+        Counts occurrences anywhere in the game — repetition is **not** required to be sequential
+        (FIDE 9.2.1 says so in parentheses, because it is the rule's usual misreading). And what
+        must match is the *position*: piece placement, side to move, castling rights and en-passant
+        availability. A rook that returns to its square having lost the right to castle has not
+        repeated anything.
+
+        `python-chess` has `is_repetition(n)` but no count, so this asks upward and stops at the
+        threshold — three is where it matters and a higher number tells a reader nothing more.
+        """
+        for count in (3, 2):
+            if self._board.is_repetition(count):
+                return count
+        return 1
+
     def is_threefold_repetition(self) -> bool:
         return self._board.is_repetition(3)
 
     def is_fifty_move_rule(self) -> bool:
         return self._board.halfmove_clock >= 100
+
+    def is_fivefold_repetition(self) -> bool:
+        """FIDE 9.6.2 — the hard backstop, needing no claim from anybody."""
+        return self._board.is_repetition(5)
+
+    def is_seventy_five_move_rule(self) -> bool:
+        """FIDE 9.6.1 — likewise. 150 plies, since the clock counts half-moves."""
+        return self._board.halfmove_clock >= 150
 
     @property
     def raw(self) -> chess.Board:

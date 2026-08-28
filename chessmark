@@ -192,7 +192,8 @@ echo "select count(*) from games;" | ./chessmark sql'
 ./chessmark latency <game-id> --all      # every turn, not just the tail'
   [resume]='./chessmark resume 5f8ee937-2e53-49df-877f-6879bcfc56b7
 ./chessmark resume <game-id> --max-usd 2.50        # raise the ceiling that stopped it
-./chessmark resume <game-id> --max-plies 400'
+./chessmark resume <game-id> --max-plies 400
+./chessmark resume <game-id> --unclaimed-draw   # a threefold nobody was told about (ADR-0020)'
   [credits]='./chessmark credits someone@example.com 50
 ./chessmark credits someone@example.com 10 --note "beta invite"
 ./chessmark credits user_2abc123 -5              # take them back, clamped at zero

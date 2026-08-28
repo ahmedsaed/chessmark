@@ -45,7 +45,17 @@ class Termination(StrEnum):
     CHECKMATE = "checkmate"
     STALEMATE = "stalemate"
     THREEFOLD_REPETITION = "threefold_repetition"
+    """Claimed by a player, or auto-applied where a game asked for that."""
+
     FIFTY_MOVE_RULE = "fifty_move_rule"
+    """Claimed by a player, or auto-applied where a game asked for that."""
+
+    FIVEFOLD_REPETITION = "fivefold_repetition"
+    """The hard backstop. Needs no claim from anybody (FIDE 9.6.2)."""
+
+    SEVENTY_FIVE_MOVE_RULE = "seventy_five_move_rule"
+    """The hard backstop. Needs no claim from anybody (FIDE 9.6.1)."""
+
     INSUFFICIENT_MATERIAL = "insufficient_material"
     RESIGNATION = "resignation"
     AGREED_DRAW = "agreed_draw"
@@ -107,6 +117,23 @@ FORFEIT_TERMINATIONS = frozenset(
 )
 
 
+class DrawNotClaimableError(Exception):
+    """A draw was claimed where neither claimable rule applies.
+
+    Carries both counters, because the answer a model needs is not "no" but *how far off* it is.
+    A refusal that only says no teaches nothing, and the model will simply claim again.
+    """
+
+    def __init__(self, *, repetition_count: int, halfmove_clock: int) -> None:
+        self.repetition_count = repetition_count
+        self.halfmove_clock = halfmove_clock
+        super().__init__(
+            "No draw to claim: this position has occurred "
+            f"{repetition_count} time(s) (three are needed) and {halfmove_clock} half-moves "
+            "have passed without a capture or pawn move (one hundred are needed)."
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class Outcome:
     """How a game ended."""
@@ -140,9 +167,30 @@ def _loss_for(colour: Colour) -> GameResult:
 class Referee:
     """Applies moves to a board and decides when — and how — the game is over."""
 
-    def __init__(self, *, start_fen: str | None = None, max_plies: int = DEFAULT_MAX_PLIES) -> None:
+    def __init__(
+        self,
+        *,
+        start_fen: str | None = None,
+        max_plies: int = DEFAULT_MAX_PLIES,
+        auto_threefold_draw: bool = False,
+        auto_fifty_move_draw: bool = False,
+    ) -> None:
+        """`auto_*` apply a *claimable* rule without a claim, and default off.
+
+        They were on, and unconditionally: threefold and the fifty-move rule ended a game the
+        instant they were satisfiable. FIDE makes both a **claim** by the player having the move
+        (9.2, 9.3) precisely because a repetition is usually good for one side and bad for the
+        other, and taking the decision away from both is not neutral — a game was drawn at ply 100
+        with a model a queen and a knight up, chasing the enemy king with checks it had not been
+        told would repeat.
+
+        The hard backstops (fivefold, seventy-five moves) are **not** switchable: they exist so a
+        game cannot loop for ever, and they need no claim from anybody.
+        """
         self.board = ChessBoard(start_fen)
         self.max_plies = max_plies
+        self.auto_threefold_draw = auto_threefold_draw
+        self.auto_fifty_move_draw = auto_fifty_move_draw
         self._outcome: Outcome | None = None
 
     # ------------------------------------------------------------------ state
@@ -209,6 +257,46 @@ class Referee:
                 winner=None,
                 detail="Draw by agreement.",
             )
+        )
+
+    def claim_draw(self) -> Outcome:
+        """Claim a draw by threefold repetition or the fifty-move rule (FIDE 9.2, 9.3).
+
+        Raises `DrawNotClaimableError` when neither holds, with the two counts in the message, because
+        the caller is a model that has to learn something from the refusal. It is **not** an illegal
+        move and must never be charged as one: a claim that does not apply is a question answered,
+        not a rule broken.
+
+        Whose turn it is does not matter here. FIDE gives the claim to the player having the move,
+        but a turn in this harness *is* a player having the move — nobody else can call this — so
+        enforcing it again would only add a way to get it wrong.
+        """
+        self._require_ongoing()
+        board = self.board
+
+        if board.is_threefold_repetition():
+            return self._finish(
+                Outcome(
+                    result=GameResult.DRAW,
+                    termination=Termination.THREEFOLD_REPETITION,
+                    winner=None,
+                    detail="Draw claimed — the position has occurred three times.",
+                )
+            )
+
+        if board.is_fifty_move_rule():
+            return self._finish(
+                Outcome(
+                    result=GameResult.DRAW,
+                    termination=Termination.FIFTY_MOVE_RULE,
+                    winner=None,
+                    detail="Draw claimed — fifty moves without a capture or pawn move.",
+                )
+            )
+
+        raise DrawNotClaimableError(
+            repetition_count=board.repetition_count(),
+            halfmove_clock=board.view().halfmove_clock,
         )
 
     def forfeit(self, colour: Colour, termination: Termination, detail: str) -> Outcome:
@@ -289,7 +377,31 @@ class Referee:
                 )
             )
 
-        if board.is_threefold_repetition():
+        # The hard backstops first, and unconditionally: a game must not be able to loop for ever,
+        # and neither of these waits for a claim (FIDE 9.6).
+        if board.is_fivefold_repetition():
+            return self._finish(
+                Outcome(
+                    result=GameResult.DRAW,
+                    termination=Termination.FIVEFOLD_REPETITION,
+                    winner=None,
+                    detail="Draw — the position has occurred five times. No claim is needed.",
+                )
+            )
+
+        if board.is_seventy_five_move_rule():
+            return self._finish(
+                Outcome(
+                    result=GameResult.DRAW,
+                    termination=Termination.SEVENTY_FIVE_MOVE_RULE,
+                    winner=None,
+                    detail="Draw — seventy-five moves without a capture or pawn move. "
+                    "No claim is needed.",
+                )
+            )
+
+        # The claimable pair, only where a game asked for them to be applied on its behalf.
+        if self.auto_threefold_draw and board.is_threefold_repetition():
             return self._finish(
                 Outcome(
                     result=GameResult.DRAW,
@@ -299,7 +411,7 @@ class Referee:
                 )
             )
 
-        if board.is_fifty_move_rule():
+        if self.auto_fifty_move_draw and board.is_fifty_move_rule():
             return self._finish(
                 Outcome(
                     result=GameResult.DRAW,

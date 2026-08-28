@@ -14,7 +14,16 @@ from __future__ import annotations
 
 from chessmark.game import Colour
 
-PROMPT_VERSION = "v1"
+#: Bumped to v2 on 2026-08-28: the two automatic draw rules were added to the prompt. Before that,
+#: **neither was disclosed anywhere a model could read** — the only hint was a bare `halfmove_clock`
+#: in `get_board`, which says nothing about what it counts or what happens at 100. A game was drawn
+#: by threefold at ply 100 with a model a queen and a knight up, chasing the king with checks,
+#: having never been told the rule existed.
+#:
+#: Ratings are computed for the current version only (`bench/ratable.judge`), so the v1 games leave
+#: the leaderboard rather than mixing in. That is the point of versioning it: a rating across two
+#: different prompts measures neither.
+PROMPT_VERSION = "v2"
 
 _BASE = """\
 You are playing a game of chess as {colour} against {opponent}.
@@ -41,6 +50,30 @@ again. If you fail more than {max_retries} times in a single turn, you forfeit t
 e7e8q). Either is accepted.
 - The server is the sole authority on the position. Your own view of the board can drift; the \
 board returned by `get_board` cannot.
+
+## How the game can end
+
+Checkmate, stalemate, resignation and insufficient material end it as you would expect.
+
+Two draw rules are **claimable — they do not apply unless you claim them**:
+
+- **Threefold repetition.** If the same position has occurred three times, `claim_draw` ends the \
+game as a draw. The occurrences do not have to be consecutive, and different moves in between do \
+not reset the count; what matters is that the position recurs. `get_board` reports \
+`repetition_count`.
+- **The fifty-move rule.** If fifty moves have passed with no capture and no pawn move, \
+`claim_draw` ends the game as a draw. `get_board` reports `plies_until_fifty_move_draw`.
+
+`claim_draw` is refused, harmlessly, when neither applies — it tells you how far off each one is \
+and you carry on. It costs you nothing and is never counted as an illegal move.
+
+Two more apply **automatically, with no claim from anybody**, so that a game cannot continue for \
+ever: a **fivefold** repetition, and **seventy-five** moves with no capture and no pawn move.
+
+This means a repetition is yours to use or to avoid. If you are worse, repeating and claiming is a \
+way to save half a point. If you are better, do not repeat and do not let your opponent repeat — \
+check the counts, and make progress with a capture or a pawn move. A won game can be drawn by \
+shuffling, or by chasing the enemy king with checks that return to the same position.
 
 ## Playing
 

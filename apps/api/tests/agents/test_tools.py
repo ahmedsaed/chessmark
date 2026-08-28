@@ -47,23 +47,17 @@ def test_the_schema_is_versioned() -> None:
     assert TOOL_SCHEMA_VERSION
 
 
-def test_all_seven_tools_are_offered() -> None:
+def test_every_tool_is_offered() -> None:
+    """Named for the set rather than its size: it was `test_all_seven_tools_are_offered`, and
+    adding `claim_draw` made the name a lie in the same commit as the assertion."""
     names = {schema["function"]["name"] for schema in tool_schemas()}
-    assert names == {
-        ToolName.GET_BOARD,
-        ToolName.GET_LEGAL_MOVES,
-        ToolName.GET_MOVE_HISTORY,
-        ToolName.MAKE_MOVE,
-        ToolName.SAY,
-        ToolName.OFFER_DRAW,
-        ToolName.RESIGN,
-    }
+    assert names == set(ToolName)
 
 
 def test_say_is_withheld_from_ranked_games() -> None:
     names = {s["function"]["name"] for s in tool_schemas(trash_talk_enabled=False)}
     assert ToolName.SAY not in names
-    assert len(names) == 6
+    assert names == set(ToolName) - {ToolName.SAY}
 
 
 def test_schemas_are_stable_across_calls() -> None:

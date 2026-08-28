@@ -28,13 +28,47 @@ sys.path.insert(0, str(API_ROOT / "src"))
 import sqlalchemy as sa  # noqa: E402
 from redis.asyncio import Redis  # noqa: E402
 
+from chessmark.agents.prompts import PROMPT_VERSION  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.enums import EventType, GameStatus  # noqa: E402
 from chessmark.db.models import TournamentGame  # noqa: E402
 from chessmark.db.repositories import append_event, get_game, rebuild_referee  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
-from chessmark.game import RESUMABLE_TERMINATIONS, GameResult  # noqa: E402
+from chessmark.game import (  # noqa: E402
+    RESUMABLE_TERMINATIONS,
+    GameResult,
+    Termination,
+)
 from chessmark.orchestration import AdvanceTurn, TurnQueue  # noqa: E402
+
+#: The two draws that were applied without a claim before ADR-0020.
+_UNCLAIMED = frozenset({Termination.THREEFOLD_REPETITION, Termination.FIFTY_MOVE_RULE})
+
+
+def _unclaimed_draw_is_reopenable(game: Any) -> tuple[bool, str]:
+    """Whether this specific draw was one the players never had a say in.
+
+    Deliberately narrow, because the general rule must keep holding: a chess result is final, and a
+    script that can reopen any draw is a script that can replay a bad result until it improves.
+
+    Two conditions, both necessary. The termination has to be one of the claimable pair — a
+    checkmate or a fivefold backstop is nobody's fault but the player's. And the game has to
+    predate the prompt that disclosed the rule: from v2 on, a model is told that repetition is
+    claimable and given `claim_draw`, so a draw it walked into is a finding about it.
+    """
+    if game.termination not in _UNCLAIMED:
+        return False, f"{game.termination} was never an unclaimed draw"
+
+    if game.prompt_version == PROMPT_VERSION:
+        return False, (
+            f"this game ran under prompt {game.prompt_version}, which states the rule and offers "
+            "`claim_draw` — walking into the draw was its own doing"
+        )
+
+    return True, (
+        f"played under prompt {game.prompt_version}, which never mentioned the rule; "
+        f"ratings are for {PROMPT_VERSION}"
+    )
 
 
 async def main() -> int:
@@ -47,6 +81,14 @@ async def main() -> int:
         help="New per-game budget. Must exceed what has already been spent, or the game stops again immediately.",
     )
     parser.add_argument("--max-plies", type=int, default=None, help="New ply cap.")
+    parser.add_argument(
+        "--unclaimed-draw",
+        action="store_true",
+        help=(
+            "reopen a game drawn by threefold repetition or the fifty-move rule that nobody "
+            "claimed. Only valid for a game played under a prompt that never disclosed the rule."
+        ),
+    )
     args = parser.parse_args()
 
     settings = get_settings()
@@ -63,11 +105,25 @@ async def main() -> int:
                 print("game is already running", file=sys.stderr)
                 return 1
 
-            if game.termination not in RESUMABLE_TERMINATIONS:
+            resumable = game.termination in RESUMABLE_TERMINATIONS
+            if not resumable and args.unclaimed_draw:
+                resumable, refusal = _unclaimed_draw_is_reopenable(game)
+                if not resumable:
+                    print(refusal, file=sys.stderr)
+                    return 2
+                print(f"reopening an unclaimed {game.termination} draw ({refusal})")
+
+            if not resumable:
                 print(
                     f"refusing to reopen a game that ended by {game.termination}. "
                     "Only a budget, a ply cap, or an unreachable provider may be reopened — "
-                    "a chess result and a forfeit are findings about a player.",
+                    "a chess result and a forfeit are findings about a player."
+                    + (
+                        " An automatic threefold or fifty-move draw from before ADR-0020 can be "
+                        "reopened with --unclaimed-draw."
+                        if game.termination in _UNCLAIMED
+                        else ""
+                    ),
                     file=sys.stderr,
                 )
                 return 2
@@ -110,9 +166,7 @@ async def main() -> int:
             if pairing is not None and (
                 pairing.abandoned_reason is not None or pairing.white_score is not None
             ):
-                was = (
-                    "abandoned" if pairing.abandoned_reason else f"scored {pairing.white_score}"
-                )
+                was = "abandoned" if pairing.abandoned_reason else f"scored {pairing.white_score}"
                 pairing.abandoned_reason = None
                 pairing.white_score = None
                 pairing.ended_at = None

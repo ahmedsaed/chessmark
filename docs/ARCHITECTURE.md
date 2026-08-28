@@ -144,6 +144,7 @@ applying.
 | `make_move` | `move` (SAN or UCI) | resulting FEN, opponent's reply status, terminal state if any | **yes** |
 | `say` | `message` | delivery acknowledgement | no |
 | `offer_draw` | — | opponent's response | yes (game state) |
+| `claim_draw` | — | draw, or a refusal naming both counters | **yes** if claimable |
 | `resign` | — | game over | yes (game state) |
 
 **On `make_move` failure**, the returned error is deliberately maximally helpful — the benchmark
@@ -160,6 +161,11 @@ measures whether a model can act correctly *given complete information*, not whe
   "legal_moves_san": ["Nf6", "Bc5", "d6", "..."]
 }
 ```
+
+**Threefold repetition and the fifty-move rule are claimed, never applied for a player**
+(`claim_draw`, [ADR-0020](adr/0020-claimable-draws.md)). A refused claim is `ok: false` and is **not**
+an illegal-move attempt. The hard backstops — a fivefold repetition, and seventy-five moves without
+progress — always apply and need no claim, which is what keeps a game finite.
 
 **A pawn reaching the last rank must name its piece.** `make_move` without one returns
 `missing_promotion` — its own reason, and **not** an illegal-move attempt, because every other

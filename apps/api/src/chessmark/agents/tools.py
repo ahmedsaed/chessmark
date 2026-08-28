@@ -10,27 +10,46 @@ not at all. A model can never corrupt the record, only propose to it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from chessmark.agents.types import ToolInvocation
-from chessmark.game import Colour, IllegalMoveError, MoveOutcome, Referee, Termination
+from chessmark.game import (
+    Colour,
+    DrawNotClaimableError,
+    IllegalMoveError,
+    MoveOutcome,
+    Referee,
+    Termination,
+)
 
 #: Bumped whenever a tool's name, arguments, or semantics change. Recorded on every game, because
 #: results produced under different tool surfaces are not comparable (BENCH-04).
-TOOL_SCHEMA_VERSION = "v1"
+#: Bumped to v2 on 2026-08-28, adding `claim_draw`. The schema is part of the cached prefix, so it
+#: cannot vary within a game — a new tool is a new version by construction.
+TOOL_SCHEMA_VERSION = "v2"
 
 MAX_MESSAGE_LENGTH = 280
 MAX_MESSAGES_PER_TURN = 3
 
 
-class ToolName:
+class ToolName(StrEnum):
+    """The tool names, as an enum so the set can be *iterated* rather than restated.
+
+    It was a plain class of string constants, and the test that checked the full surface listed
+    them again by hand — under the name `test_all_seven_tools_are_offered`, which adding an eighth
+    made false. A `StrEnum` compares and serialises exactly like the strings it replaces.
+    """
+
     GET_BOARD = "get_board"
     GET_LEGAL_MOVES = "get_legal_moves"
     GET_MOVE_HISTORY = "get_move_history"
     MAKE_MOVE = "make_move"
     SAY = "say"
     OFFER_DRAW = "offer_draw"
+    CLAIM_DRAW = "claim_draw"
     RESIGN = "resign"
 
 
@@ -103,6 +122,15 @@ def tool_schemas(*, trash_talk_enabled: bool = True) -> list[dict[str, Any]]:
         _fn(
             ToolName.OFFER_DRAW,
             "Offer your opponent a draw.",
+            {},
+        ),
+        _fn(
+            ToolName.CLAIM_DRAW,
+            "Claim a draw by threefold repetition or the fifty-move rule. Neither is applied "
+            "automatically — you must claim it. Succeeds and ends the game immediately if the "
+            "position has occurred three times, or if fifty moves have passed with no capture and "
+            "no pawn move; otherwise it is refused and tells you how far off each one is, and you "
+            "play on as normal. A refused claim costs you nothing.",
             {},
         ),
         _fn(
@@ -194,15 +222,17 @@ class ToolDispatcher:
                 ok=False,
             )
 
-        handler = {
+        handlers: dict[str, Callable[[dict[str, Any]], ToolResult]] = {
             ToolName.GET_BOARD: self._get_board,
             ToolName.GET_LEGAL_MOVES: self._get_legal_moves,
             ToolName.GET_MOVE_HISTORY: self._get_move_history,
             ToolName.MAKE_MOVE: self._make_move,
             ToolName.SAY: self._say,
             ToolName.OFFER_DRAW: self._offer_draw,
+            ToolName.CLAIM_DRAW: self._claim_draw,
             ToolName.RESIGN: self._resign,
-        }.get(call.name)
+        }
+        handler = handlers.get(call.name)
 
         if handler is None:
             available = ", ".join(sorted(self._available_tool_names()))
@@ -219,16 +249,15 @@ class ToolDispatcher:
         return handler(call.arguments)
 
     def _available_tool_names(self) -> set[str]:
-        names = {
-            ToolName.GET_BOARD,
-            ToolName.GET_LEGAL_MOVES,
-            ToolName.GET_MOVE_HISTORY,
-            ToolName.MAKE_MOVE,
-            ToolName.OFFER_DRAW,
-            ToolName.RESIGN,
-        }
-        if self.trash_talk_enabled:
-            names.add(ToolName.SAY)
+        """Derived from the enum, not restated.
+
+        This was a second hand-maintained copy of the tool list, and adding `claim_draw` left it
+        behind: the unknown-tool message would have told a model that the tool it had just been
+        offered did not exist. `say` is the only conditional one.
+        """
+        names = {str(name) for name in ToolName}
+        if not self.trash_talk_enabled:
+            names.discard(str(ToolName.SAY))
         return names
 
     # ------------------------------------------------------------------ read-only
@@ -253,6 +282,11 @@ class ToolDispatcher:
                 },
                 "legal_move_count": view.legal_move_count,
                 "halfmove_clock": view.halfmove_clock,
+                # Both draw rules, named for their consequence. `halfmove_clock` stays because it
+                # is part of the FEN a model may be reconciling against, but it was never a
+                # disclosure: a bare integer does not say what it counts or what happens at 100.
+                "repetition_count": view.repetition_count,
+                "plies_until_fifty_move_draw": view.plies_until_fifty_move_draw,
             }
         )
 
@@ -359,6 +393,43 @@ class ToolDispatcher:
                 "detail": "Draw offered. Your opponent will respond on its turn. "
                 "You must still make a move now.",
             }
+        )
+
+    def _claim_draw(self, _arguments: dict[str, Any]) -> ToolResult:
+        """A refused claim is `ok: False` but **not** an illegal move.
+
+        `ok=False` is what marks a tool result as unsuccessful for the transcript; what matters is
+        that this never reaches the illegal-move counter. A claim that does not apply is a question
+        answered, not a rule broken, and charging it as an attempt would forfeit a model for asking
+        — which is exactly the mistake `MISSING_PROMOTION` was created to stop making.
+        """
+        try:
+            outcome = self.referee.claim_draw()
+        except DrawNotClaimableError as refusal:
+            view = self.referee.board.view()
+            return ToolResult(
+                payload={
+                    "ok": False,
+                    "error": "not_claimable",
+                    "detail": str(refusal),
+                    "repetition_count": refusal.repetition_count,
+                    "repetitions_needed": 3,
+                    "plies_until_fifty_move_draw": view.plies_until_fifty_move_draw,
+                    "you_must_still_move": True,
+                },
+                ok=False,
+            )
+
+        return ToolResult(
+            payload={
+                "ok": True,
+                "claimed": True,
+                "result": str(outcome.result),
+                "termination": str(outcome.termination),
+                "detail": outcome.detail,
+            },
+            ends_turn=True,
+            ends_game=True,
         )
 
     # ------------------------------------------------------------------ talking

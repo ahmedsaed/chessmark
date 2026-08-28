@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from chessmark.game import ChessBoard, GameResult, Referee, Termination
+from chessmark.game import ChessBoard, DrawNotClaimableError, GameResult, Referee, Termination
 
 # --------------------------------------------------------------------- castling
 
@@ -171,14 +171,70 @@ def test_insufficient_material_ends_the_game() -> None:
 # --------------------------------------------------------------------- repetition
 
 
-def test_threefold_repetition_draws_automatically() -> None:
+#: Shuffle both knights out and back twice: the starting position occurs three times.
+_THREEFOLD = ["Nf3", "Nf6", "Ng1", "Ng8", "Nf3", "Nf6", "Ng1", "Ng8"]
+
+
+def test_threefold_does_not_draw_on_its_own() -> None:
+    """It is a **claim** (FIDE 9.2), and it used to end the game the instant it was satisfiable.
+
+    That is not a neutral default. A repetition usually favours one side, so deciding for both
+    takes away a real choice — and it drew a game at ply 100 with a model a queen and a knight up,
+    chasing the enemy king with checks it had never been told would repeat.
+    """
     referee = Referee()
-    # Shuffle both knights out and back twice; the starting position occurs three times.
-    _play(referee, ["Nf3", "Nf6", "Ng1", "Ng8", "Nf3", "Nf6", "Ng1"])
-    outcome = referee.play("Ng8")
+    _play(referee, _THREEFOLD)
+
+    assert referee.board.is_threefold_repetition(), "the condition holds"
+    assert not referee.is_over, "and the game is still going, because nobody claimed it"
+
+
+def test_threefold_draws_when_claimed() -> None:
+    referee = Referee()
+    _play(referee, _THREEFOLD)
+    outcome = referee.claim_draw()
+
+    assert outcome.termination is Termination.THREEFOLD_REPETITION
+    assert outcome.result is GameResult.DRAW
+
+
+def test_a_game_may_ask_to_be_drawn_automatically() -> None:
+    """The switch exists because human-facing or casual games may reasonably want the old
+    behaviour. It defaults off, and it used to be on *and* ignored."""
+    referee = Referee(auto_threefold_draw=True)
+    _play(referee, _THREEFOLD[:-1])
+    outcome = referee.play(_THREEFOLD[-1])
 
     assert outcome.outcome is not None
     assert outcome.outcome.termination is Termination.THREEFOLD_REPETITION
+
+
+def test_claiming_with_nothing_to_claim_is_refused_not_punished() -> None:
+    """A claim that does not apply is a question answered, not a rule broken. It must not reach the
+    illegal-move counter, and the refusal has to say how far off each rule is — a bare "no" teaches
+    a model nothing and it simply claims again."""
+    referee = Referee()
+    _play(referee, ["e4", "e5"])
+
+    with pytest.raises(DrawNotClaimableError) as refused:
+        referee.claim_draw()
+
+    assert refused.value.repetition_count == 1
+    assert "three are needed" in str(refused.value)
+    assert not referee.is_over
+
+
+def test_fivefold_repetition_draws_with_no_claim() -> None:
+    """The hard backstop (FIDE 9.6.2), so a game cannot loop for ever now that three does not end
+    it. Not switchable, for the same reason."""
+    referee = Referee()
+    _play(referee, _THREEFOLD)
+    # Two more round trips take the starting position to five occurrences.
+    _play(referee, ["Nc3", "Nc6", "Nb1", "Nb8", "Nc3", "Nc6", "Nb1"])
+    outcome = referee.play("Nb8")
+
+    assert outcome.outcome is not None
+    assert outcome.outcome.termination is Termination.FIVEFOLD_REPETITION
     assert outcome.outcome.result is GameResult.DRAW
 
 
@@ -191,13 +247,31 @@ def test_two_repetitions_do_not_draw() -> None:
 # --------------------------------------------------------------------- fifty moves
 
 
-def test_fifty_move_rule_draws() -> None:
-    # Halfmove clock at 99; a quiet rook move takes it to 100.
+def test_fifty_moves_does_not_draw_on_its_own() -> None:
+    """Claimable too (FIDE 9.3), and for the same reason."""
     referee = Referee(start_fen="7k/8/8/8/8/8/8/R3K3 w Q - 99 60")
+    referee.play("Ra2")
+
+    assert referee.board.is_fifty_move_rule()
+    assert not referee.is_over
+
+
+def test_fifty_moves_draws_when_claimed() -> None:
+    referee = Referee(start_fen="7k/8/8/8/8/8/8/R3K3 w Q - 99 60")
+    referee.play("Ra2")
+    outcome = referee.claim_draw()
+
+    assert outcome.termination is Termination.FIFTY_MOVE_RULE
+    assert outcome.result is GameResult.DRAW
+
+
+def test_seventy_five_moves_draws_with_no_claim() -> None:
+    """The other hard backstop (FIDE 9.6.1). 150 plies, because the clock counts half-moves."""
+    referee = Referee(start_fen="7k/8/8/8/8/8/8/R3K3 w Q - 149 90")
     outcome = referee.play("Ra2")
 
     assert outcome.outcome is not None
-    assert outcome.outcome.termination is Termination.FIFTY_MOVE_RULE
+    assert outcome.outcome.termination is Termination.SEVENTY_FIVE_MOVE_RULE
     assert outcome.outcome.result is GameResult.DRAW
 
 
