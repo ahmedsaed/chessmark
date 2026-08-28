@@ -456,6 +456,60 @@ creates running games without going through `_start_games`, so it was the one pa
 `max_concurrent` went unchecked, and three games coming due at once would have played in parallel in
 a pool bounded to one.
 
+**A harness ceiling is not a finding about a player** (AGENT-17). `FORFEIT_TERMINATIONS` held two
+that were, and one pool made it plain: **five of twelve completed games carried a verdict neither
+model had earned.**
+
+- **`TIMEOUT` measured the provider.** The same model on two endpoints got two verdicts — the
+  routing lottery ADR-0015 exists to remove, reappearing as a clock. One model lost a game **at ply
+  1 having never been served a single completion**. A turn that runs out of clock is now *failed and
+  retried*, and `TIMEOUT` is resumable, which it was not.
+- **`BUDGET_EXCEEDED` counted the prompt**, and the prompt is re-sent every round-trip (ADR-0003) —
+  so it measured transcript size times round-trips. A model that produced **5,263** tokens was
+  forfeited for "using 514,446": four replays of a 128k transcript. It punished long games hardest
+  and big-context models most (a 1M-window model at a 128k prompt is nowhere near compaction's
+  trigger, and four round-trips still crossed a flat 400k). It counts **completion tokens** now.
+
+Latency and size are still measured and published — they are statistics. A forfeit says "it played
+worse", and of a slow provider that claim is false.
+
+**A gated model is disabled, not paired again** (AGENT-18). `thinkingmachines/inkling-small:free`
+answers 403 *"only available on agentic harnesses. Try plugging it into a coding agent or
+productivity app listed on openrouter.ai/apps"* — a distribution allow-list, not a capability check.
+**There is nothing to declare.** The gate was probed four ways — no headers, `HTTP-Referer` +
+`X-Title`, `X-OpenRouter-Title`, and `X-OpenRouter-Categories: agents` — and answered 403
+identically; OpenRouter's own [app-attribution docs](https://openrouter.ai/docs/app-attribution)
+say the headers exist "for rankings on openrouter.ai" and describe no registration step, and
+`/apps` is a usage leaderboard, not a list one applies to. What settles it: the **paid** variant of
+the same model answered on the first try, so the gate is on the free distribution rather than on our
+client. Attribution headers are still worth sending for their own sake; they will not lift this.
+
+**Attribution is sent anyway, for its own sake.** `agents/attribution.py` puts `HTTP-Referer` and
+`X-OpenRouter-Title` on every call that carries a real key — an app page, per-model analytics, and
+usage counted as ours. `APP_URL` falls back to the first CORS origin, which is the front end's own
+address and therefore right on a development machine without a second variable to keep in step. They
+are **headers, not `extra_body`**: `usage`, `provider` and `session_id` live in the body because
+OpenRouter reads them there, and these do not. They ride only with a key, so a scripted gateway's
+recorded request stays byte-identical to its cassette.
+
+**Nothing in the catalogue predicts it** either: it advertises `tools`, a 1M window, `status: 0`,
+100% uptime and `per_request_limits: null`, identical to a model that works. So it is learned from
+the refusal — 403 joins 429 and provider-404 as unavailability, because a generic error taught the
+matchmaker nothing and one pool spent **22 pairings** dying at ply 0 against that one model.
+
+**A gate is the one unavailability that waiting cannot fix**, so it is the one that does not pause.
+`_disable_gated` sets `enabled = False` on the registry row and abandons the game at once. Cooling
+it down is not enough — the ladder's first rung lapses after sixty seconds — and pausing would spend
+the whole 24-hour window rediscovering the same 403. Disabled, never deleted (`players.model_id` is
+`ON DELETE RESTRICT`), and a sync will not undo it because `enabled` is written on creation only.
+The narrow half matters: only the allow-list *wording* withdraws a model, since disabling one over
+any 403 would empty the catalogue an endpoint at a time.
+
+**The pool must not pair a model that already has a paused game.** The cooldown alone left a gap:
+its first rung is sixty seconds, so it lapses, the matchmaker sees the model as available, pairs it,
+and it is refused again — four paused games against one model with nothing running. Asking about
+paused games is the precise fix; a ceiling on paused games was the imprecise one, and was reverted.
+
 **The ply cap is a cost bound, not a rules bound** — threefold and the fifty-move rule are applied
 automatically, so games terminate on their own. 300 plies is the standard; 80 sat at the median of
 real games and let the harness decide half the results.
@@ -553,6 +607,14 @@ found through one abandoned game:
    length is 65536". Both numbers were already stored. `endpoint_is_playable()` is now the single
    predicate shared by `select_endpoint`, `GET /models` and `resolve_field`, so the catalogue, the
    field and the picker cannot disagree.
+
+`prune --model <slug>` names one explicitly, bypassing the eligibility test — the rule is a
+prediction from metadata and a distribution gate is invisible to it, so the operator supplies the
+finding the catalogue cannot. It includes already-disabled rows, because disabling is what the
+worker does on the refusal and the games it left behind still need clearing. **`--apply` acts on
+everything in the report**, named and predicted alike — so `--only-named` is usually what you want
+beside `--model`: naming one gated model should not take every model the rule happens to dislike
+today with it, at the moment the operator is dealing with something else.
 
 `make prune-registry` applies the rule to the registry as it already stands — reports by default,
 `ARGS=--apply` to act. It **disables, never deletes**: `players.model_id` is `ON DELETE RESTRICT`,

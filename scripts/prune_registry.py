@@ -19,6 +19,16 @@ This applies the rule to what is already there, and it is deliberately two comma
     make prune-registry                          # what would go, and why
     make prune-registry ARGS=--apply             # do it
     make prune-registry ARGS="--apply --keep-finished"   # spare games that reached a result
+
+`--model SLUG` names one explicitly, whatever the catalogue says about it. The rule above is a
+prediction from metadata, and a **distribution gate is invisible to it** — a gated model advertises
+tool support, a full window and 100% uptime and refuses anyway (AGENT-18). The worker disables such
+a model when it is refused; this is how the games it already lost get cleared.
+
+    make prune-registry ARGS="--model vendor/model:free --only-named --apply"
+
+`--apply` acts on everything in the report, so `--only-named` is usually what you want alongside
+`--model`: it leaves the eligibility rule out entirely and touches nothing else.
 """
 
 from __future__ import annotations
@@ -70,7 +80,25 @@ async def main() -> int:
         default=None,
         help="override the floor (default: settings.min_context_tokens)",
     )
+    parser.add_argument(
+        "--model",
+        action="append",
+        default=[],
+        metavar="SLUG",
+        help=(
+            "also prune this model, whatever the catalogue says about it. Repeatable. For a gate "
+            "no metadata predicts (AGENT-18): the model is playable on paper and refused in fact."
+        ),
+    )
+    parser.add_argument(
+        "--only-named",
+        action="store_true",
+        help="prune only the --model slugs, leaving the eligibility rule out of it entirely",
+    )
     args = parser.parse_args()
+
+    if args.only_named and not args.model:
+        parser.error("--only-named needs at least one --model")
 
     floor = context_floor(args.min_context)
     sessionmaker = get_sessionmaker()
@@ -93,14 +121,40 @@ async def main() -> int:
             )
 
             doomed: list[tuple[ModelRegistry, list[str]]] = []
-            for row in rows:
-                against = ineligible_reasons(
-                    row, min_context=floor, has_endpoint=row.id in playable_ids
-                )
-                if against:
-                    doomed.append((row, against))
+            # **`--only-named` is about the blast radius, not about convenience.** `--apply` acts
+            # on the whole report, so naming one gated model would otherwise take every model the
+            # eligibility rule happens to dislike today with it — a much larger change than the
+            # operator asked for, made at the moment they are dealing with something else.
+            if not args.only_named:
+                for row in rows:
+                    against = ineligible_reasons(
+                        row, min_context=floor, has_endpoint=row.id in playable_ids
+                    )
+                    if against:
+                        doomed.append((row, against))
 
             print(f"{BOLD}context floor{OFF} {floor:,} tokens · {len(rows)} enabled models")
+            if args.only_named:
+                print(f"{DIM}--only-named: the eligibility rule is not being applied{OFF}")
+
+            # **Named models bypass the test, deliberately.** The rule this script applies is a
+            # prediction from metadata, and a distribution gate is invisible to it: the model
+            # advertises tools, a full window and 100% uptime, and answers 403 anyway (AGENT-18).
+            # So the operator supplies the finding the catalogue cannot. Already-disabled rows are
+            # included, because disabling is what the worker does on the refusal and the games it
+            # left behind still need clearing.
+            named = set(args.model)
+            for slug in sorted(named):
+                row = await session.scalar(
+                    sa.select(ModelRegistry).where(ModelRegistry.openrouter_id == slug)
+                )
+                if row is None:
+                    print(f"{RED}no registry row for {slug}{OFF} — nothing to prune")
+                    continue
+                if any(existing.id == row.id for existing, _ in doomed):
+                    continue
+                doomed.append((row, ["named on the command line"]))
+
             if not doomed:
                 print(f"{GREEN}nothing to prune{OFF} — every enabled model can finish a game")
                 return 0

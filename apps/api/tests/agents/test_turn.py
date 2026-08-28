@@ -460,17 +460,45 @@ async def test_a_model_that_never_moves_runs_out_of_iterations(
     assert result.outcome.termination is Termination.ERROR_FORFEIT
 
 
-async def test_the_token_budget_forfeits(db: AsyncSession, table: Table) -> None:
+async def test_a_runaway_output_stops_the_turn(db: AsyncSession, table: Table) -> None:
+    """The budget counts what the model *generated*. 400k tokens of output in one turn is
+    pathological and worth stopping."""
     result = await play_turn(
         db,
         table,
-        scripted(step(tool_call("get_board"), prompt_tokens=5000), repeat_last=True),
-        limits=TurnLimits(max_tokens=4000, max_tool_iterations=10),
+        scripted(step(tool_call("get_board"), completion_tokens=5000), repeat_last=True),
+        limits=TurnLimits(max_completion_budget=4000, max_tool_iterations=10),
     )
 
     assert result.status is TurnStatus.FORFEITED
     assert result.outcome is not None
     assert result.outcome.termination is Termination.BUDGET_EXCEEDED
+
+
+async def test_replaying_the_prompt_is_not_the_model_s_spending(
+    db: AsyncSession, table: Table
+) -> None:
+    """The regression that matters, and it ended three real games.
+
+    The transcript is re-sent on every round-trip (ADR-0003), so counting prompt tokens measured
+    transcript size times round-trips — both the harness's doing. A model that produced 5,263
+    tokens was forfeited for "using 514,446": four replays of a 128k transcript. It punished long
+    games hardest, because that is where the transcript is largest.
+    """
+    result = await play_turn(
+        db,
+        table,
+        scripted(
+            step(tool_call("get_board"), prompt_tokens=200_000),
+            step(tool_call("get_legal_moves"), prompt_tokens=200_000),
+            step(tool_call("make_move", move="e4"), prompt_tokens=200_000),
+        ),
+        limits=TurnLimits(max_completion_budget=4000),
+    )
+
+    assert result.prompt_tokens >= 600_000, "the prompt really was replayed three times"
+    assert result.status is TurnStatus.COMPLETED
+    assert result.moved
 
 
 async def test_costs_roll_up_to_the_player_and_game(db: AsyncSession, table: Table) -> None:

@@ -26,11 +26,12 @@ from chessmark.bench.service import compute_ratings
 from chessmark.core.budget import FreeTierBudget
 from chessmark.core.cooldown import ProviderCooldown
 from chessmark.db import tournaments as repo
-from chessmark.db.enums import TournamentStatus
+from chessmark.db.enums import GameStatus, TournamentStatus
 from chessmark.db.models import (
     Game,
     ModelEndpoint,
     ModelRegistry,
+    Player,
     Tournament,
     TournamentEntrant,
     TournamentGame,
@@ -304,11 +305,14 @@ async def _schedule_next_round(
 
 
 async def _resting_entrants(
-    session: AsyncSession, cooldown: ProviderCooldown, entrants: list[Any]
+    session: AsyncSession,
+    cooldown: ProviderCooldown,
+    entrants: list[Any],
+    tournament_id: uuid.UUID,
 ) -> set[str]:
     """Which entrants cannot be played right now.
 
-    Two reasons, and the second is the one production taught us:
+    Three reasons, and the last two are the ones production taught us:
 
     * the model's own endpoint is resting off a refusal;
     * **every endpoint it has belongs to a provider resting a shared pool.** `gemma-4-26b` was
@@ -321,6 +325,34 @@ async def _resting_entrants(
     """
     slugs = [e.key.split("@", 1)[0] for e in entrants]
     by_model = await cooldown.resting(slugs)
+
+    # **A model with a paused game is already busy**, whatever its cooldown says.
+    #
+    # This is the gap the cooldown alone left, and it produced four paused games against one model
+    # with nothing running: the cooldown's first rung is sixty seconds, so it lapses, the matchmaker
+    # sees the model as available, pairs it, and it is refused again. Each turn of that loop spends
+    # a pairing and leaves another game parked.
+    #
+    # Asking about paused games instead of reinstating a ceiling on them is the difference between
+    # "wait until a number goes down" and "do not start a second game against a model already
+    # waiting to play its first" — which is the actual duplication.
+    parked = await session.scalars(
+        sa.select(Player.model_id)
+        .select_from(TournamentGame)
+        .join(Game, Game.id == TournamentGame.game_id)
+        .join(Player, Player.game_id == Game.id)
+        .where(
+            TournamentGame.tournament_id == tournament_id,
+            Game.status == GameStatus.PAUSED,
+        )
+    )
+    parked_ids = {row for row in parked if row is not None}
+    if parked_ids:
+        by_model |= set(
+            await session.scalars(
+                sa.select(ModelRegistry.openrouter_id).where(ModelRegistry.id.in_(parked_ids))
+            )
+        )
 
     providers = await cooldown.resting_providers()
     if providers:
@@ -389,7 +421,7 @@ async def _schedule_pool(
     # ninety minutes rediscovering that a provider is rate-limited — see `core/cooldown.py`.
     resting: set[str] = set()
     if cooldown is not None:
-        resting = await _resting_entrants(session, cooldown, entrants)
+        resting = await _resting_entrants(session, cooldown, entrants, tournament.id)
         if resting:
             log.info("pool %s skipping %d resting entrants", tournament.slug, len(resting))
 

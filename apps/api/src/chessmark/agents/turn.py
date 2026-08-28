@@ -85,8 +85,19 @@ class TurnLimits:
     is working, not stuck. Observed legitimate turns ran to 80s on a small free model, and
     frontier reasoning models are slower still."""
 
-    max_tokens: int = 400_000
-    """Total tokens across the whole turn, summed over every round-trip."""
+    max_completion_budget: int = 400_000
+    """**Completion** tokens across the whole turn, summed over every round-trip.
+
+    It counted prompt tokens too, and the prompt is re-sent on every round-trip (ADR-0003) — so the
+    ceiling measured transcript size times round-trips, both of which are the harness's doing. A model
+    that produced 5,263 tokens was forfeited for "using 514,446": four replays of a 128k transcript.
+    It punished long games hardest, because that is where the transcript is largest, and
+    big-context models hardest of all — a 1M-window model at a 128k prompt is nowhere near
+    compaction's trigger and four round-trips still crossed a flat 400k.
+
+    Output is the model's own contribution and the only honest measure of a runaway. 400k tokens of
+    *output* in one turn is pathological; 400k of replayed prompt is an ordinary Tuesday at ply 70.
+    """
 
     max_completion_tokens: int = 64_000
     """A ceiling on one answer, **clamped at call time** to what the endpoint will accept.
@@ -856,21 +867,24 @@ class TurnRunner:
     def _over_budget(self, result: TurnResult, started: float) -> bool:
         elapsed = time.perf_counter() - started
         if elapsed > self.limits.max_seconds:
-            result.status = TurnStatus.FORFEITED
-            result.outcome = self._forfeit(
-                Termination.TIMEOUT,
-                f"{self.colour.value.capitalize()} exceeded the {self.limits.max_seconds:.0f}s "
-                "turn limit.",
+            # **Failed, not forfeited.** The turn is discarded and retried, because running out of
+            # wall clock says nothing about the play: one model lost a game at ply 1 having never
+            # been served a completion at all. `outcome` stays None, which is what makes
+            # `_advance` raise `ProviderFailureError` and the worker try again — and abandon
+            # honestly if it never gets through.
+            result.status = TurnStatus.FAILED
+            result.error = (
+                f"the turn exceeded its {self.limits.max_seconds:.0f}s limit; "
+                f"{result.llm_calls} calls completed"
             )
             return True
 
-        used = result.prompt_tokens + result.completion_tokens
-        if used > self.limits.max_tokens:
+        if result.completion_tokens > self.limits.max_completion_budget:
             result.status = TurnStatus.FORFEITED
             result.outcome = self._forfeit(
                 Termination.BUDGET_EXCEEDED,
-                f"{self.colour.value.capitalize()} used {used} tokens in one turn, over the "
-                f"{self.limits.max_tokens} limit.",
+                f"{self.colour.value.capitalize()} generated {result.completion_tokens} tokens in "
+                f"one turn, over the {self.limits.max_completion_budget} limit.",
             )
             return True
 

@@ -369,3 +369,86 @@ class TestARejectedRequest:
         handled = await make_worker(unavailable).handle(game.first_job)
 
         assert handled.outcome == "turn_failed", "requeued, not abandoned"
+
+
+#: The refusal, verbatim, from `thinkingmachines/inkling-small:free` on 2026-08-28. Reproduced
+#: with no headers, with `HTTP-Referer` + `X-Title`, with `X-OpenRouter-Title`, and with
+#: `X-OpenRouter-Categories: agents` — identically 403 every time. The *paid* variant of the same
+#: model answered normally on the first try, which is what settles it: the gate is on the free
+#: distribution, not on our client.
+GATED_403 = (
+    'litellm.APIError: OpenrouterException - {"error":{"message":'
+    '"thinkingmachines/inkling-small:free is only available on agentic harnesses. Try plugging '
+    'it into a coding agent or productivity app listed on https://openrouter.ai/apps",'
+    '"code":403}}'
+)
+
+
+class GatedError(Exception):
+    status_code = 403
+
+    def __init__(self) -> None:
+        super().__init__(GATED_403)
+
+
+async def gated(**_kwargs: object) -> object:
+    raise GatedError
+
+
+class TestAGatedModel:
+    """A gate is the one unavailability that waiting cannot fix (AGENT-18).
+
+    Everything else in this file is about *patience*: come back later, the provider is fine. A
+    distribution allow-list has no later. So the model is withdrawn from the registry and the game
+    closed at once — otherwise the 24-hour window is spent rediscovering the same 403, and the
+    cooldown's own first rung lapses after sixty seconds and lets the matchmaker pair it again.
+    One pool spent 22 pairings dying at ply 0 against exactly this model.
+    """
+
+    async def test_the_model_is_disabled_in_the_registry(
+        self, db: AsyncSession, queue: Any, make_worker: Any, redis: Any
+    ) -> None:
+        from tests.orchestration.test_match import _register
+        from tests.support import seat_match
+
+        model = await _register(db, SEATED_MODEL)
+        await _register(db, "scripted/black")
+        fixture = await seat_match(db, queue)
+
+        handled = await make_worker(gated, cooldown=ProviderCooldown(redis)).handle(
+            fixture.first_job
+        )
+
+        assert handled.outcome != PAUSED, "a gate has no later to come back to"
+
+        db.expunge_all()
+        reloaded = await db.get(Game, fixture.game.id)
+        assert reloaded is not None
+        assert reloaded.status is GameStatus.ABORTED
+        assert reloaded.termination is Termination.ABANDONED, "not a forfeit — it never played"
+
+        row = await db.get(type(model), model.id)
+        assert row is not None
+        assert row.enabled is False, "the whole point: it is never offered again"
+
+    async def test_a_plain_403_still_only_pauses(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """The narrow half. A provider refusing for its own reasons is unavailability like any
+        other, and disabling a model over one of those would empty the catalogue an endpoint at a
+        time. Only the allow-list wording withdraws it."""
+
+        class PlainForbiddenError(Exception):
+            status_code = 403
+
+            def __init__(self) -> None:
+                super().__init__('{"error":{"message":"Provider returned error","code":403}}')
+
+        async def refused(**_kwargs: object) -> object:
+            raise PlainForbiddenError
+
+        handled = await make_worker(refused, cooldown=ProviderCooldown(redis)).handle(
+            game.first_job
+        )
+
+        assert handled.outcome == PAUSED

@@ -157,6 +157,19 @@ class RateLimit:
     limit_source: str | None = None
     retry_after_seconds: float | None = None
     status_code: int | None = None
+    gated: bool = False
+    """The model is not available to us **at all**, and waiting will not change that.
+
+    `thinkingmachines/inkling-small:free` answers 403 *"only available on agentic harnesses — try
+    plugging it into a coding agent or productivity app listed on openrouter.ai/apps"*. It is a
+    distribution restriction, not a capability check: we *are* an agentic harness, and sending the
+    app-attribution headers changes nothing, because the gate is an allow-list of registered apps.
+
+    Nothing in the catalogue predicts it. That model advertises `tools`, a 1M window, `status: 0`
+    and 100% uptime — indistinguishable from one that works. So it is discovered by being refused,
+    and the only useful response is to stop offering it: 22 pairings in one pool died at ply 0
+    against that model, because a generic error taught the matchmaker nothing.
+    """
 
     @property
     def is_upstream_pool(self) -> bool:
@@ -170,6 +183,10 @@ class RateLimit:
     def describe(self, model: str) -> str:
         """One line for the page, honest about which failure this was."""
         where = self.provider or "its provider"
+        if self.gated:
+            return f"{model} is not available through this API (403)"
+        if self.status_code == 403:
+            return f"{model} was refused by {where} (403)"
         if self.status_code == 404:
             return f"{model} is not being served by {where} right now (404)"
         source = f" ({self.limit_source})" if self.limit_source else ""

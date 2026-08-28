@@ -918,9 +918,10 @@ class StandingOut(Schema):
 class TournamentPairingOut(Schema):
     """One scheduled pairing, in whatever state it is in.
 
-    The state is derived rather than stored: a pairing with a score is `played`, one with a game
-    and no score is `live`, one with neither is `queued`. That keeps the page honest about what is
-    actually happening rather than about what a scheduler last wrote down.
+    The state is derived rather than stored: a pairing with a score is `played`, one whose game is
+    paused is `paused`, one with a running game is `live`, one with neither is `waiting`. That keeps
+    the page honest about what is actually happening rather than about what a scheduler last wrote
+    down — "live" once covered a game sitting on a provider cooldown.
     """
 
     id: uuid.UUID
@@ -946,6 +947,9 @@ class TournamentStats(Schema):
     pairings: int
     played: int
     live: int
+    #: Holding a game that is not moving — a provider cooldown (ADR-0017). Counted apart from
+    #: `live`, which used to include them and made a stalled event look busy.
+    paused: int = 0
     #: Written down, not yet started. Deliberately not "queued": nothing is in the job queue for
     #: these, and only the live game has one. What holds them back is the concurrency bound.
     waiting: int

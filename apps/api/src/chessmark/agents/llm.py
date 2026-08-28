@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from chessmark.agents.attribution import attribution_headers
 from chessmark.agents.caching import apply_cache_control
 from chessmark.agents.normalise import normalise_response
 from chessmark.agents.pricing import PricingTable, compute_cost
@@ -130,12 +131,13 @@ def _status_code(error: BaseException) -> int | None:
 def is_unavailable(error: BaseException) -> bool:
     """Whether the endpoint is declining to serve this right now, rather than failing.
 
-    A 429 says so politely and a provider 404 says so bluntly, and both mean "not now" rather than
-    "not ever" — so both pause the game and cool the endpoint down instead of spending the retry
+    A 429 says so politely, a provider 404 says so bluntly, and a 403 says it about the model
+    rather than the moment — all three mean "not from here, not now" rather than "your request was
+    wrong" — so both pause the game and cool the endpoint down instead of spending the retry
     budget. Told apart from a *model* that does not exist only by when it happens: that one still
     fails at ply 0, where a pause simply expires and the game is abandoned honestly.
     """
-    return is_rate_limit(error) or _status_code(error) == 404
+    return is_rate_limit(error) or _status_code(error) in {403, 404}
 
 
 def is_rate_limit(error: BaseException) -> bool:
@@ -173,6 +175,18 @@ def rejects_the_request(error: BaseException) -> bool:
     return _status_code(error) in REQUEST_REJECTED_STATUS
 
 
+#: A 403 that is about the *model* rather than the moment. Matched on the phrase because there is
+#: no code for it: 403 alone also covers moderation, a missing BYOK key, a region block and a key
+#: scope, none of which should retire a model. Narrow enough that failing to recognise a gate merely
+#: pauses the game rather than disabling something that works.
+_GATED = re.compile(r"only available on|not available (?:on|through)", re.I)
+
+
+def is_gated(error: BaseException) -> bool:
+    """Whether the provider says this model is not offered to us at all."""
+    return _status_code(error) == 403 and bool(_GATED.search(str(error)))
+
+
 def rate_limit_from(error: BaseException) -> RateLimit:
     """What the provider said, in a form the orchestrator can act on.
 
@@ -187,6 +201,7 @@ def rate_limit_from(error: BaseException) -> RateLimit:
         limit_source=limit_source.group(1) if limit_source else None,
         retry_after_seconds=retry_after_seconds(error),
         status_code=_status_code(error),
+        gated=is_gated(error),
     )
 
 
@@ -327,6 +342,7 @@ class LlmGateway:
         sleep_fn: SleepFn | None = None,
         on_attempt: AttemptFn | None = None,
         timeout: float = 180.0,
+        attribution: dict[str, str] | None = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url
@@ -337,6 +353,10 @@ class LlmGateway:
         self._sleep = sleep_fn or asyncio.sleep
         self._on_attempt = on_attempt
         self.timeout = timeout
+        # Resolved once, at construction: it is a constant of the process, and reading settings per
+        # call would put a cache lookup inside the hot path for two strings that never change.
+        # Only attached when we hold a key — see `agents/attribution.py` for why.
+        self.attribution = attribution if attribution is not None else attribution_headers()
 
     def build_request(
         self,
@@ -435,6 +455,15 @@ class LlmGateway:
             call_kwargs["api_key"] = self.api_key
         if self.base_url:
             call_kwargs["api_base"] = self.base_url
+
+        # Who is calling (`agents/attribution.py`). Sent as real headers rather than in
+        # `extra_body`, because these are HTTP headers and not OpenRouter body fields — and only
+        # with a key, so a scripted gateway's recorded request stays byte-identical to its cassette.
+        if self.api_key and self.attribution:
+            call_kwargs["extra_headers"] = {
+                **dict(call_kwargs.get("extra_headers") or {}),
+                **self.attribution,
+            }
 
         deadline = deadline_seconds if deadline_seconds is not None else self.timeout
         last_error: BaseException | None = None
