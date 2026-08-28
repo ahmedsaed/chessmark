@@ -130,12 +130,13 @@ def _status_code(error: BaseException) -> int | None:
 def is_unavailable(error: BaseException) -> bool:
     """Whether the endpoint is declining to serve this right now, rather than failing.
 
-    A 429 says so politely and a provider 404 says so bluntly, and both mean "not now" rather than
-    "not ever" — so both pause the game and cool the endpoint down instead of spending the retry
+    A 429 says so politely, a provider 404 says so bluntly, and a 403 says it about the model
+    rather than the moment — all three mean "not from here, not now" rather than "your request was
+    wrong" — so both pause the game and cool the endpoint down instead of spending the retry
     budget. Told apart from a *model* that does not exist only by when it happens: that one still
     fails at ply 0, where a pause simply expires and the game is abandoned honestly.
     """
-    return is_rate_limit(error) or _status_code(error) == 404
+    return is_rate_limit(error) or _status_code(error) in {403, 404}
 
 
 def is_rate_limit(error: BaseException) -> bool:
@@ -173,6 +174,18 @@ def rejects_the_request(error: BaseException) -> bool:
     return _status_code(error) in REQUEST_REJECTED_STATUS
 
 
+#: A 403 that is about the *model* rather than the moment. Matched on the phrase because there is
+#: no code for it: 403 alone also covers moderation, a missing BYOK key, a region block and a key
+#: scope, none of which should retire a model. Narrow enough that failing to recognise a gate merely
+#: pauses the game rather than disabling something that works.
+_GATED = re.compile(r"only available on|not available (?:on|through)", re.I)
+
+
+def is_gated(error: BaseException) -> bool:
+    """Whether the provider says this model is not offered to us at all."""
+    return _status_code(error) == 403 and bool(_GATED.search(str(error)))
+
+
 def rate_limit_from(error: BaseException) -> RateLimit:
     """What the provider said, in a form the orchestrator can act on.
 
@@ -187,6 +200,7 @@ def rate_limit_from(error: BaseException) -> RateLimit:
         limit_source=limit_source.group(1) if limit_source else None,
         retry_after_seconds=retry_after_seconds(error),
         status_code=_status_code(error),
+        gated=is_gated(error),
     )
 
 

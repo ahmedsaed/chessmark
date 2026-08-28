@@ -371,7 +371,7 @@ export interface Standing {
  * `state` is derived by the API from the row rather than stored, so the page describes what is
  * actually happening rather than what a scheduler last wrote down.
  */
-export type PairingState = "waiting" | "live" | "played" | "abandoned";
+export type PairingState = "waiting" | "live" | "paused" | "played" | "abandoned";
 
 export interface TournamentPairing {
   id: string;
@@ -391,6 +391,8 @@ export interface TournamentStats {
   pairings: number;
   played: number;
   live: number;
+  /** Holding a game that is not moving — a provider cooldown. Counted apart from `live`. */
+  paused: number;
   /** Written down, not yet started. Not "queued": nothing is in the job queue for these. */
   waiting: number;
   abandoned: number;

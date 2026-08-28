@@ -76,7 +76,7 @@ function nameMap(tournament: TournamentDetail): Map<string, string> {
  * is indistinguishable from one that is wrong, and free-tier providers abandon games regularly.
  */
 function Progress({ tournament }: { tournament: TournamentDetail }) {
-  const { played, live, waiting, abandoned, pairings } = tournament.stats;
+  const { played, live, paused, waiting, abandoned, pairings } = tournament.stats;
   if (!pairings) {
     return (
       <p className="mt-8 border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
@@ -85,10 +85,12 @@ function Progress({ tournament }: { tournament: TournamentDetail }) {
     );
   }
 
+  /* The same colours the schedule's dots use, so a reader who learns one has learned both. */
   const segments = [
-    { label: "played", count: played, className: "bg-accent" },
-    { label: "live", count: live, className: "bg-machine" },
-    { label: "abandoned", count: abandoned, className: "bg-bad" },
+    { label: "played", count: played, className: "bg-good" },
+    { label: "live", count: live, className: "bg-bad" },
+    { label: "paused", count: paused, className: "bg-ink-faint" },
+    { label: "abandoned", count: abandoned, className: "bg-bad-deep" },
     { label: "waiting", count: waiting, className: "bg-line" },
   ].filter((segment) => segment.count > 0);
 
@@ -155,7 +157,9 @@ function Metrics({ tournament }: { tournament: TournamentDetail }) {
       <Fact
         label="Concurrency"
         value={String(tournament.max_concurrent)}
-        note={`${s.live} in flight`}
+        /* `live` and not `live + paused`: a paused game holds no slot (ADR-0017), and saying "4 in
+           flight" against a bound of 1 was the arithmetic that made the page look broken. */
+        note={s.paused ? `${s.live} running · ${s.paused} paused` : `${s.live} running`}
       />
     </dl>
   );
@@ -240,6 +244,10 @@ function Schedule({
         <span className="tabular font-mono text-[10px] text-ink-faint">{pairings.length}</span>
       </div>
 
+      <div className="mb-3">
+        <StateLegend />
+      </div>
+
       {rounds.size === 0 && (
         <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
           Nothing scheduled yet.
@@ -315,15 +323,71 @@ function Pairing({
   );
 }
 
-function StateDot({ state }: { state: TournamentPairing["state"] }) {
-  const tone = {
-    played: "bg-accent",
-    live: "bg-machine",
-    abandoned: "bg-bad",
-    waiting: "bg-line",
-  }[state];
+/**
+ * The colours a pairing's state is drawn in, and they are the site's own.
+ *
+ * They used to be `accent` for played, `machine` for live, `bad` for abandoned — state-mapped, but
+ * **inverted relative to every other page**: red-with-a-pulse is what the header, the lobby card
+ * and the hero all use for *live*, and cyan is the `machine` register that tool calls and
+ * compaction notices live in. So the one place it meant "abandoned" read as live, and the one
+ * place it meant "live" read as machinery. Not random, but no reader could have known.
+ *
+ * Now: `good` for a real result, `bad` and pulsing for a game actually moving, `ink-faint` for one
+ * paused on a provider, and hollow for a pairing nothing has started.
+ */
+const PAIRING_TONE: Record<TournamentPairing["state"], string> = {
+  played: "bg-good",
+  live: "bg-bad animate-pulse",
+  paused: "bg-ink-faint",
+  abandoned: "border border-bad-deep bg-transparent",
+  waiting: "border border-line bg-transparent",
+};
 
-  return <i aria-label={state} title={state} className={`block h-1.5 w-1.5 flex-none ${tone}`} />;
+const PAIRING_HINT: Record<TournamentPairing["state"], string> = {
+  played: "a result",
+  live: "playing now",
+  paused: "waiting on a provider",
+  abandoned: "the harness gave up",
+  waiting: "not started",
+};
+
+function StateDot({ state }: { state: TournamentPairing["state"] }) {
+  return (
+    <i
+      aria-label={`${state} — ${PAIRING_HINT[state]}`}
+      title={`${state} — ${PAIRING_HINT[state]}`}
+      className={`block h-1.5 w-1.5 flex-none ${PAIRING_TONE[state]}`}
+    />
+  );
+}
+
+/**
+ * What the dots mean, said once.
+ *
+ * The colours are consistent now, which is necessary and not sufficient: a 1.5px square carries no
+ * label. "It feels random" is the correct reaction to an unexplained colour, however principled it
+ * is underneath.
+ */
+function StateLegend() {
+  const order: TournamentPairing["state"][] = [
+    "live",
+    "paused",
+    "played",
+    "waiting",
+    "abandoned",
+  ];
+  return (
+    <ul className="flex flex-wrap items-center gap-x-4 gap-y-1">
+      {order.map((state) => (
+        <li key={state} className="flex items-center gap-1.5">
+          <i aria-hidden className={`block h-1.5 w-1.5 flex-none ${PAIRING_TONE[state]}`} />
+          <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+            {state}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
 function Fact({

@@ -41,24 +41,36 @@ from chessmark.tournament import standings as compute_standings
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
 
 
-def _state(row: TournamentGame) -> str:
-    """Derived, not stored, so the page describes reality rather than a scheduler's last word."""
+def _state(row: TournamentGame, status: GameStatus | None = None) -> str:
+    """Derived, not stored, so the page describes reality rather than a scheduler's last word.
+
+    **`paused` is its own state, and used not to be.** Any pairing holding a game with no score was
+    reported "live", so a page said "4 live" while some of those games were sitting on a provider
+    cooldown with nothing happening (ADR-0017) — and a `pending` game, created but not yet picked
+    up, counted as live too. The scheduler's word was "there is a game here"; the reader's question
+    is "is anything happening".
+    """
     if row.abandoned_reason:
         return "abandoned"
     if row.white_score is not None:
         return "played"
-    if row.game_id is not None:
-        return "live"
-    return "waiting"
+    if row.game_id is None:
+        return "waiting"
+    if status is GameStatus.PAUSED:
+        return "paused"
+    return "live"
 
 
 async def _stats(session: SessionDep, tournament_id: uuid.UUID) -> TournamentStats:
-    rows = list(
-        await session.scalars(
-            sa.select(TournamentGame).where(TournamentGame.tournament_id == tournament_id)
+    pairs = (
+        await session.execute(
+            sa.select(TournamentGame, Game.status)
+            .outerjoin(Game, Game.id == TournamentGame.game_id)
+            .where(TournamentGame.tournament_id == tournament_id)
         )
-    )
-    states = [_state(row) for row in rows]
+    ).all()
+    rows = [row for row, _ in pairs]
+    states = [_state(row, status) for row, status in pairs]
 
     totals = (
         await session.execute(
@@ -96,6 +108,7 @@ async def _stats(session: SessionDep, tournament_id: uuid.UUID) -> TournamentSta
         pairings=len(rows),
         played=states.count("played"),
         live=states.count("live"),
+        paused=states.count("paused"),
         waiting=states.count("waiting"),
         abandoned=states.count("abandoned"),
         total_cost_usd=cost,
@@ -179,13 +192,16 @@ async def get_tournament(session: SessionDep, slug: str) -> TournamentDetail:
     results = await repo.results_so_far(session, tournament.id)
     table = compute_standings(entrants, results)
 
-    pairing_rows = list(
-        await session.scalars(
-            sa.select(TournamentGame)
+    pairing_pairs = (
+        await session.execute(
+            sa.select(TournamentGame, Game.status)
+            .outerjoin(Game, Game.id == TournamentGame.game_id)
             .where(TournamentGame.tournament_id == tournament.id)
             .order_by(TournamentGame.round_number, TournamentGame.id)
         )
-    )
+    ).all()
+    pairing_rows = [row for row, _ in pairing_pairs]
+    pairing_status = {row.id: status for row, status in pairing_pairs}
 
     game_ids = [row.game_id for row in pairing_rows if row.game_id]
     games: list[GameSummary] = []
@@ -230,7 +246,7 @@ async def get_tournament(session: SessionDep, slug: str) -> TournamentDetail:
                 white_key=row.white_key,
                 black_key=row.black_key,
                 white_score=row.white_score,
-                state=_state(row),
+                state=_state(row, pairing_status.get(row.id)),
                 game_id=row.game_id,
                 abandoned_reason=row.abandoned_reason,
                 started_at=row.started_at,

@@ -25,10 +25,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 API_ROOT = REPO_ROOT / "apps" / "api"
 sys.path.insert(0, str(API_ROOT / "src"))
 
+import sqlalchemy as sa  # noqa: E402
 from redis.asyncio import Redis  # noqa: E402
 
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.enums import EventType, GameStatus  # noqa: E402
+from chessmark.db.models import TournamentGame  # noqa: E402
 from chessmark.db.repositories import append_event, get_game, rebuild_referee  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.game import RESUMABLE_TERMINATIONS, GameResult  # noqa: E402
@@ -90,6 +92,19 @@ async def main() -> int:
             # before playing a move.
             previous = game.termination
             game.status = GameStatus.RUNNING
+
+            # **The pairing has to be un-settled too.** A tournament pairing whose game was
+            # abandoned carries `abandoned_reason`, and `_settle_finished` only looks at pairings
+            # that are neither scored nor abandoned — so a resumed game played on to checkmate and
+            # its pairing stayed "abandoned, no score" for ever. Observed exactly that: a 120-ply
+            # game with a real result, invisible to the standings.
+            pairing = await session.scalar(
+                sa.select(TournamentGame).where(TournamentGame.game_id == game.id)
+            )
+            if pairing is not None and pairing.abandoned_reason:
+                pairing.abandoned_reason = None
+                pairing.ended_at = None
+                print("re-opened its tournament pairing so it can settle again")
             game.result = GameResult.ONGOING
             game.termination = None
             game.termination_detail = None

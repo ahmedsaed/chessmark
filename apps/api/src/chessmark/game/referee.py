@@ -75,17 +75,33 @@ RESUMABLE_TERMINATIONS = frozenset(
         Termination.BUDGET_EXCEEDED,
         Termination.PLY_CAP,
         Termination.ABANDONED,
+        Termination.TIMEOUT,
     }
 )
 
 
+#: Endings that are findings **about a player**, and so count for ratings.
+#:
+#: Each one is something the model did: it played illegally six times, it answered in prose four
+#: times running, it could not stop talking, it filled its own window. Reproducible, and the same
+#: on any endpoint that serves the model.
+#:
+#: **`TIMEOUT` and `BUDGET_EXCEEDED` were here and are not findings.** Wall clock measures the
+#: *provider's* latency — the same model on two endpoints got two verdicts, which is the routing
+#: lottery ADR-0015 exists to remove, reappearing as a clock. One model lost a game at **ply 1
+#: having never been served a single completion**. And the token ceiling counted the *prompt*,
+#: which the harness re-sends every round-trip: a model that produced 5,263 tokens was forfeited
+#: for "using 514,446", four replays of a 128k transcript. Five of twelve completed games in one
+#: pool carried a verdict neither model had earned.
+#:
+#: Latency and size are still measured and published — mean latency per contestant, tokens per
+#: call — as *statistics*, which is what they are. A forfeit says "it played worse", and of a slow
+#: provider that claim is simply false.
 FORFEIT_TERMINATIONS = frozenset(
     {
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
         Termination.TRUNCATED,
-        Termination.TIMEOUT,
-        Termination.BUDGET_EXCEEDED,
         Termination.CONTEXT_EXCEEDED,
     }
 )
