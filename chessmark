@@ -21,6 +21,7 @@ RED=$'\033[31m'; GREEN=$'\033[32m'; AMBER=$'\033[33m'
 
 die() { printf '%s%s%s\n' "$RED" "$*" "$OFF" >&2; exit 1; }
 say() { printf '%s%s%s\n' "$DIM" "$*" "$OFF"; }
+warn() { printf '%s%s%s\n' "$AMBER" "$*" "$OFF" >&2; }
 
 # psql and pg_dump read the credentials from inside the container, so this works whatever `.env`
 # set POSTGRES_USER and POSTGRES_DB to — and there is no second copy of them to drift.
@@ -38,9 +39,27 @@ cmd_down() { # stop everything, leaving the data volumes alone
   "${COMPOSE[@]}" down "$@"
 }
 
-cmd_deploy() { # pull the published images, migrate, then restart — the whole deploy
+cmd_deploy() { # pull, drain the workers, migrate, restart, check /ready — the whole deploy
   say "pulling…";        "${COMPOSE[@]}" pull
-  say "migrating…";      "${COMPOSE[@]}" run --rm migrate
+
+  # **Stop the writers before migrating.** A migration that takes ACCESS EXCLUSIVE — which every
+  # `ALTER TABLE` does, including a catalogue-only `SET DEFAULT` taking microseconds — conflicts
+  # with the ACCESS SHARE that any plain `SELECT` holds. The worker keeps one transaction open for
+  # a whole turn, and a free model's turn runs to 442 seconds, so `migrate` queued behind it and
+  # the deploy looked hung. Worse: a queued ACCESS EXCLUSIVE blocks everything behind it, so the
+  # API stalled too.
+  #
+  # Stopping a worker mid-turn is safe by design: the turn is one transaction and rolls back whole,
+  # and its job is redelivered (`expected_ply` idempotency, ADR-0007).
+  say "draining workers…"; "${COMPOSE[@]}" stop worker tournament
+
+  say "migrating…"
+  if ! "${COMPOSE[@]}" run --rm migrate; then
+    warn "migration failed — bringing the workers back on the old image"
+    "${COMPOSE[@]}" up -d worker tournament
+    return 1
+  fi
+
   # `WORKER_REPLICAS` is read from the environment or `.env`, so a deploy keeps whatever scale is
   # configured rather than quietly returning to one worker.
   say "restarting…";     "${COMPOSE[@]}" up -d --remove-orphans api web worker tournament
@@ -162,7 +181,10 @@ cmd_migrate() { # apply migrations, without restarting anything else
 # ---------------------------------------------------------------------------- help
 
 declare -A EXAMPLES=(
-  [deploy]='./chessmark deploy                      # pull, migrate, restart, check /ready'
+  [deploy]='./chessmark deploy                      # pull, drain workers, migrate, restart, check /ready
+
+# The worker and tournament services are stopped for the migration and brought back after.
+# A migration waits at most ALEMBIC_LOCK_TIMEOUT_SECONDS (10) for a lock, then fails loudly.'
   [up]='./chessmark up
 ./chessmark up worker                  # just one service'
   [logs]='./chessmark logs worker

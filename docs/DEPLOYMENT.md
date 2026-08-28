@@ -43,8 +43,33 @@ everything inside a container: no uv, no node, and no remembering which compose 
 
 Four details that are deliberate rather than incidental:
 
-- **`deploy` is the whole sequence** — pull, migrate, restart, check `/ready`. There is no half of it
-  worth running alone.
+- **`deploy` is the whole sequence** — pull, **drain the workers**, migrate, restart, check
+  `/ready`. There is no half of it worth running alone.
+
+  The drain is not tidiness. Every `ALTER TABLE` takes **ACCESS EXCLUSIVE**, including a
+  catalogue-only `SET DEFAULT` that does microseconds of work, and that conflicts with the ACCESS
+  SHARE any plain `SELECT` holds. The worker keeps **one transaction open for a whole turn**
+  (NFR-08) and a free model's turn runs to 442 seconds — so `migrate` queued behind it and the
+  deploy looked hung. A queued ACCESS EXCLUSIVE also sits at the head of the lock queue and blocks
+  everything behind it, so the API stalled too.
+
+  Stopping a worker mid-turn is safe by design: the turn is one transaction and rolls back whole,
+  and its job is redelivered (`expected_ply` idempotency, ADR-0007). If the migration fails, the
+  workers come back on the old image and `deploy` returns non-zero.
+
+  **Migrations wait at most `ALEMBIC_LOCK_TIMEOUT_SECONDS` (default 10) for a lock**, then fail
+  loudly. `lock_timeout` bounds only the wait, never the work, so a slow backfill is unaffected —
+  raise it for one that legitimately needs to wait behind a reader. If a migration does fail this
+  way, find the holder:
+
+  ```
+  ./chessmark sql <<'SQL'
+  SELECT pid, state, now() - xact_start AS txn_age, left(query, 80)
+  FROM pg_stat_activity
+  WHERE datname = current_database() AND pid <> pg_backend_pid()
+  ORDER BY xact_start NULLS LAST;
+  SQL
+  ```
 - **`restart` uses `--force-recreate`.** A container that once failed to bind its port can come back
   running-but-unpublished: healthy inside, unreachable outside, with `docker port` empty. `start` does
   not fix that; recreating does.
