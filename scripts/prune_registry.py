@@ -24,6 +24,11 @@ This applies the rule to what is already there, and it is deliberately two comma
 prediction from metadata, and a **distribution gate is invisible to it** — a gated model advertises
 tool support, a full window and 100% uptime and refuses anyway (AGENT-18). The worker disables such
 a model when it is refused; this is how the games it already lost get cleared.
+
+    make prune-registry ARGS="--model vendor/model:free --only-named --apply"
+
+`--apply` acts on everything in the report, so `--only-named` is usually what you want alongside
+`--model`: it leaves the eligibility rule out entirely and touches nothing else.
 """
 
 from __future__ import annotations
@@ -85,7 +90,15 @@ async def main() -> int:
             "no metadata predicts (AGENT-18): the model is playable on paper and refused in fact."
         ),
     )
+    parser.add_argument(
+        "--only-named",
+        action="store_true",
+        help="prune only the --model slugs, leaving the eligibility rule out of it entirely",
+    )
     args = parser.parse_args()
+
+    if args.only_named and not args.model:
+        parser.error("--only-named needs at least one --model")
 
     floor = context_floor(args.min_context)
     sessionmaker = get_sessionmaker()
@@ -108,14 +121,21 @@ async def main() -> int:
             )
 
             doomed: list[tuple[ModelRegistry, list[str]]] = []
-            for row in rows:
-                against = ineligible_reasons(
-                    row, min_context=floor, has_endpoint=row.id in playable_ids
-                )
-                if against:
-                    doomed.append((row, against))
+            # **`--only-named` is about the blast radius, not about convenience.** `--apply` acts
+            # on the whole report, so naming one gated model would otherwise take every model the
+            # eligibility rule happens to dislike today with it — a much larger change than the
+            # operator asked for, made at the moment they are dealing with something else.
+            if not args.only_named:
+                for row in rows:
+                    against = ineligible_reasons(
+                        row, min_context=floor, has_endpoint=row.id in playable_ids
+                    )
+                    if against:
+                        doomed.append((row, against))
 
             print(f"{BOLD}context floor{OFF} {floor:,} tokens · {len(rows)} enabled models")
+            if args.only_named:
+                print(f"{DIM}--only-named: the eligibility rule is not being applied{OFF}")
 
             # **Named models bypass the test, deliberately.** The rule this script applies is a
             # prediction from metadata, and a distribution gate is invisible to it: the model

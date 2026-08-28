@@ -176,7 +176,7 @@ LINES=500 ./chessmark logs tournament'
   [prune]='./chessmark prune                       # report only
 ./chessmark prune --apply               # disable them and remove their games
 ./chessmark prune --apply --keep-finished
-./chessmark prune --model vendor/model:free --apply   # one named model, whatever the catalogue says'
+./chessmark prune --model vendor/model:free --only-named --apply   # that model and nothing else'
   [tournament]='./chessmark tournament field --free
 ./chessmark tournament create --name "Free Models" --slug pool-free --free --format pool
 ./chessmark tournament run pool-free --interval 30

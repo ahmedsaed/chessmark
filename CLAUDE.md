@@ -612,7 +612,9 @@ found through one abandoned game:
 prediction from metadata and a distribution gate is invisible to it, so the operator supplies the
 finding the catalogue cannot. It includes already-disabled rows, because disabling is what the
 worker does on the refusal and the games it left behind still need clearing. **`--apply` acts on
-everything in the report**, named and predicted alike; run it without `--apply` first.
+everything in the report**, named and predicted alike — so `--only-named` is usually what you want
+beside `--model`: naming one gated model should not take every model the rule happens to dislike
+today with it, at the moment the operator is dealing with something else.
 
 `make prune-registry` applies the rule to the registry as it already stands — reports by default,
 `ARGS=--apply` to act. It **disables, never deletes**: `players.model_id` is `ON DELETE RESTRICT`,
