@@ -318,6 +318,63 @@ async def test_a_finished_game_settles_its_pairing(
     assert [r.white_score for r in results] == [1.0]
 
 
+async def test_a_resumed_game_settles_even_though_its_pairing_was_abandoned(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """An abandonment is a verdict, and a resumed game can outgrow it.
+
+    `_settle_finished` used to skip any pairing already carrying an `abandoned_reason`, on the
+    reasonable-sounding ground that it was settled. But a game abandoned on a provider 404 was
+    resumed, played on to checkmate at ply 120 — and its pairing stayed "abandoned, no score" for
+    ever, invisible to the standings. Nothing could ever leave that state.
+
+    Three models, not two: with two the single pairing completes the event, `advance` returns
+    "already over" on the next tick and never reaches the settle at all — which is a real
+    limitation of resuming a *closed* event, and not the one under test here. A pool, which is
+    where this was seen, never finishes.
+    """
+    tournament_id, _ = await make_tournament(
+        db, models=3, config=TournamentConfig(format=Format.ROUND_ROBIN, max_concurrent=1)
+    )
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    rows = await repo.in_flight(db, tournament_id)
+    pairing_id, game_id = rows[0].id, rows[0].game_id
+
+    # Abandoned, and settled as such.
+    game = await db.get(Game, game_id)
+    assert game is not None
+    game.status = GameStatus.ABORTED
+    game.termination_detail = "provider returned 404"
+    await db.commit()
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    pairing = await db.get(TournamentGame, pairing_id)
+    assert pairing is not None and pairing.abandoned_reason, "the abandonment was recorded"
+
+    # Resumed by hand, and played to a real result.
+    game = await db.get(Game, game_id)
+    assert game is not None
+    game.status = GameStatus.FINISHED
+    game.result = GameResult.BLACK_WINS
+    game.termination = Termination.CHECKMATE
+    game.ply_count = 120
+    await db.commit()
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    pairing = await db.get(TournamentGame, pairing_id)
+    assert pairing is not None
+    assert pairing.white_score == 0.0, "the checkmate is the result, and it is black's"
+    assert pairing.abandoned_reason is None, "a real result overrides the abandonment it outgrew"
+    assert any(r.white_score == 0.0 for r in await repo.results_so_far(db, tournament_id)), (
+        "and it reaches the standings, which was the whole complaint"
+    )
+
+
 async def test_an_abandoned_game_is_not_a_result_about_either_player(
     db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
 ) -> None:

@@ -394,6 +394,11 @@ async def settle(session: AsyncSession, row: TournamentGame, game: Game) -> bool
         return False
 
     row.white_score = score
+    # **A real result overrides a recorded abandonment**, because the game record is the authority
+    # (invariant 1) and the two cannot both be true. A game abandoned on a provider 404 was
+    # resumed, played on to checkmate at ply 120 — and its pairing stayed "abandoned, no score",
+    # because this function was only ever reached for pairings that were not already abandoned.
+    row.abandoned_reason = None
     row.ended_at = sa.func.now()
     await session.flush()
     return True

@@ -93,18 +93,30 @@ async def main() -> int:
             previous = game.termination
             game.status = GameStatus.RUNNING
 
-            # **The pairing has to be un-settled too.** A tournament pairing whose game was
-            # abandoned carries `abandoned_reason`, and `_settle_finished` only looks at pairings
-            # that are neither scored nor abandoned — so a resumed game played on to checkmate and
-            # its pairing stayed "abandoned, no score" for ever. Observed exactly that: a 120-ply
-            # game with a real result, invisible to the standings.
+            # **The pairing has to be un-settled too, and both halves of it.** A pairing carries
+            # either an `abandoned_reason` or a `white_score`, and a resumed game must shed
+            # whichever it has: the verdict being reopened is exactly the one written there.
+            #
+            # Clearing only the abandonment was the first version of this, and it left a worse bug
+            # than it fixed. `white_score` means "this pairing is decided" — the column's own
+            # comment says *null while the game is unplayed or in flight* — so four resumed games
+            # ran for up to 89 plies while the schedule showed them as **played**, with the score
+            # of the forfeit that had just been overturned, and the event reported `live: 0` with
+            # four games moving. The homepage, reading the games directly, disagreed with the
+            # tournament page, which is how it was noticed.
             pairing = await session.scalar(
                 sa.select(TournamentGame).where(TournamentGame.game_id == game.id)
             )
-            if pairing is not None and pairing.abandoned_reason:
+            if pairing is not None and (
+                pairing.abandoned_reason is not None or pairing.white_score is not None
+            ):
+                was = (
+                    "abandoned" if pairing.abandoned_reason else f"scored {pairing.white_score}"
+                )
                 pairing.abandoned_reason = None
+                pairing.white_score = None
                 pairing.ended_at = None
-                print("re-opened its tournament pairing so it can settle again")
+                print(f"re-opened its tournament pairing (was {was}) so it can settle again")
             game.result = GameResult.ONGOING
             game.termination = None
             game.termination_detail = None

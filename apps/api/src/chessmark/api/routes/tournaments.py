@@ -41,8 +41,30 @@ from chessmark.tournament import standings as compute_standings
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
 
 
+#: What a game's own status says about its pairing. The game record is the authority (invariant 1).
+_BY_STATUS = {
+    GameStatus.RUNNING: "live",
+    GameStatus.PENDING: "live",
+    GameStatus.PAUSED: "paused",
+    GameStatus.FINISHED: "played",
+    GameStatus.ABORTED: "abandoned",
+}
+
+
 def _state(row: TournamentGame, status: GameStatus | None = None) -> str:
     """Derived, not stored, so the page describes reality rather than a scheduler's last word.
+
+    **The game decides, and the pairing only fills in where there is no game.** It was the other
+    way round — `abandoned_reason` first, then `white_score`, then the status — and both of those
+    columns are a *verdict already recorded*, which a resumed game invalidates. Two contradictions
+    reached the page at once from that ordering:
+
+    * Four pairings kept the score of a forfeit that had just been overturned, so games running at
+      up to ply 89 were drawn as **played** and the event reported `live: 0` while four boards
+      moved. (`resume_game.py` now clears the score; this is the half that stops a stale one from
+      being believed.)
+    * A game abandoned on a provider 404, resumed, and played on to checkmate at ply 120 was still
+      drawn as **abandoned**, because its pairing's `abandoned_reason` outranked its own result.
 
     **`paused` is its own state, and used not to be.** Any pairing holding a game with no score was
     reported "live", so a page said "4 live" while some of those games were sitting on a provider
@@ -50,15 +72,14 @@ def _state(row: TournamentGame, status: GameStatus | None = None) -> str:
     up, counted as live too. The scheduler's word was "there is a game here"; the reader's question
     is "is anything happening".
     """
+    if row.game_id is not None and status is not None:
+        return _BY_STATUS.get(status, "live")
+    # No game, or one we could not read: the pairing's own record is all there is.
     if row.abandoned_reason:
         return "abandoned"
     if row.white_score is not None:
         return "played"
-    if row.game_id is None:
-        return "waiting"
-    if status is GameStatus.PAUSED:
-        return "paused"
-    return "live"
+    return "waiting"
 
 
 async def _stats(session: SessionDep, tournament_id: uuid.UUID) -> TournamentStats:

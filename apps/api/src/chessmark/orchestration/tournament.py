@@ -221,14 +221,21 @@ async def _uses_free_models(session: AsyncSession, tournament: Tournament) -> bo
 
 
 async def _settle_finished(session: AsyncSession, tournament: Tournament) -> int:
-    """Record results for pairings whose game has ended."""
+    """Record results for pairings whose game has ended.
+
+    **An abandoned pairing is included.** It used to be filtered out, on the reasonable-sounding
+    ground that an abandonment is settled — but a game can be *resumed*, and then the pairing holds
+    a verdict its own game has outgrown. One played on to checkmate at ply 120 and stayed
+    "abandoned, no score" for ever, invisible to the standings. `settle` is the one place that
+    decides, and it returns False unless the game actually reached a result, so widening the query
+    costs a handful of reads a tick and removes a state nothing could ever leave.
+    """
     rows = list(
         await session.scalars(
             sa.select(TournamentGame).where(
                 TournamentGame.tournament_id == tournament.id,
                 TournamentGame.game_id.is_not(None),
                 TournamentGame.white_score.is_(None),
-                TournamentGame.abandoned_reason.is_(None),
             )
         )
     )

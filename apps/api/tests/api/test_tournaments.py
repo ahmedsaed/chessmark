@@ -112,12 +112,17 @@ async def test_pairings_report_the_state_they_are_actually_in(
             .order_by(TournamentGame.id)
         )
     )
-    # One played, one live, one abandoned, the rest queued.
-    game = Game(status=GameStatus.FINISHED, start_fen="8/8/8/8/8/8/8/8 w - - 0 1")
-    db.add(game)
+    # One played, one live, one abandoned, the rest queued. **The live one needs a game that is
+    # actually running**: this used to point at a FINISHED game and still expect "live", which was
+    # the bug wearing an assertion — a pairing whose game has ended is played, whatever its own
+    # columns say yet.
+    finished = Game(status=GameStatus.FINISHED, start_fen="8/8/8/8/8/8/8/8 w - - 0 1")
+    running = Game(status=GameStatus.RUNNING, start_fen="8/8/8/8/8/8/8/8 w - - 0 1")
+    db.add_all([finished, running])
     await db.flush()
     rows[0].white_score = 1.0
-    rows[1].game_id = game.id
+    rows[0].game_id = finished.id
+    rows[1].game_id = running.id
     rows[2].abandoned_reason = "no provider could be reached"
     await db.commit()
 
@@ -129,6 +134,60 @@ async def test_pairings_report_the_state_they_are_actually_in(
     assert states.count("abandoned") == 1
     assert states.count("waiting") == len(rows) - 3
     assert body["stats"]["pairings"] == len(rows)
+
+
+async def test_a_resumed_game_outranks_the_verdict_its_pairing_still_holds(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The game record is the authority (invariant 1), and a resumed game makes its pairing's own
+    columns stale — so the state must be read from the game, not from them.
+
+    Both halves were seen on the same page at once. Four pairings kept the score of a forfeit that
+    had just been overturned, so games running at up to ply 89 were drawn as *played* and the event
+    reported `live: 0` while four boards moved; and a game abandoned on a provider 404, resumed and
+    played on to checkmate at ply 120, was still drawn as *abandoned*. `resume_game.py` clears both
+    columns now; this is the half that stops a stale one from being believed if it survives.
+    """
+    tournament_id, _ = await make_event(db, models=4)
+
+    from chessmark.tournament import round_robin
+
+    entrants = await repo.entrants_of(db, tournament_id)
+    for games in round_robin(entrants):
+        await repo.record_round(db, tournament_id, games)
+    await db.commit()
+
+    rows = list(
+        await db.scalars(
+            sa.select(TournamentGame)
+            .where(TournamentGame.tournament_id == tournament_id)
+            .order_by(TournamentGame.id)
+        )
+    )
+
+    resumed_from_forfeit = Game(status=GameStatus.RUNNING, start_fen="8/8/8/8/8/8/8/8 w - - 0 1")
+    resumed_to_a_result = Game(
+        status=GameStatus.FINISHED, start_fen="8/8/8/8/8/8/8/8 w - - 0 1", ply_count=120
+    )
+    db.add_all([resumed_from_forfeit, resumed_to_a_result])
+    await db.flush()
+
+    rows[0].game_id = resumed_from_forfeit.id
+    rows[0].white_score = 1.0  # the overturned forfeit's score, not yet cleared
+    rows[1].game_id = resumed_to_a_result.id
+    rows[1].abandoned_reason = "provider returned 404"  # the abandonment it outgrew
+    await db.commit()
+
+    body = (await client.get("/tournaments/test-cup")).json()
+    by_game = {p["game_id"]: p["state"] for p in body["pairings"] if p["game_id"]}
+
+    assert by_game[str(resumed_from_forfeit.id)] == "live", (
+        "a running game is live however its pairing was scored"
+    )
+    assert by_game[str(resumed_to_a_result.id)] == "played", (
+        "a finished game is played however its pairing was abandoned"
+    )
+    assert body["stats"]["live"] == 1, "the count the page leads with has to agree"
 
 
 async def test_money_comes_from_the_games_not_a_running_total(

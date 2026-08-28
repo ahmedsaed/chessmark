@@ -474,7 +474,8 @@ Latency and size are still measured and published — they are statistics. A for
 worse", and of a slow provider that claim is false.
 
 **A gated model is disabled, not paired again** (AGENT-18). `thinkingmachines/inkling-small:free`
-answers 403 *"only available on agentic harnesses. Try plugging it into a coding agent or
+and `thinkingmachines/inkling:free` — the vendor's whole free tier, checked one at a time — answer
+403 *"only available on agentic harnesses. Try plugging it into a coding agent or
 productivity app listed on openrouter.ai/apps"* — a distribution allow-list, not a capability check.
 **There is nothing to declare.** The gate was probed four ways — no headers, `HTTP-Referer` +
 `X-Title`, `X-OpenRouter-Title`, and `X-OpenRouter-Categories: agents` — and answered 403
@@ -504,6 +505,24 @@ the whole 24-hour window rediscovering the same 403. Disabled, never deleted (`p
 `ON DELETE RESTRICT`), and a sync will not undo it because `enabled` is written on creation only.
 The narrow half matters: only the allow-list *wording* withdraws a model, since disabling one over
 any 403 would empty the catalogue an endpoint at a time.
+
+**A pairing's state is read from its game, never from its own columns** — the game record is the
+authority (invariant 1), and `white_score` / `abandoned_reason` are *verdicts already written*,
+which resuming invalidates. Both contradictions reached one page at once:
+
+- Four pairings kept the score of a forfeit that had just been overturned. `white_score` means
+  decided — its own comment says *null while the game is unplayed or in flight* — so games running
+  at up to ply 89 were drawn as **played**, the event reported `live: 0` with four boards moving,
+  and the homepage (which reads games directly) disagreed with the tournament page. That is how it
+  was found. `resume_game.py` cleared the abandonment but not the score.
+- A game abandoned on a provider 404, resumed, and played to checkmate at ply 120 was still drawn
+  as **abandoned**, and `_settle_finished` skipped it for ever because it filtered out pairings that
+  already carried an `abandoned_reason`. Nothing could leave that state. `settle` now clears a stale
+  abandonment when a real result arrives, and the query no longer excludes one.
+
+A closed event still cannot be resumed cleanly: abandoning its last pairing completes it, `advance`
+returns *already over*, and no later tick settles anything. A pool never finishes, which is why the
+fix was enough where it was needed.
 
 **The pool must not pair a model that already has a paused game.** The cooldown alone left a gap:
 its first rung is sixty seconds, so it lapses, the matchmaker sees the model as available, pairs it,
