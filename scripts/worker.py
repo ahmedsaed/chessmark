@@ -35,6 +35,7 @@ from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import ProviderCooldown  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.orchestration import TurnQueue, TurnWorker, reconcile  # noqa: E402
+from chessmark.orchestration.reconciler import SingleFlight  # noqa: E402
 
 log = logging.getLogger("chessmark.worker")
 
@@ -46,7 +47,9 @@ log = logging.getLogger("chessmark.worker")
 SCRIPTED_REASONING = "Taking the first move the board offers. I am scripted; there is no plan."
 
 
-async def reconcile_loop(sessionmaker: Any, queue: TurnQueue, *, every: float = 60.0) -> None:
+async def reconcile_loop(
+    sessionmaker: Any, queue: TurnQueue, *, redis: Any = None, every: float = 60.0
+) -> None:
     """Rescue stalled games, and resume paused ones.
 
     Every minute rather than every five. The sweep is two indexed queries and was always cheap;
@@ -56,7 +59,12 @@ async def reconcile_loop(sessionmaker: Any, queue: TurnQueue, *, every: float = 
     while True:
         await asyncio.sleep(every)
         try:
-            report = await reconcile(sessionmaker, queue)
+            # One worker at a time. Every worker runs this loop, and several sweeping together
+            # would each see the same free concurrency slot and each fill it.
+            async with SingleFlight(redis) as mine:
+                if not mine:
+                    continue
+                report = await reconcile(sessionmaker, queue)
             if report.requeued or report.resumed:
                 log.warning("reconciler: %s", report)
         except Exception:
@@ -147,7 +155,7 @@ async def main(argv: list[str] | None = None) -> int:
 
     mode = " (scripted — no spend)" if args.scripted else ""
     log.info("worker %s started%s", worker.consumer, mode)
-    reconciler = asyncio.create_task(reconcile_loop(sessionmaker, queue))
+    reconciler = asyncio.create_task(reconcile_loop(sessionmaker, queue, redis=redis))
     try:
         await worker.run_forever()
     finally:

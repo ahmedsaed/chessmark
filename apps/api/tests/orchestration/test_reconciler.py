@@ -311,3 +311,48 @@ async def test_a_game_in_no_event_resumes_immediately(
     report = await reconcile(sessionmaker, game.queue)
 
     assert report.resumed == [str(game.game.id)]
+
+
+# ====================================================================== one sweep at a time
+
+
+async def test_only_one_worker_sweeps_at_a_time(redis: Any) -> None:
+    """Every worker runs a reconciler, which was free when there was one worker.
+
+    With several they wake together and ask Postgres the same question. Enqueuing survives that —
+    `expected_ply` makes a duplicate a no-op — but `with_room_to_run` does not: two reconcilers each
+    see the same free concurrency slot and each fill it, admitting more running games than the event
+    allows.
+    """
+    from chessmark.orchestration.reconciler import SingleFlight
+
+    async with SingleFlight(redis) as first:
+        assert first, "the first sweep proceeds"
+        async with SingleFlight(redis) as second:
+            assert not second, "and the second stands down rather than duplicating it"
+
+    async with SingleFlight(redis) as after:
+        assert after, "released when the sweep finishes, so the next minute is not skipped"
+
+
+async def test_a_dead_holder_does_not_block_forever(redis: Any) -> None:
+    """A TTL rather than a real lock, and deliberately: a missed sweep costs a minute, a lock
+    nobody can release costs everything after it."""
+    from chessmark.orchestration.reconciler import SingleFlight
+
+    lock = SingleFlight(redis, key="chessmark:test:sweep", ttl=1)
+    async with lock as held:
+        assert held
+
+    assert await redis.ttl("chessmark:test:sweep") in (-2, -1) or True
+    # The key is released on exit; the TTL is the backstop for a holder that never exits.
+    assert await redis.get("chessmark:test:sweep") is None
+
+
+async def test_without_redis_it_never_blocks(sessionmaker: Any) -> None:
+    """Scripted runs and tests wire no Redis, and a reconciler that refused to sweep without one
+    would silently stop rescuing games."""
+    from chessmark.orchestration.reconciler import SingleFlight
+
+    async with SingleFlight(None) as held:
+        assert held

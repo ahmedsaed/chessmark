@@ -232,8 +232,10 @@ browser reported as real turned out to be an API server started hours earlier, s
 without the redaction the worker beside it was already writing. Restart the API and the worker
 after backend changes, or run them with reload.
 
-**Only one worker may consume the queue.** A job goes to whichever worker reaches it first, so a
-second one is not redundancy — it is a coin toss over who plays each turn. Seeding used to run as
+**Only one worker may consume the queue *here*.** Not because two is unsafe — the queue is a Redis
+Streams consumer group, so a job goes to exactly one consumer and identical workers share the load
+(see `WORKER_REPLICAS`). The rule is about workers that are *not* identical: a scripted one racing
+a real one is a coin toss over who plays each turn, with different providers. Seeding used to run as
 a Playwright project, i.e. *after* `global-setup.ts` had started the background worker, and the two
 then fought over the seeded game: the seed plays a fixed script while the worker plays whatever
 `responsive` decides. Locally the seed usually won and the game came out at its expected seven
@@ -308,7 +310,14 @@ unit-testing fetch wrappers means mocking `fetch` and then asserting the mock.
   ([ADR-0015 amendment](docs/adr/0015-quantization-as-identity-and-pinned-endpoints.md)).
 
 - `chessmark.orchestration` — the queue, the worker, the reconciler, and `human.py`. Redis Streams
-  consumer group, `expected_ply` idempotency, one transaction per turn, ack-after-commit. A turn is
+  consumer group, `expected_ply` idempotency, one transaction per turn, ack-after-commit.
+  **A worker plays one turn at a time, start to finish**, so a free model's turn — 17–38s typical,
+  442s worst — blocks whatever is behind it. `WORKER_REPLICAS` (`./chessmark workers 3`) runs more:
+  the consumer group shards jobs, so they share rather than duplicate. Every worker also runs a
+  reconciler, and those *would* duplicate — two seeing the same free concurrency slot and each
+  filling it — so the sweep takes a Redis `SingleFlight` lock with a TTL. A TTL rather than a real
+  lock, because a missed sweep costs a minute and a lock nobody can release costs everything after
+  it. A turn is
   enqueued **only when a model is to play it**: handing the queue a job for a person's move
   produces one the worker can only answer with `awaiting_human`, and it then lingers as a stale
   entry the human's own next job queues behind. That bug cost a full debugging pass.

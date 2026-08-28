@@ -41,6 +41,8 @@ cmd_down() { # stop everything, leaving the data volumes alone
 cmd_deploy() { # pull the published images, migrate, then restart — the whole deploy
   say "pulling…";        "${COMPOSE[@]}" pull
   say "migrating…";      "${COMPOSE[@]}" run --rm migrate
+  # `WORKER_REPLICAS` is read from the environment or `.env`, so a deploy keeps whatever scale is
+  # configured rather than quietly returning to one worker.
   say "restarting…";     "${COMPOSE[@]}" up -d --remove-orphans api web worker tournament
   cmd_ready
 }
@@ -63,6 +65,16 @@ cmd_ready() { # ask the API whether it can reach Postgres and Redis
 
 cmd_logs() { # tail a service's log:  ./chessmark logs worker
   "${COMPOSE[@]}" logs -f --tail="${LINES:-100}" "$@"
+}
+
+cmd_workers() { # how many turn workers to run:  ./chessmark workers 3
+  [ $# -gt 0 ] || die "how many? e.g. ./chessmark workers 3"
+  # A worker plays one turn at a time, start to finish. A free model's turn runs 17–38 seconds —
+  # worst observed 442 — so with one worker a person's game queues behind whatever the pool is
+  # doing. The queue is a Redis Streams consumer group, so extra workers share the jobs rather
+  # than duplicating them.
+  WORKER_REPLICAS="$1" "${COMPOSE[@]}" up -d --no-deps worker
+  "${COMPOSE[@]}" ps worker --format 'table {{.Name}}\t{{.Status}}'
 }
 
 cmd_restart() { # recreate a service. Use this, not `start`, after a port clash
@@ -151,6 +163,10 @@ declare -A EXAMPLES=(
   [logs]='./chessmark logs worker
 LINES=500 ./chessmark logs tournament'
   [restart]='./chessmark restart api                 # after a port clash, or to pick up a new image'
+  [workers]='./chessmark workers 3                    # three turn workers
+./chessmark workers 1                    # back to one
+
+# Persist it so `deploy` keeps them: put WORKER_REPLICAS=3 in .env'
   [catalogue]='./chessmark catalogue                   # models + endpoints, honouring the context floor'
   [prune]='./chessmark prune                       # report only
 ./chessmark prune --apply               # disable them and remove their games
@@ -201,6 +217,7 @@ $(row status)
 $(row ready)
 $(row logs)
 $(row restart)
+$(row workers)
 
 ${AMBER}the catalogue${OFF}
 $(row catalogue)
