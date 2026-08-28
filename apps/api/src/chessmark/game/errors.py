@@ -25,6 +25,15 @@ class IllegalMoveReason(StrEnum):
     AMBIGUOUS = "ambiguous"
     """Well-formed algebraic notation, but more than one piece could play it."""
 
+    MISSING_PROMOTION = "missing_promotion"
+    """A pawn reaching the last rank, with no piece named to promote to.
+
+    Its own reason because the move is otherwise *right*: the pawn can go there, and the only thing
+    missing is which piece it becomes. Folded into `NOT_REACHABLE` it produced a flatly false
+    explanation — "the pawn on e7 cannot move to e8" — against a model that had found the move and
+    left out a qualifier. Counted separately so an analysis can tell "did not know the rules" from
+    "did not finish the sentence"."""
+
     NO_PIECE = "no_piece"
     """The origin square is empty."""
 

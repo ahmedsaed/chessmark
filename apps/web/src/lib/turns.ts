@@ -92,6 +92,7 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
       model: asString(payload.model),
       human: payload.human === true,
       reasoning: [],
+      withheldReasoning: 0,
       output: [],
       tools: [],
       illegal: [],
@@ -124,6 +125,7 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
           model: asString(payload.model),
           human: payload.human === true,
           reasoning: [],
+          withheldReasoning: 0,
           output: [],
           tools: [],
           illegal: [],
@@ -136,10 +138,15 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
       }
 
       case "thinking": {
-        // Absent in human games — the text is withheld from the stream so the human at the table
-        // cannot read their opponent's plan (invariant 8).
+        /* The text is withheld from a game its reader is *playing* (invariant 8) — `api/redaction`
+           strips it on the way out and leaves the token count. So an absent `reasoning` with a
+           count is not "the model said nothing", it is "you may not read this yet", and the two
+           looked identical on the page: a turn showing only its tool calls with no hint that
+           anything had been held back. */
         const text = asString(payload.reasoning);
-        if (current && text) current.reasoning.push(text);
+        if (!current) break;
+        if (text) current.reasoning.push(text);
+        else current.withheldReasoning += asNumber(payload.tokens);
         break;
       }
 

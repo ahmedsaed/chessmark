@@ -210,6 +210,14 @@ export interface TurnView {
   human: boolean;
   /** What the model was thinking. DeepSeek fills this; Gemini never does. */
   reasoning: string[];
+  /**
+   * Reasoning tokens the model produced whose text is being withheld.
+   *
+   * A game you are *playing* strips the text on the way out (invariant 8, HUMAN-07) and keeps the
+   * count, so the panel can say the model is thinking without saying what about. Zero for a game
+   * between two models, where the text is published, and zero for a model that does not reason.
+   */
+  withheldReasoning: number;
   /** What the model said outside a tool call. Gemini fills this; DeepSeek never does. */
   output: string[];
   tools: ToolCallView[];

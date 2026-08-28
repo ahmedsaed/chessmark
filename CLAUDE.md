@@ -309,6 +309,14 @@ unit-testing fetch wrappers means mocking `fetch` and then asserting the mock.
   at length for both seats sharing one id
   ([ADR-0015 amendment](docs/adr/0015-quantization-as-identity-and-pinned-endpoints.md)).
 
+**`game_events.created_at` is the *transaction* timestamp.** It defaults to `now()`, which in
+Postgres is constant for a transaction, and a turn commits everything it produced in one (NFR-08) —
+so a turn's `turn_started` and its `move_made` carry the identical instant. Any timing derived from
+the log *within* a turn measures nothing, and "move landed → next turn started" reads back the
+previous turn's duration, plausibly enough to be believed. The reliable clocks are `latency_ms` on
+`turns` and `llm_calls`, both `perf_counter` in-process. `./chessmark latency <game-id>` does the
+decomposition properly: provider, harness, and the queue wait derived by subtraction.
+
 - `chessmark.orchestration` — the queue, the worker, the reconciler, and `human.py`. Redis Streams
   consumer group, `expected_ply` idempotency, one transaction per turn, ack-after-commit.
   **A worker plays one turn at a time, start to finish**, so a free model's turn — 17–38s typical,
@@ -474,8 +482,20 @@ off entirely (see Phase 17's launch conditions).
 blocking a message today hides it from nobody. The check has to run *before* the event is appended
 and before the opponent's transcript is written, because both are append-only and the transcript is
 byte-stable for caching (invariant 2).
-The other deliberate limitations stand — no clock, advisory-only human draw offers, promotion
-always to a queen.
+The other deliberate limitations stand — no clock, advisory-only human draw offers.
+
+**Promotion is chosen, not assumed.** It used to be a queen either way, which is right almost every
+time and wrong in exactly the position that matters: the one where a rook or a knight wins and the
+player cannot say so. A human drag to the last rank opens a picker; a model that names no piece gets
+`MISSING_PROMOTION` — its own reason, because every other explanation was false. `not_reachable`
+told a model that had found the move that its pawn could not make it, and charged an illegal attempt
+for the privilege.
+
+**A withheld reasoning trace is not an absent one.** `api/redaction.py` strips the text from a game
+its reader is playing and keeps the token count (invariant 8), and the panel rendered that
+identically to a model that had said nothing — a turn showing only its tool calls, with no hint that
+anything was held back. `withheldReasoning` carries the count, and the turn says `thinking · 801`
+without saying what about.
 
 **The site would not load at all without Clerk keys.** `src/proxy.ts` called `clerkMiddleware()`
 unconditionally and it throws without a publishable key; a throwing proxy takes every route with

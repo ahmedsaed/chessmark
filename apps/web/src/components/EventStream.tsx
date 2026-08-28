@@ -444,6 +444,22 @@ function Turn({
               />
             )}
 
+            {/* Not a disclosure: there is nothing behind it to open. The count is the honest
+                thing to show — it says the model *is* reasoning, and how much, without saying
+                what about (invariant 8). Revealed in full once the game is over. */}
+            {turn.reasoning.length === 0 && turn.withheldReasoning > 0 && (
+              <span
+                title="Reasoning is withheld while you are playing this game — it is published when the game ends"
+                className="inline-flex items-center gap-1.5 border border-line bg-surface px-2 py-1 font-mono text-[10px] text-ink-faint"
+              >
+                <span aria-hidden className="text-machine">
+                  ·
+                </span>
+                thinking
+                <span className="text-ink-faint">· {turn.withheldReasoning.toLocaleString()}</span>
+              </span>
+            )}
+
             {turn.output.length > 0 && (
               <Disclosure
                 label="output"

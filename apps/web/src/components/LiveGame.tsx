@@ -12,7 +12,7 @@
  * means an out-of-order or duplicated event cannot desync the board.
  */
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Chess } from "chess.js";
 
 import { Board } from "@/components/Board";
@@ -24,7 +24,7 @@ import { captures } from "@/lib/captures";
 import { useGameDetail } from "@/hooks/useGameDetail";
 import { useGameStream } from "@/hooks/useGameStream";
 import { foldEvents } from "@/lib/turns";
-import type { GameDetail, GameEvent } from "@/lib/types";
+import type { Colour, GameDetail, GameEvent } from "@/lib/types";
 
 const TERMINAL = new Set(["finished", "aborted"]);
 
@@ -115,19 +115,45 @@ export function LiveGame({
   /* Validated locally before it leaves the browser, so a wrong drag is refused without a round
      trip — but this is a courtesy, not the rule. The same move is checked again by the referee
      server-side, which is what a crafted request meets (invariant 1). */
-  function handleDrop(from: string, to: string): boolean {
-    if (!onMove) return false;
+  /**
+   * A drag that lands a pawn on the last rank, held until the player says what it becomes.
+   *
+   * It used to promote to a queen silently. A queen is right almost every time, which is exactly
+   * why the exception matters: the one position in a game where a rook or a knight wins is a
+   * position the player cannot reach, and they find that out by watching the wrong piece appear.
+   */
+  const [promoting, setPromoting] = useState<{ from: string; to: string } | null>(null);
 
+  function play(from: string, to: string, promotion?: "q" | "r" | "b" | "n"): boolean {
+    if (!onMove) return false;
     const board = new Chess(fen);
     try {
-      // Promotions are always to a queen here. Under-promotion is rare enough that a picker
-      // would cost every player a click to serve almost nobody; it can come later.
-      const move = board.move({ from, to, promotion: "q" });
+      /* Validated locally before it leaves the browser, so a wrong drag is refused without a round
+         trip — a courtesy, not the rule. The referee checks it again (invariant 1). */
+      const move = board.move({ from, to, promotion });
       onMove(move.san, moves.length);
       return true;
     } catch {
       return false;
     }
+  }
+
+  function handleDrop(from: string, to: string): boolean {
+    if (!onMove) return false;
+
+    const board = new Chess(fen);
+    const promotes = board
+      .moves({ square: from as Parameters<typeof board.moves>[0]["square"], verbose: true })
+      .some((move) => move.to === to && move.promotion);
+
+    if (promotes) {
+      // Held, not played. `true` so the board accepts the drag and shows the pawn on its new
+      // square while the choice is made — reverting it first and moving it again reads as a
+      // rejected move.
+      setPromoting({ from, to });
+      return true;
+    }
+    return play(from, to);
   }
 
   /* Near is the seat at the bottom of the board, which is the viewer's own when they hold one. */
@@ -201,6 +227,17 @@ export function LiveGame({
           />
         </div>
 
+        {promoting && (
+          <PromotionPicker
+            colour={seat ?? "white"}
+            onPick={(piece) => {
+              play(promoting.from, promoting.to, piece);
+              setPromoting(null);
+            }}
+            onCancel={() => setPromoting(null)}
+          />
+        )}
+
         <div className="order-2 flex min-h-[24rem] min-w-0 flex-col lg:order-none lg:min-h-0">
           {/* Resign, draw and chat live here rather than under the board. They are things said to
               an opponent, and this is the column where everything said to an opponent already is —
@@ -215,6 +252,72 @@ export function LiveGame({
             }
           />
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Which piece the pawn becomes.
+ *
+ * Queen first and focused, because it is the answer almost every time; the other three are there
+ * for the position where they are not. Modal rather than inline: a move is not made until this is
+ * answered, and a picker that could be ignored would leave the board in a state the server has
+ * never heard of.
+ */
+function PromotionPicker({
+  colour,
+  onPick,
+  onCancel,
+}: {
+  colour: Colour;
+  onPick: (piece: "q" | "r" | "b" | "n") => void;
+  onCancel: () => void;
+}) {
+  const pieces: { key: "q" | "r" | "b" | "n"; label: string; glyph: string }[] = [
+    { key: "q", label: "Queen", glyph: colour === "white" ? "♕" : "♛" },
+    { key: "r", label: "Rook", glyph: colour === "white" ? "♖" : "♜" },
+    { key: "b", label: "Bishop", glyph: colour === "white" ? "♗" : "♝" },
+    { key: "n", label: "Knight", glyph: colour === "white" ? "♘" : "♞" },
+  ];
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Choose a promotion"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ground/80 p-5 backdrop-blur-sm"
+      onKeyDown={(event) => event.key === "Escape" && onCancel()}
+    >
+      <div className="border border-line bg-surface-2 p-5">
+        <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+          Promote to
+        </p>
+        <div className="flex gap-2">
+          {pieces.map((piece, index) => (
+            <button
+              key={piece.key}
+              type="button"
+              autoFocus={index === 0}
+              onClick={() => onPick(piece.key)}
+              className="flex h-16 w-16 flex-col items-center justify-center gap-0.5 border border-line bg-surface transition-colors hover:border-accent focus-visible:border-accent"
+            >
+              <span aria-hidden className="text-3xl leading-none text-ink">
+                {piece.glyph}
+              </span>
+              <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+                {piece.label}
+              </span>
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="mt-3 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint hover:text-ink-dim"
+        >
+          cancel
+        </button>
       </div>
     </div>
   );
