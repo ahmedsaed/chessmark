@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
+from chessmark.agents.attribution import attribution_headers
 from chessmark.agents.caching import apply_cache_control
 from chessmark.agents.normalise import normalise_response
 from chessmark.agents.pricing import PricingTable, compute_cost
@@ -341,6 +342,7 @@ class LlmGateway:
         sleep_fn: SleepFn | None = None,
         on_attempt: AttemptFn | None = None,
         timeout: float = 180.0,
+        attribution: dict[str, str] | None = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url
@@ -351,6 +353,10 @@ class LlmGateway:
         self._sleep = sleep_fn or asyncio.sleep
         self._on_attempt = on_attempt
         self.timeout = timeout
+        # Resolved once, at construction: it is a constant of the process, and reading settings per
+        # call would put a cache lookup inside the hot path for two strings that never change.
+        # Only attached when we hold a key — see `agents/attribution.py` for why.
+        self.attribution = attribution if attribution is not None else attribution_headers()
 
     def build_request(
         self,
@@ -449,6 +455,15 @@ class LlmGateway:
             call_kwargs["api_key"] = self.api_key
         if self.base_url:
             call_kwargs["api_base"] = self.base_url
+
+        # Who is calling (`agents/attribution.py`). Sent as real headers rather than in
+        # `extra_body`, because these are HTTP headers and not OpenRouter body fields — and only
+        # with a key, so a scripted gateway's recorded request stays byte-identical to its cassette.
+        if self.api_key and self.attribution:
+            call_kwargs["extra_headers"] = {
+                **dict(call_kwargs.get("extra_headers") or {}),
+                **self.attribution,
+            }
 
         deadline = deadline_seconds if deadline_seconds is not None else self.timeout
         last_error: BaseException | None = None

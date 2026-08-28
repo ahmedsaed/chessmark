@@ -66,6 +66,17 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
+    #: Our public URL, sent as `HTTP-Referer` so OpenRouter can attribute our usage to us.
+    #:
+    #: Attribution is **only** for rankings and analytics — it lifts no gate and unlocks no model
+    #: (`agents/attribution.py` records what was probed). Empty falls back to the first CORS
+    #: origin, which is the web front end's own address and therefore the right answer on a
+    #: development machine without a second variable to keep in step.
+    app_url: str = ""
+    #: The name shown on our OpenRouter app page. Required for a `localhost` referer to be tracked
+    #: at all, which is exactly the case where the default matters least.
+    app_title: str = "Chessmark"
+
     # --- Auth (Clerk) ---
     clerk_publishable_key: str = ""
     clerk_secret_key: str = ""

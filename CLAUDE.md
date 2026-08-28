@@ -484,6 +484,14 @@ say the headers exist "for rankings on openrouter.ai" and describe no registrati
 the same model answered on the first try, so the gate is on the free distribution rather than on our
 client. Attribution headers are still worth sending for their own sake; they will not lift this.
 
+**Attribution is sent anyway, for its own sake.** `agents/attribution.py` puts `HTTP-Referer` and
+`X-OpenRouter-Title` on every call that carries a real key — an app page, per-model analytics, and
+usage counted as ours. `APP_URL` falls back to the first CORS origin, which is the front end's own
+address and therefore right on a development machine without a second variable to keep in step. They
+are **headers, not `extra_body`**: `usage`, `provider` and `session_id` live in the body because
+OpenRouter reads them there, and these do not. They ride only with a key, so a scripted gateway's
+recorded request stays byte-identical to its cassette.
+
 **Nothing in the catalogue predicts it** either: it advertises `tools`, a 1M window, `status: 0`,
 100% uptime and `per_request_limits: null`, identical to a model that works. So it is learned from
 the refusal — 403 joins 429 and provider-404 as unavailability, because a generic error taught the
