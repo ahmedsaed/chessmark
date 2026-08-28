@@ -31,12 +31,20 @@ from chessmark.game import Termination
 
 #: Endings that say nothing about either model. Excluded from ratings — not deleted, and still
 #: visible on the site, because "we stopped this game" is a fact worth being able to read.
+#:
+#: **`TIMEOUT` belongs here and was missed.** AGENT-17 took it out of `FORFEIT_TERMINATIONS` and
+#: made it resumable, on the finding that it measured the provider and not the player — the same
+#: model on two endpoints got two verdicts, and one lost a game at ply 1 having never been served a
+#: completion. That change did not reach this module, so a timed-out game stopped being called a
+#: forfeit and went on counting toward the rating anyway. Four sets classify a termination and
+#: nothing linked them; `tests/bench/test_classification.py` now does.
 HARNESS_TERMINATIONS = frozenset(
     {
         Termination.PLY_CAP,
         Termination.BUDGET_EXCEEDED,
         Termination.ABANDONED,
         Termination.ADJUDICATION,
+        Termination.TIMEOUT,
     }
 )
 
@@ -57,7 +65,6 @@ RATED_TERMINATIONS = frozenset(
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
         Termination.TRUNCATED,
-        Termination.TIMEOUT,
         Termination.CONTEXT_EXCEEDED,
     }
 )

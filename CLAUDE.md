@@ -473,6 +473,16 @@ model had earned.**
 Latency and size are still measured and published — they are statistics. A forfeit says "it played
 worse", and of a slow provider that claim is false.
 
+**Four frozensets classify a termination, and nothing linked them.** `FORFEIT_TERMINATIONS` and
+`RESUMABLE_TERMINATIONS` (`game/referee.py`) decide whether an ending is a finding and whether it
+can be reopened; `HARNESS_TERMINATIONS` and `RATED_TERMINATIONS` (`bench/ratable.py`) decide whether
+it reaches the leaderboard. AGENT-17 changed the first pair and missed the second, so `timeout`
+stopped being called a forfeit and went on being **rated** anyway — the half that actually reaches
+the leaderboard, which was the entire point of the change. Its own test listed it under "a forfeit
+counts". `tests/bench/test_classification.py` links them now: every termination is classified,
+nothing is both rated and a harness stop, every resumable ending is a harness stop and unrated, and
+every forfeit is rated and final. An audit found it, not a game.
+
 **A gated model is disabled, not paired again** (AGENT-18). `thinkingmachines/inkling-small:free`
 and `thinkingmachines/inkling:free` — the vendor's whole free tier, checked one at a time — answer
 403 *"only available on agentic harnesses. Try plugging it into a coding agent or
