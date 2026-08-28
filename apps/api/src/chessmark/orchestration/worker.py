@@ -320,6 +320,16 @@ class TurnWorker:
             game_outcome=referee.outcome,
         )
 
+    async def _seat_to_play(self, session: AsyncSession, job: AdvanceTurn) -> Player:
+        """The seat whose turn just failed.
+
+        Derived from `expected_ply` rather than from the referee, because both callers are handling
+        a turn that was rolled back whole: rebuilding the board to ask whose move it is would cost
+        a read to learn something the job already states. White plays the even plies.
+        """
+        colour = Colour(("white", "black")[job.expected_ply % 2])
+        return await self._player(session, job.game_id, colour)
+
     async def _pause(self, job: AdvanceTurn, result: TurnResult) -> HandledJob:
         """Stop the game until the provider will serve it again.
 
@@ -342,8 +352,7 @@ class TurnWorker:
 
         async with self.sessionmaker() as session, session.begin():
             game = await get_game(session, job.game_id)
-            colour = Colour(("white", "black")[job.expected_ply % 2])
-            player = await self._player(session, game.id, colour)
+            player = await self._seat_to_play(session, job)
             model = model_for(player)
             provider = limit.provider or _pinned_provider(player)
 
@@ -414,7 +423,7 @@ class TurnWorker:
                 payload={
                     "reason": reason,
                     "player_id": str(player.id),
-                    "colour": colour.value,
+                    "colour": player.colour.value,
                     "model": model,
                     "provider": provider,
                     "limit_source": limit.limit_source,
@@ -482,8 +491,7 @@ class TurnWorker:
         """
         async with self.sessionmaker() as session, session.begin():
             game = await get_game(session, job.game_id)
-            colour = Colour(("white", "black")[job.expected_ply % 2])
-            player = await self._player(session, game.id, colour)
+            player = await self._seat_to_play(session, job)
             model = model_for(player)
 
             await session.execute(

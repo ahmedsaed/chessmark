@@ -60,7 +60,6 @@ def test_every_chess_result_counts(termination: Termination) -> None:
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
         Termination.TRUNCATED,
-        Termination.TIMEOUT,
         Termination.CONTEXT_EXCEEDED,
     ],
 )
@@ -76,7 +75,17 @@ def test_a_forfeit_counts(termination: Termination) -> None:
 
 @pytest.mark.parametrize(
     "termination",
-    [Termination.PLY_CAP, Termination.BUDGET_EXCEEDED, Termination.ABANDONED],
+    [
+        Termination.PLY_CAP,
+        Termination.BUDGET_EXCEEDED,
+        Termination.ABANDONED,
+        # **`TIMEOUT` moved here, and this test asserted the opposite for a while.** AGENT-17 found
+        # it measured the provider: the same model on two endpoints got two verdicts, and one lost
+        # a game at ply 1 having never been served a completion. It stopped being a forfeit in
+        # `game/referee.py` and stayed rated here, which is the half that actually reaches the
+        # leaderboard.
+        Termination.TIMEOUT,
+    ],
 )
 def test_a_harness_stop_does_not_count(termination: Termination) -> None:
     """Our ceiling, our budget, our provider — none of it is anything either model did.
