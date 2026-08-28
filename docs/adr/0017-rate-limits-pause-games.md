@@ -225,3 +225,39 @@ in advance. (The reverted ceiling above was the imprecise version of the same in
 every attempted provider returned a retry hint", and a free model is typically served by exactly one
 endpoint that returned none — so the absence of a hint is the normal case, and the ladder in
 `core/cooldown.py` has to have an opinion of its own.
+
+
+## Amendment — 2026-08-28, later: a 400 can be the endpoint too
+
+`{"status":400,"title":"Bad Request","detail":"Function id '...': DEGRADED function cannot be
+invoked"}` — from Nvidia, abandoning a game at ply 1 after four attempts. Nothing about that is a bad
+request: the endpoint is unhealthy and a fresh call succeeds.
+
+**This is the third time the same lesson has arrived.** A provider 404 was classified as "does not
+exist"; a 403 was classified as a bad request; now a 400. So state it once, plainly: **the status
+code does not say whether the request or the endpoint is at fault — the body does.**
+
+`endpoint_is_unhealthy` matches endpoint-health wording on a 400 only, and such an error joins 429,
+403 and provider-404 as unavailability: paused, cooled down, retried later.
+
+The narrow half is load-bearing. The *other* 400 we see is `"this endpoint's maximum context length
+is 65536 tokens. However, you requested about 65810"`, which is our own arithmetic — the next attempt
+sends the same bytes and is refused the same way, so it must keep failing fast rather than being
+retried and cooled down. Both halves have a test naming the verbatim body.
+
+## Amendment — 2026-08-28, later still: our clock, reported as their failure
+
+A game died at ply 10 with `Abandoned after 5 failed provider attempts: provider call exceeded 17s`.
+
+The 17 seconds were **ours**. `deadline_seconds` is whatever is left of the turn's 600-second clock,
+and the gate that stopped a turn only fired once that clock had run out — so with 583 seconds spent
+it said "carry on", and the call it then made got 17 seconds. A free model's *mean* latency is 17–38
+seconds, so the call could not succeed, and it surfaced as an `LlmError` rather than a rate limit:
+the abandon path, five retries, each one hitting the same wall.
+
+`_over_budget` now asks the question it was always being used for — *is there enough clock left to be
+worth asking?* — with a `min_call_seconds` floor of 30. Below that the turn is **failed and retried**
+(AGENT-17), and the message names our limit rather than the provider.
+
+Slicing the budget per call was considered and rejected: it caps a single slow-but-succeeding call
+for no reason. The floor only refuses to start a call that cannot finish.

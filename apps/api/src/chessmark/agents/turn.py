@@ -81,6 +81,20 @@ class TurnLimits:
     """
 
     max_seconds: float = 600.0
+
+    #: The least time a call needs for its answer to be worth waiting for.
+    #:
+    #: **A call that cannot succeed must not be made.** `deadline_seconds` is whatever is left of
+    #: the turn's clock, so a turn with 583 of 600 seconds spent asked for a completion in 17 —
+    #: less than a free model's *mean* latency of 17-38s. It failed, as it always would, and the
+    #: failure surfaced as `provider call exceeded 17s`: an `LlmError`, not a rate limit, so the
+    #: worker retried the job five times and then abandoned a real game at ply 10. Every retry hit
+    #: the same wall, and every message blamed the provider for our clock.
+    #:
+    #: This is not a slice of the budget per call — that was considered and rejected, because it
+    #: caps a single slow-but-succeeding call for no reason. It is a floor below which the turn
+    #: stops asking and reports honestly that *we* ran out of time.
+    min_call_seconds: float = 30.0
     """Wall clock. Slow is not wrong: a reasoning model taking two minutes on a critical position
     is working, not stuck. Observed legitimate turns ran to 80s on a small free model, and
     frontier reasoning models are slower still."""
@@ -865,16 +879,26 @@ class TurnRunner:
         result.cost_usd += completion.cost_usd
 
     def _over_budget(self, result: TurnResult, started: float) -> bool:
+        """Whether this turn may make another provider call.
+
+        Asked at the top of every iteration, so "over budget" means *there is not enough clock left
+        to be worth asking* — not merely that the clock has run out. Those were the same check, and
+        the difference cost a game: with 583 of 600 seconds spent it said "carry on", and the call
+        it then made got a 17-second deadline it could never meet.
+        """
         elapsed = time.perf_counter() - started
-        if elapsed > self.limits.max_seconds:
-            # **Failed, not forfeited.** The turn is discarded and retried, because running out of
-            # wall clock says nothing about the play: one model lost a game at ply 1 having never
-            # been served a completion at all. `outcome` stays None, which is what makes
-            # `_advance` raise `ProviderFailureError` and the worker try again — and abandon
-            # honestly if it never gets through.
+        remaining = self.limits.max_seconds - elapsed
+        if remaining < self.limits.min_call_seconds:
+            # **Failed, not forfeited, and never reported as the provider's fault.** The turn is
+            # discarded and retried, because running out of wall clock says nothing about the play:
+            # one model lost a game at ply 1 having never been served a completion at all.
+            # `outcome` stays None, which is what makes `_advance` raise `ProviderFailureError` and
+            # the worker try again — and abandon honestly if it never gets through.
             result.status = TurnStatus.FAILED
             result.error = (
-                f"the turn exceeded its {self.limits.max_seconds:.0f}s limit; "
+                f"the turn had {max(remaining, 0.0):.0f}s left of its "
+                f"{self.limits.max_seconds:.0f}s limit, less than the "
+                f"{self.limits.min_call_seconds:.0f}s a call needs; "
                 f"{result.llm_calls} calls completed"
             )
             return True

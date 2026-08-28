@@ -115,6 +115,30 @@ REQUEST_REJECTED_NAMES = frozenset(
 #: instead of once.
 REQUEST_REJECTED_STATUS = frozenset({400, 413, 422})
 
+#: A 400 that is about the *endpoint* rather than the request.
+#:
+#: Nvidia answers `{"status":400,"title":"Bad Request","detail":"Function id '...': DEGRADED
+#: function cannot be invoked"}`. Nothing about that is a bad request — the endpoint is unhealthy,
+#: and a fresh call a minute later succeeds. Classified with the genuine 400s it abandoned a game at
+#: ply 1 after four attempts, which is the provider-404 lesson arriving for the third time: **the
+#: status code does not say whether the request or the endpoint is at fault. The body does.**
+#:
+#: Narrow on purpose, because the other 400 we see *is* about the request: "this endpoint's maximum
+#: context length is 65536 tokens. However, you requested about 65810" is our own arithmetic, and it
+#: must keep failing fast rather than being retried and cooled down. So this matches endpoint health
+#: and nothing else — failing to recognise a new wording merely abandons a game the way it does
+#: today.
+_ENDPOINT_UNHEALTHY = re.compile(
+    r"degraded|no healthy|temporarily unavailable|overloaded|"
+    r"currently loading|capacity|try again later",
+    re.I,
+)
+
+
+def endpoint_is_unhealthy(error: BaseException) -> bool:
+    """Whether a rejected-looking status is really the endpoint being unwell."""
+    return _status_code(error) == 400 and bool(_ENDPOINT_UNHEALTHY.search(str(error)))
+
 
 def _status_code(error: BaseException) -> int | None:
     for attribute in ("status_code", "http_status", "code"):
@@ -137,7 +161,7 @@ def is_unavailable(error: BaseException) -> bool:
     budget. Told apart from a *model* that does not exist only by when it happens: that one still
     fails at ply 0, where a pause simply expires and the game is abandoned honestly.
     """
-    return is_rate_limit(error) or _status_code(error) in {403, 404}
+    return is_rate_limit(error) or _status_code(error) in {403, 404} or endpoint_is_unhealthy(error)
 
 
 def is_rate_limit(error: BaseException) -> bool:
@@ -170,6 +194,10 @@ def rejects_the_request(error: BaseException) -> bool:
     times, because a `TurnResult` carried only the error's text and nothing that could be reasoned
     about. Five identical rejections, then the game was abandoned at ply 10 of a real Scotch Game.
     """
+    if endpoint_is_unhealthy(error):
+        # A degraded endpoint is unavailability wearing a 400. Waiting is the right answer, and
+        # abandoning is not.
+        return False
     if type(error).__name__ in REQUEST_REJECTED_NAMES:
         return True
     return _status_code(error) in REQUEST_REJECTED_STATUS

@@ -122,6 +122,11 @@ A worker plays one turn at a time, start to finish, so one of these blocks whate
 `limit_source: upstream_provider_shared_pool` and arrive from first-party providers too. A probe of
 six free models returned four 200s, one 429 and one 403.
 
+**A status code does not say whether the request or the endpoint is at fault — the body does.** 429,
+403, provider-404 and a 400 whose body names endpoint health (`DEGRADED function cannot be invoked`)
+are all *unavailability*: paused and cooled down. A 400 saying the completion does not fit the window
+is our own arithmetic and fails fast. Three separate games were abandoned learning this one rule.
+
 **A rate limit pauses the game; it does not retry it.**
 [ADR-0017](adr/0017-rate-limits-pause-games.md) records that incident in full, including why three
 of its four causes did not look like the problem. **A gate cannot be waited out at all** —
