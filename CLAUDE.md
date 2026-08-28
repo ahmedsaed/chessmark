@@ -474,12 +474,28 @@ Latency and size are still measured and published — they are statistics. A for
 worse", and of a slow provider that claim is false.
 
 **A gated model is disabled, not paired again** (AGENT-18). `thinkingmachines/inkling-small:free`
-answers 403 *"only available on agentic harnesses"* — a distribution allow-list, not a capability
-check: we *are* one, and app-attribution headers change nothing. **Nothing in the catalogue predicts
-it**: it advertises `tools`, a 1M window, `status: 0` and 100% uptime, identical to a model that
-works, and `/api/v1/apps` is an HTML page rather than an API. So it is learned from the refusal —
-and 403 joins 429 and provider-404 as unavailability, because a generic error taught the matchmaker
-nothing and one pool spent **22 pairings** dying at ply 0 against that one model.
+answers 403 *"only available on agentic harnesses. Try plugging it into a coding agent or
+productivity app listed on openrouter.ai/apps"* — a distribution allow-list, not a capability check.
+**There is nothing to declare.** The gate was probed four ways — no headers, `HTTP-Referer` +
+`X-Title`, `X-OpenRouter-Title`, and `X-OpenRouter-Categories: agents` — and answered 403
+identically; OpenRouter's own [app-attribution docs](https://openrouter.ai/docs/app-attribution)
+say the headers exist "for rankings on openrouter.ai" and describe no registration step, and
+`/apps` is a usage leaderboard, not a list one applies to. What settles it: the **paid** variant of
+the same model answered on the first try, so the gate is on the free distribution rather than on our
+client. Attribution headers are still worth sending for their own sake; they will not lift this.
+
+**Nothing in the catalogue predicts it** either: it advertises `tools`, a 1M window, `status: 0`,
+100% uptime and `per_request_limits: null`, identical to a model that works. So it is learned from
+the refusal — 403 joins 429 and provider-404 as unavailability, because a generic error taught the
+matchmaker nothing and one pool spent **22 pairings** dying at ply 0 against that one model.
+
+**A gate is the one unavailability that waiting cannot fix**, so it is the one that does not pause.
+`_disable_gated` sets `enabled = False` on the registry row and abandons the game at once. Cooling
+it down is not enough — the ladder's first rung lapses after sixty seconds — and pausing would spend
+the whole 24-hour window rediscovering the same 403. Disabled, never deleted (`players.model_id` is
+`ON DELETE RESTRICT`), and a sync will not undo it because `enabled` is written on creation only.
+The narrow half matters: only the allow-list *wording* withdraws a model, since disabling one over
+any 403 would empty the catalogue an endpoint at a time.
 
 **The pool must not pair a model that already has a paused game.** The cooldown alone left a gap:
 its first rung is sixty seconds, so it lapses, the matchmaker sees the model as available, pairs it,

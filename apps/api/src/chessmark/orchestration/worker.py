@@ -34,10 +34,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.turn import TurnLimits, TurnResult, TurnRunner
+from chessmark.agents.types import RateLimit
 from chessmark.core.budget import GlobalBudget
 from chessmark.core.cooldown import ProviderCooldown, resume_at
 from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
-from chessmark.db.models import Game, GameEvent, Player
+from chessmark.db.models import Game, GameEvent, ModelRegistry, Player
 from chessmark.db.quotas import record_spend
 from chessmark.db.repositories import (
     append_event,
@@ -336,6 +337,9 @@ class TurnWorker:
         limit = result.rate_limit
         assert limit is not None  # only reached from the rate-limit branch of `handle`
 
+        if limit.gated:
+            return await self._disable_gated(job, result, limit)
+
         async with self.sessionmaker() as session, session.begin():
             game = await get_game(session, job.game_id)
             colour = Colour(("white", "black")[job.expected_ply % 2])
@@ -455,6 +459,46 @@ class TurnWorker:
     async def _has_human_seat(self, session: AsyncSession, game_id: uuid.UUID) -> bool:
         seats = await session.scalars(sa.select(Player.kind).where(Player.game_id == game_id))
         return any(PlayerKind(kind) is not PlayerKind.MODEL for kind in seats)
+
+    async def _disable_gated(
+        self, job: AdvanceTurn, result: TurnResult, limit: RateLimit
+    ) -> HandledJob:
+        """A gate is not a cooldown: waiting is the one response that cannot work.
+
+        `thinkingmachines/inkling-small:free` answers 403 *"only available on agentic harnesses"* —
+        an allow-list of registered apps, not a capability check. We are a harness; the
+        app-attribution headers are documented as being for rankings and change nothing, and the
+        paid variant of the same model answers normally, so the gate is on the free distribution
+        rather than on us. There is no header, category or registration that lifts it.
+
+        So the model is **disabled in the registry** and the game abandoned at once. Pausing it
+        would spend the full 24-hour window rediscovering the same refusal, and the cooldown alone
+        only rests it: the ladder's first rung lapses after a minute and the matchmaker pairs it
+        again. One pool spent 22 pairings dying at ply 0 against this model.
+
+        Disabled, never deleted — `players.model_id` is `ON DELETE RESTRICT` and a game must stay
+        readable however its model turned out (the same bargain `prune-registry` strikes). A sync
+        will not undo it either: `enabled` is written on creation only.
+        """
+        async with self.sessionmaker() as session, session.begin():
+            game = await get_game(session, job.game_id)
+            colour = Colour(("white", "black")[job.expected_ply % 2])
+            player = await self._player(session, game.id, colour)
+            model = model_for(player)
+
+            await session.execute(
+                sa.update(ModelRegistry)
+                .where(ModelRegistry.id == player.model_id)
+                .values(enabled=False)
+            )
+            log.error(
+                "disabling %s: %s — a gated model cannot be waited out",
+                model,
+                limit.describe(model),
+            )
+            await self._abandon(session, game, f"Model withdrawn: {limit.describe(model)}")
+
+        return HandledJob(ABORTED, game.id, job.expected_ply, result=result)
 
     async def _abandon(self, session: AsyncSession, game: Game, detail: str) -> None:
         """Close a game the harness could not finish. Never a chess result, never a forfeit."""
