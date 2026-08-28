@@ -161,6 +161,12 @@ measures whether a model can act correctly *given complete information*, not whe
 }
 ```
 
+**A pawn reaching the last rank must name its piece.** `make_move` without one returns
+`missing_promotion` — its own reason, and **not** an illegal-move attempt, because every other
+explanation was false: `not_reachable` told a model that had found the move that its pawn could not
+make it, and charged it an illegal attempt for the privilege. Promoting to a queen by default is
+right almost every time and wrong in exactly the position that matters.
+
 ### Context strategy
 
 Full transcript, every turn, engineered for prompt caching:
@@ -224,6 +230,21 @@ append-only table. Event types: `game_started`, `turn_started`, `thinking`, `too
 One mechanism, three features. This is the highest-leverage decision in the data model.
 
 ---
+
+### A human seat is the same path, with one job never enqueued
+
+Human-vs-model reuses model-vs-model whole (see *Uniformity* above), and the whole of the difference
+is at the queue:
+
+- **A turn is enqueued only when a model is to play it.** Handing the queue a job for a person's move
+  produces one the worker can only answer with `awaiting_human`, and it then lingers as a stale entry
+  that the human's own next job queues behind. That bug cost a full debugging pass.
+- **The reconciler tells "waiting on a person" apart from "stalled"**, and expires an idle human game
+  after two hours.
+- **A paused game gives up after ten minutes rather than 24 hours** when a person holds a seat,
+  because a person will not wait out a shared free pool ([ADR-0017](adr/0017-rate-limits-pause-games.md)).
+
+Deliberate limitations: no clock, and a human draw offer is advisory only.
 
 ## Cost control
 

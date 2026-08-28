@@ -189,4 +189,39 @@ Spend stays bounded regardless, which is the property that matters. Running game
 against `max_concurrent`, and a resumed game asks for its slot back before it plays — so the number
 of games *spending money* at any moment is unchanged. What is unbounded now is the number of games
 sitting paused costing nothing, and each of those resolves on its own: it resumes, or it is abandoned
-after six pauses.
+once its patience runs out (a 24-hour span — see the amendment below, which replaced the pause count
+this sentence originally named).
+
+## Amendment — 2026-08-28: a 404 is unavailability, and patience is a span
+
+Three things this ADR got wrong, all found by leaving a free pool running.
+
+**A provider 404 is unavailability, not a bad request.** It was classified alongside 400 and 422 as
+"the request itself is unacceptable", so it burned the retry budget and then abandoned. A game
+between two free models reached **ply 55 and 1.17M tokens** before being abandoned outright on
+`{"code":404,"provider_name":"Nvidia"}` — while the model was still listed, its endpoint still there
+at 97.8% uptime, and a fresh call answered. A blip, and a good game thrown away for it.
+
+Both 429 and provider-404 now pause and cool the endpoint down. `RateLimit.describe` words the reason
+so a reader is not told they were rate-limited when they were not. 403 joins them
+([ADR-0019](0019-harness-bounds-are-not-findings.md)), with the one exception that a *gate* cannot be
+waited out and so does not pause at all.
+
+**Patience is a 24-hour span, not a pause count.** Six pauses came to about three and a half hours,
+and four real games were abandoned in one afternoon because two free pools stayed hot for longer than
+that. A count also tied the patience to how the cooldown ladder happened to be tuned, which is a
+setting, not a policy. The window is measured from the **first** pause, so it is wall-clock patience.
+
+A game with a human seat still gives up after **ten minutes**: a person will not wait out a shared
+pool.
+
+**And the cooldown alone does not stop re-pairing.** Its first rung is sixty seconds, so it lapses,
+the matchmaker sees the model as available, pairs it, and it is refused again — four paused games
+against one model with nothing running. The precise fix is that **a pool will not pair a model that
+already has a paused game in the event**, which is a question about state rather than a number chosen
+in advance. (The reverted ceiling above was the imprecise version of the same instinct.)
+
+**`Retry-After` is honoured when it arrives, which is usually not.** OpenRouter sends one only "when
+every attempted provider returned a retry hint", and a free model is typically served by exactly one
+endpoint that returned none — so the absence of a hint is the normal case, and the ladder in
+`core/cooldown.py` has to have an opinion of its own.

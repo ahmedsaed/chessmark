@@ -24,6 +24,37 @@ worker is the API's own turn loop, the tournament runner drives the same orchest
 building them separately would give them three chances to drift apart at the point where they must
 not.
 
+## `./chessmark` — the stack without a toolchain
+
+`make` is for a development machine. On a server, where Docker is all there is, `./chessmark` runs
+everything inside a container: no uv, no node, and no remembering which compose files to combine.
+`./chessmark help` lists the commands; `./chessmark help <command>` gives examples.
+
+| | |
+| --- | --- |
+| `up` `down` `status` `ready` `logs` `restart` | the stack |
+| `deploy` | pull the published images, migrate, restart, check `/ready` |
+| `workers N` | how many turn workers to run (`WORKER_REPLICAS`) |
+| `catalogue` `endpoints` `models` `prune` | the model registry |
+| `latency <game-id>` `resume <game-id>` | one game |
+| `tournament …` `standings <slug>` | events |
+| `credits` | grant or revoke; `--show` prints a balance with its ledger |
+| `psql` `sql` `backup` `migrate` | the database |
+
+Four details that are deliberate rather than incidental:
+
+- **`deploy` is the whole sequence** — pull, migrate, restart, check `/ready`. There is no half of it
+  worth running alone.
+- **`restart` uses `--force-recreate`.** A container that once failed to bind its port can come back
+  running-but-unpublished: healthy inside, unreachable outside, with `docker port` empty. `start` does
+  not fix that; recreating does.
+- **`sql` runs with `ON_ERROR_STOP=1`**, and both it and `backup` read the credentials from *inside*
+  the container, so there is no second copy of `POSTGRES_USER` to drift.
+- **`credits` resolves a person the same way the API does** (`db.users.resolve_user`, shared with
+  `POST /admin/credits`), and an email we do not hold is asked of Clerk — so an invitation can be
+  pre-funded for somebody who has never signed in. `core.clerk.get_directory` lives in `core/` for
+  that reason: `db/` importing `api/` would invert the layering for one cached client.
+
 ## Managing tournaments
 
 The `tournament` service's entrypoint is the script, so management reads naturally:
@@ -39,12 +70,25 @@ docker compose run --rm tournament pause pool-free --abort-live
 The long-running `tournament` container ticks whichever slug `TOURNAMENT_SLUG` names. One container
 per event you want running.
 
-## Only one worker
+## How many workers
 
-A job goes to whichever worker reaches it first, so a second is not redundancy — it is a coin toss
-over who plays each turn. `deploy.replicas: 1` says so, and scaling it is a correctness bug rather
-than a capacity decision. That mistake already cost a debugging pass in the browser suite, where a
-seeded seven-ply game came out at fifteen.
+**Identical workers share the load; different ones fight.** The queue is a Redis Streams consumer
+group, so a job goes to exactly one consumer — running several copies of the same image shards the
+work rather than duplicating it. `WORKER_REPLICAS` (or `./chessmark workers 3`) sets the count.
+
+This is worth having, because **a worker plays one turn at a time, start to finish**. A free model's
+turn is 17–38s typically and 442s at worst, so one of those blocks whatever is behind it — including
+a human's game, which is how the head-of-line blocking was noticed.
+
+**Every worker also runs a reconciler, and those *would* duplicate** — two of them seeing the same
+free concurrency slot and each filling it. The sweep therefore takes a Redis `SingleFlight` lock with
+a **TTL** rather than a real lock: a missed sweep costs a minute, and a lock nobody can release costs
+everything after it.
+
+What must not happen is workers that are **not** identical. A scripted one racing a real one is a
+coin toss over who plays each turn, with different providers — that mistake cost a debugging pass in
+the browser suite, where a seeded seven-ply game came out at fifteen. See
+[TESTING.md](TESTING.md#rules-that-cost-a-debugging-pass-each).
 
 ## The API has two addresses
 
