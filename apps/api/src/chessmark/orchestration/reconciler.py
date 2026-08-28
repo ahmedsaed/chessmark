@@ -25,6 +25,7 @@ import datetime as dt
 import logging
 import uuid
 from dataclasses import dataclass, field
+from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -62,6 +63,35 @@ class ReconcileReport:
             f"abandoned {len(self.abandoned)}, waiting on a person {len(self.waiting)}, "
             f"resumed {len(self.resumed)}"
         )
+
+
+class SingleFlight:
+    """A lock that lets one worker at a time run a sweep the others would only duplicate.
+
+    Every worker runs a reconciler, and with one worker that was free. With several, they wake
+    together and ask Postgres the same question: mostly harmless, because enqueuing is idempotent
+    on `expected_ply` — but `with_room_to_run` is not, since two reconcilers each see the same free
+    slot and each fill it, admitting more running games than the event allows.
+
+    A Redis key with a TTL rather than a real lock. If a holder dies the key expires and the next
+    sweep proceeds, which is the correct failure: a missed sweep costs a minute, and a lock nobody
+    can release costs everything after it.
+    """
+
+    def __init__(self, redis: Any, *, key: str = "chessmark:reconcile:lock", ttl: int = 55) -> None:
+        self._redis = redis
+        self._key = key
+        self._ttl = ttl
+
+    async def __aenter__(self) -> bool:
+        if self._redis is None:
+            return True
+        self._held = bool(await self._redis.set(self._key, "1", nx=True, ex=self._ttl))
+        return self._held
+
+    async def __aexit__(self, *_exc: object) -> None:
+        if self._redis is not None and getattr(self, "_held", False):
+            await self._redis.delete(self._key)
 
 
 async def find_stalled(

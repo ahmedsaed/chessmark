@@ -95,10 +95,19 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
-    # **Exactly one.** A job goes to whichever worker reaches it first, so a second is not
-    # redundancy — it is a coin toss over who plays each turn.
+    # **More than one is fine, and sometimes necessary.** The queue is a Redis Streams consumer
+    # group, so a job goes to exactly one consumer and each worker takes a unique name — two
+    # workers share the load rather than duplicating it.
+    #
+    # This said "exactly one" and meant something narrower: a worker with a *different provider*
+    # must not race a real one, which is what the browser suite's scripted worker would do. Two
+    # identical workers are ordinary horizontal scaling.
+    #
+    # It matters because a worker takes one job at a time and plays it to the end. A free model's
+    # turn runs 17–38 seconds — worst observed 442 — so a person's game queues behind whatever the
+    # pool happens to be doing. One worker per concurrent game you want moving independently.
     deploy:
-      replicas: 1
+      replicas: ${WORKER_REPLICAS:-1}
 
   # Ticks whichever event is named. A pool is *meant* to run indefinitely, which is precisely why
   # it cannot live in somebody's terminal.
