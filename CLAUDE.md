@@ -517,8 +517,15 @@ which resuming invalidates. Both contradictions reached one page at once:
   was found. `resume_game.py` cleared the abandonment but not the score.
 - A game abandoned on a provider 404, resumed, and played to checkmate at ply 120 was still drawn
   as **abandoned**, and `_settle_finished` skipped it for ever because it filtered out pairings that
-  already carried an `abandoned_reason`. Nothing could leave that state. `settle` now clears a stale
-  abandonment when a real result arrives, and the query no longer excludes one.
+  already carried an `abandoned_reason`. Nothing could leave that state.
+
+**And a stale score is not only mis-drawn — it blocks the real result.** `_settle_finished` also
+skipped anything already scored, so a resumed game that then drew by threefold repetition at ply 100
+left its pairing holding the overturned forfeit's `0-1`: the standings recorded a loss where there
+was a draw, and the pool's leader was half a point better off than it had earned. So **`settle`
+reconciles rather than records** — it makes the pairing agree with its game in whichever direction
+they disagree, returns False when they already agree, and `_settle_finished` offers it every pairing
+with a game on every tick. A few dozen reads, and a disagreement that cannot be sustained.
 
 A closed event still cannot be resumed cleanly: abandoning its last pairing completes it, `advance`
 returns *already over*, and no later tick settles anything. A pool never finishes, which is why the

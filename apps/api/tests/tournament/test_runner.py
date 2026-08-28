@@ -318,6 +318,76 @@ async def test_a_finished_game_settles_its_pairing(
     assert [r.white_score for r in results] == [1.0]
 
 
+async def test_a_stale_score_is_corrected_rather_than_believed_for_ever(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """The half that made the display bug a *standings* bug.
+
+    A resumed game's pairing kept the score of the forfeit that had just been overturned, and
+    `_settle_finished` skipped anything already scored — so when the game then drew by threefold
+    repetition at ply 100, the real result had nowhere to go. The standings recorded a loss where
+    there was a draw, and no later tick would ever correct it. Observed in production, in a pool
+    whose leader was a half-point better off than it had earned.
+    """
+    tournament_id, _ = await make_tournament(
+        db, models=3, config=TournamentConfig(format=Format.ROUND_ROBIN, max_concurrent=1)
+    )
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    rows = await repo.in_flight(db, tournament_id)
+    pairing_id, game_id = rows[0].id, rows[0].game_id
+
+    # The state a resume used to leave behind: a score from the overturned verdict, on a game that
+    # is playing again.
+    pairing = await db.get(TournamentGame, pairing_id)
+    assert pairing is not None
+    pairing.white_score = 1.0
+    await db.commit()
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    pairing = await db.get(TournamentGame, pairing_id)
+    assert pairing is not None
+    assert pairing.white_score is None, "a game in flight is not a decided pairing"
+
+    # And when it does finish, the game's own result is what lands.
+    game = await db.get(Game, game_id)
+    assert game is not None
+    game.status = GameStatus.FINISHED
+    game.result = GameResult.DRAW
+    game.termination = Termination.THREEFOLD_REPETITION
+    game.ply_count = 100
+    await db.commit()
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    pairing = await db.get(TournamentGame, pairing_id)
+    assert pairing is not None
+    assert pairing.white_score == 0.5, "the threefold draw, not the forfeit it replaced"
+
+
+async def test_settling_is_idempotent(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """`_settle_finished` now offers every pairing on every tick, so `settle` must report a change
+    only when it makes one. Otherwise the count a tick reports climbs for ever and reads as work."""
+    tournament_id, _ = await make_tournament(
+        db, models=3, config=TournamentConfig(format=Format.ROUND_ROBIN, max_concurrent=1)
+    )
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    await finish_all_in_flight(db, tournament_id, white_wins=True)
+
+    first = await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    assert first.settled == 1
+
+    second = await advance(sessionmaker, queue, tournament_id=tournament_id)
+    assert second.settled == 0, "nothing changed the second time, so nothing is reported"
+
+
 async def test_a_resumed_game_settles_even_though_its_pairing_was_abandoned(
     db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
 ) -> None:
