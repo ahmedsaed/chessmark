@@ -157,6 +157,22 @@ class RateLimit:
     limit_source: str | None = None
     retry_after_seconds: float | None = None
     status_code: int | None = None
+    timed_out: bool = False
+    """The provider did not answer inside the per-call timeout.
+
+    Not a rate limit and not an error — the endpoint simply is not serving us, which is the same
+    conclusion a 429 reaches by a different route. It takes the same path (pause, cool down, come
+    back) because that is the cheapest correct response: retrying means waiting the whole timeout
+    again, ten more minutes of a worker held against an endpoint that has just failed to answer.
+
+    A per-*turn* clock used to enforce this, and it measured the wrong thing. The turn's remaining
+    seconds were handed to each call as its deadline, so a turn with 583 of 600 spent asked for a
+    completion in 17 — below a free model's mean latency — and the doomed call was reported as
+    `provider call exceeded 17s`. Ten minutes per call, applied where the bound belongs, needs no
+    such arithmetic: `max_tool_iterations` already bounds how many calls a turn may make, and
+    `max_completion_budget` bounds what it may generate.
+    """
+
     gated: bool = False
     """The model is not available to us **at all**, and waiting will not change that.
 
@@ -185,6 +201,8 @@ class RateLimit:
         where = self.provider or "its provider"
         if self.gated:
             return f"{model} is not available through this API (403)"
+        if self.timed_out:
+            return f"{where} did not answer in time for {model}"
         if self.status_code == 403:
             return f"{model} was refused by {where} (403)"
         if self.status_code == 404:

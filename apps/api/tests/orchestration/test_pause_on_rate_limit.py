@@ -452,3 +452,65 @@ class TestAGatedModel:
         )
 
         assert handled.outcome == PAUSED
+
+
+async def times_out(**_kwargs: object) -> object:
+    raise TimeoutError
+
+
+class TestAProviderThatDoesNotAnswer:
+    """A timeout pauses the game; it never abandons it (ADR-0017 amendment).
+
+    **The per-turn clock this replaced measured the wrong thing.** A turn makes an unknown number of
+    calls — 2.95 per ply for free models — and its *remaining* seconds were handed to each call as
+    that call's deadline. So a turn with 583 of 600 spent asked for a completion in 17, below a free
+    model's mean latency; the doomed call raised an `LlmError` rather than a rate limit, took the
+    abandon path, and burned five retries hitting the same wall. A real game died at ply 10 with a
+    message blaming the provider for our clock.
+
+    Now the bound is ten minutes **per call**, in the gateway, and a provider that will not answer
+    inside it is treated exactly like one answering 429: paused, cooled down, come back.
+    """
+
+    async def test_it_pauses_rather_than_abandoning(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        handled = await make_worker(times_out, cooldown=ProviderCooldown(redis)).handle(
+            game.first_job
+        )
+
+        assert handled.outcome == PAUSED
+
+        db.expunge_all()
+        reloaded = await db.get(Game, game.game.id)
+        assert reloaded is not None
+        assert reloaded.status is GameStatus.PAUSED
+        assert reloaded.termination is None, "a slow provider is not a termination"
+
+    async def test_the_reason_does_not_blame_the_model(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        await make_worker(times_out, cooldown=ProviderCooldown(redis)).handle(game.first_job)
+
+        db.expunge_all()
+        reloaded = await db.get(Game, game.game.id)
+        assert reloaded is not None
+        assert reloaded.pause_reason is not None
+        assert "did not answer in time" in reloaded.pause_reason, reloaded.pause_reason
+
+    async def test_it_is_not_retried_first(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """The expensive mistake, avoided. A retry means waiting the whole timeout again — ten more
+        minutes of a worker held against an endpoint that has just failed to answer. This is the 429
+        lesson (patience inside the retry loop is paid for in requests) with a much larger unit."""
+        calls = 0
+
+        async def counting(**_kwargs: object) -> object:
+            nonlocal calls
+            calls += 1
+            raise TimeoutError
+
+        await make_worker(counting, cooldown=ProviderCooldown(redis)).handle(game.first_job)
+
+        assert calls == 1, f"one attempt, then pause — not {calls}"

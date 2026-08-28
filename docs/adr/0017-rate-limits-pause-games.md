@@ -225,3 +225,56 @@ in advance. (The reverted ceiling above was the imprecise version of the same in
 every attempted provider returned a retry hint", and a free model is typically served by exactly one
 endpoint that returned none — so the absence of a hint is the normal case, and the ladder in
 `core/cooldown.py` has to have an opinion of its own.
+
+
+## Amendment — 2026-08-28, later: a 400 can be the endpoint too
+
+`{"status":400,"title":"Bad Request","detail":"Function id '...': DEGRADED function cannot be
+invoked"}` — from Nvidia, abandoning a game at ply 1 after four attempts. Nothing about that is a bad
+request: the endpoint is unhealthy and a fresh call succeeds.
+
+**This is the third time the same lesson has arrived.** A provider 404 was classified as "does not
+exist"; a 403 was classified as a bad request; now a 400. So state it once, plainly: **the status
+code does not say whether the request or the endpoint is at fault — the body does.**
+
+`endpoint_is_unhealthy` matches endpoint-health wording on a 400 only, and such an error joins 429,
+403 and provider-404 as unavailability: paused, cooled down, retried later.
+
+The narrow half is load-bearing. The *other* 400 we see is `"this endpoint's maximum context length
+is 65536 tokens. However, you requested about 65810"`, which is our own arithmetic — the next attempt
+sends the same bytes and is refused the same way, so it must keep failing fast rather than being
+retried and cooled down. Both halves have a test naming the verbatim body.
+
+## Amendment — 2026-08-28, later still: the bound belongs on the call, not the turn
+
+A game died at ply 10 with `Abandoned after 5 failed provider attempts: provider call exceeded 17s`.
+
+The 17 seconds were **ours**. `TurnLimits.max_seconds` was 600 seconds *per turn*, and the turn's
+remaining seconds were handed to each call as that call's deadline — so with 583 spent, the next call
+was asked for a completion in 17. A free model's *mean* latency is 17–38 seconds. The call could not
+succeed, and because a timeout is not a rate limit it took the abandon path: five retries, each
+replaying the same near-exhausted turn into the same wall.
+
+**The per-turn clock measured the wrong thing and is gone.** A turn makes an unknown number of calls
+— 2.95 per ply for free models — so a shared time budget punishes a slow-but-healthy sequence and
+blames whichever call happens to exhaust it. And it was redundant: a turn is already bounded by
+`max_tool_iterations` (how many calls it may make) and `max_completion_budget` (how much it may
+generate), and each call by the gateway's own `asyncio.wait_for`. Seconds-per-turn added nothing to
+those three and contradicted the last one.
+
+So: **ten minutes per call**, in the gateway, and **a provider that does not answer inside it is
+unavailability** — the same conclusion a 429, a 403 and a provider-404 reach by other routes. It
+takes the same path: pause, cool the endpoint down, come back, abandon honestly when the 24-hour span
+runs out.
+
+**Paused on the first timeout, never retried first.** This is the 429 lesson with a much larger unit:
+patience inside the retry loop is paid for in requests, and here one retry costs *ten more minutes*
+of a worker held against an endpoint that has just failed to answer. The cooldown ladder decides when
+to come back, which is the whole reason it exists.
+
+Ten minutes is chosen against measurement, not taste: the worst call observed was 442 seconds, so a
+tighter bound would pause on calls that were going to succeed.
+
+An interim fix — a `min_call_seconds` floor, so a turn stopped rather than making a call it could not
+finish — was written and then removed by this change. It was a patch on the arithmetic that should
+not have existed.

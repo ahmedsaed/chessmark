@@ -118,9 +118,19 @@ What remains true is that free models are **slow and verbose**: 17s and 38s mean
 A worker plays one turn at a time, start to finish, so one of these blocks whatever is behind it —
 `./chessmark workers 3` is the answer.
 
+**A call gets ten minutes; a turn gets no clock at all.** The bound is per *request*, in the gateway,
+because a turn makes an unknown number of calls and a shared time budget blames whichever one
+exhausts it. A provider that will not answer inside ten minutes is treated as unavailable — paused
+and cooled down, not retried ([ADR-0017](adr/0017-rate-limits-pause-games.md)).
+
 **The free tier is a shared pool, and it is patchy.** 429s carry
 `limit_source: upstream_provider_shared_pool` and arrive from first-party providers too. A probe of
 six free models returned four 200s, one 429 and one 403.
+
+**A status code does not say whether the request or the endpoint is at fault — the body does.** 429,
+403, provider-404 and a 400 whose body names endpoint health (`DEGRADED function cannot be invoked`)
+are all *unavailability*: paused and cooled down. A 400 saying the completion does not fit the window
+is our own arithmetic and fails fast. Three separate games were abandoned learning this one rule.
 
 **A rate limit pauses the game; it does not retry it.**
 [ADR-0017](adr/0017-rate-limits-pause-games.md) records that incident in full, including why three
