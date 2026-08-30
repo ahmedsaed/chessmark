@@ -60,6 +60,20 @@ MAX_TRUNCATIONS = 3
 MAX_NUDGES = 3
 
 
+class HarnessCeilingError(Exception):
+    """A model was cut off by a limit *we* set, so the turn failed rather than the player.
+
+    Raised rather than returned so it travels the same path as a provider failure: the turn rolls
+    back whole and the worker decides. It is never a `Termination` and never reaches a player's
+    record — that is the entire point (invariant 11).
+    """
+
+    def __init__(self, model: str, max_tokens: int) -> None:
+        super().__init__(f"{model} was cut off by our own max_tokens of {max_tokens}")
+        self.model = model
+        self.max_tokens = max_tokens
+
+
 @dataclass(frozen=True, slots=True)
 class TurnLimits:
     """Per-turn ceilings (AGENT-08).
@@ -249,6 +263,9 @@ class TurnRunner:
         self._compactions = 0
         self._summary_tokens = 0
         self._reactive_compactions = 0
+        #: What the last call was allowed to generate. Kept so a truncation can be attributed:
+        #: a response that stopped at *our* number was ended by the harness, not by the model.
+        self._requested_max_tokens: int | None = None
         self._truncations = 0
         self._move_committed = False
 
@@ -310,6 +327,13 @@ class TurnRunner:
             # badly, our request would not fit. Treated exactly like a provider failure — the turn
             # rolls back whole and the worker decides — rather than clamped to a token nobody can
             # answer in, which is what forfeited a model for truncation at ply 5 (ADR-0021).
+            result.status = TurnStatus.FAILED
+            result.error = str(error)
+            result.outcome = None
+        except HarnessCeilingError as error:
+            # Our ceiling, not the model's failure. Same treatment as a provider outage: the turn
+            # is marked FAILED with no outcome, so nothing is recorded against either player and
+            # the worker retries or abandons honestly (invariant 11, ADR-0019).
             result.status = TurnStatus.FAILED
             result.error = str(error)
             result.outcome = None
@@ -490,6 +514,13 @@ class TurnRunner:
             log.warning("compaction of %s produced no summary", self.player.id)
         return summary
 
+    def _allow(self, window: compaction.Window, occupied: int | None) -> int:
+        """How many tokens this call may generate, remembered so a truncation can be attributed."""
+        self._requested_max_tokens = window.completion_cap(
+            occupied, self.limits.max_completion_tokens
+        )
+        return self._requested_max_tokens
+
     async def _compact_reactively(self, turn: Turn, result: TurnResult, error: LlmError) -> bool:
         """The last rung: the endpoint refused the prompt for its size, so compact and try again.
 
@@ -565,7 +596,7 @@ class TurnRunner:
                     # ceiling on the answer, so asking for less than the model needs is a
                     # truncation and asking for more than fits is a rejection; this is the largest
                     # value that cannot be rejected.
-                    max_tokens=window.completion_cap(occupied, self.limits.max_completion_tokens),
+                    max_tokens=self._allow(window, occupied),
                     # One session per game, both seats included, so a match reads as a conversation
                     # on OpenRouter's own dashboard rather than as a hundred unrelated generations.
                     # See `agents/sessions.py` for why the unit is the game and not the turn.
@@ -755,12 +786,35 @@ class TurnRunner:
           AGENT-05 is about.
         """
         if completion.finish_reason == "length":
-            return await self._retry_truncated(turn, result)
+            return await self._retry_truncated(turn, result, completion)
         if mangled_tool_call(completion):
             raise ProviderMangledError(self.model, completion)
         return await self._nudge(turn, result)
 
-    async def _retry_truncated(self, turn: Turn, result: TurnResult) -> bool:
+    async def _retry_truncated(
+        self, turn: Turn, result: TurnResult, completion: Completion
+    ) -> bool:
+        """A response cut off at `finish_reason: "length"`. Whose ceiling did the cutting?
+
+        **Ours does not count.** We know exactly what we asked for, so this is a fact about the
+        response and not a judgement call: if the model stopped at our own `max_tokens`, the
+        harness ended the answer and blaming the model for it publishes a finding it did not earn
+        (invariant 11, ADR-0019). That is not hypothetical — a miscalculated window asked an
+        endpoint for **one** output token, every reply came back truncated, and four of them ended
+        a game `truncated`, `1-0`, against a model that had done nothing wrong.
+
+        A ceiling the *provider* imposed still counts, and `TRUNCATED` stays rated: with the window
+        arithmetic fixed (AGENT-19), what remains is a model that could not finish a turn inside a
+        budget set well above what any of them need, and reliability is the benchmark.
+        """
+        if self._our_ceiling_bound(completion):
+            log.warning(
+                "%s was cut off at our own max_tokens of %s; failing the turn, not the player",
+                self.model,
+                self._requested_max_tokens,
+            )
+            raise HarnessCeilingError(self.model, self._requested_max_tokens or 0)
+
         self._truncations += 1
         if self._truncations > MAX_TRUNCATIONS:
             result.status = TurnStatus.FORFEITED
@@ -1038,6 +1092,23 @@ class TurnRunner:
             return True
 
         return False
+
+    def _our_ceiling_bound(self, completion: Completion) -> bool:
+        """Whether the response stopped at the number *we* asked for.
+
+        A count, not an inference. The provider reports what it generated and we know what we
+        allowed; a response that reached our ceiling was ended by us, and one that stopped short of
+        it was ended by the endpoint's own limit.
+
+        `False` when either number is missing — an endpoint that reports no usage, or an unknown
+        window that let the request through unclamped. Unattributable, and the existing behaviour
+        (a strike) is the one that does not change silently.
+        """
+        requested = self._requested_max_tokens
+        generated = completion.usage.completion
+        if not requested or not generated:
+            return False
+        return generated >= requested
 
     def _forfeit(self, termination: Termination, detail: str) -> Outcome | None:
         """End the game against this player, unless it is already over."""
