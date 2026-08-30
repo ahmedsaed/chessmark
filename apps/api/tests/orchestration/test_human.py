@@ -353,7 +353,15 @@ async def test_a_stalled_model_game_is_still_requeued(db, sessionmaker, queue):
 
 
 async def test_the_idle_window_is_far_longer_than_the_stall_window(db):
-    """A person may leave the tab open; a stalled model game is our fault and is urgent."""
+    """A person may leave the tab open; a stalled model game is our fault and is urgent.
+
+    The multiple used to be four, when the stall window was twenty minutes. It is 45 now — a
+    healthy slow turn can take longer than twenty minutes since the per-call timeout became ten
+    (ADR-0017), and the sweep was manufacturing duplicate jobs for turns that were fine (ADR-0022).
+    The property being protected is the *ordering*, comfortably: a person waits far longer than a
+    stalled model does. Four was never the point, and pinning it here would make the stall window
+    un-tunable without touching a human-facing number that has nothing to do with it.
+    """
     from chessmark.orchestration.reconciler import DEFAULT_STALE_AFTER
 
-    assert DEFAULT_HUMAN_IDLE_AFTER > DEFAULT_STALE_AFTER * 4
+    assert DEFAULT_HUMAN_IDLE_AFTER > DEFAULT_STALE_AFTER * 2

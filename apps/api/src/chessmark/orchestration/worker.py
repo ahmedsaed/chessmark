@@ -41,6 +41,7 @@ from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
 from chessmark.db.models import Game, GameEvent, ModelRegistry, Player
 from chessmark.db.quotas import record_spend
 from chessmark.db.repositories import (
+    GameInFlightError,
     append_event,
     finish_game,
     get_game,
@@ -76,9 +77,19 @@ GLOBAL_BUDGET = TurnOutcome("global_budget_halted")
 #: else would run an LLM turn on a human's behalf and play their move for them.
 AWAITING_HUMAN = TurnOutcome("awaiting_human")
 ABORTED = TurnOutcome("aborted")
+#: Another worker holds this game's row and is playing this very ply. Not a failure: the job is
+#: dropped and nothing is re-enqueued, because the owner enqueues the next ply when it commits
+#: (ADR-0022).
+IN_FLIGHT = TurnOutcome("in_flight")
 #: The provider asked us to come back later. The game is paused with a time to resume at, holds no
 #: concurrency slot while it waits, and is picked up again by the reconciler.
 PAUSED = TurnOutcome("paused")
+
+#: Statuses a game does not come back from on its own.
+#:
+#: Only one thing reopens a game in one of these: an operator running `scripts/resume_game.py`,
+#: which says so in the event it writes. Everything else must leave it alone — see `_still_running`.
+TERMINAL_STATUSES = frozenset({GameStatus.FINISHED, GameStatus.ABORTED})
 
 #: How many times a turn may be retried after a provider failure before the game is abandoned.
 #: Generous, because the failures this covers — outages, mangled responses — are usually temporary.
@@ -201,6 +212,15 @@ class TurnWorker:
     async def handle(self, job: AdvanceTurn) -> HandledJob:
         try:
             return await self._advance(job)
+        except GameInFlightError:
+            # Somebody else is playing this ply. `expected_ply` cannot catch this — both jobs read
+            # the same uncommitted state — and two workers really did play ply 19 of one game fifty
+            # milliseconds apart, then wrote competing endings over each other (ADR-0022).
+            #
+            # Dropped, not re-enqueued: the owner enqueues the next ply when it commits, and if the
+            # owner dies the queue's `XAUTOCLAIM` and the reconciler both still cover it.
+            log.info("dropping job for %s: another worker is advancing it", job.game_id)
+            return HandledJob(IN_FLIGHT, job.game_id, job.expected_ply)
         except ProviderFailureError as failure:
             # An endpoint declining to serve is not a failure to retry harder at — the position is
             # untouched and the answer is to come back. Burning the job's retry budget on it spent
@@ -211,7 +231,12 @@ class TurnWorker:
 
     async def _advance(self, job: AdvanceTurn) -> HandledJob:
         async with self.sessionmaker() as session, session.begin():
-            game = await get_game(session, job.game_id)
+            # **Claimed, not merely read.** The row lock is what makes one worker the owner of this
+            # ply; everything below it — the idempotency check included — assumes nobody else is
+            # doing the same thing at the same time, and before this that assumption was simply
+            # false (ADR-0022, OPS-15). The turn already runs inside this transaction, so holding
+            # the lock for its duration changes nothing about how long the row is held.
+            game = await get_game(session, job.game_id, claim=True)
 
             if game.status is not GameStatus.RUNNING:
                 return HandledJob(NOT_RUNNING, game.id, game.ply_count)
@@ -352,6 +377,16 @@ class TurnWorker:
 
         async with self.sessionmaker() as session, session.begin():
             game = await get_game(session, job.game_id)
+
+            # **A game that ended stays ended.** This used to set `PAUSED` unconditionally, and a
+            # second worker running the same ply — which happened, fifty milliseconds apart — would
+            # finish minutes after the first had concluded the game and write `PAUSED` over a
+            # finished record. The reconciler then correctly resumed it, and the ply was played a
+            # third time. One game ended seven times that way (ADR-0022, OPS-16).
+            if game.status in TERMINAL_STATUSES:
+                log.info("not pausing %s: it is already %s", game.id, game.status.value)
+                return HandledJob(NOT_RUNNING, game.id, job.expected_ply, result=result)
+
             player = await self._seat_to_play(session, job)
             model = model_for(player)
             provider = limit.provider or _pinned_provider(player)
@@ -509,7 +544,17 @@ class TurnWorker:
         return HandledJob(ABORTED, game.id, job.expected_ply, result=result)
 
     async def _abandon(self, session: AsyncSession, game: Game, detail: str) -> None:
-        """Close a game the harness could not finish. Never a chess result, never a forfeit."""
+        """Close a game the harness could not finish. Never a chess result, never a forfeit.
+
+        Silently does nothing to a game that is already over, for the reason `_conclude` does: the
+        loser of a race between two workers on one ply must not overwrite the winner's verdict. One
+        game was ended as `budget_exceeded` — a harness stop, excluded from ratings — resurrected,
+        and re-ended as `error_forfeit`, which *is* rated. Scheduling picked the verdict (ADR-0022).
+        """
+        if game.status in TERMINAL_STATUSES:
+            log.info("not abandoning %s: it is already %s", game.id, game.status.value)
+            return
+
         game.status = GameStatus.ABORTED
         game.termination = Termination.ABANDONED
         game.termination_detail = detail
@@ -627,7 +672,12 @@ class TurnWorker:
         return outcome
 
     async def _conclude(self, session: AsyncSession, game: Game, outcome: Outcome | None) -> None:
-        if outcome is None or game.status is GameStatus.FINISHED:
+        """Record a result, once. A game that already has one keeps it.
+
+        `ABORTED` was missing from this guard and `FINISHED` alone was not enough: an abandoned game
+        would take a second ending, and a second `game_ended` row (ADR-0022, invariant 7).
+        """
+        if outcome is None or game.status in TERMINAL_STATUSES:
             return
 
         await finish_game(session, game_id=game.id, outcome=outcome)

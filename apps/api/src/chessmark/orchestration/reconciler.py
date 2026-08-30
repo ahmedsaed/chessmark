@@ -39,7 +39,18 @@ from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
 
 log = logging.getLogger(__name__)
 
-DEFAULT_STALE_AFTER = dt.timedelta(minutes=20)
+#: How long a game may go without an event before it is treated as stalled.
+#:
+#: **Tuning, not the guarantee.** It was 20 minutes, and since the per-call timeout became ten
+#: minutes (ADR-0017) a healthy slow turn can legitimately exceed that — `max_tool_iterations` is
+#: 20 — so this sweep was *manufacturing* the duplicate jobs that had two workers playing ply 19
+#: fifty milliseconds apart. What makes a duplicate harmless is the row lock in `worker._advance`
+#: (ADR-0022); this number only decides how often we make one and throw it away.
+#:
+#: Deliberately below the worst legitimate turn. A duplicate is now dropped in microseconds, and
+#: the alternative — a threshold above every possible turn — leaves a genuinely stalled game
+#: invisible for hours.
+DEFAULT_STALE_AFTER = dt.timedelta(minutes=45)
 
 #: How long a game may sit waiting for a person before it is written off (GAME-08).
 #: Deliberately far longer than the stall threshold: a stalled *model* game is our fault and
