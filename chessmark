@@ -235,7 +235,12 @@ echo "select count(*) from games;" | ./chessmark sql'
   [resume]='./chessmark resume 5f8ee937-2e53-49df-877f-6879bcfc56b7
 ./chessmark resume <game-id> --max-usd 2.50        # raise the ceiling that stopped it
 ./chessmark resume <game-id> --max-plies 400
-./chessmark resume <game-id> --unclaimed-draw   # a threefold nobody was told about (ADR-0020)'
+./chessmark resume <game-id> --unclaimed-draw   # a threefold nobody was told about (ADR-0020)
+./chessmark resume <game-id> --harness-ceiling      # truncated by *our* max_tokens (ADR-0021)
+./chessmark resume <game-id> --overwritten-verdict  # a race replaced an earlier harness stop (ADR-0022)
+
+# The last three reopen a forfeit, which the general rule refuses. Each is gated on the
+# record, not on the flag: the stored calls or the event log decide whether it applies.'
   [status]='./chessmark status                      # everything
 ./chessmark status --games               # just the games
 ./chessmark status --tournaments         # just the events

@@ -141,10 +141,37 @@ async def test_turns_expose_tool_calls(
 # ====================================================================== reasoning privacy
 
 
-async def test_reasoning_is_withheld_while_the_game_is_live(
+async def test_reasoning_is_withheld_while_a_person_is_playing(
+    client: AsyncClient, db: AsyncSession, queue, redis, make_worker
+) -> None:
+    """Invariant 8 / HUMAN-07. It would hand somebody their opponent's plan mid-decision."""
+    from chessmark.agents.scripted import step
+    from chessmark.game import Colour
+    from tests.support import make_user, seat_human_match
+
+    user = await make_user(db)
+    human = await seat_human_match(db, queue, user=user, human_colour=Colour.BLACK)
+    worker = make_worker(
+        scripted(step(tool_call("make_move", move="e4"), reasoning="I intend Qh5 next."))
+    )
+    await run_next(worker, human.queue)
+
+    body = (await client.get(f"/games/{human.game.id}/turns")).json()
+
+    assert body[0]["reasoning_available"] is False
+    assert body[0]["llm_calls"][0]["reasoning"] is None
+    assert "Qh5" not in (await client.get(f"/games/{human.game.id}/turns")).text
+
+
+async def test_reasoning_is_published_live_for_a_model_game(
     client: AsyncClient, db: AsyncSession, game: Fixture, make_worker
 ) -> None:
-    """Invariant 8 / HUMAN-07. Mid-game reasoning would leak a model's plan to its opponent."""
+    """One rule, in one place.
+
+    The event log has always streamed this game's `thinking` events live — there is no participant
+    to leak to — while `/turns` applied a broader rule of its own and withheld the same text. Two
+    gates in one module, disagreeing.
+    """
     from chessmark.agents.scripted import step
 
     worker = make_worker(
@@ -154,9 +181,8 @@ async def test_reasoning_is_withheld_while_the_game_is_live(
 
     body = (await client.get(f"/games/{game.game.id}/turns")).json()
 
-    assert body[0]["reasoning_available"] is False
-    assert body[0]["llm_calls"][0]["reasoning"] is None
-    assert "Qh5" not in (await client.get(f"/games/{game.game.id}/turns")).text
+    assert body[0]["reasoning_available"] is True
+    assert "Qh5" in (await client.get(f"/games/{game.game.id}/turns")).text
 
 
 async def test_reasoning_is_revealed_once_the_game_ends(

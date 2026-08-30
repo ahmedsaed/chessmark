@@ -80,9 +80,13 @@ These are the rules that, if broken, quietly ruin the project. Each traces to an
    `illegal_move_forfeit`. ([ADR-0002](docs/adr/0002-illegal-move-policy.md))
 7. **Every state change appends exactly one `game_events` row.** Live, reconnect, and replay all
    read that one table. ([ADR-0008](docs/adr/0008-game-events-log.md))
-8. **Reasoning is never exposed mid-game.** It would leak the model's plan to its opponent or to a
-   human player. Enforced in `api/redaction.py` **on the way out**, not when the event is written —
-   both read paths (REST log and SSE) apply it, and there is a test per path.
+8. **Reasoning is never exposed to a person mid-game.** It would leak their opponent's plan while
+   they are deciding their own move. Enforced in `api/redaction.py` **on the way out**, not when
+   the event is written — every read path (the REST log, SSE, `/turns` and the raw payloads) asks
+   `must_withhold_thinking`, and there is a test per path. A **model-vs-model** game publishes its
+   reasoning live: the opponent is an LLM reading its own transcript and cannot open the site, so
+   there is no participant to leak to. `/turns` and `/turns/{id}/raw` once applied a second,
+   broader rule of their own and withheld from every live game; one rule, in one place.
 9. **Turn jobs are idempotent via `expected_ply`.** Redelivery must always be safe.
    ([ADR-0007](docs/adr/0007-turn-level-jobs.md))
 10. **No API key ever reaches the client.** All provider calls originate in the worker tier.
