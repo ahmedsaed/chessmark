@@ -12,7 +12,7 @@ supersedes the old one, rather than an edit.
 | [0004](0004-sse-over-websockets.md) | SSE instead of WebSockets for live updates | Accepted |
 | [0005](0005-postgres-from-day-one.md) | PostgreSQL from day one | Accepted |
 | [0006](0006-clerk-for-auth.md) | Clerk for authentication | Accepted |
-| [0007](0007-turn-level-jobs.md) | The turn is the unit of work | Accepted |
+| [0007](0007-turn-level-jobs.md) | The turn is the unit of work | Amended by [0022](0022-one-owner-per-ply.md) |
 | [0008](0008-game-events-log.md) | A single `game_events` log powers live, reconnect, and replay | Accepted |
 | [0009](0009-dedicated-say-tool.md) | Trash talk via a dedicated `say` tool | Accepted |
 | [0010](0010-defer-stockfish.md) | Defer Stockfish, but ship the schema for it now | Accepted |
@@ -23,9 +23,11 @@ supersedes the old one, rather than an edit.
 | [0015](0015-quantization-as-identity-and-pinned-endpoints.md) | Quantization identifies the contestant; endpoints are pinned per match | Accepted |
 | [0016](0016-credits-as-a-granted-balance.md) | Credits are a granted balance, priced per model | Accepted |
 | [0017](0017-rate-limits-pause-games.md) | A rate limit pauses the game; endpoints cool down between games | Accepted |
-| [0018](0018-context-compaction.md) | The model summarises its own history when the window fills | Accepted |
-| [0019](0019-harness-bounds-are-not-findings.md) | A harness bound is not a finding about a player | Accepted |
+| [0018](0018-context-compaction.md) | The model summarises its own history when the window fills | Amended by [0021](0021-measured-windows-and-the-compaction-ladder.md) |
+| [0019](0019-harness-bounds-are-not-findings.md) | A harness bound is not a finding about a player | Amended by [0021](0021-measured-windows-and-the-compaction-ladder.md) |
 | [0020](0020-claimable-draws.md) | Threefold and the fifty-move rule are claimed, not applied | Accepted |
+| [0021](0021-measured-windows-and-the-compaction-ladder.md) | The window is measured, and compaction trims before it summarises | Accepted |
+| [0022](0022-one-owner-per-ply.md) | A ply has one owner, and a game that ended stays ended | Accepted |
 
 ## Template
 

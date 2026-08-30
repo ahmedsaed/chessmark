@@ -242,6 +242,19 @@ class Player(Base):
     #: `games.event_seq` is. Each player has its own independent transcript.
     transcript_seq: Mapped[int] = mapped_column(default=0, server_default="0")
 
+    #: The last `usage.prompt_tokens` the provider reported for this seat, carried between turns.
+    #:
+    #: **Why it is stored rather than held in memory.** The worker builds a fresh `TurnRunner` for
+    #: every turn, so a counter living on the runner is zero at the start of each one — which meant
+    #: the first call of *every* turn fell back to a character estimate, for the whole game, when
+    #: the design said the estimate ran once. It said 477,155 tokens of a six-ply transcript and
+    #: forfeited a model (ADR-0021).
+    #:
+    #: Zero means "nothing measured yet", which is true only before a game's first response.
+    #: Invariant 4 already says money comes from returned token counts; this applies the same rule
+    #: to the arithmetic deciding whether a request can be sent at all (AGENT-19).
+    last_prompt_tokens: Mapped[int] = mapped_column(default=0, server_default="0")
+
     # --- per-player benchmark metrics ---
     illegal_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
     compactions: Mapped[int] = mapped_column(default=0, server_default="0")
@@ -459,6 +472,22 @@ class TranscriptMessage(Base):
     invariant 3 asks that the record be verbatim — so a compacted game keeps every message it ever
     sent and `build_messages` simply stops sending the folded ones. What changes is the request,
     not the history.
+    """
+
+    trimmed_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    """Set when a compaction elided this message's content but kept the message (ADR-0021).
+
+    The cheap rung of the ladder, and the reason it is a second mark rather than a `superseded_at`:
+    a `tool` result cannot simply stop being sent, because the assistant message that requested it
+    would then carry a `tool_call_id` with no answer and every provider refuses that. So the
+    message stays, its content is replaced *in the request* by `compaction.TRIMMED_PLACEHOLDER`,
+    and the row itself is untouched — the column records the decision, `content` still holds what
+    the tool actually returned.
+
+    Only stale tool output is trimmed. It is the bulk of a chess transcript — `get_legal_moves`
+    returns 38 or 39 move objects and a turn calls it most plies — and it is worth nothing once the
+    position has moved on, because the board is authoritative (invariant 1) and the model can ask
+    again.
     """
 
     is_summary: Mapped[bool] = mapped_column(default=False, server_default=sa.false())

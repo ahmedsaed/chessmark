@@ -10,11 +10,16 @@ import uuid
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.db.enums import EventType, GameStatus, PlayerKind
 from chessmark.db.models import Game, GameEvent, Player, Ply
 from chessmark.game import Colour, GameResult, MoveOutcome, Outcome, Referee
+
+#: Postgres's SQLSTATE for a `NOWAIT` lock it could not take. Matched on the code rather than on
+#: the driver's exception class, so this does not depend on asyncpg being underneath.
+LOCK_NOT_AVAILABLE = "55P03"
 
 
 class GameNotFoundError(LookupError):
@@ -56,7 +61,47 @@ async def create_game(
     return game
 
 
-async def get_game(session: AsyncSession, game_id: uuid.UUID) -> Game:
+class GameInFlightError(Exception):
+    """Another worker holds this game's row and is playing its ply (ADR-0022).
+
+    Not an error in any ordinary sense — it is the answer to "may I play this ply", and the answer
+    is no because somebody already is. Raised rather than returned so a caller cannot proceed by
+    forgetting to check.
+    """
+
+    def __init__(self, game_id: uuid.UUID) -> None:
+        super().__init__(f"game {game_id} is being advanced by another worker")
+        self.game_id = game_id
+
+
+async def get_game(session: AsyncSession, game_id: uuid.UUID, *, claim: bool = False) -> Game:
+    """Load a game. With `claim`, take its row lock or raise.
+
+    **`expected_ply` protects redelivery, not concurrency** (ADR-0007, ADR-0022). A redelivered job
+    either finds the ply already played and drops, or reruns a turn that was rolled back. Two jobs
+    running *simultaneously* both read ply 18, both find it matches, and both play ply 19 — which
+    two workers did, fifty milliseconds apart, in a real game.
+
+    `NOWAIT` rather than a plain wait, and that is the whole point: a turn holds this lock for as
+    long as it runs, which can be twenty calls at ten minutes each, and a second worker blocking on
+    that would hold a connection for hours to learn something it can learn now.
+    """
+    if claim:
+        try:
+            locked = await session.scalar(
+                sa.select(Game).where(Game.id == game_id).with_for_update(nowait=True)
+            )
+        except DBAPIError as error:
+            # Postgres answers a `NOWAIT` it cannot satisfy with 55P03 `lock_not_available`. Matched
+            # on the SQLSTATE rather than on the driver's exception class, so this does not depend
+            # on asyncpg being the driver underneath.
+            if getattr(error.orig, "sqlstate", None) == LOCK_NOT_AVAILABLE:
+                raise GameInFlightError(game_id) from error
+            raise
+        if locked is None:
+            raise GameNotFoundError(game_id)
+        return locked
+
     game = await session.get(Game, game_id)
     if game is None:
         raise GameNotFoundError(game_id)

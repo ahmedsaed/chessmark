@@ -357,11 +357,15 @@ class TestARejectedRequest:
     async def test_an_outage_still_gets_its_retries(
         self, db: AsyncSession, game: Fixture, make_worker: Any
     ) -> None:
-        """The distinction that makes this safe. A 503 is a provider having a bad minute and the
-        next attempt may well work; a 400 is the same bytes being refused the same way."""
+        """The distinction that makes this safe. A 502 is a provider having a bad minute and the
+        next attempt may well work; a 400 is the same bytes being refused the same way.
+
+        A 503 used to stand in here and no longer belongs: OpenRouter means "no provider meets your
+        routing requirements" by it, which pinned routing cannot fix on a retry, so it pauses.
+        """
 
         class OutageError(Exception):
-            status_code = 503
+            status_code = 502
 
         async def unavailable(**_kwargs: object) -> object:
             raise OutageError

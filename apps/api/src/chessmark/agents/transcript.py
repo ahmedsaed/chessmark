@@ -23,7 +23,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.agents.compaction import live_messages
+from chessmark.agents.compaction import TRIMMED_PLACEHOLDER, live_messages
 from chessmark.db.models import Player, TranscriptMessage
 
 
@@ -116,7 +116,10 @@ def to_provider_message(row: TranscriptMessage) -> dict[str, Any]:
         message["tool_call_id"] = row.tool_call_id or ""
         if row.name:
             message["name"] = row.name
-        message["content"] = row.content or ""
+        # A trimmed result keeps its place and its `tool_call_id` — the assistant message that
+        # requested it still has an answer — and carries a placeholder instead of what the tool
+        # returned (ADR-0021). The row is untouched; only the request shrinks.
+        message["content"] = TRIMMED_PLACEHOLDER if row.trimmed_at else (row.content or "")
         return message
 
     if row.content is not None:

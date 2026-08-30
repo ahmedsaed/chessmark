@@ -29,7 +29,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.agents import compaction, prompts, transcript
+from chessmark.agents import compaction, llm, prompts, transcript
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.mangled import ProviderMangledError, mangled_tool_call
 from chessmark.agents.sessions import session_for_game
@@ -58,6 +58,20 @@ MAX_TRUNCATIONS = 3
 #: toolless reply in one turn ends it. A model that has been told four times, in the same turn,
 #: that prose does not move a piece is not going to move one.
 MAX_NUDGES = 3
+
+
+class HarnessCeilingError(Exception):
+    """A model was cut off by a limit *we* set, so the turn failed rather than the player.
+
+    Raised rather than returned so it travels the same path as a provider failure: the turn rolls
+    back whole and the worker decides. It is never a `Termination` and never reaches a player's
+    record — that is the entire point (invariant 11).
+    """
+
+    def __init__(self, model: str, max_tokens: int) -> None:
+        super().__init__(f"{model} was cut off by our own max_tokens of {max_tokens}")
+        self.model = model
+        self.max_tokens = max_tokens
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,16 +142,15 @@ class TurnLimits:
     **Turns, not messages.** A turn is three to five messages and every provider rejects a `tool`
     result whose `tool_calls` parent is missing, so a count of messages would cut mid-turn and 400.
     """
-    """Cap on a *single* response.
 
-    The per-turn budget cannot bound this: it is only checked between round-trips, so by the time
-    it is consulted the tokens are already generated and billed. Only a per-call ceiling stops a
-    spiral mid-flight.
+    max_kept_messages: int = compaction.DEFAULT_MAX_KEPT_MESSAGES
+    """A ceiling on what `keep_turns` may actually amount to (ADR-0021).
 
-    Sized as a circuit breaker rather than an allowance. A legitimate turn was observed using
-    ~9,800 completion tokens; a spiral used 34,260 and still produced no tool call. 64,000 leaves
-    a frontier model room to think as hard as it wants about a sharp position while still
-    catching genuinely unbounded generation.
+    "Three to five messages" describes a model that reads the board and moves. A reasoning model
+    that enumerates legal moves, reconsiders and retries a rejected move produces ten or more, so
+    four turns came to fifty messages — larger than the window they were meant to fit inside, which
+    is why compaction could fold and fold and never converge. Whole turns are dropped, never a
+    message, so a tool result is never orphaned from its request.
     """
 
 
@@ -238,11 +251,21 @@ class TurnRunner:
         self._llm_sequence = 0
         self._tool_sequence = 0
         self._nudges = 0
-        #: The prompt size the provider last reported. Exact where an estimate would do, and the
-        #: reason compaction fires on measurement rather than on a per-ply guess.
-        self._prompt_tokens = 0
+        #: The prompt size the provider last reported, or `None` before anything has been measured.
+        #:
+        #: **Seeded from the seat, not from zero.** The worker builds a new runner for every turn,
+        #: so a counter starting at zero here meant the first call of *every* turn fell back to a
+        #: character estimate — for the whole game, while the design believed the estimate ran once
+        #: at ply 1. There is no estimate any more, and this is why there does not need to be one
+        #: (AGENT-19, ADR-0021).
+        self._prompt_tokens: int | None = player.last_prompt_tokens or None
         self._cached_window: compaction.Window | None = None
         self._compactions = 0
+        self._summary_tokens = 0
+        self._reactive_compactions = 0
+        #: What the last call was allowed to generate. Kept so a truncation can be attributed:
+        #: a response that stopped at *our* number was ended by the harness, not by the model.
+        self._requested_max_tokens: int | None = None
         self._truncations = 0
         self._move_committed = False
 
@@ -298,6 +321,22 @@ class TurnRunner:
             result.outcome = None
             result.rate_limit = error.rate_limit
             result.request_rejected = error.request_rejected
+        except compaction.NoRoomToAnswerError as error:
+            # The transcript leaves no usable room for an answer, and compaction could not fix it.
+            # **A harness stop, not a forfeit** (invariant 11, ADR-0019): the model did not play
+            # badly, our request would not fit. Treated exactly like a provider failure — the turn
+            # rolls back whole and the worker decides — rather than clamped to a token nobody can
+            # answer in, which is what forfeited a model for truncation at ply 5 (ADR-0021).
+            result.status = TurnStatus.FAILED
+            result.error = str(error)
+            result.outcome = None
+        except HarnessCeilingError as error:
+            # Our ceiling, not the model's failure. Same treatment as a provider outage: the turn
+            # is marked FAILED with no outcome, so nothing is recorded against either player and
+            # the worker retries or abandons honestly (invariant 11, ADR-0019).
+            result.status = TurnStatus.FAILED
+            result.error = str(error)
+            result.outcome = None
         except ProviderMangledError as error:
             # The endpoint failed to parse a tool call the model did make (ADR-0015). Same
             # treatment as an outage, for the same reason: the model acted correctly and its host
@@ -331,55 +370,59 @@ class TurnRunner:
         return self._cached_window
 
     async def _compact(
-        self, turn: Turn, result: TurnResult, occupied: int, window: compaction.Window
+        self, turn: Turn, result: TurnResult, occupied: int | None, window: compaction.Window
     ) -> bool:
-        """Ask the model to summarise its own earlier turns. True when the transcript shrank.
+        """One compaction pass: trim the kept turns' stale tool output, fold the rest into a
+        summary. True when the request actually changed.
 
-        Failure returns False and the turn proceeds on the un-compacted history, which will very
-        likely be refused for exceeding the window — and that is the intended outcome. The turn
-        fails, rolls back, and is retried, which compacts again; a rate limit pauses the game
-        instead. The alternative, carrying on regardless, spends a call to be told the prompt is
-        too large and then abandons the game.
+        **Two rungs, one pass, one cache miss.** Trimming is not free — eliding a message rewrites
+        the cacheable prefix exactly as summarising does (invariant 2's named exception) — so
+        running the rungs separately would pay that twice. What trimming buys is a smaller thing to
+        summarise and smaller turns to keep, which is what makes the pass converge: it used to fold
+        3 messages of 44 and report success, five times, while the game marched into a
+        context-length 400.
+
+        Failure returns False and the turn proceeds on the history it has. If that is too large the
+        provider says so with exact numbers, and `_loop` compacts against those and retries — the
+        reactive rung, and the only check of "did it fit" that is not a guess.
         """
         rows = await compaction.live_messages(self.session, self.player.id)
-        plan = compaction.plan_compaction(rows, keep_turns=self.limits.keep_turns)
+        plan = compaction.plan_compaction(
+            rows,
+            keep_turns=self.limits.keep_turns,
+            max_kept_messages=self.limits.max_kept_messages,
+        )
         if not plan.worthwhile:
-            # Nothing left to fold: the retained turns alone fill the window. Compacting again
-            # cannot help, so say so rather than looping on it.
+            # Nothing to fold and nothing left to trim. Compacting again cannot help, so say so
+            # rather than looping on it.
             log.warning(
-                "cannot compact %s: the last %d turns already fill the window",
+                "cannot compact %s: nothing left to fold or trim in the last %d turns",
                 self.player.id,
                 self.limits.keep_turns,
             )
             return False
 
+        before_characters = compaction.sent_characters(rows)
         log.info(
-            "compacting %s at %d of %d tokens: folding %d messages, keeping %d",
+            "compacting %s at %s of %d tokens: folding %d, trimming %d, keeping %d",
             self.player.id,
-            occupied,
+            occupied if occupied is not None else "an unmeasured size",
             window.context,
             len(plan.fold),
+            len(plan.trim),
             len(plan.keep),
         )
 
-        completion = await self.gateway.complete(
-            model=self.model,
-            messages=compaction.summary_request(plan),
-            # No tools: a model handed its schema mid-summary calls one, and the call would have to
-            # be discarded. And a small cap, which is what keeps this request inside the window it
-            # exists to make room in — the reserve the trigger held back is exactly this space.
-            max_tokens=window.completion_cap(occupied, compaction.SUMMARY_MAX_TOKENS),
-            session_id=session_for_game(self.game.id),
-        )
-        await self._record_llm_call(turn, completion)
-        self._accumulate(result, completion)
-
-        summary = (completion.content or "").strip()
-        if not summary:
-            log.warning(
-                "compaction of %s produced nothing; leaving the transcript alone", self.player.id
-            )
-            return False
+        summary = ""
+        if plan.fold:
+            summary = await self._summarise(turn, result, plan, occupied, window)
+            if not summary:
+                # The summarising call failed or said nothing. Rung one still stands on its own —
+                # it needs no provider at all — so the pass proceeds with the trim rather than
+                # abandoning both and leaving the request exactly as large as it was.
+                plan = compaction.Plan(fold=[], keep=plan.keep, trim=plan.trim)
+                if not plan.worthwhile:
+                    return False
 
         await compaction.apply(
             self.session,
@@ -389,7 +432,13 @@ class TurnRunner:
             summary=summary,
         )
         self._compactions += 1
-        self._prompt_tokens = 0  # the next call measures the new prefix rather than the old one
+        # The prefix was rewritten, so the old measurement describes a transcript that no longer
+        # exists. `None` means unmeasured, which is the truth until the next response arrives.
+        self._prompt_tokens = None
+        self.player.last_prompt_tokens = 0
+
+        after = await compaction.live_messages(self.session, self.player.id)
+        after_characters = compaction.sent_characters(after)
 
         await append_event(
             self.session,
@@ -400,14 +449,110 @@ class TurnRunner:
                 "colour": self.colour.value,
                 "model": self.model,
                 "folded": len(plan.fold),
+                "trimmed": len(plan.trim),
                 "kept": len(plan.keep),
+                #: What the provider counted before the pass, and `None` when nothing had been
+                #: measured yet. Reported as-is rather than filled in, because a number nobody
+                #: returned is the mistake this whole change exists to remove (AGENT-19).
                 "occupied_tokens": occupied,
                 "context_tokens": window.context,
-                "summary_tokens": completion.usage.completion,
+                #: **Characters, and labelled as characters.** How much the pass actually freed is
+                #: worth showing, and an exact count of something real beats a token estimate of
+                #: the right thing. `occupied_tokens` is the measured token size; these two say
+                #: what changed.
+                "characters_before": before_characters,
+                "characters_after": after_characters,
+                "summary_tokens": self._summary_tokens,
                 "compaction": self._compactions,
             },
         )
         return True
+
+    async def _summarise(
+        self,
+        turn: Turn,
+        result: TurnResult,
+        plan: compaction.Plan,
+        occupied: int | None,
+        window: compaction.Window,
+    ) -> str:
+        """Rung two: ask the model to summarise the turns being folded. "" when it could not.
+
+        The model summarises **itself**, on its own pinned endpoint, with tools withheld (ADR-0018)
+        — a cheaper third model would be cheaper and would put another model's prose into a
+        benchmark record.
+        """
+        try:
+            cap = window.completion_cap(occupied, compaction.SUMMARY_MAX_TOKENS)
+        except compaction.NoRoomToAnswerError:
+            # No room even to *write* the summary. Normally impossible, because the trigger fires
+            # while the reserve is still free and the reserve is exactly this space — but a game
+            # resumed onto a smaller endpoint arrives here. Rung one can still run.
+            log.warning(
+                "cannot summarise %s: %s of %d tokens leaves no room to answer in",
+                self.player.id,
+                occupied,
+                window.context,
+            )
+            return ""
+
+        completion = await self.gateway.complete(
+            model=self.model,
+            messages=compaction.summary_request(plan),
+            # No tools: a model handed its schema mid-summary calls one, and the call would have to
+            # be discarded. And a small cap, which is what keeps this request inside the window it
+            # exists to make room in — the reserve the trigger held back is exactly this space.
+            max_tokens=cap,
+            session_id=session_for_game(self.game.id),
+        )
+        await self._record_llm_call(turn, completion)
+        self._accumulate(result, completion)
+        self._summary_tokens = completion.usage.completion
+
+        summary = (completion.content or "").strip()
+        if not summary:
+            log.warning("compaction of %s produced no summary", self.player.id)
+        return summary
+
+    def _allow(self, window: compaction.Window, occupied: int | None) -> int:
+        """How many tokens this call may generate, remembered so a truncation can be attributed."""
+        self._requested_max_tokens = window.completion_cap(
+            occupied, self.limits.max_completion_tokens
+        )
+        return self._requested_max_tokens
+
+    async def _compact_reactively(self, turn: Turn, result: TurnResult, error: LlmError) -> bool:
+        """The last rung: the endpoint refused the prompt for its size, so compact and try again.
+
+        **The provider's numbers, not ours.** *"maximum context length is 256000 tokens. However,
+        you requested about 262254"* is an exact measurement of the very request that failed, taken
+        by the only party that can take it — better than the stored endpoint window, which said
+        something different, and better than any arithmetic on this side.
+
+        Once per turn. A second refusal after a pass that folded and trimmed means the transcript
+        genuinely does not fit, and repeating would spend calls to be told so again — which is what
+        five identical rejections at ply 10 cost the first time (ADR-0021).
+
+        Returns False for anything that is not a context-length refusal, and for the second one, so
+        the caller re-raises and the error keeps its normal classification.
+        """
+        limit = llm.context_limit_from(error)
+        if limit is None or self._reactive_compactions:
+            return False
+
+        self._reactive_compactions += 1
+        log.warning(
+            "%s refused a %d-token prompt against a %d-token window; compacting and retrying",
+            self.model,
+            limit.requested,
+            limit.context,
+        )
+        window = compaction.Window(
+            context=limit.context, reserve=self.limits.context_reserve_tokens
+        )
+        # Deliberately *not* cached onto `self._cached_window`: this is what one endpoint said about
+        # one request, and the registry's figure is what the rest of the game is planned against.
+        return await self._compact(turn, result, limit.requested, window)
 
     # ------------------------------------------------------------------ the loop
 
@@ -418,10 +563,10 @@ class TurnRunner:
 
             messages = await transcript.build_messages(self.session, self.player.id)
 
-            # How full the window is. The provider's own count from the previous round-trip when
-            # there is one — exact, per invariant 4 — and a character estimate before the first,
-            # which is the only point in a turn where nothing exact exists.
-            occupied = self._prompt_tokens or compaction.estimate_tokens(messages)
+            # How full the window is: the provider's own count, or `None` before a game's first
+            # response. **Never an estimate** — invariant 4's rule about money applies just as
+            # much to the arithmetic deciding whether a request can be sent (AGENT-19).
+            occupied = self._prompt_tokens
             window = await self._endpoint_window()
 
             # **Once per turn.** A turn is a few round-trips against one transcript, so a second
@@ -430,32 +575,41 @@ class TurnRunner:
             # spend a call per round-trip discovering there is nothing left to fold.
             if (
                 self._compactions == 0
+                and occupied is not None
                 and window.should_compact(occupied)
                 and await self._compact(turn, result, occupied, window)
             ):
-                # Rebuilt from the summary, so both the message list and its size change.
+                # The prefix was rewritten, so the old measurement describes a transcript that no
+                # longer exists. The next response measures the new one; until then this is a first
+                # call again, and it is bounded rather than guessed at.
                 messages = await transcript.build_messages(self.session, self.player.id)
-                occupied = compaction.estimate_tokens(messages)
+                occupied = None
 
-            completion = await self.gateway.complete(
-                model=self.model,
-                messages=messages,
-                tools=self._tools,
-                # **Clamped to what the endpoint will accept.** A flat 64,000 reconciled against
-                # nothing asked a 65,536-token endpoint for 65,810 tokens and was refused — a 400
-                # that abandoned a game at ply 10. `max_tokens` is a ceiling on the answer, so
-                # asking for less than the model needs is a truncation and asking for more than
-                # fits is a rejection; this is the largest value that cannot be rejected.
-                max_tokens=window.completion_cap(occupied, self.limits.max_completion_tokens),
-                # One session per game, both seats included, so a match reads as a conversation
-                # on OpenRouter's own dashboard rather than as a hundred unrelated generations.
-                # See `agents/sessions.py` for why the unit is the game and not the turn.
-                session_id=session_for_game(self.game.id),
-            )
+            try:
+                completion = await self.gateway.complete(
+                    model=self.model,
+                    messages=messages,
+                    tools=self._tools,
+                    # **Clamped to what the endpoint will accept** (AGENT-16). A flat 64,000
+                    # reconciled against nothing asked a 65,536-token endpoint for 65,810 tokens
+                    # and was refused — a 400 that abandoned a game at ply 10. `max_tokens` is a
+                    # ceiling on the answer, so asking for less than the model needs is a
+                    # truncation and asking for more than fits is a rejection; this is the largest
+                    # value that cannot be rejected.
+                    max_tokens=self._allow(window, occupied),
+                    # One session per game, both seats included, so a match reads as a conversation
+                    # on OpenRouter's own dashboard rather than as a hundred unrelated generations.
+                    # See `agents/sessions.py` for why the unit is the game and not the turn.
+                    session_id=session_for_game(self.game.id),
+                )
+            except LlmError as error:
+                if not await self._compact_reactively(turn, result, error):
+                    raise
+                continue
 
             await self._record_llm_call(turn, completion)
             self._accumulate(result, completion)
-            self._prompt_tokens = completion.usage.prompt or self._prompt_tokens
+            self._remember_prompt_size(completion)
 
             if completion.reasoning:
                 # Written in full, always. Whether a *reader* may see it is decided on the way out,
@@ -494,19 +648,33 @@ class TurnRunner:
                     },
                 )
 
-            await transcript.append_message(
-                self.session,
-                player_id=self.player.id,
-                game_id=self.game.id,
-                turn_id=turn.id,
-                role="assistant",
-                content=completion.content,
-                tool_calls=self._serialise_tool_calls(completion),
-                # Stored so the next turn can hand it straight back. Gemini 3 rejects a function
-                # call whose `thought_signature` is missing and DeepSeek rejects a thinking-mode
-                # history without its `reasoning_content`; both travel in here.
-                reasoning_details=completion.reasoning_details,
-            )
+            # **Only when the model actually said or did something.** A response with neither
+            # content nor tool calls — an ordinary truncation for a small model — used to append a
+            # row with both columns null, which `to_provider_message` renders as a bare
+            # `{"role": "assistant"}`. Liquid refuses that outright: *"Assistant messages require
+            # `content`, `tool_calls`, or `function_call`"*, naming `messages.126.content`. The
+            # transcript is append-only (ADR-0003), so one such row refuses **every later turn of
+            # that seat** — the one 400 that no retry, pause or resume can ever clear. It abandoned
+            # a real game at ply 57.
+            #
+            # Nothing is lost by omitting it: the model said nothing and did nothing. The raw
+            # response is still in `llm_calls` and the turn is still in the event log, so the
+            # record stays verbatim (invariant 3) — only the request changes. The two consecutive
+            # user messages that result (the turn prompt, then the nudge) are accepted everywhere.
+            if completion.content or completion.tool_calls:
+                await transcript.append_message(
+                    self.session,
+                    player_id=self.player.id,
+                    game_id=self.game.id,
+                    turn_id=turn.id,
+                    role="assistant",
+                    content=completion.content,
+                    tool_calls=self._serialise_tool_calls(completion),
+                    # Stored so the next turn can hand it straight back. Gemini 3 rejects a
+                    # function call whose `thought_signature` is missing and DeepSeek rejects a
+                    # thinking-mode history without its `reasoning_content`; both travel in here.
+                    reasoning_details=completion.reasoning_details,
+                )
 
             if not completion.tool_calls:
                 if await self._no_action(turn, result, completion):
@@ -618,12 +786,35 @@ class TurnRunner:
           AGENT-05 is about.
         """
         if completion.finish_reason == "length":
-            return await self._retry_truncated(turn, result)
+            return await self._retry_truncated(turn, result, completion)
         if mangled_tool_call(completion):
             raise ProviderMangledError(self.model, completion)
         return await self._nudge(turn, result)
 
-    async def _retry_truncated(self, turn: Turn, result: TurnResult) -> bool:
+    async def _retry_truncated(
+        self, turn: Turn, result: TurnResult, completion: Completion
+    ) -> bool:
+        """A response cut off at `finish_reason: "length"`. Whose ceiling did the cutting?
+
+        **Ours does not count.** We know exactly what we asked for, so this is a fact about the
+        response and not a judgement call: if the model stopped at our own `max_tokens`, the
+        harness ended the answer and blaming the model for it publishes a finding it did not earn
+        (invariant 11, ADR-0019). That is not hypothetical — a miscalculated window asked an
+        endpoint for **one** output token, every reply came back truncated, and four of them ended
+        a game `truncated`, `1-0`, against a model that had done nothing wrong.
+
+        A ceiling the *provider* imposed still counts, and `TRUNCATED` stays rated: with the window
+        arithmetic fixed (AGENT-19), what remains is a model that could not finish a turn inside a
+        budget set well above what any of them need, and reliability is the benchmark.
+        """
+        if self._our_ceiling_bound(completion):
+            log.warning(
+                "%s was cut off at our own max_tokens of %s; failing the turn, not the player",
+                self.model,
+                self._requested_max_tokens,
+            )
+            raise HarnessCeilingError(self.model, self._requested_max_tokens or 0)
+
         self._truncations += 1
         if self._truncations > MAX_TRUNCATIONS:
             result.status = TurnStatus.FORFEITED
@@ -860,6 +1051,22 @@ class TurnRunner:
 
     # ------------------------------------------------------------------ helpers
 
+    def _remember_prompt_size(self, completion: Completion) -> None:
+        """Carry the measured prompt size forward, on the seat rather than on this runner.
+
+        The worker builds a new runner per turn, so a value kept only here is lost between them —
+        which is exactly how a character estimate came to drive the first call of every turn for a
+        whole game (ADR-0021). Written to `players.last_prompt_tokens` so the *next* turn starts
+        from a number the provider returned.
+
+        A response with no usage — some endpoints omit it on an error — leaves the last good
+        measurement in place rather than resetting to "unmeasured".
+        """
+        if not completion.usage.prompt:
+            return
+        self._prompt_tokens = completion.usage.prompt
+        self.player.last_prompt_tokens = completion.usage.prompt
+
     def _accumulate(self, result: TurnResult, completion: Completion) -> None:
         result.prompt_tokens += completion.usage.prompt
         result.completion_tokens += completion.usage.completion
@@ -885,6 +1092,23 @@ class TurnRunner:
             return True
 
         return False
+
+    def _our_ceiling_bound(self, completion: Completion) -> bool:
+        """Whether the response stopped at the number *we* asked for.
+
+        A count, not an inference. The provider reports what it generated and we know what we
+        allowed; a response that reached our ceiling was ended by us, and one that stopped short of
+        it was ended by the endpoint's own limit.
+
+        `False` when either number is missing — an endpoint that reports no usage, or an unknown
+        window that let the request through unclamped. Unattributable, and the existing behaviour
+        (a strike) is the one that does not change silently.
+        """
+        requested = self._requested_max_tokens
+        generated = completion.usage.completion
+        if not requested or not generated:
+            return False
+        return generated >= requested
 
     def _forfeit(self, termination: Termination, detail: str) -> Outcome | None:
         """End the game against this player, unless it is already over."""

@@ -35,12 +35,16 @@ from chessmark.agents.llm import LlmGateway
 from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.turn import TurnLimits, TurnResult, TurnRunner
 from chessmark.agents.types import RateLimit
-from chessmark.core.budget import GlobalBudget
+from chessmark.core.budget import FreeTierBudget, GlobalBudget
+from chessmark.core.config import get_settings
 from chessmark.core.cooldown import ProviderCooldown, resume_at
+from chessmark.core.credits import fetch_balance
+from chessmark.core.halt import SOURCE_CREDITS, SOURCE_FREE_TIER, Halt, HaltState
 from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
 from chessmark.db.models import Game, GameEvent, ModelRegistry, Player
 from chessmark.db.quotas import record_spend
 from chessmark.db.repositories import (
+    GameInFlightError,
     append_event,
     finish_game,
     get_game,
@@ -71,14 +75,43 @@ BUDGET = TurnOutcome("budget_exceeded")
 #: The global kill switch was tripped. The turn is not run and the game is left RUNNING, so it
 #: resumes when the budget resets rather than being forfeited for an outage of our own making.
 GLOBAL_BUDGET = TurnOutcome("global_budget_halted")
+#: The global halt is on — our account is out of credits, or somebody stopped the harness by hand.
+#: Treated exactly like the daily budget: the turn is not run, the job is dropped, and the game is
+#: left RUNNING for the reconciler to pick up once spending is possible again (OPS-19).
+HALTED = TurnOutcome("halted")
+#: The free-model allowance for the day is spent. Same treatment as the halt and the daily budget:
+#: the turn is not run, the game is left RUNNING, and it resumes when the allowance resets.
+FREE_TIER_SPENT = TurnOutcome("free_tier_spent")
 #: The side to move is a person. The worker does nothing and enqueues nothing — the game waits in
 #: RUNNING until the human's move endpoint commits a ply and enqueues the model's reply. Anything
 #: else would run an LLM turn on a human's behalf and play their move for them.
 AWAITING_HUMAN = TurnOutcome("awaiting_human")
 ABORTED = TurnOutcome("aborted")
+#: Another worker holds this game's row and is playing this very ply. Not a failure: the job is
+#: dropped and nothing is re-enqueued, because the owner enqueues the next ply when it commits
+#: (ADR-0022).
+IN_FLIGHT = TurnOutcome("in_flight")
 #: The provider asked us to come back later. The game is paused with a time to resume at, holds no
 #: concurrency slot while it waits, and is picked up again by the reconciler.
 PAUSED = TurnOutcome("paused")
+
+#: Statuses a game does not come back from on its own.
+#:
+#: Only one thing reopens a game in one of these: an operator running `scripts/resume_game.py`,
+#: which says so in the event it writes. Everything else must leave it alone — see `_still_running`.
+TERMINAL_STATUSES = frozenset({GameStatus.FINISHED, GameStatus.ABORTED})
+
+
+def next_utc_midnight(now: dt.datetime | None = None) -> dt.datetime:
+    """When OpenRouter's daily allowance resets, if `X-RateLimit-Reset` did not say.
+
+    A fallback, and a conservative one: it can only be later than the true reset, so the worst case
+    is waiting longer than necessary rather than resuming into a cap that has not lifted. UTC,
+    because that is the clock the allowance is on regardless of where the server is.
+    """
+    stamp = now or dt.datetime.now(dt.UTC)
+    return (stamp + dt.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
 
 #: How many times a turn may be retried after a provider failure before the game is abandoned.
 #: Generous, because the failures this covers — outages, mangled responses — are usually temporary.
@@ -96,6 +129,14 @@ MAX_JOB_ATTEMPTS = 5
 #: is usually serving again by morning, so a game that cannot get a turn in twenty-four hours is
 #: not waiting on a busy pool — it is waiting on something that is not coming back.
 PAUSE_WINDOW = dt.timedelta(hours=24)
+
+#: How long a game waits when the refusal is about our *account* rather than a provider's pool.
+#:
+#: A 402 is cleared by somebody topping up and a 401 by somebody fixing a key — both are human
+#: actions on human timescales, so the cooldown ladder's opening rung of sixty seconds would spend
+#: ninety attempts an hour discovering the obvious. Fifteen minutes still gives 96 tries inside the
+#: 24-hour window, which is far more than enough to catch a fix.
+ACCOUNT_PAUSE_SECONDS = 900
 
 #: A person will not wait out a provider. Their game pauses briefly and gives up in minutes, not
 #: hours — the honest outcome, and better than a board that quietly never moves again. Their
@@ -151,6 +192,8 @@ class TurnWorker:
         consumer: str | None = None,
         budget: GlobalBudget | None = None,
         cooldown: ProviderCooldown | None = None,
+        halt: Halt | None = None,
+        free_tier: FreeTierBudget | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
         self.queue = queue
@@ -159,6 +202,13 @@ class TurnWorker:
         self.limits = limits
         #: Layer 1 of ADR-0011. Optional so scripted tests, which spend nothing, need not wire it.
         self.budget = budget
+        #: The global stop (OPS-19). Optional for the same reason: a scripted provider never runs
+        #: out of credits, and a test that wires no Redis has nothing to read it from.
+        self.halt = halt
+        #: The free tier's daily request count. Read before a turn against a `:free` model, not
+        #: only when starting a game — the counter existed to keep us under the cap and could only
+        #: describe it after the fact, because nothing on the playing path consulted it.
+        self.free_tier = free_tier
         #: What is remembered between games about an endpoint that refused. Optional for the same
         #: reason: a scripted provider never rate-limits anything. Without it a game still pauses
         #: — it just pauses on the first rung every time, and the matchmaker learns nothing.
@@ -201,17 +251,37 @@ class TurnWorker:
     async def handle(self, job: AdvanceTurn) -> HandledJob:
         try:
             return await self._advance(job)
+        except GameInFlightError:
+            # Somebody else is playing this ply. `expected_ply` cannot catch this — both jobs read
+            # the same uncommitted state — and two workers really did play ply 19 of one game fifty
+            # milliseconds apart, then wrote competing endings over each other (ADR-0022).
+            #
+            # Dropped, not re-enqueued: the owner enqueues the next ply when it commits, and if the
+            # owner dies the queue's `XAUTOCLAIM` and the reconciler both still cover it.
+            log.info("dropping job for %s: another worker is advancing it", job.game_id)
+            return HandledJob(IN_FLIGHT, job.game_id, job.expected_ply)
         except ProviderFailureError as failure:
             # An endpoint declining to serve is not a failure to retry harder at — the position is
             # untouched and the answer is to come back. Burning the job's retry budget on it spent
             # forty requests a game and then abandoned fourteen games in a row.
             if failure.result.rate_limit is not None:
+                # An empty account is not this game's problem, and pausing thirty pairings one at a
+                # time would have each of them wake every fifteen minutes to rediscover it — about
+                # 120 doomed requests an hour against an account that can serve none of them. One
+                # switch instead (OPS-19).
+                if await self._halt_on_account(failure.result.rate_limit):
+                    return HandledJob(HALTED, job.game_id, job.expected_ply, result=failure.result)
                 return await self._pause(job, failure.result)
             return await self._retry_or_abandon(job, failure.result)
 
     async def _advance(self, job: AdvanceTurn) -> HandledJob:
         async with self.sessionmaker() as session, session.begin():
-            game = await get_game(session, job.game_id)
+            # **Claimed, not merely read.** The row lock is what makes one worker the owner of this
+            # ply; everything below it — the idempotency check included — assumes nobody else is
+            # doing the same thing at the same time, and before this that assumption was simply
+            # false (ADR-0022, OPS-15). The turn already runs inside this transaction, so holding
+            # the lock for its duration changes nothing about how long the row is held.
+            game = await get_game(session, job.game_id, claim=True)
 
             if game.status is not GameStatus.RUNNING:
                 return HandledJob(NOT_RUNNING, game.id, game.ply_count)
@@ -251,6 +321,24 @@ class TurnWorker:
                 # again. Forfeiting a model for our budget would corrupt the benchmark.
                 return HandledJob(GLOBAL_BUDGET, game.id, referee.ply)
 
+            # The global halt (OPS-19). Beside the budget rather than folded into it, because they
+            # are different kinds of thing: that one is a *limit* that resets at midnight, this one
+            # is a *state* that persists until the account is topped up or somebody says so.
+            #
+            # **Free games stop too.** OpenRouter's own documentation says a 402 applies to free
+            # models when the balance is negative, so letting a free pool run on would spend the
+            # day rediscovering the same refusal thirty games at a time.
+            halted = await self._halted()
+            if halted is not None:
+                log.warning(
+                    "harness halted (%s: %s); not running %s at ply %s",
+                    halted.source,
+                    halted.reason,
+                    game.id,
+                    referee.ply,
+                )
+                return HandledJob(HALTED, game.id, referee.ply)
+
             colour = referee.side_to_move
             player = await self._player(session, game.id, colour)
             opponent = await self._player(session, game.id, colour.opponent)
@@ -260,6 +348,28 @@ class TurnWorker:
             # think. The move endpoint enqueues the model's turn when the ply lands (HUMAN-02).
             if PlayerKind(player.kind) is not PlayerKind.MODEL:
                 return HandledJob(AWAITING_HUMAN, game.id, referee.ply)
+
+            # The free tier is bounded by a request count, not by money, and OpenRouter reports
+            # nothing back — so the only defence is counting our own attempts and stopping short
+            # (OPS-10). That counter existed and **nothing on the playing path read it**: it gated
+            # starting a game and not taking a turn, so a pool already in flight spent past the
+            # allowance and then discovered the cap as a 429, one model at a time.
+            #
+            # Checked here rather than above because it is a fact about *this seat's* model: a paid
+            # model draws on no allowance and must not be stopped by a free one's.
+            if (
+                self.free_tier is not None
+                and model_for(player).endswith(":free")
+                and await self.free_tier.tripped()
+            ):
+                log.warning(
+                    "the free-model allowance is spent; not running %s at ply %s",
+                    game.id,
+                    referee.ply,
+                )
+                # Left RUNNING with its job dropped, like the budget and the halt. The allowance
+                # resets at UTC midnight and the reconciler picks the game up then.
+                return HandledJob(FREE_TIER_SPENT, game.id, referee.ply)
 
             # Route by *this player's* resolved policy. Per player rather than per game because
             # `only` names providers and providers are model-specific: one vendor's endpoint list
@@ -330,6 +440,73 @@ class TurnWorker:
         colour = Colour(("white", "black")[job.expected_ply % 2])
         return await self._player(session, job.game_id, colour)
 
+    async def _halted(self) -> HaltState | None:
+        """The global stop, if it is on."""
+        if self.halt is None:
+            return None
+        return await self.halt.state()
+
+    async def _halt_on_account(self, limit: RateLimit) -> bool:
+        """An account-wide refusal stops the whole harness rather than this one game.
+
+        Two of them, and the free-model daily cap is the one that will actually happen: it arrives
+        as a 429 like a hot shared pool, and means something entirely different. The allowance is
+        1,000 requests a day **across the account**, so resting one endpoint for sixty seconds
+        hands the next entrant the identical refusal — a seventeen-model pool working through its
+        whole field one doomed request at a time (OPS-20).
+
+        It is also the easiest halt to lift, because OpenRouter says when: `X-RateLimit-Reset`
+        becomes the halt's expiry and Redis does the rest, with the next UTC midnight as a
+        conservative fallback when the header is missing.
+        """
+        if self.halt is None:
+            return False
+
+        if limit.free_daily_cap:
+            await self.halt.set(
+                limit.describe(""),
+                source=SOURCE_FREE_TIER,
+                until=limit.resets_at or next_utc_midnight(),
+            )
+            return True
+
+        return await self._halt_on_credits(limit)
+
+    async def _halt_on_credits(self, limit: RateLimit) -> bool:
+        """A 402 stops the whole harness rather than this one game. True when it did.
+
+        **Only a 402, and only when we cannot see credit.** A 401 stays a per-game pause: it is
+        also account-level, but a rejected key is as likely to be one misconfigured worker as a
+        dead credential, and halting the system on it would let a bad deploy of one container stop
+        every game the others were playing.
+
+        The balance is recorded with the halt so a later probe can lift it, and consulted *first*
+        so that the narrow case stays narrow: OpenRouter is reported to check a key's remaining
+        budget against `max_tokens` rather than actual usage, which would refuse a large request
+        against a balance that serves a smaller one. If the account visibly has money, this 402 is
+        about the request and the game pauses as before — the alternative is halting everything
+        over one expensive call, which is the `403 → disable` mistake wearing new clothes
+        (ADR-0019).
+        """
+        if self.halt is None or limit.status_code != 402:
+            return False
+
+        balance = await fetch_balance(get_settings().openrouter_api_key)
+        if balance is not None and balance.positive:
+            log.warning(
+                "a 402 while the account holds $%s — treating it as about this request, not the "
+                "account, and pausing only this game",
+                balance.remaining,
+            )
+            return False
+
+        await self.halt.set(
+            "our provider account is out of credits (402)",
+            source=SOURCE_CREDITS,
+            balance_usd=balance.remaining if balance is not None else None,
+        )
+        return True
+
     async def _pause(self, job: AdvanceTurn, result: TurnResult) -> HandledJob:
         """Stop the game until the provider will serve it again.
 
@@ -352,6 +529,16 @@ class TurnWorker:
 
         async with self.sessionmaker() as session, session.begin():
             game = await get_game(session, job.game_id)
+
+            # **A game that ended stays ended.** This used to set `PAUSED` unconditionally, and a
+            # second worker running the same ply — which happened, fifty milliseconds apart — would
+            # finish minutes after the first had concluded the game and write `PAUSED` over a
+            # finished record. The reconciler then correctly resumed it, and the ply was played a
+            # third time. One game ended seven times that way (ADR-0022, OPS-16).
+            if game.status in TERMINAL_STATUSES:
+                log.info("not pausing %s: it is already %s", game.id, game.status.value)
+                return HandledJob(NOT_RUNNING, game.id, job.expected_ply, result=result)
+
             player = await self._seat_to_play(session, job)
             model = model_for(player)
             provider = limit.provider or _pinned_provider(player)
@@ -364,7 +551,13 @@ class TurnWorker:
             waited = dt.datetime.now(dt.UTC) - first_pause if first_pause else dt.timedelta()
 
             seconds = 0
-            if self.cooldown is not None:
+            if limit.account:
+                # **No cooldown.** The endpoint did not refuse us; our account did, and every other
+                # endpoint would have refused identically. Resting this one would teach the
+                # matchmaker that a model is unreliable when nothing about it failed, and it would
+                # go on believing that after the credits were topped up.
+                seconds = ACCOUNT_PAUSE_SECONDS
+            elif self.cooldown is not None:
                 seconds = await self.cooldown.note(
                     model,
                     provider=provider,
@@ -509,7 +702,17 @@ class TurnWorker:
         return HandledJob(ABORTED, game.id, job.expected_ply, result=result)
 
     async def _abandon(self, session: AsyncSession, game: Game, detail: str) -> None:
-        """Close a game the harness could not finish. Never a chess result, never a forfeit."""
+        """Close a game the harness could not finish. Never a chess result, never a forfeit.
+
+        Silently does nothing to a game that is already over, for the reason `_conclude` does: the
+        loser of a race between two workers on one ply must not overwrite the winner's verdict. One
+        game was ended as `budget_exceeded` — a harness stop, excluded from ratings — resurrected,
+        and re-ended as `error_forfeit`, which *is* rated. Scheduling picked the verdict (ADR-0022).
+        """
+        if game.status in TERMINAL_STATUSES:
+            log.info("not abandoning %s: it is already %s", game.id, game.status.value)
+            return
+
         game.status = GameStatus.ABORTED
         game.termination = Termination.ABANDONED
         game.termination_detail = detail
@@ -627,7 +830,12 @@ class TurnWorker:
         return outcome
 
     async def _conclude(self, session: AsyncSession, game: Game, outcome: Outcome | None) -> None:
-        if outcome is None or game.status is GameStatus.FINISHED:
+        """Record a result, once. A game that already has one keeps it.
+
+        `ABORTED` was missing from this guard and `FINISHED` alone was not enough: an abandoned game
+        would take a second ending, and a second `game_ended` row (ADR-0022, invariant 7).
+        """
+        if outcome is None or game.status in TERMINAL_STATUSES:
             return
 
         await finish_game(session, game_id=game.id, outcome=outcome)

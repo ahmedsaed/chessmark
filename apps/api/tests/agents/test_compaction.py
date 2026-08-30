@@ -19,8 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents import compaction, transcript
 from chessmark.agents.compaction import (
     DEFAULT_RESERVE_TOKENS,
+    MIN_USEFUL_COMPLETION,
+    NoRoomToAnswerError,
     Window,
-    estimate_tokens,
     plan_compaction,
 )
 from chessmark.db.models import TranscriptMessage
@@ -44,6 +45,7 @@ class Row:
         self.reasoning_details = None
         self.tool_call_id = None
         self.name = None
+        self.trimmed_at = None
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Row({self.seq}, {self.role}, turn={self.turn_id})"
@@ -106,21 +108,39 @@ class TestTheCompletionCap:
         """A ceiling, not a target: plenty of room does not mean asking for a longer answer."""
         assert Window(context=1_000_000).completion_cap(1_000, 4_000) == 4_000
 
-    def test_it_never_asks_for_nothing(self) -> None:
-        """A request for zero output is not a request, and a full window should fail as a rejection
-        the worker can classify rather than as an empty answer nobody can read."""
-        assert Window(context=1_000).completion_cap(5_000, 64_000) == 1
+    def test_it_refuses_rather_than_asking_for_a_token_nobody_can_answer_in(self) -> None:
+        """The floor used to be 1, and that forfeited a model (ADR-0021).
+
+        A `max_tokens` of 1 is not a smaller request, it is a request that cannot succeed: every
+        reply comes back `finish_reason: "length"`, and four of those ended a game `truncated`,
+        `1-0`, against a model that had done nothing wrong. A state, not a value.
+        """
+        with pytest.raises(NoRoomToAnswerError):
+            Window(context=1_000).completion_cap(5_000, 64_000)
+
+    def test_it_refuses_just_below_the_useful_floor(self) -> None:
+        window = Window(context=64_000)
+        prompt = 64_000 - 256 - MIN_USEFUL_COMPLETION
+
+        assert window.completion_cap(prompt, 64_000) == MIN_USEFUL_COMPLETION
+        with pytest.raises(NoRoomToAnswerError):
+            window.completion_cap(prompt + 1, 64_000)
+
+    def test_an_unmeasured_prompt_is_bounded_rather_than_guessed_at(self) -> None:
+        """A game's first call, and the only place no measurement exists.
+
+        Half the window is a *bound*: the system prompt plus one turn prompt is a few thousand
+        tokens against a window of at least 64k, so the sum always fits. The character estimate it
+        replaces reported 477,155 tokens of a six-ply transcript.
+        """
+        assert Window(context=65_536).completion_cap(None, 64_000) == 32_768
+        assert Window(context=1_000_000).completion_cap(None, 64_000) == 64_000, (
+            "still a ceiling, not a target"
+        )
 
     def test_an_unknown_window_passes_the_request_through(self) -> None:
         assert Window(context=0).completion_cap(1_000, 64_000) == 64_000
-
-
-def test_the_estimate_over_states_rather_than_under() -> None:
-    """It is used only before a turn's first response, where nothing exact exists. Over-estimating
-    compacts a little early; under-estimating hits the window and forfeits."""
-    messages = [{"role": "user", "content": "x" * 3_500}]
-
-    assert estimate_tokens(messages) >= 1_000
+        assert Window(context=0).completion_cap(None, 64_000) == 64_000
 
 
 # ====================================================================== what to fold
@@ -132,13 +152,34 @@ class TestThePlan:
         assistant message that requested it, which is only true if whole turns are kept."""
         rows = transcript_of(10)
 
-        plan = plan_compaction(rows, keep_turns=4)
+        plan = plan_compaction(rows, keep_turns=4, max_kept_messages=100)
 
         kept_turns = {r.turn_id for r in plan.keep if r.turn_id is not None}
         assert kept_turns == {7, 8, 9, 10}
         for turn_id in kept_turns:
             roles = [r.role for r in plan.keep if r.turn_id == turn_id]
             assert roles == ["user", "assistant", "tool", "assistant"], "a whole turn, or none"
+
+    def test_keep_turns_is_a_ceiling_that_the_message_count_can_lower(self) -> None:
+        """Four turns of a reasoning model came to fifty messages — larger than the window they
+        were supposed to fit inside, which is why compaction folded five times and never converged
+        (ADR-0021)."""
+        rows = transcript_of(10)  # four messages a turn
+
+        plan = plan_compaction(rows, keep_turns=4, max_kept_messages=12)
+
+        kept_turns = {r.turn_id for r in plan.keep if r.turn_id is not None}
+        assert kept_turns == {8, 9, 10}, "a whole turn was dropped, not a message"
+        assert len([r for r in plan.keep if r.turn_id is not None]) <= 12
+
+    def test_one_turn_is_the_floor(self) -> None:
+        """A turn stripped of its own context has nothing to act on, so the ceiling never empties
+        the kept region entirely."""
+        rows = transcript_of(6)
+
+        plan = plan_compaction(rows, keep_turns=4, max_kept_messages=1)
+
+        assert {r.turn_id for r in plan.keep if r.turn_id is not None} == {6}
 
     def test_the_system_prompt_is_never_folded(self) -> None:
         """It is the byte-stable head of the cacheable prefix (ADR-0003) and the one message a
@@ -162,11 +203,40 @@ class TestThePlan:
         assert any(r.is_summary for r in plan.fold)
         assert not any(r.is_summary for r in plan.keep)
 
-    def test_nothing_to_fold_is_reported_rather_than_pretended(self) -> None:
-        """The retained turns alone filling the window is a real state, and treating it as a
-        successful compaction would loop forever."""
+    def test_nothing_to_fold_and_nothing_to_trim_is_reported_rather_than_pretended(self) -> None:
+        """A pass with no work is a real state, and treating it as a successful compaction is what
+        let one game fold 3 messages of 44 five times while marching into a 400 (ADR-0021)."""
+        rows = [Row(1, "system", None), *transcript_of(1)[1:]]
+
+        plan = plan_compaction(rows, keep_turns=4)
+
+        assert plan.fold == []
+        assert plan.trim == [], "the newest turn's tool results are what the model is looking at"
+        assert not plan.worthwhile
+
+    def test_a_pass_with_only_trimming_left_is_still_worth_running(self) -> None:
+        """Rung one needs no provider at all, so "nothing to fold" is not "nothing to do"."""
         plan = plan_compaction(transcript_of(3), keep_turns=4)
 
+        assert plan.fold == []
+        assert [r.seq for r in plan.trim] == [4, 8], "every tool result but the newest turn's"
+        assert plan.worthwhile
+
+    def test_the_newest_turn_is_never_trimmed(self) -> None:
+        plan = plan_compaction(transcript_of(6), keep_turns=6, max_kept_messages=100)
+
+        assert all(r.turn_id != 6 for r in plan.trim)
+
+    def test_an_already_trimmed_row_is_not_counted_again(self) -> None:
+        """Otherwise a pass that changed nothing would report itself as having done work."""
+        rows = transcript_of(3)
+        for row in rows:
+            if row.role == "tool":
+                row.trimmed_at = "already"
+
+        plan = plan_compaction(rows, keep_turns=4)
+
+        assert plan.trim == []
         assert not plan.worthwhile
 
     def test_keeping_nothing_folds_everything_but_the_system_prompt(self) -> None:
@@ -313,9 +383,17 @@ class TestATurnThatCompacts:
     event log. The scripted model answers the summary request with prose and then plays.
     """
 
-    async def _big_transcript(self, db: AsyncSession, table: Any, *, rows: int) -> None:
+    async def _big_transcript(
+        self, db: AsyncSession, table: Any, *, rows: int, measured: int = 0
+    ) -> None:
         """A transcript large enough to trip a small reserve, with real turn ids so the cut has
-        boundaries to land on."""
+        boundaries to land on.
+
+        `measured` is the seat's `last_prompt_tokens`, and seeding it is not incidental: since
+        ADR-0021 the trigger reads a number the *provider* returned and never an estimate, so a
+        transcript with no measurement behind it is one the harness has never sent and will not
+        compact. A real seat holding ten turns of history has been measured ten times.
+        """
         from chessmark.db.models import Turn as TurnRow
 
         seq = 1
@@ -347,6 +425,7 @@ class TestATurnThatCompacts:
         # `seq` comes from `players.transcript_seq` under a row lock, not from `max(seq)`. Seeding
         # rows without moving the counter makes the turn's own first append collide on seq 1.
         table.white.transcript_seq = seq
+        table.white.last_prompt_tokens = measured
         await db.commit()
 
     async def _register(self, db: AsyncSession, *, slug: str, context: int) -> None:
@@ -381,7 +460,7 @@ class TestATurnThatCompacts:
 
         slug = "scripted/roomy"
         await self._register(db, slug=slug, context=60_000)
-        await self._big_transcript(db, table, rows=10)
+        await self._big_transcript(db, table, rows=10, measured=55_000)
 
         before = len(await transcript.full_history(db, table.white.id))
 

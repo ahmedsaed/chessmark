@@ -66,6 +66,10 @@ launch.
 | PGN is verified against `chess.js` but **not against Lichess or SCID themselves**. | Phase 8 |
 | The browser suite's **signed-in half does not run in CI** — it needs a real Clerk instance. CI asserts the public pages only; the playing flow is asserted locally by `make test-e2e-all`. | Phase 23 |
 | **A closed event cannot be resumed cleanly.** Abandoning its last pairing completes it, `advance` returns *already over*, and no later tick settles anything. A pool never finishes, so this has not bitten. | Phase 13 |
+| **Standings and ratings are one decision, and human tournaments make two.** FIDE records a forfeit as a loss in the crosstable and excludes it from the rating: the table must be complete, the rating should only reflect games actually played. `db/tournaments.settle` and `bench/ratable.judge` make the same call in both places. Splitting them would give a third answer for endings like `truncated` — score it, do not rate it. | Phase 13 |
+| **Whether a provider's own output ceiling should forfeit a model is unsettled.** ADR-0021 keeps `TRUNCATED` rated once our own `max_tokens` is excluded from the strike count. ADR-0019's reasoning cuts the other way — a ceiling measures the endpoint, not the weights — and the two cases are distinguishable in the response, so this is a switch rather than a philosophy. Revisit once the compaction work has run a full pool. | Phase 12 |
+
+| **A 402 may not always mean the account is empty.** OpenRouter is reported — by users, not by their docs — to check a key's remaining budget against `max_tokens`, the maximum *possible* output, so a large request can be refused against a balance that would serve a smaller one. `worker._halt_on_credits` handles it by consulting the balance first and pausing only that game when the account visibly has money, but the better answer would be to retry with a smaller ceiling. Never yet observed here. | Phase 5 |
 
 Deliberate limitations, not gaps: no clock, and human draw offers are advisory only.
 
