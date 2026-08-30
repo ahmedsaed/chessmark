@@ -37,6 +37,7 @@ everything inside a container: no uv, no node, and no remembering which compose 
 | `workers N` | how many turn workers to run (`WORKER_REPLICAS`) |
 | `catalogue` `endpoints` `models` `prune` | the model registry |
 | `latency <game-id>` `resume <game-id>` `repair` | one game, and the transcripts behind it |
+| `halt` | stop every model call, or resume; `--clear` lifts it |
 | `tournament …` `standings <slug>` | events |
 | `credits` | grant or revoke; `--show` prints a balance with its ledger |
 | `psql` `sql` `backup` `migrate` | the database |
@@ -213,6 +214,46 @@ is a dump that runs happily for months and turns out to be missing a schema.
 The drill kills each container and brings it back. It does not test auto-restart, because no
 restart policy covers `docker kill` — Docker reads that as operator intent, and the same is true of
 `always`. Policies cover *crashes*, which is the case that actually happens.
+
+## Stopping everything
+
+```
+./chessmark halt                      # is it on, and why?
+./chessmark halt "paying for a bug"   # stop every model call, now
+./chessmark halt --clear              # start again
+```
+
+Two switches stop spending and they are different things. The **daily kill switch** is a limit —
+`GLOBAL_DAILY_USD_BUDGET` in config, compared against a counter that resets at UTC midnight, and
+changing it means editing `.env` and restarting. The **halt** is a state: it stops everything now,
+it stays until something lifts it, and it can be set while the stack runs (OPS-19).
+
+**Games are left running and nothing is forfeited.** A halted turn is not run and its job is
+dropped; the game stays `RUNNING` and the reconciler picks it up once spending is possible again.
+A model must never lose a game because we stopped the harness (invariant 11) — so a halt is safe
+to use freely, including in the middle of a tournament.
+
+**Free games stop too.** OpenRouter's own documentation says a 402 applies to free models when the
+balance is negative, so exempting them would mean spending the day rediscovering the same refusal
+thirty games at a time.
+
+### It can set itself
+
+A **402** from OpenRouter — *"Your account or API key has insufficient credits"* — sets the halt
+automatically, and that one **lifts itself**: the reconciler probes the account balance every five
+minutes and resumes once there is credit. Top up and walk away; you do not need to run anything.
+
+A halt you set by hand never lifts itself. Somebody meant it, and a probe deciding otherwise would
+be the system overruling its operator, so `--clear` is the only way back.
+
+The first halt wins. Setting one over an existing halt reports what is already there rather than
+replacing it, so a 402 cannot quietly overwrite the reason you typed.
+
+### When it is on
+
+`./chessmark halt` with no arguments prints the reason, who set it, how long ago, and — for a
+credit halt — what the balance was at the time and that it will lift on its own. Worker logs carry
+`harness halted (credits: …); not running <game> at ply N` once per attempted turn.
 
 ## Deploying a change that needs a data repair
 

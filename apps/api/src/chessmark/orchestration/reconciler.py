@@ -30,6 +30,8 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from chessmark.core.credits import fetch_balance
+from chessmark.core.halt import Halt
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import EventType, GameStatus, PlayerKind
 from chessmark.db.models import Game, GameEvent, Player, Tournament, TournamentGame
@@ -58,6 +60,17 @@ DEFAULT_STALE_AFTER = dt.timedelta(minutes=45)
 DEFAULT_HUMAN_IDLE_AFTER = dt.timedelta(hours=2)
 
 
+#: How often the credit probe runs while a credit halt stands.
+#:
+#: One request every five minutes, not one per game per tick. The halt exists precisely because the
+#: account cannot serve requests, so the probe must not become the thing it was built to prevent.
+#: A top-up is noticed within five minutes, which is faster than anybody watching for it.
+CREDIT_PROBE_EVERY = dt.timedelta(minutes=5)
+
+#: The Redis key remembering when the probe last ran, so several reconcilers share one cadence.
+CREDIT_PROBE_KEY = "chessmark:halt:probed"
+
+
 @dataclass(slots=True)
 class ReconcileReport:
     requeued: list[str] = field(default_factory=list)
@@ -66,13 +79,15 @@ class ReconcileReport:
     waiting: list[str] = field(default_factory=list)
     #: Paused for a provider rate limit, and put back on the queue because the wait is over.
     resumed: list[str] = field(default_factory=list)
+    #: The global halt was lifted this tick, because the account has credit again.
+    unhalted: bool = False
     checked: int = 0
 
     def __str__(self) -> str:
         return (
             f"checked {self.checked} running games, requeued {len(self.requeued)}, "
             f"abandoned {len(self.abandoned)}, waiting on a person {len(self.waiting)}, "
-            f"resumed {len(self.resumed)}"
+            f"resumed {len(self.resumed)}" + (", lifted the halt" if self.unhalted else "")
         )
 
 
@@ -271,15 +286,62 @@ async def resume(session: AsyncSession, game: Game) -> AdvanceTurn:
     return AdvanceTurn(game_id=game.id, expected_ply=game.ply_count)
 
 
+async def lift_credit_halt(halt: Halt, *, api_key: str, redis: Any = None) -> bool:
+    """Lift a halt set by a 402, once the account has credit again. True when it was lifted.
+
+    **Only a credit halt.** An operator halt is never lifted here: somebody meant it, and a probe
+    deciding otherwise would be the system overruling the person who stopped it.
+
+    Every uncertainty leaves the halt standing. No key, a probe that times out, a body in an
+    unexpected shape, a balance of zero — all of them mean "we did not learn that there is money",
+    which is not the same as learning there is, and only the second lifts a stop.
+    """
+    state = await halt.state()
+    if state is None or not state.self_clearing:
+        return False
+
+    if redis is not None and not await _probe_is_due(redis):
+        return False
+
+    balance = await fetch_balance(api_key)
+    if balance is None or not balance.positive:
+        return False
+
+    log.warning("account holds $%s again; lifting the credit halt", balance.remaining)
+    return await halt.clear()
+
+
+async def _probe_is_due(redis: Any) -> bool:
+    """Rate-limit the probe across every reconciler, using the key's own TTL as the clock.
+
+    `SET NX EX` rather than a timestamp comparison: the key existing *is* "asked recently", so
+    there is nothing to parse, nothing to expire by hand, and two reconcilers waking together
+    cannot both decide it is due.
+    """
+    seconds = int(CREDIT_PROBE_EVERY.total_seconds())
+    return bool(await redis.set(CREDIT_PROBE_KEY, "1", nx=True, ex=seconds))
+
+
 async def reconcile(
     sessionmaker: async_sessionmaker[AsyncSession],
     queue: TurnQueue,
     *,
     stale_after: dt.timedelta = DEFAULT_STALE_AFTER,
     human_idle_after: dt.timedelta = DEFAULT_HUMAN_IDLE_AFTER,
+    halt: Halt | None = None,
+    api_key: str = "",
+    redis: Any = None,
 ) -> ReconcileReport:
     report = ReconcileReport()
     jobs: list[AdvanceTurn] = []
+
+    # First, because everything below it is pointless while the harness is stopped: a game
+    # re-enqueued under a halt is a job the worker can only answer with `halted`.
+    if halt is not None:
+        report.unhalted = await lift_credit_halt(halt, api_key=api_key, redis=redis)
+        if await halt.active():
+            log.info("harness is halted; skipping the sweep")
+            return report
 
     async with sessionmaker() as session, session.begin():
         stalled = await find_stalled(session, stale_after=stale_after)

@@ -31,6 +31,7 @@ from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
 from chessmark.agents.scripted import responsive  # noqa: E402
 from chessmark.core.budget import FreeTierBudget, GlobalBudget  # noqa: E402
+from chessmark.core.halt import Halt  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import ProviderCooldown  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
@@ -64,8 +65,14 @@ async def reconcile_loop(
             async with SingleFlight(redis) as mine:
                 if not mine:
                     continue
-                report = await reconcile(sessionmaker, queue)
-            if report.requeued or report.resumed:
+                report = await reconcile(
+                    sessionmaker,
+                    queue,
+                    halt=Halt(redis),
+                    api_key=get_settings().openrouter_api_key,
+                    redis=redis,
+                )
+            if report.requeued or report.resumed or report.unhalted:
                 log.warning("reconciler: %s", report)
         except Exception:
             log.exception("reconciler failed")
@@ -129,6 +136,10 @@ async def main(argv: list[str] | None = None) -> int:
     # matchmaker in another container entirely — knows what this one just learned.
     cooldown = ProviderCooldown(redis)
 
+    # The global stop (OPS-19). Read before every turn and set by a 402, so an empty account stops
+    # the harness once rather than pausing thirty games one at a time.
+    halt = Halt(redis)
+
     async def count_free_requests(model: str) -> None:
         if model.endswith(":free"):
             await free_tier.record()
@@ -147,6 +158,7 @@ async def main(argv: list[str] | None = None) -> int:
         redis=redis,
         budget=budget,
         cooldown=cooldown,
+        halt=halt,
     )
 
     loop = asyncio.get_running_loop()

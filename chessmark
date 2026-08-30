@@ -153,6 +153,13 @@ cmd_repair() { # supersede transcript rows no provider will accept:  ./chessmark
   api_script repair_transcripts.py "$@"
 }
 
+cmd_halt() { # stop every model call, or resume:  ./chessmark halt "reason" | --clear
+  # A *state*, not a limit — the daily kill switch is config read at startup and cannot be flipped
+  # while the stack runs. Games are left RUNNING and nothing is forfeited (OPS-19); a halt set by a
+  # 402 lifts itself once the account has credit, one set here never does.
+  api_script halt.py "$@"
+}
+
 # ---------------------------------------------------------------------------- people
 
 cmd_credits() { # grant or revoke credits by email, Clerk id, or ours; --show to read a balance
@@ -224,6 +231,12 @@ echo "select count(*) from games;" | ./chessmark sql'
 ./chessmark resume <game-id> --max-usd 2.50        # raise the ceiling that stopped it
 ./chessmark resume <game-id> --max-plies 400
 ./chessmark resume <game-id> --unclaimed-draw   # a threefold nobody was told about (ADR-0020)'
+  [halt]='./chessmark halt                        # is it on, and why?
+./chessmark halt "paying for a bug"      # stop every model call, now
+./chessmark halt --clear                 # start again
+
+# Games are left running and nothing is forfeited — they resume where they stopped.
+# A halt set by a 402 lifts itself once the account has credit; this one does not.'
   [repair]='./chessmark repair                      # report only; writes nothing
 ./chessmark repair --write               # supersede them
 ./chessmark repair --game <game-id>      # look at one game
@@ -257,6 +270,7 @@ ${AMBER}the stack${OFF}
 $(row up)
 $(row down)
 $(row deploy)
+$(row halt)
 $(row status)
 $(row ready)
 $(row logs)
