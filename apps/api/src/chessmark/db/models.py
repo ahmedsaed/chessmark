@@ -242,6 +242,19 @@ class Player(Base):
     #: `games.event_seq` is. Each player has its own independent transcript.
     transcript_seq: Mapped[int] = mapped_column(default=0, server_default="0")
 
+    #: The last `usage.prompt_tokens` the provider reported for this seat, carried between turns.
+    #:
+    #: **Why it is stored rather than held in memory.** The worker builds a fresh `TurnRunner` for
+    #: every turn, so a counter living on the runner is zero at the start of each one — which meant
+    #: the first call of *every* turn fell back to a character estimate, for the whole game, when
+    #: the design said the estimate ran once. It said 477,155 tokens of a six-ply transcript and
+    #: forfeited a model (ADR-0021).
+    #:
+    #: Zero means "nothing measured yet", which is true only before a game's first response.
+    #: Invariant 4 already says money comes from returned token counts; this applies the same rule
+    #: to the arithmetic deciding whether a request can be sent at all (AGENT-19).
+    last_prompt_tokens: Mapped[int] = mapped_column(default=0, server_default="0")
+
     # --- per-player benchmark metrics ---
     illegal_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
     compactions: Mapped[int] = mapped_column(default=0, server_default="0")

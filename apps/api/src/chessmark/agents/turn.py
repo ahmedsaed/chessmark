@@ -238,9 +238,14 @@ class TurnRunner:
         self._llm_sequence = 0
         self._tool_sequence = 0
         self._nudges = 0
-        #: The prompt size the provider last reported. Exact where an estimate would do, and the
-        #: reason compaction fires on measurement rather than on a per-ply guess.
-        self._prompt_tokens = 0
+        #: The prompt size the provider last reported, or `None` before anything has been measured.
+        #:
+        #: **Seeded from the seat, not from zero.** The worker builds a new runner for every turn,
+        #: so a counter starting at zero here meant the first call of *every* turn fell back to a
+        #: character estimate — for the whole game, while the design believed the estimate ran once
+        #: at ply 1. There is no estimate any more, and this is why there does not need to be one
+        #: (AGENT-19, ADR-0021).
+        self._prompt_tokens: int | None = player.last_prompt_tokens or None
         self._cached_window: compaction.Window | None = None
         self._compactions = 0
         self._truncations = 0
@@ -298,6 +303,15 @@ class TurnRunner:
             result.outcome = None
             result.rate_limit = error.rate_limit
             result.request_rejected = error.request_rejected
+        except compaction.NoRoomToAnswerError as error:
+            # The transcript leaves no usable room for an answer, and compaction could not fix it.
+            # **A harness stop, not a forfeit** (invariant 11, ADR-0019): the model did not play
+            # badly, our request would not fit. Treated exactly like a provider failure — the turn
+            # rolls back whole and the worker decides — rather than clamped to a token nobody can
+            # answer in, which is what forfeited a model for truncation at ply 5 (ADR-0021).
+            result.status = TurnStatus.FAILED
+            result.error = str(error)
+            result.outcome = None
         except ProviderMangledError as error:
             # The endpoint failed to parse a tool call the model did make (ADR-0015). Same
             # treatment as an outage, for the same reason: the model acted correctly and its host
@@ -362,13 +376,28 @@ class TurnRunner:
             len(plan.keep),
         )
 
+        try:
+            summary_cap = window.completion_cap(occupied, compaction.SUMMARY_MAX_TOKENS)
+        except compaction.NoRoomToAnswerError:
+            # There is not even room to *write* the summary. Normally impossible — the trigger
+            # fires while the reserve is still free, and the reserve is exactly this space — but a
+            # game resumed onto a smaller endpoint arrives here. Say so and let the caller decide,
+            # rather than spending a call that cannot answer.
+            log.warning(
+                "cannot compact %s: %d of %d tokens leaves no room to write a summary",
+                self.player.id,
+                occupied,
+                window.context,
+            )
+            return False
+
         completion = await self.gateway.complete(
             model=self.model,
             messages=compaction.summary_request(plan),
             # No tools: a model handed its schema mid-summary calls one, and the call would have to
             # be discarded. And a small cap, which is what keeps this request inside the window it
             # exists to make room in — the reserve the trigger held back is exactly this space.
-            max_tokens=window.completion_cap(occupied, compaction.SUMMARY_MAX_TOKENS),
+            max_tokens=summary_cap,
             session_id=session_for_game(self.game.id),
         )
         await self._record_llm_call(turn, completion)
@@ -389,7 +418,9 @@ class TurnRunner:
             summary=summary,
         )
         self._compactions += 1
-        self._prompt_tokens = 0  # the next call measures the new prefix rather than the old one
+        # The prefix was rewritten, so the old measurement describes a transcript that no longer
+        # exists. `None` means unmeasured, which is the truth until the next response arrives.
+        self._prompt_tokens = None
 
         await append_event(
             self.session,
@@ -418,10 +449,10 @@ class TurnRunner:
 
             messages = await transcript.build_messages(self.session, self.player.id)
 
-            # How full the window is. The provider's own count from the previous round-trip when
-            # there is one — exact, per invariant 4 — and a character estimate before the first,
-            # which is the only point in a turn where nothing exact exists.
-            occupied = self._prompt_tokens or compaction.estimate_tokens(messages)
+            # How full the window is: the provider's own count, or `None` before a game's first
+            # response. **Never an estimate** — invariant 4's rule about money applies just as
+            # much to the arithmetic deciding whether a request can be sent (AGENT-19).
+            occupied = self._prompt_tokens
             window = await self._endpoint_window()
 
             # **Once per turn.** A turn is a few round-trips against one transcript, so a second
@@ -430,20 +461,23 @@ class TurnRunner:
             # spend a call per round-trip discovering there is nothing left to fold.
             if (
                 self._compactions == 0
+                and occupied is not None
                 and window.should_compact(occupied)
                 and await self._compact(turn, result, occupied, window)
             ):
-                # Rebuilt from the summary, so both the message list and its size change.
+                # The prefix was rewritten, so the old measurement describes a transcript that no
+                # longer exists. The next response measures the new one; until then this is a first
+                # call again, and it is bounded rather than guessed at.
                 messages = await transcript.build_messages(self.session, self.player.id)
-                occupied = compaction.estimate_tokens(messages)
+                occupied = None
 
             completion = await self.gateway.complete(
                 model=self.model,
                 messages=messages,
                 tools=self._tools,
-                # **Clamped to what the endpoint will accept.** A flat 64,000 reconciled against
-                # nothing asked a 65,536-token endpoint for 65,810 tokens and was refused — a 400
-                # that abandoned a game at ply 10. `max_tokens` is a ceiling on the answer, so
+                # **Clamped to what the endpoint will accept** (AGENT-16). A flat 64,000 reconciled
+                # against nothing asked a 65,536-token endpoint for 65,810 tokens and was refused —
+                # a 400 that abandoned a game at ply 10. `max_tokens` is a ceiling on the answer, so
                 # asking for less than the model needs is a truncation and asking for more than
                 # fits is a rejection; this is the largest value that cannot be rejected.
                 max_tokens=window.completion_cap(occupied, self.limits.max_completion_tokens),
@@ -455,7 +489,7 @@ class TurnRunner:
 
             await self._record_llm_call(turn, completion)
             self._accumulate(result, completion)
-            self._prompt_tokens = completion.usage.prompt or self._prompt_tokens
+            self._remember_prompt_size(completion)
 
             if completion.reasoning:
                 # Written in full, always. Whether a *reader* may see it is decided on the way out,
@@ -873,6 +907,22 @@ class TurnRunner:
         await self.session.flush()
 
     # ------------------------------------------------------------------ helpers
+
+    def _remember_prompt_size(self, completion: Completion) -> None:
+        """Carry the measured prompt size forward, on the seat rather than on this runner.
+
+        The worker builds a new runner per turn, so a value kept only here is lost between them —
+        which is exactly how a character estimate came to drive the first call of every turn for a
+        whole game (ADR-0021). Written to `players.last_prompt_tokens` so the *next* turn starts
+        from a number the provider returned.
+
+        A response with no usage — some endpoints omit it on an error — leaves the last good
+        measurement in place rather than resetting to "unmeasured".
+        """
+        if not completion.usage.prompt:
+            return
+        self._prompt_tokens = completion.usage.prompt
+        self.player.last_prompt_tokens = completion.usage.prompt
 
     def _accumulate(self, result: TurnResult, completion: Completion) -> None:
         result.prompt_tokens += completion.usage.prompt

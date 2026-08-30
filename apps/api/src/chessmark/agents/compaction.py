@@ -61,9 +61,23 @@ MIN_FRACTION = 0.10
 #: call inside the window it is trying to make room in.
 SUMMARY_MAX_TOKENS = 2_000
 
-#: Rough characters per token. Used only before a turn's first response, where no exact count
-#: exists yet; every later decision uses the provider's own `usage.prompt_tokens` (invariant 4).
-CHARS_PER_TOKEN = 3.5
+#: The smallest answer worth asking for. Below this, `completion_cap` raises rather than clamping.
+#:
+#: **The floor used to be 1**, on the reasoning that "a request for zero output is not a request".
+#: That is true of zero and false of one: a `max_tokens` of 1 is not a smaller request, it is a
+#: request that cannot succeed. Fed a prompt size larger than the window it asked an endpoint for a
+#: single token, every reply came back `finish_reason: "length"`, and after four of them a model was
+#: forfeited for truncation at ply 5 — a harness miscalculation published as a finding about a
+#: player, which is precisely what ADR-0019 exists to prevent.
+MIN_USEFUL_COMPLETION = 1_024
+
+#: What a game's first call may ask for, as a fraction of the window, before anything is measured.
+#:
+#: **A bound, not an estimate.** Half a window cannot be wrong in the dangerous direction: the
+#: system prompt plus one turn prompt is a few thousand tokens against a window of at least 64k
+#: (AGENT-14), so the sum always fits. It costs at most a shorter first answer, where the old
+#: character estimate cost a game.
+FIRST_CALL_FRACTION = 2
 
 
 SUMMARY_INSTRUCTION = """\
@@ -89,25 +103,22 @@ available through your tools — call `get_board_state` if you need the position
 --- end of summary ---"""
 
 
-def estimate_tokens(messages: list[dict[str, Any]]) -> int:
-    """A rough token count for a message list.
+class NoRoomToAnswerError(Exception):
+    """The prompt leaves no usable room for a completion.
 
-    Only used where nothing exact exists — the first call of a turn, before any response has
-    reported `usage.prompt_tokens`. Deliberately crude and deliberately *low* in characters per
-    token, so it over-estimates: an over-estimate compacts a little early, an under-estimate hits
-    the window and forfeits.
+    Raised rather than returned so it cannot be ignored by a caller that treats the cap as just a
+    number. It is not a provider failure and not a model failure: it says the transcript needs to
+    get smaller before this endpoint can be asked anything at all.
     """
-    characters = 0
-    for message in messages:
-        content = message.get("content")
-        if isinstance(content, str):
-            characters += len(content)
-        elif isinstance(content, list):
-            characters += sum(len(str(part)) for part in content)
-        for key in ("tool_calls", "reasoning_details"):
-            if message.get(key):
-                characters += len(str(message[key]))
-    return int(characters / CHARS_PER_TOKEN)
+
+    def __init__(self, *, context: int, prompt_tokens: int, available: int) -> None:
+        super().__init__(
+            f"a {context}-token window holding a {prompt_tokens}-token prompt leaves "
+            f"{available} tokens to answer in, under the {MIN_USEFUL_COMPLETION} floor"
+        )
+        self.context = context
+        self.prompt_tokens = prompt_tokens
+        self.available = available
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,16 +150,37 @@ class Window:
             return False
         return self.context - prompt_tokens < self.headroom_needed()
 
-    def completion_cap(self, prompt_tokens: int, requested: int) -> int:
+    def completion_cap(self, prompt_tokens: int | None, requested: int) -> int:
         """How many output tokens may be asked for, given what the prompt already occupies.
 
-        The clamp that had been missing. `max_tokens` was a flat 64,000 reconciled against nothing,
-        so a 65,536-token endpoint was asked for 65,810 tokens and refused — a 400 that abandoned a
-        game at ply 10. Never returns less than 1: a request for zero output is not a request.
+        The clamp that had been missing (AGENT-16). `max_tokens` was a flat 64,000 reconciled
+        against nothing, so a 65,536-token endpoint was asked for 65,810 tokens and refused — a 400
+        that abandoned a game at ply 10.
+
+        `prompt_tokens` is `None` when nothing has been measured yet, which happens on a game's
+        first call and nowhere else. We do **not** guess there: a bound of half the window is used
+        instead, and a bound cannot be wrong in the direction that forfeits a model. What used to
+        happen was a character estimate, and it is worth being exact about how badly that went — it
+        reported 477,155 tokens for a six-ply transcript against a 256,000-token window, the clamp
+        went negative, its `max(1, ...)` floor asked for one output token, and the model was
+        forfeited for the truncations that followed (ADR-0021).
+
+        Raises `NoRoomToAnswerError` rather than returning a number too small to answer in. That is a
+        state for the caller to act on — compact, or stop — not a value to pass to a provider.
         """
         if not self.known:
             return requested
-        return max(1, min(requested, self.context - prompt_tokens - 256))
+        if prompt_tokens is None:
+            return max(1, min(requested, self.context // FIRST_CALL_FRACTION))
+
+        # 256 for the framing the provider adds around our messages: role markers, the tool schema's
+        # envelope, whatever a given endpoint counts that we cannot see.
+        available = self.context - prompt_tokens - 256
+        if available < MIN_USEFUL_COMPLETION:
+            raise NoRoomToAnswerError(
+                context=self.context, prompt_tokens=prompt_tokens, available=available
+            )
+        return min(requested, available)
 
 
 @dataclass(frozen=True, slots=True)
@@ -319,11 +351,12 @@ async def apply(
 __all__ = [
     "DEFAULT_KEEP_TURNS",
     "DEFAULT_RESERVE_TOKENS",
+    "MIN_USEFUL_COMPLETION",
     "SUMMARY_MAX_TOKENS",
+    "NoRoomToAnswerError",
     "Plan",
     "Window",
     "apply",
-    "estimate_tokens",
     "live_messages",
     "plan_compaction",
     "summary_request",

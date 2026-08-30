@@ -19,8 +19,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents import compaction, transcript
 from chessmark.agents.compaction import (
     DEFAULT_RESERVE_TOKENS,
+    MIN_USEFUL_COMPLETION,
+    NoRoomToAnswerError,
     Window,
-    estimate_tokens,
     plan_compaction,
 )
 from chessmark.db.models import TranscriptMessage
@@ -106,21 +107,39 @@ class TestTheCompletionCap:
         """A ceiling, not a target: plenty of room does not mean asking for a longer answer."""
         assert Window(context=1_000_000).completion_cap(1_000, 4_000) == 4_000
 
-    def test_it_never_asks_for_nothing(self) -> None:
-        """A request for zero output is not a request, and a full window should fail as a rejection
-        the worker can classify rather than as an empty answer nobody can read."""
-        assert Window(context=1_000).completion_cap(5_000, 64_000) == 1
+    def test_it_refuses_rather_than_asking_for_a_token_nobody_can_answer_in(self) -> None:
+        """The floor used to be 1, and that forfeited a model (ADR-0021).
+
+        A `max_tokens` of 1 is not a smaller request, it is a request that cannot succeed: every
+        reply comes back `finish_reason: "length"`, and four of those ended a game `truncated`,
+        `1-0`, against a model that had done nothing wrong. A state, not a value.
+        """
+        with pytest.raises(NoRoomToAnswerError):
+            Window(context=1_000).completion_cap(5_000, 64_000)
+
+    def test_it_refuses_just_below_the_useful_floor(self) -> None:
+        window = Window(context=64_000)
+        prompt = 64_000 - 256 - MIN_USEFUL_COMPLETION
+
+        assert window.completion_cap(prompt, 64_000) == MIN_USEFUL_COMPLETION
+        with pytest.raises(NoRoomToAnswerError):
+            window.completion_cap(prompt + 1, 64_000)
+
+    def test_an_unmeasured_prompt_is_bounded_rather_than_guessed_at(self) -> None:
+        """A game's first call, and the only place no measurement exists.
+
+        Half the window is a *bound*: the system prompt plus one turn prompt is a few thousand
+        tokens against a window of at least 64k, so the sum always fits. The character estimate it
+        replaces reported 477,155 tokens of a six-ply transcript.
+        """
+        assert Window(context=65_536).completion_cap(None, 64_000) == 32_768
+        assert Window(context=1_000_000).completion_cap(None, 64_000) == 64_000, (
+            "still a ceiling, not a target"
+        )
 
     def test_an_unknown_window_passes_the_request_through(self) -> None:
         assert Window(context=0).completion_cap(1_000, 64_000) == 64_000
-
-
-def test_the_estimate_over_states_rather_than_under() -> None:
-    """It is used only before a turn's first response, where nothing exact exists. Over-estimating
-    compacts a little early; under-estimating hits the window and forfeits."""
-    messages = [{"role": "user", "content": "x" * 3_500}]
-
-    assert estimate_tokens(messages) >= 1_000
+        assert Window(context=0).completion_cap(None, 64_000) == 64_000
 
 
 # ====================================================================== what to fold
@@ -313,9 +332,17 @@ class TestATurnThatCompacts:
     event log. The scripted model answers the summary request with prose and then plays.
     """
 
-    async def _big_transcript(self, db: AsyncSession, table: Any, *, rows: int) -> None:
+    async def _big_transcript(
+        self, db: AsyncSession, table: Any, *, rows: int, measured: int = 0
+    ) -> None:
         """A transcript large enough to trip a small reserve, with real turn ids so the cut has
-        boundaries to land on."""
+        boundaries to land on.
+
+        `measured` is the seat's `last_prompt_tokens`, and seeding it is not incidental: since
+        ADR-0021 the trigger reads a number the *provider* returned and never an estimate, so a
+        transcript with no measurement behind it is one the harness has never sent and will not
+        compact. A real seat holding ten turns of history has been measured ten times.
+        """
         from chessmark.db.models import Turn as TurnRow
 
         seq = 1
@@ -347,6 +374,7 @@ class TestATurnThatCompacts:
         # `seq` comes from `players.transcript_seq` under a row lock, not from `max(seq)`. Seeding
         # rows without moving the counter makes the turn's own first append collide on seq 1.
         table.white.transcript_seq = seq
+        table.white.last_prompt_tokens = measured
         await db.commit()
 
     async def _register(self, db: AsyncSession, *, slug: str, context: int) -> None:
@@ -381,7 +409,7 @@ class TestATurnThatCompacts:
 
         slug = "scripted/roomy"
         await self._register(db, slug=slug, context=60_000)
-        await self._big_transcript(db, table, rows=10)
+        await self._big_transcript(db, table, rows=10, measured=55_000)
 
         before = len(await transcript.full_history(db, table.white.id))
 
