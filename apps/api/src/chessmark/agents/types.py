@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import json
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -173,6 +174,28 @@ class RateLimit:
     `max_completion_budget` bounds what it may generate.
     """
 
+    free_daily_cap: bool = False
+    """OpenRouter's account-wide daily allowance for free models is spent.
+
+    A 429 like any other on the wire, and nothing like one in meaning. The allowance is 1,000
+    requests a day **across the account**, so when it is gone every free model refuses — resting
+    one endpoint for sixty seconds simply hands the next entrant the same refusal, and a
+    seventeen-model pool works through its whole field one doomed request at a time.
+
+    Halts the harness rather than pausing a game, exactly as a 402 does (OPS-19), with one
+    advantage over it: `resets_at` usually says precisely when the cap lifts, so the halt expires
+    on its own instead of waiting to be probed.
+    """
+
+    resets_at: dt.datetime | None = None
+    """When a platform limit lifts, from `X-RateLimit-Reset`.
+
+    Distinct from `retry_after_seconds`, which is a provider's hint about *its* pool. This is
+    OpenRouter's own statement about our account's cap, and it is exact where the cooldown ladder
+    is guessing — the daily cap can be hours out, and the ladder would spend those hours waking
+    every sixty seconds to be refused.
+    """
+
     account: bool = False
     """The refusal is about **our account**, not about the model or the endpoint serving it.
 
@@ -217,6 +240,8 @@ class RateLimit:
         publishing facts about models, and it is a fact about us.
         """
         where = self.provider or "its provider"
+        if self.free_daily_cap:
+            return "the free-model allowance for the day is spent (429)"
         if self.account:
             if self.status_code == 402:
                 return "our provider account is out of credits (402)"

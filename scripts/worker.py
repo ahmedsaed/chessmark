@@ -159,6 +159,7 @@ async def main(argv: list[str] | None = None) -> int:
         budget=budget,
         cooldown=cooldown,
         halt=halt,
+        free_tier=free_tier,
     )
 
     loop = asyncio.get_running_loop()

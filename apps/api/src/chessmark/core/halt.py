@@ -50,6 +50,13 @@ SOURCE_CREDITS = "credits"
 #: otherwise would be the system overruling its operator.
 SOURCE_OPERATOR = "operator"
 
+#: Set by OpenRouter's daily free-model allowance running out. Lifts itself at a *known* time.
+#:
+#: The one halt that needs neither a probe nor a command: `X-RateLimit-Reset` says when the cap
+#: lifts, so the key is written with that as its TTL and Redis does the rest. Nothing has to sweep
+#: it and there is no midnight job to fail to run — the same reasoning the spend counters use.
+SOURCE_FREE_TIER = "free_tier"
+
 
 @dataclass(frozen=True, slots=True)
 class HaltState:
@@ -68,8 +75,12 @@ class HaltState:
     #: the whole system on the second would be the `403 → disable` mistake again (ADR-0019).
     balance_usd: Decimal | None = None
 
+    #: When this halt lifts on its own, for the one source that knows. `None` means it does not.
+    until: dt.datetime | None = None
+
     @property
     def self_clearing(self) -> bool:
+        """Whether a credit probe may lift this. Not the same as expiring on its own."""
         return self.source == SOURCE_CREDITS
 
 
@@ -100,6 +111,11 @@ class Halt:
                     if data.get("balance_usd") is not None
                     else None
                 ),
+                until=(
+                    dt.datetime.fromisoformat(data["until"])
+                    if data.get("until") is not None
+                    else None
+                ),
             )
         except (ValueError, KeyError, TypeError):
             log.exception("unreadable halt value; treating the system as running")
@@ -114,6 +130,7 @@ class Halt:
         *,
         source: str = SOURCE_OPERATOR,
         balance_usd: Decimal | None = None,
+        until: dt.datetime | None = None,
         now: dt.datetime | None = None,
     ) -> HaltState:
         """Stop everything.
@@ -127,25 +144,36 @@ class Halt:
         if existing is not None:
             return existing
 
+        stamp = now or dt.datetime.now(dt.UTC)
         state = HaltState(
             reason=reason,
             source=source,
-            at=now or dt.datetime.now(dt.UTC),
+            at=stamp,
             balance_usd=balance_usd,
+            until=until,
         )
-        await self._redis.set(
-            KEY,
-            json.dumps(
-                {
-                    "reason": state.reason,
-                    "source": state.source,
-                    "at": state.at.isoformat(),
-                    "balance_usd": str(state.balance_usd)
-                    if state.balance_usd is not None
-                    else None,
-                }
-            ),
+        payload = json.dumps(
+            {
+                "reason": state.reason,
+                "source": state.source,
+                "at": state.at.isoformat(),
+                "balance_usd": str(state.balance_usd) if state.balance_usd is not None else None,
+                "until": state.until.isoformat() if state.until is not None else None,
+            }
         )
+
+        # **The TTL is the expiry.** A halt that knows when it ends is written with that as the
+        # key's lifetime, so Redis lifts it — nothing has to sweep, and there is no job to fail to
+        # run. A halt already in the past is not written at all: it would expire immediately and
+        # the only effect would be a log line claiming the harness had stopped.
+        seconds = int((until - stamp).total_seconds()) if until is not None else 0
+        if until is not None and seconds <= 0:
+            log.info("not halting: %s had already lifted at %s", reason, until.isoformat())
+            return state
+        if seconds > 0:
+            await self._redis.set(KEY, payload, ex=seconds)
+        else:
+            await self._redis.set(KEY, payload)
         log.error("halting every model call (%s): %s", state.source, state.reason)
         return state
 

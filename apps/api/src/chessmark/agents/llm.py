@@ -14,6 +14,7 @@ Two design choices carry most of the weight:
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import random
 import re
@@ -245,6 +246,65 @@ def is_rate_limit(error: BaseException) -> bool:
 #: `"retry_after_seconds":5` and `"Retry-After":"5"`, as they appear in a provider's error body.
 _RETRY_AFTER = re.compile(r'"?[Rr]etry[-_][Aa]fter(?:_seconds)?"?\s*[:=]\s*"?(\d+(?:\.\d+)?)"?')
 
+#: OpenRouter's own daily cap on free models, which arrives as a 429 like any other.
+#:
+#: **Account-wide, not about an endpoint**, and that is the whole reason it needs its own name.
+#: The free allowance is 1,000 requests a day across the account (50 before ten credits are
+#: bought), so when it is spent *every* free model refuses. Classified as an ordinary rate limit it
+#: rested one model for sixty seconds, the matchmaker paired the next entrant, that refused
+#: identically, and a seventeen-model pool worked through its whole field one doomed request at a
+#: time — the same shape as the 402 that now halts the harness (OPS-19).
+#:
+#: Matched on the message because there is no code for it: 429 alone also covers the per-minute
+#: cap and a provider's shared pool, and those are short waits that the cooldown ladder handles
+#: correctly. Failing to recognise a reworded message degrades to that behaviour rather than to
+#: anything worse.
+_FREE_DAILY_CAP = re.compile(r"free-models-per-day|free_models_per_day", re.I)
+
+#: `X-RateLimit-Reset`, the moment a platform limit lifts. Far better than our ladder's guess: the
+#: daily cap can be hours out, and the ladder would spend that time waking every sixty seconds.
+_RESET_HEADERS = ("x-ratelimit-reset", "X-RateLimit-Reset")
+
+#: Above this, a reset value is milliseconds rather than seconds. `1e11` seconds is the year 5138
+#: and `1e11` milliseconds is 1973, so nothing real is ambiguous — and OpenRouter sends ms.
+_MILLISECONDS_ABOVE = 100_000_000_000
+
+
+def is_free_daily_cap(error: BaseException) -> bool:
+    """Whether this 429 is OpenRouter's account-wide daily free-model allowance, not a pool."""
+    return is_rate_limit(error) and bool(_FREE_DAILY_CAP.search(str(error)))
+
+
+def resets_at(error: BaseException) -> dt.datetime | None:
+    """When the platform limit lifts, as `X-RateLimit-Reset` said. `None` when it did not say.
+
+    Read from the header only. The body carries no equivalent, and inventing one from the ladder
+    here would put a guess where the caller is entitled to assume a fact.
+    """
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+
+    for name in _RESET_HEADERS:
+        try:
+            raw = headers.get(name)
+        except (AttributeError, TypeError):  # pragma: no cover - exotic header objects
+            raw = None
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value <= 0:
+            continue
+        if value > _MILLISECONDS_ABOVE:
+            value /= 1000
+        return dt.datetime.fromtimestamp(value, tz=dt.UTC)
+    return None
+
+
 #: `"limit_source":"upstream_provider_shared_pool"` and `"provider_name":"Google AI Studio"`.
 #: Read out of the message rather than a parsed body because that is where they actually arrive:
 #: LiteLLM stringifies the provider's JSON into the exception text on its way through.
@@ -298,6 +358,8 @@ def rate_limit_from(error: BaseException) -> RateLimit:
         status_code=_status_code(error),
         gated=is_gated(error),
         account=is_account_problem(error),
+        free_daily_cap=is_free_daily_cap(error),
+        resets_at=resets_at(error),
     )
 
 

@@ -243,6 +243,13 @@ A **402** from OpenRouter — *"Your account or API key has insufficient credits
 automatically, and that one **lifts itself**: the reconciler probes the account balance every five
 minutes and resumes once there is credit. Top up and walk away; you do not need to run anything.
 
+The **free-tier daily cap** sets it too, and lifts even more cleanly. It arrives as a 429 reading
+*"Rate limit exceeded: free-models-per-day"* — account-wide, so every free model refuses at once —
+and `X-RateLimit-Reset` says when it goes. The halt is written with that as its expiry, so nothing
+probes and nothing sweeps: the key simply runs out. `./chessmark halt` shows the time it will lift.
+If you see this most days, the pool is running hotter than the allowance and the answer is fewer
+concurrent games or a paid entrant, not a bigger reserve.
+
 A halt you set by hand never lifts itself. Somebody meant it, and a probe deciding otherwise would
 be the system overruling its operator, so `--clear` is the only way back.
 

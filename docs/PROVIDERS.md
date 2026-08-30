@@ -115,9 +115,22 @@ guessing at the prompt.
 | 402 | out of credits | **pause**, no cooldown (OPS-17) |
 | 403 | moderation, or a distribution gate | pause; a gate withdraws the model (ADR-0019) |
 | 408 | timed out | retry |
-| 429 | rate limited | pause + cooldown (ADR-0017) |
+| 429 | a provider's pool is hot, *or* a platform cap | pause + cooldown; the **daily** cap halts (OPS-20) |
 | 502 | provider down | retry |
 | 503 | no provider meets our routing | **pause** + cooldown (OPS-18) |
+
+**429 is two different facts sharing a code.** `limit_source: upstream_provider_shared_pool` is one
+provider having a busy minute — wait it out, rest that pool, carry on. *"Rate limit exceeded:
+free-models-per-day"* is OpenRouter's own cap on our **account**: 1,000 free-model requests a day
+(50 before ten credits are bought), shared by every pool, every human game against a free model and
+every `make play`.
+
+Treating the second as the first cost the whole field. Resting one model for sixty seconds let the
+matchmaker pair the next entrant, which refused identically, and a seventeen-model pool worked
+through every one of them a doomed request at a time. It halts now, and it is the easiest halt to
+lift: `X-RateLimit-Reset` says exactly when the cap goes, so the halt is written with that as its
+TTL and expires on its own. The **per-minute** cap (20 rpm) keeps the cooldown ladder, which is the
+right response to a short wait.
 
 The two account codes are the odd ones: they pause like a 429 and **do not rest the endpoint**,
 because the endpoint never refused us. Cooling it down would teach the matchmaker that a model is
