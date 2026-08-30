@@ -38,6 +38,20 @@ from chessmark.db.models import Game, Player, TranscriptMessage  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 
 
+#: How an *absent* `tool_calls` is actually stored, and it is not what you would guess.
+#:
+#: `tool_calls` is `JSONB`, and SQLAlchemy writes a Python `None` into a JSON column as the JSON
+#: value `null` — `'null'::jsonb` — rather than as SQL `NULL`. So `tool_calls IS NULL` matches
+#: **nothing**: against a database holding 373 assistant rows it returned zero, and this script
+#: reported "no unsendable transcript rows" for a transcript that had abandoned a game.
+#:
+#: Python-side code never noticed, because JSONB `null` deserialises back to `None` and
+#: `compaction.is_sendable` reads the attribute rather than querying — which is why the runtime
+#: filter worked while the repair query silently found nothing. A repair that finds nothing reads
+#: as success, which makes this the worst shape of bug to leave untested.
+_NO_TOOL_CALLS = ("null", "[]")
+
+
 def _unsendable() -> sa.ColumnElement[bool]:
     """The rows this script exists for.
 
@@ -51,7 +65,7 @@ def _unsendable() -> sa.ColumnElement[bool]:
         sa.or_(TranscriptMessage.content.is_(None), TranscriptMessage.content == ""),
         sa.or_(
             TranscriptMessage.tool_calls.is_(None),
-            sa.cast(TranscriptMessage.tool_calls, sa.Text) == "[]",
+            sa.cast(TranscriptMessage.tool_calls, sa.Text).in_(_NO_TOOL_CALLS),
         ),
     )
 
