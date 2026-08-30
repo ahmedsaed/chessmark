@@ -168,15 +168,20 @@ what we asked for, so the two cases are distinguishable from the response, not m
 budget has told us something true about itself, and with the window arithmetic fixed that is the
 only way the termination can now be reached.
 
-### A model that cannot hold one turn is never entered
+### A model that cannot hold one turn is never entered — and already was not
 
-The failure "this seat's window cannot fit a single turn" is knowable **before** a game rather than
-at ply 40: endpoint context lengths are stored, and the size of one turn is ours to measure. That
-check belongs in matchmaking, alongside the AGENT-14 registry rules, and a model that fails it is
-not paired.
+This was going to be new work, and reading the code first found it already there.
+`registry.endpoint_is_playable` requires the **endpoint's** own window to clear
+`min_context_tokens`, which is 64,000 — three orders of magnitude more than one turn — and all four
+callers use it: `resolve_field` when admitting entrants, `select_endpoint` when pinning a seat,
+`GET /models` when advertising, and the tournament field query. It was added when the
+endpoint-versus-model window distinction was found, and it is strictly stronger than the rule
+proposed here.
 
-With it in place, a mid-game context failure means the model's *own* output filled its window, which
-is a finding about the model and forfeits it honestly.
+So nothing changes, and the property holds: a mid-game context failure means the model's *own*
+output filled a window of at least 64k, which is a finding about the model and forfeits it honestly.
+Recorded rather than quietly dropped, because "we should add X" and "X is already there, here is
+where" are different facts and the second one is the useful one.
 
 ### An empty assistant message is never written
 
