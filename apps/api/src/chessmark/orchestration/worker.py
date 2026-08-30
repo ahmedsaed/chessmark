@@ -108,6 +108,14 @@ MAX_JOB_ATTEMPTS = 5
 #: not waiting on a busy pool — it is waiting on something that is not coming back.
 PAUSE_WINDOW = dt.timedelta(hours=24)
 
+#: How long a game waits when the refusal is about our *account* rather than a provider's pool.
+#:
+#: A 402 is cleared by somebody topping up and a 401 by somebody fixing a key — both are human
+#: actions on human timescales, so the cooldown ladder's opening rung of sixty seconds would spend
+#: ninety attempts an hour discovering the obvious. Fifteen minutes still gives 96 tries inside the
+#: 24-hour window, which is far more than enough to catch a fix.
+ACCOUNT_PAUSE_SECONDS = 900
+
 #: A person will not wait out a provider. Their game pauses briefly and gives up in minutes, not
 #: hours — the honest outcome, and better than a board that quietly never moves again. Their
 #: opponent's model is not forfeited: nobody played badly.
@@ -399,7 +407,13 @@ class TurnWorker:
             waited = dt.datetime.now(dt.UTC) - first_pause if first_pause else dt.timedelta()
 
             seconds = 0
-            if self.cooldown is not None:
+            if limit.account:
+                # **No cooldown.** The endpoint did not refuse us; our account did, and every other
+                # endpoint would have refused identically. Resting this one would teach the
+                # matchmaker that a model is unreliable when nothing about it failed, and it would
+                # go on believing that after the credits were topped up.
+                seconds = ACCOUNT_PAUSE_SECONDS
+            elif self.cooldown is not None:
                 seconds = await self.cooldown.note(
                     model,
                     provider=provider,

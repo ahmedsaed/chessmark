@@ -35,7 +35,27 @@ CompletionFn = Callable[..., Awaitable[Any]]
 SleepFn = Callable[[float], Awaitable[None]]
 
 #: Status codes worth trying again. 408 timeout, 409 conflict, 429 rate limit, and 5xx.
-RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
+#:
+#: **503 is deliberately not here, and was.** OpenRouter's 503 is not a generic outage: it means
+#: *"No available model provider meets your routing requirements"*, and our routing is pinned for
+#: the whole game (ADR-0015). Nothing about that changes in the three seconds a retry ladder waits,
+#: so four attempts spent four requests to be told the same thing and the worker then spent five
+#: more. It is the provider-404 fact wearing a different code, and it takes the same path: pause,
+#: cool the endpoint down, come back.
+RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 504, 529})
+
+#: Refusals about **our account**, not about the model or the endpoint serving it.
+#:
+#: * 402 — out of credits. Every endpoint will refuse identically until somebody tops up.
+#: * 401 — the key was rejected. Same shape: nothing is wrong with the model we asked for.
+#:
+#: Neither was classified at all, so both fell through to the retry budget and **abandoned the
+#: game after five attempts**. On a free pool that costs nothing and has never bitten; on a paid
+#: pool, running out of credits would end every game in flight rather than waiting for the top-up.
+#:
+#: Waiting is right and cooling an endpoint down is wrong — the endpoint is fine, and resting it
+#: would teach the matchmaker something false about a model that never failed.
+ACCOUNT_STATUS = frozenset({401, 402})
 
 #: Exception class names that mean "transient", matched by name so this module never has to
 #: import LiteLLM's exception hierarchy at module scope.
@@ -186,20 +206,29 @@ def _status_code(error: BaseException) -> int | None:
 
 
 def is_unavailable(error: BaseException) -> bool:
-    """Whether the endpoint is declining to serve this right now, rather than failing.
+    """Whether we are being declined right now, rather than failing.
 
-    A 429 says so politely, a provider 404 says so bluntly, and a 403 says it about the model
-    rather than the moment — all three mean "not from here, not now" rather than "your request was
-    wrong" — so both pause the game and cool the endpoint down instead of spending the retry
-    budget. Told apart from a *model* that does not exist only by when it happens: that one still
-    fails at ply 0, where a pause simply expires and the game is abandoned honestly.
+    A 429 says so politely, a provider 404 says so bluntly, a 403 says it about the model rather
+    than the moment, and a 503 says no endpoint matches our pinned routing. A 401 or 402 says it
+    about our account instead of about the model. All of them mean "not from here, not now" rather
+    than "your request was wrong", so all of them pause the game instead of spending the retry
+    budget — which is a budget measured in requests, the scarce thing (ADR-0017).
+
+    Told apart from a *model* that does not exist only by when it happens: that one still fails at
+    ply 0, where a pause simply expires and the game is abandoned honestly.
     """
     return (
         is_rate_limit(error)
         or isinstance(error, TimeoutError)
-        or _status_code(error) in {403, 404}
+        or _status_code(error) in {403, 404, 503}
+        or is_account_problem(error)
         or endpoint_is_unhealthy(error)
     )
+
+
+def is_account_problem(error: BaseException) -> bool:
+    """Whether the refusal is about our account rather than about the model or its endpoint."""
+    return _status_code(error) in ACCOUNT_STATUS
 
 
 def is_rate_limit(error: BaseException) -> bool:
@@ -268,6 +297,7 @@ def rate_limit_from(error: BaseException) -> RateLimit:
         retry_after_seconds=retry_after_seconds(error),
         status_code=_status_code(error),
         gated=is_gated(error),
+        account=is_account_problem(error),
     )
 
 

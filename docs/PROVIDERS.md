@@ -106,6 +106,27 @@ came back `finish_reason: "length"`, and the game was forfeited for truncation. 
 call, where nothing has been measured yet, the clamp uses half the window as a bound rather than
 guessing at the prompt.
 
+**The codes, and what each one does here.** OpenRouter's set, and the path each takes:
+
+| Code | Means | Response |
+| --- | --- | --- |
+| 400 | ambiguous — see below | depends entirely on the body |
+| 401 | credentials refused | **pause**, no cooldown (OPS-17) |
+| 402 | out of credits | **pause**, no cooldown (OPS-17) |
+| 403 | moderation, or a distribution gate | pause; a gate withdraws the model (ADR-0019) |
+| 408 | timed out | retry |
+| 429 | rate limited | pause + cooldown (ADR-0017) |
+| 502 | provider down | retry |
+| 503 | no provider meets our routing | **pause** + cooldown (OPS-18) |
+
+The two account codes are the odd ones: they pause like a 429 and **do not rest the endpoint**,
+because the endpoint never refused us. Cooling it down would teach the matchmaker that a model is
+unreliable when nothing about it failed, and it would go on believing that after the top-up.
+
+503 is not a generic outage here. OpenRouter means *"No available model provider meets your routing
+requirements"*, and routing is pinned for the whole game (ADR-0015) — so it cannot come right inside
+a retry ladder, and it used to spend nine requests proving that before abandoning the game.
+
 **A 400 does not tell you whose fault it is; the body does.** Three arrive here and take three
 different paths:
 

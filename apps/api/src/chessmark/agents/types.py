@@ -173,6 +173,19 @@ class RateLimit:
     `max_completion_budget` bounds what it may generate.
     """
 
+    account: bool = False
+    """The refusal is about **our account**, not about the model or the endpoint serving it.
+
+    A 402 (out of credits) and a 401 (key rejected) are both this shape: every endpoint will answer
+    identically until a person does something, and nothing is wrong with the model we asked for.
+
+    Two consequences, and the second is the one worth stating. The game **pauses** rather than
+    burning five job attempts and abandoning — which is what both did, unclassified, and what would
+    have ended every game in flight on a paid pool the moment credits ran out. And the endpoint is
+    **not cooled down**: resting it would teach the matchmaker something false about a model that
+    never failed, and would go on doing so after the account was fixed.
+    """
+
     gated: bool = False
     """The model is not available to us **at all**, and waiting will not change that.
 
@@ -197,8 +210,17 @@ class RateLimit:
         return self.limit_source == "upstream_provider_shared_pool"
 
     def describe(self, model: str) -> str:
-        """One line for the page, honest about which failure this was."""
+        """One line for the page, honest about which failure this was.
+
+        **The account cases name the account, not the model.** "out of credits" attributed to
+        `nemotron-3-super` would read as a fact about that model on a page whose whole job is
+        publishing facts about models, and it is a fact about us.
+        """
         where = self.provider or "its provider"
+        if self.account:
+            if self.status_code == 402:
+                return "our provider account is out of credits (402)"
+            return f"our provider credentials were refused ({self.status_code or 401})"
         if self.gated:
             return f"{model} is not available through this API (403)"
         if self.timed_out:
@@ -207,6 +229,8 @@ class RateLimit:
             return f"{model} was refused by {where} (403)"
         if self.status_code == 404:
             return f"{model} is not being served by {where} right now (404)"
+        if self.status_code == 503:
+            return f"no endpoint meets the routing pinned for {model} (503)"
         source = f" ({self.limit_source})" if self.limit_source else ""
         return f"{model} rate-limited by {where}{source}"
 
