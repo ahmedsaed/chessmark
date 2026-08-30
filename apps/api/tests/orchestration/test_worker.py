@@ -280,14 +280,17 @@ async def test_the_ply_cap_ends_the_game(db: AsyncSession, queue, make_worker) -
 #
 # **An outage, not a rate limit.** These used to raise a 429 as a convenient stand-in for "the
 # provider is having a bad day", and a 429 no longer travels this path at all: it pauses the game
-# instead of spending its retry budget (see `test_pause_on_rate_limit.py`). A 503 is what this
+# instead of spending its retry budget (see `test_pause_on_rate_limit.py`). A 502 is what this
 # branch is actually for — a provider that is broken rather than one that has told us to come back.
+#
+# **Not a 503**, which used to stand in here. OpenRouter means "no provider meets your routing
+# requirements" by that, and pinned routing cannot come right on a retry, so it pauses now too.
 
 
 class OutageError(Exception):
     """Shaped like the provider library's error, which carries its status on the exception."""
 
-    status_code = 503
+    status_code = 502
 
 
 async def unavailable(**_kwargs: object) -> object:

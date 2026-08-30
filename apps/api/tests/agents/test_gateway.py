@@ -254,8 +254,14 @@ class AuthenticationError(Exception):
     pass
 
 
-@pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504])
+@pytest.mark.parametrize("status", [408, 429, 500, 502, 504])
 def test_transient_statuses_are_retryable(status: int) -> None:
+    """A provider that is broken may well work on the next attempt.
+
+    **503 was here and is not a transient outage.** OpenRouter means *"no available model provider
+    meets your routing requirements"* by it, and routing is pinned for the whole game (ADR-0015),
+    so it cannot come right inside a retry ladder — see `test_account_and_routing_refusals.py`.
+    """
     assert is_retryable(TransientError(status))
 
 
@@ -277,7 +283,7 @@ def test_an_unrecognised_error_is_treated_as_fatal() -> None:
 
 async def test_a_server_error_retries_then_succeeds() -> None:
     """AGENT-09: transient provider failures must not end a game."""
-    completion_fn = fails_with(TransientError(500), TransientError(503))
+    completion_fn = fails_with(TransientError(500), TransientError(502))
 
     result = await gateway(completion_fn=completion_fn).complete(model="x/y", messages=[])
 

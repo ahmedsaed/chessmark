@@ -106,6 +106,40 @@ came back `finish_reason: "length"`, and the game was forfeited for truncation. 
 call, where nothing has been measured yet, the clamp uses half the window as a bound rather than
 guessing at the prompt.
 
+**The codes, and what each one does here.** OpenRouter's set, and the path each takes:
+
+| Code | Means | Response |
+| --- | --- | --- |
+| 400 | ambiguous — see below | depends entirely on the body |
+| 401 | credentials refused | **pause**, no cooldown (OPS-17) |
+| 402 | out of credits | **pause**, no cooldown (OPS-17) |
+| 403 | moderation, or a distribution gate | pause; a gate withdraws the model (ADR-0019) |
+| 408 | timed out | retry |
+| 429 | a provider's pool is hot, *or* a platform cap | pause + cooldown; the **daily** cap halts (OPS-20) |
+| 502 | provider down | retry |
+| 503 | no provider meets our routing | **pause** + cooldown (OPS-18) |
+
+**429 is two different facts sharing a code.** `limit_source: upstream_provider_shared_pool` is one
+provider having a busy minute — wait it out, rest that pool, carry on. *"Rate limit exceeded:
+free-models-per-day"* is OpenRouter's own cap on our **account**: 1,000 free-model requests a day
+(50 before ten credits are bought), shared by every pool, every human game against a free model and
+every `make play`.
+
+Treating the second as the first cost the whole field. Resting one model for sixty seconds let the
+matchmaker pair the next entrant, which refused identically, and a seventeen-model pool worked
+through every one of them a doomed request at a time. It halts now, and it is the easiest halt to
+lift: `X-RateLimit-Reset` says exactly when the cap goes, so the halt is written with that as its
+TTL and expires on its own. The **per-minute** cap (20 rpm) keeps the cooldown ladder, which is the
+right response to a short wait.
+
+The two account codes are the odd ones: they pause like a 429 and **do not rest the endpoint**,
+because the endpoint never refused us. Cooling it down would teach the matchmaker that a model is
+unreliable when nothing about it failed, and it would go on believing that after the top-up.
+
+503 is not a generic outage here. OpenRouter means *"No available model provider meets your routing
+requirements"*, and routing is pinned for the whole game (ADR-0015) — so it cannot come right inside
+a retry ladder, and it used to spend nine requests proving that before abandoning the game.
+
 **A 400 does not tell you whose fault it is; the body does.** Three arrive here and take three
 different paths:
 

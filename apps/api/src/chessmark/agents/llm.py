@@ -14,6 +14,7 @@ Two design choices carry most of the weight:
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import random
 import re
@@ -35,7 +36,27 @@ CompletionFn = Callable[..., Awaitable[Any]]
 SleepFn = Callable[[float], Awaitable[None]]
 
 #: Status codes worth trying again. 408 timeout, 409 conflict, 429 rate limit, and 5xx.
-RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504, 529})
+#:
+#: **503 is deliberately not here, and was.** OpenRouter's 503 is not a generic outage: it means
+#: *"No available model provider meets your routing requirements"*, and our routing is pinned for
+#: the whole game (ADR-0015). Nothing about that changes in the three seconds a retry ladder waits,
+#: so four attempts spent four requests to be told the same thing and the worker then spent five
+#: more. It is the provider-404 fact wearing a different code, and it takes the same path: pause,
+#: cool the endpoint down, come back.
+RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 504, 529})
+
+#: Refusals about **our account**, not about the model or the endpoint serving it.
+#:
+#: * 402 — out of credits. Every endpoint will refuse identically until somebody tops up.
+#: * 401 — the key was rejected. Same shape: nothing is wrong with the model we asked for.
+#:
+#: Neither was classified at all, so both fell through to the retry budget and **abandoned the
+#: game after five attempts**. On a free pool that costs nothing and has never bitten; on a paid
+#: pool, running out of credits would end every game in flight rather than waiting for the top-up.
+#:
+#: Waiting is right and cooling an endpoint down is wrong — the endpoint is fine, and resting it
+#: would teach the matchmaker something false about a model that never failed.
+ACCOUNT_STATUS = frozenset({401, 402})
 
 #: Exception class names that mean "transient", matched by name so this module never has to
 #: import LiteLLM's exception hierarchy at module scope.
@@ -186,20 +207,29 @@ def _status_code(error: BaseException) -> int | None:
 
 
 def is_unavailable(error: BaseException) -> bool:
-    """Whether the endpoint is declining to serve this right now, rather than failing.
+    """Whether we are being declined right now, rather than failing.
 
-    A 429 says so politely, a provider 404 says so bluntly, and a 403 says it about the model
-    rather than the moment — all three mean "not from here, not now" rather than "your request was
-    wrong" — so both pause the game and cool the endpoint down instead of spending the retry
-    budget. Told apart from a *model* that does not exist only by when it happens: that one still
-    fails at ply 0, where a pause simply expires and the game is abandoned honestly.
+    A 429 says so politely, a provider 404 says so bluntly, a 403 says it about the model rather
+    than the moment, and a 503 says no endpoint matches our pinned routing. A 401 or 402 says it
+    about our account instead of about the model. All of them mean "not from here, not now" rather
+    than "your request was wrong", so all of them pause the game instead of spending the retry
+    budget — which is a budget measured in requests, the scarce thing (ADR-0017).
+
+    Told apart from a *model* that does not exist only by when it happens: that one still fails at
+    ply 0, where a pause simply expires and the game is abandoned honestly.
     """
     return (
         is_rate_limit(error)
         or isinstance(error, TimeoutError)
-        or _status_code(error) in {403, 404}
+        or _status_code(error) in {403, 404, 503}
+        or is_account_problem(error)
         or endpoint_is_unhealthy(error)
     )
+
+
+def is_account_problem(error: BaseException) -> bool:
+    """Whether the refusal is about our account rather than about the model or its endpoint."""
+    return _status_code(error) in ACCOUNT_STATUS
 
 
 def is_rate_limit(error: BaseException) -> bool:
@@ -215,6 +245,65 @@ def is_rate_limit(error: BaseException) -> bool:
 
 #: `"retry_after_seconds":5` and `"Retry-After":"5"`, as they appear in a provider's error body.
 _RETRY_AFTER = re.compile(r'"?[Rr]etry[-_][Aa]fter(?:_seconds)?"?\s*[:=]\s*"?(\d+(?:\.\d+)?)"?')
+
+#: OpenRouter's own daily cap on free models, which arrives as a 429 like any other.
+#:
+#: **Account-wide, not about an endpoint**, and that is the whole reason it needs its own name.
+#: The free allowance is 1,000 requests a day across the account (50 before ten credits are
+#: bought), so when it is spent *every* free model refuses. Classified as an ordinary rate limit it
+#: rested one model for sixty seconds, the matchmaker paired the next entrant, that refused
+#: identically, and a seventeen-model pool worked through its whole field one doomed request at a
+#: time — the same shape as the 402 that now halts the harness (OPS-19).
+#:
+#: Matched on the message because there is no code for it: 429 alone also covers the per-minute
+#: cap and a provider's shared pool, and those are short waits that the cooldown ladder handles
+#: correctly. Failing to recognise a reworded message degrades to that behaviour rather than to
+#: anything worse.
+_FREE_DAILY_CAP = re.compile(r"free-models-per-day|free_models_per_day", re.I)
+
+#: `X-RateLimit-Reset`, the moment a platform limit lifts. Far better than our ladder's guess: the
+#: daily cap can be hours out, and the ladder would spend that time waking every sixty seconds.
+_RESET_HEADERS = ("x-ratelimit-reset", "X-RateLimit-Reset")
+
+#: Above this, a reset value is milliseconds rather than seconds. `1e11` seconds is the year 5138
+#: and `1e11` milliseconds is 1973, so nothing real is ambiguous — and OpenRouter sends ms.
+_MILLISECONDS_ABOVE = 100_000_000_000
+
+
+def is_free_daily_cap(error: BaseException) -> bool:
+    """Whether this 429 is OpenRouter's account-wide daily free-model allowance, not a pool."""
+    return is_rate_limit(error) and bool(_FREE_DAILY_CAP.search(str(error)))
+
+
+def resets_at(error: BaseException) -> dt.datetime | None:
+    """When the platform limit lifts, as `X-RateLimit-Reset` said. `None` when it did not say.
+
+    Read from the header only. The body carries no equivalent, and inventing one from the ladder
+    here would put a guess where the caller is entitled to assume a fact.
+    """
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+
+    for name in _RESET_HEADERS:
+        try:
+            raw = headers.get(name)
+        except (AttributeError, TypeError):  # pragma: no cover - exotic header objects
+            raw = None
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            continue
+        if value <= 0:
+            continue
+        if value > _MILLISECONDS_ABOVE:
+            value /= 1000
+        return dt.datetime.fromtimestamp(value, tz=dt.UTC)
+    return None
+
 
 #: `"limit_source":"upstream_provider_shared_pool"` and `"provider_name":"Google AI Studio"`.
 #: Read out of the message rather than a parsed body because that is where they actually arrive:
@@ -268,6 +357,9 @@ def rate_limit_from(error: BaseException) -> RateLimit:
         retry_after_seconds=retry_after_seconds(error),
         status_code=_status_code(error),
         gated=is_gated(error),
+        account=is_account_problem(error),
+        free_daily_cap=is_free_daily_cap(error),
+        resets_at=resets_at(error),
     )
 
 
