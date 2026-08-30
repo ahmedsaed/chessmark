@@ -16,6 +16,50 @@ function asNumber(value: unknown): number {
   return typeof value === "number" ? value : 0;
 }
 
+/**
+ * What a compaction pass actually did, in one line.
+ *
+ * Every one of these numbers was already being written to the event and none of it was on screen,
+ * which is how a game "compacted" five times — folding three messages of forty-four each time —
+ * without anybody noticing it had never made room (ADR-0021).
+ *
+ * **Characters, said as characters.** The backend refuses to publish a token estimate of part of a
+ * transcript, so the size it can measure exactly is what it reports; `occupied_tokens` is the one
+ * token figure, and it is the provider's own count of the prompt before the pass.
+ */
+export function compactionText(payload: Record<string, unknown>): string {
+  const folded = asNumber(payload.folded);
+  const trimmed = asNumber(payload.trimmed);
+  const before = asNumber(payload.characters_before);
+  const after = asNumber(payload.characters_after);
+
+  const did: string[] = [];
+  if (folded > 0) did.push(`${folded} messages summarised`);
+  if (trimmed > 0) did.push(`${trimmed} stale tool results dropped`);
+  if (did.length === 0) did.push("history compacted");
+
+  const parts = [did.join(", ")];
+  if (asNumber(payload.kept) > 0) parts.push(`${asNumber(payload.kept)} messages kept`);
+  if (before > 0 && after > 0 && after < before) {
+    parts.push(`${percent(1 - after / before)} smaller`);
+  }
+  const occupied = asNumber(payload.occupied_tokens);
+  const context = asNumber(payload.context_tokens);
+  if (occupied > 0 && context > 0) {
+    parts.push(`was ${compact(occupied)} of ${compact(context)} tokens`);
+  }
+  return parts.join(" · ");
+}
+
+function percent(fraction: number): string {
+  return `${Math.round(fraction * 100)}%`;
+}
+
+/** 261751 → "262k". A reader comparing a prompt to a window does not want six digits of either. */
+function compact(tokens: number): string {
+  return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -210,10 +254,7 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
           key: `compacted-${event.seq}`,
           seq: event.seq,
           kind: "compacted",
-          text:
-            asNumber(payload.folded) > 0
-              ? `history summarised — ${asNumber(payload.folded)} messages folded, ${asNumber(payload.kept)} turns kept`
-              : "history summarised",
+          text: compactionText(payload),
           resumeAfter: null,
         });
         break;

@@ -474,6 +474,22 @@ class TranscriptMessage(Base):
     not the history.
     """
 
+    trimmed_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    """Set when a compaction elided this message's content but kept the message (ADR-0021).
+
+    The cheap rung of the ladder, and the reason it is a second mark rather than a `superseded_at`:
+    a `tool` result cannot simply stop being sent, because the assistant message that requested it
+    would then carry a `tool_call_id` with no answer and every provider refuses that. So the
+    message stays, its content is replaced *in the request* by `compaction.TRIMMED_PLACEHOLDER`,
+    and the row itself is untouched — the column records the decision, `content` still holds what
+    the tool actually returned.
+
+    Only stale tool output is trimmed. It is the bulk of a chess transcript — `get_legal_moves`
+    returns 38 or 39 move objects and a turn calls it most plies — and it is worth nothing once the
+    position has moved on, because the board is authoritative (invariant 1) and the model can ask
+    again.
+    """
+
     is_summary: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     """This row *is* a compaction summary, written by the model about its own earlier turns.
 

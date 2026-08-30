@@ -57,6 +57,33 @@ DEFAULT_RESERVE_TOKENS = 20_000
 #: A fraction of the window below which compaction is not worth its cache miss.
 MIN_FRACTION = 0.10
 
+#: A ceiling on how many *messages* the retained turns may amount to.
+#:
+#: `keep_turns` alone was sized against "a turn is three to five messages", which is true of a model
+#: that reads the board and moves. A reasoning model that enumerates legal moves, reconsiders and
+#: retries a rejected move produces ten or more, so four turns came to 41 and then 50 messages —
+#: **the retained turns were themselves larger than the window**, and a pass that folded 3 messages
+#: of 44 reported success five times while the game marched into a context-length 400.
+#:
+#: Whole turns are dropped from the front until the count fits, never a message, because a `tool`
+#: result separated from the `tool_calls` that requested it is refused by every provider.
+DEFAULT_MAX_KEPT_MESSAGES = 12
+
+#: What a trimmed tool result says in place of what it returned.
+#:
+#: The bulk of a chess transcript is stale tool output: `get_legal_moves` returns 38 or 39 move
+#: objects and a turn calls it most plies, so by ply 55 the request is mostly enumerations of
+#: positions that no longer exist. They are worth nothing — the board is authoritative (invariant
+#: 1) and the model can call the tool again — and summarising them would spend a call compressing
+#: text whose value is already zero.
+#:
+#: Elided rather than removed: the message keeps its `tool_call_id`, so the assistant message that
+#: requested it still has its answer and nothing is orphaned.
+TRIMMED_PLACEHOLDER = (
+    "[This earlier tool result has been dropped to save context. "
+    "Call the tool again if you need it — the board is authoritative.]"
+)
+
 #: The summary is a paragraph or two, not an essay. It is also the cap that keeps the compacting
 #: call inside the window it is trying to make room in.
 SUMMARY_MAX_TOKENS = 2_000
@@ -185,20 +212,41 @@ class Window:
 
 @dataclass(frozen=True, slots=True)
 class Plan:
-    """Which messages get folded and which are kept verbatim."""
+    """What one compaction pass does: fold the old turns, trim the kept ones' tool output.
+
+    Two rungs in one pass, and one pass on purpose. Trimming is *not* free — removing or eliding a
+    message rewrites the cacheable prefix exactly as summarising does, so invariant 2's named
+    exception costs the same either way. What trimming saves is the summary having less to carry
+    and the retained turns being smaller, which is what makes the pass converge; doing the two
+    rungs separately would pay the cache miss twice for that.
+    """
 
     fold: list[TranscriptMessage]
+    """Folded into the summary and superseded. Everything before the cut."""
+
     keep: list[TranscriptMessage]
+    """Replayed verbatim: the system prompt and the retained turns."""
+
+    trim: list[TranscriptMessage]
+    """Kept, but with their content elided — stale tool results inside the retained turns.
+
+    The most recent turn is never trimmed. Its tool results are what the model is looking at.
+    """
 
     @property
     def worthwhile(self) -> bool:
-        """Whether there is anything to gain.
+        """Whether this pass would change the request at all.
 
-        Nothing to fold means the retained turns alone already fill the window — compaction cannot
-        help, and pretending it did would loop. The caller treats that as "cannot compact" rather
-        than as success.
+        **It used to ask `bool(self.fold)`, and that is what made a failure look like a success.**
+        Folding three messages of forty-four freed nothing, `_compact` returned True, the loop
+        rebuilt its message list and believed it had made room, and the request went out 6,254
+        tokens over the window. Five times in one game.
+
+        Whether the pass made *enough* room is not predicted here — that would need a token
+        estimate, and there is not one any more (AGENT-19). It is verified by the next call's
+        measurement, and the provider's own refusal is the backstop (ADR-0021).
         """
-        return bool(self.fold)
+        return bool(self.fold or self.trim)
 
 
 async def live_messages(session: AsyncSession, player_id: uuid.UUID) -> list[TranscriptMessage]:
@@ -277,8 +325,13 @@ async def window_for(
     return Window(context=int(endpoint_context or model_context or 0), reserve=reserve)
 
 
-def plan_compaction(rows: list[TranscriptMessage], *, keep_turns: int = DEFAULT_KEEP_TURNS) -> Plan:
-    """Fold everything except the system prompt and the last `keep_turns` turns.
+def plan_compaction(
+    rows: list[TranscriptMessage],
+    *,
+    keep_turns: int = DEFAULT_KEEP_TURNS,
+    max_kept_messages: int = DEFAULT_MAX_KEPT_MESSAGES,
+) -> Plan:
+    """Fold everything except the system prompt and the last few turns, and trim what stays.
 
     The cut lands on a turn boundary, so a `tool` result is never separated from the assistant
     message that requested it. A previous summary is folded into the new one, which keeps exactly
@@ -286,23 +339,63 @@ def plan_compaction(rows: list[TranscriptMessage], *, keep_turns: int = DEFAULT_
 
     Messages with no `turn_id` — a human's action, anything written outside a turn — are kept if
     they fall after the cut and folded if before, on the same rule as everything else.
+
+    **`keep_turns` is a ceiling, not a promise.** Turns are dropped from the front until the kept
+    region is at most `max_kept_messages`, because four turns of a reasoning model came to fifty
+    messages and were larger than the window they were supposed to fit inside. One turn is the
+    floor: a turn stripped of its own context has nothing to act on.
     """
     turn_ids: list[int] = []
     for row in rows:
         if row.turn_id is not None and row.turn_id not in turn_ids:
             turn_ids.append(row.turn_id)
 
-    keep_ids = set(turn_ids[-keep_turns:]) if keep_turns > 0 else set()
+    keep_ids = _turns_that_fit(rows, turn_ids, keep_turns, max_kept_messages)
     cut = min((r.seq for r in rows if r.turn_id in keep_ids), default=None)
+    newest = turn_ids[-1] if turn_ids else None
 
     fold: list[TranscriptMessage] = []
     keep: list[TranscriptMessage] = []
+    trim: list[TranscriptMessage] = []
     for row in rows:
         # The system prompt is never folded: it is the byte-stable head of the cacheable prefix
         # (ADR-0003) and the only message a compaction must leave exactly where it was.
         retained = row.role == "system" or (cut is not None and row.seq >= cut)
-        (keep if retained else fold).append(row)
-    return Plan(fold=fold, keep=keep)
+        if not retained:
+            fold.append(row)
+            continue
+        keep.append(row)
+        # Rung one, and the cheap one: a stale tool result inside a turn we are keeping. Not the
+        # newest turn — those results are what the model is about to act on — and not one already
+        # trimmed, which would make the pass look productive when it changed nothing.
+        if row.role == "tool" and row.turn_id != newest and row.trimmed_at is None:
+            trim.append(row)
+
+    return Plan(fold=fold, keep=keep, trim=trim)
+
+
+def _turns_that_fit(
+    rows: list[TranscriptMessage],
+    turn_ids: list[int],
+    keep_turns: int,
+    max_kept_messages: int,
+) -> set[int]:
+    """The most recent turns that fit inside both ceilings.
+
+    Counted in messages rather than tokens on purpose: a message count is a fact about the
+    transcript, where a token count of a *part* would be an estimate, and there are no estimates on
+    this path any more (AGENT-19). It is a structural bound on the shape that went wrong — four
+    turns, fifty messages — not a prediction about size.
+    """
+    if keep_turns <= 0 or not turn_ids:
+        return set()
+
+    per_turn = {turn_id: sum(1 for r in rows if r.turn_id == turn_id) for turn_id in turn_ids}
+
+    candidates = turn_ids[-keep_turns:]
+    while len(candidates) > 1 and sum(per_turn[t] for t in candidates) > max_kept_messages:
+        candidates = candidates[1:]
+    return set(candidates)
 
 
 def summary_request(plan: Plan) -> list[dict[str, Any]]:
@@ -328,10 +421,18 @@ async def apply(
     summary: str,
     now: dt.datetime | None = None,
 ) -> TranscriptMessage:
-    """Fold the planned messages and append the summary. One statement each; no deletes."""
+    """Fold the planned messages, trim the kept ones, and append the summary. No deletes.
+
+    Two marks, both additive. `superseded_at` stops a row being sent at all; `trimmed_at` keeps it
+    in the request with its content elided, which is what lets a `tool` result shrink without
+    orphaning the `tool_calls` that asked for it. Neither touches `content`, so the record is still
+    verbatim (invariant 3) and `full_history` still shows exactly what was sent the first time.
+    """
     stamp = now or dt.datetime.now(dt.UTC)
     for row in plan.fold:
         row.superseded_at = stamp
+    for row in plan.trim:
+        row.trimmed_at = stamp
 
     # Through the same allocator as every other append: `players.transcript_seq` under a row lock,
     # not `max(seq) + 1`. Two sources of truth for one sequence is a unique-violation waiting for
@@ -348,16 +449,36 @@ async def apply(
     )
 
 
+def sent_characters(rows: list[TranscriptMessage]) -> int:
+    """How many characters these rows put in a request, counting a trimmed row as its placeholder.
+
+    Characters, and labelled as characters wherever it is reported. It is an exact measurement of
+    something real, where a token count of part of a transcript would be an estimate — and the one
+    thing this module has learned is not to publish an estimate as though it were a measurement
+    (AGENT-19). It answers "how much did this pass free" honestly, in a unit that is checkable.
+    """
+    total = 0
+    for row in rows:
+        total += len(TRIMMED_PLACEHOLDER if row.trimmed_at else (row.content or ""))
+        for value in (row.tool_calls, row.reasoning_details):
+            if value:
+                total += len(str(value))
+    return total
+
+
 __all__ = [
     "DEFAULT_KEEP_TURNS",
+    "DEFAULT_MAX_KEPT_MESSAGES",
     "DEFAULT_RESERVE_TOKENS",
     "MIN_USEFUL_COMPLETION",
     "SUMMARY_MAX_TOKENS",
+    "TRIMMED_PLACEHOLDER",
     "NoRoomToAnswerError",
     "Plan",
     "Window",
     "apply",
     "live_messages",
     "plan_compaction",
+    "sent_characters",
     "summary_request",
 ]

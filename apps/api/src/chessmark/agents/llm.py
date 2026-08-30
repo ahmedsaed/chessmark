@@ -140,6 +140,39 @@ def endpoint_is_unhealthy(error: BaseException) -> bool:
     return _status_code(error) == 400 and bool(_ENDPOINT_UNHEALTHY.search(str(error)))
 
 
+#: `"maximum context length is 256000 tokens. However, you requested about 262254 tokens"`.
+#:
+#: The provider counting our prompt for us, exactly, in the one place we could not count it
+#: ourselves. Worth parsing rather than merely logging: these two numbers are better than anything
+#: the harness computed, and they are what the reactive rung compacts against (ADR-0021).
+_CONTEXT_LENGTH = re.compile(
+    r"maximum context length is\s*(\d+)\s*tokens.*?requested about\s*(\d+)",
+    re.I | re.S,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextLimit:
+    """What the endpoint said about the window, when it refused us for exceeding it."""
+
+    context: int
+    requested: int
+
+
+def context_limit_from(error: BaseException) -> ContextLimit | None:
+    """The window and the prompt size, as the *provider* counted them.
+
+    `None` when this is not a context-length refusal — including for a 400 about anything else, so
+    a caller cannot mistake "some other 400" for "compact and try again".
+    """
+    if _status_code(error) != 400:
+        return None
+    match = _CONTEXT_LENGTH.search(str(error))
+    if match is None:
+        return None
+    return ContextLimit(context=int(match.group(1)), requested=int(match.group(2)))
+
+
 def _status_code(error: BaseException) -> int | None:
     for attribute in ("status_code", "http_status", "code"):
         value = getattr(error, attribute, None)

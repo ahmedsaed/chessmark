@@ -110,25 +110,36 @@ Where no measurement exists yet — the first call of a game, and only there —
   to know a number we have not been told.
 
 **`completion_cap` never returns an unusable value.** Below `MIN_USEFUL_COMPLETION` it raises
-`NoRoomToAnswer` rather than clamping. A number too small to answer in is a state to act on, not a
+`NoRoomToAnswerError` rather than clamping. A number too small to answer in is a state to act on, not a
 value to pass along.
 
 ### Compaction is a ladder, run in one pass
 
-At the threshold — unchanged from ADR-0018 — one compaction pass runs these rungs in order and
-stops as soon as the prompt fits the deep target:
+At the threshold — unchanged from ADR-0018 — one compaction pass does all of this at once:
 
-1. **Trim stale tool results.** Oldest first, and only tool results: they have already been acted on
-   and the board is authoritative. Trimmed rows are superseded, exactly as folded rows are.
-2. **Summarise**, as ADR-0018 describes.
-3. **Shrink `keep_turns`** and summarise again, down to a floor of one turn, if the retained turns
-   are themselves the problem.
+1. **Bound the retained turns in messages as well as turns.** `keep_turns` stays 4, but whole turns
+   are dropped from the front until the kept region is at most `max_kept_messages`, with a floor of
+   one turn. This is the rung that fixes convergence: four turns *were* fifty messages.
+2. **Trim stale tool results** inside the retained turns — every one but the newest turn's. They
+   have been acted on, the board is authoritative, and a `get_legal_moves` dump of a position that
+   no longer exists is the single largest thing in a chess transcript. Marked `trimmed_at` and
+   replaced by a placeholder *in the request*; the row and its content are untouched.
+3. **Summarise** everything before the cut, as ADR-0018 describes — but only if there is anything
+   before the cut. A pass with nothing to fold still runs rungs 1 and 2, and costs no call at all.
 
-**Trimming is not free, and the ladder is one pass for that reason.** Removing a message rewrites
-the cacheable prefix exactly as summarising does — invariant 2's named exception costs the same
-either way. What trimming saves is the *API call*, not the cache miss, so both rungs happen inside a
-single pass and we pay one miss rather than two. For a chess transcript rung 1 will usually be
-enough, and then rung 2 never runs.
+**Trimming is not free, and that is why it is one pass.** Eliding a message rewrites the cacheable
+prefix exactly as summarising does — invariant 2's named exception costs the same either way. What
+trimming saves is the *API call*, not the cache miss, so doing the rungs separately would pay the
+miss twice. Rung 1 is why the summary has less to carry and the kept turns are smaller, which is
+what makes the pass converge.
+
+A trimmed tool result is **elided, not removed**. Removing it would leave the assistant message
+that requested it holding a `tool_call_id` with no answer, which every provider refuses — the same
+family of mistake as the empty assistant message above.
+
+**The pass does not predict whether it made enough room.** That would need a token count of part of
+a transcript, which is an estimate, and there are none on this path any more. It is verified by the
+next call's measurement, with the provider's refusal as the backstop.
 
 **A compaction that did not make room is a failure, not a success.** `Plan.worthwhile` compares the
 projected size against the window instead of asking whether anything was folded, and `_compact`
@@ -178,10 +189,16 @@ log holds the turn — so invariant 3 is untouched. What changes is the request.
 
 ### Compaction says what it did
 
-The `compacted` event gains `occupied_after`, `freed_tokens` and `measured`, and the frontend
-renders it. Every number in the table above was already being written and none of it was on screen;
-"folded 3, kept 41, freed nothing, still over" would have been legible the first time instead of the
-eleventh.
+The `compacted` event gains `trimmed`, `characters_before` and `characters_after`, and the frontend
+renders the lot. Every number in the table above was already being written and none of it was on
+screen; "folded 3, kept 41, freed nothing, still over" would have been legible the first time
+instead of the eleventh.
+
+**Characters, and labelled as characters.** The obvious field to add is "tokens after", and we
+cannot have it: nobody has counted the new prompt yet, and inventing the number is the exact mistake
+this ADR exists to remove. An exact count of a real quantity is worth more than an estimate of the
+preferred one, and `occupied_tokens` — the provider's own count before the pass — is still there
+beside it.
 
 ## Alternatives considered
 

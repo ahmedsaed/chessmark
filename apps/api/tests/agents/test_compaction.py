@@ -45,6 +45,7 @@ class Row:
         self.reasoning_details = None
         self.tool_call_id = None
         self.name = None
+        self.trimmed_at = None
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Row({self.seq}, {self.role}, turn={self.turn_id})"
@@ -151,13 +152,34 @@ class TestThePlan:
         assistant message that requested it, which is only true if whole turns are kept."""
         rows = transcript_of(10)
 
-        plan = plan_compaction(rows, keep_turns=4)
+        plan = plan_compaction(rows, keep_turns=4, max_kept_messages=100)
 
         kept_turns = {r.turn_id for r in plan.keep if r.turn_id is not None}
         assert kept_turns == {7, 8, 9, 10}
         for turn_id in kept_turns:
             roles = [r.role for r in plan.keep if r.turn_id == turn_id]
             assert roles == ["user", "assistant", "tool", "assistant"], "a whole turn, or none"
+
+    def test_keep_turns_is_a_ceiling_that_the_message_count_can_lower(self) -> None:
+        """Four turns of a reasoning model came to fifty messages — larger than the window they
+        were supposed to fit inside, which is why compaction folded five times and never converged
+        (ADR-0021)."""
+        rows = transcript_of(10)  # four messages a turn
+
+        plan = plan_compaction(rows, keep_turns=4, max_kept_messages=12)
+
+        kept_turns = {r.turn_id for r in plan.keep if r.turn_id is not None}
+        assert kept_turns == {8, 9, 10}, "a whole turn was dropped, not a message"
+        assert len([r for r in plan.keep if r.turn_id is not None]) <= 12
+
+    def test_one_turn_is_the_floor(self) -> None:
+        """A turn stripped of its own context has nothing to act on, so the ceiling never empties
+        the kept region entirely."""
+        rows = transcript_of(6)
+
+        plan = plan_compaction(rows, keep_turns=4, max_kept_messages=1)
+
+        assert {r.turn_id for r in plan.keep if r.turn_id is not None} == {6}
 
     def test_the_system_prompt_is_never_folded(self) -> None:
         """It is the byte-stable head of the cacheable prefix (ADR-0003) and the one message a
@@ -181,11 +203,40 @@ class TestThePlan:
         assert any(r.is_summary for r in plan.fold)
         assert not any(r.is_summary for r in plan.keep)
 
-    def test_nothing_to_fold_is_reported_rather_than_pretended(self) -> None:
-        """The retained turns alone filling the window is a real state, and treating it as a
-        successful compaction would loop forever."""
+    def test_nothing_to_fold_and_nothing_to_trim_is_reported_rather_than_pretended(self) -> None:
+        """A pass with no work is a real state, and treating it as a successful compaction is what
+        let one game fold 3 messages of 44 five times while marching into a 400 (ADR-0021)."""
+        rows = [Row(1, "system", None), *transcript_of(1)[1:]]
+
+        plan = plan_compaction(rows, keep_turns=4)
+
+        assert plan.fold == []
+        assert plan.trim == [], "the newest turn's tool results are what the model is looking at"
+        assert not plan.worthwhile
+
+    def test_a_pass_with_only_trimming_left_is_still_worth_running(self) -> None:
+        """Rung one needs no provider at all, so "nothing to fold" is not "nothing to do"."""
         plan = plan_compaction(transcript_of(3), keep_turns=4)
 
+        assert plan.fold == []
+        assert [r.seq for r in plan.trim] == [4, 8], "every tool result but the newest turn's"
+        assert plan.worthwhile
+
+    def test_the_newest_turn_is_never_trimmed(self) -> None:
+        plan = plan_compaction(transcript_of(6), keep_turns=6, max_kept_messages=100)
+
+        assert all(r.turn_id != 6 for r in plan.trim)
+
+    def test_an_already_trimmed_row_is_not_counted_again(self) -> None:
+        """Otherwise a pass that changed nothing would report itself as having done work."""
+        rows = transcript_of(3)
+        for row in rows:
+            if row.role == "tool":
+                row.trimmed_at = "already"
+
+        plan = plan_compaction(rows, keep_turns=4)
+
+        assert plan.trim == []
         assert not plan.worthwhile
 
     def test_keeping_nothing_folds_everything_but_the_system_prompt(self) -> None:

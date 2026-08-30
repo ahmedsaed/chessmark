@@ -29,7 +29,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.agents import compaction, prompts, transcript
+from chessmark.agents import compaction, llm, prompts, transcript
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.mangled import ProviderMangledError, mangled_tool_call
 from chessmark.agents.sessions import session_for_game
@@ -128,16 +128,15 @@ class TurnLimits:
     **Turns, not messages.** A turn is three to five messages and every provider rejects a `tool`
     result whose `tool_calls` parent is missing, so a count of messages would cut mid-turn and 400.
     """
-    """Cap on a *single* response.
 
-    The per-turn budget cannot bound this: it is only checked between round-trips, so by the time
-    it is consulted the tokens are already generated and billed. Only a per-call ceiling stops a
-    spiral mid-flight.
+    max_kept_messages: int = compaction.DEFAULT_MAX_KEPT_MESSAGES
+    """A ceiling on what `keep_turns` may actually amount to (ADR-0021).
 
-    Sized as a circuit breaker rather than an allowance. A legitimate turn was observed using
-    ~9,800 completion tokens; a spiral used 34,260 and still produced no tool call. 64,000 leaves
-    a frontier model room to think as hard as it wants about a sharp position while still
-    catching genuinely unbounded generation.
+    "Three to five messages" describes a model that reads the board and moves. A reasoning model
+    that enumerates legal moves, reconsiders and retries a rejected move produces ten or more, so
+    four turns came to fifty messages — larger than the window they were meant to fit inside, which
+    is why compaction could fold and fold and never converge. Whole turns are dropped, never a
+    message, so a tool result is never orphaned from its request.
     """
 
 
@@ -248,6 +247,8 @@ class TurnRunner:
         self._prompt_tokens: int | None = player.last_prompt_tokens or None
         self._cached_window: compaction.Window | None = None
         self._compactions = 0
+        self._summary_tokens = 0
+        self._reactive_compactions = 0
         self._truncations = 0
         self._move_committed = False
 
@@ -345,70 +346,59 @@ class TurnRunner:
         return self._cached_window
 
     async def _compact(
-        self, turn: Turn, result: TurnResult, occupied: int, window: compaction.Window
+        self, turn: Turn, result: TurnResult, occupied: int | None, window: compaction.Window
     ) -> bool:
-        """Ask the model to summarise its own earlier turns. True when the transcript shrank.
+        """One compaction pass: trim the kept turns' stale tool output, fold the rest into a
+        summary. True when the request actually changed.
 
-        Failure returns False and the turn proceeds on the un-compacted history, which will very
-        likely be refused for exceeding the window — and that is the intended outcome. The turn
-        fails, rolls back, and is retried, which compacts again; a rate limit pauses the game
-        instead. The alternative, carrying on regardless, spends a call to be told the prompt is
-        too large and then abandons the game.
+        **Two rungs, one pass, one cache miss.** Trimming is not free — eliding a message rewrites
+        the cacheable prefix exactly as summarising does (invariant 2's named exception) — so
+        running the rungs separately would pay that twice. What trimming buys is a smaller thing to
+        summarise and smaller turns to keep, which is what makes the pass converge: it used to fold
+        3 messages of 44 and report success, five times, while the game marched into a
+        context-length 400.
+
+        Failure returns False and the turn proceeds on the history it has. If that is too large the
+        provider says so with exact numbers, and `_loop` compacts against those and retries — the
+        reactive rung, and the only check of "did it fit" that is not a guess.
         """
         rows = await compaction.live_messages(self.session, self.player.id)
-        plan = compaction.plan_compaction(rows, keep_turns=self.limits.keep_turns)
+        plan = compaction.plan_compaction(
+            rows,
+            keep_turns=self.limits.keep_turns,
+            max_kept_messages=self.limits.max_kept_messages,
+        )
         if not plan.worthwhile:
-            # Nothing left to fold: the retained turns alone fill the window. Compacting again
-            # cannot help, so say so rather than looping on it.
+            # Nothing to fold and nothing left to trim. Compacting again cannot help, so say so
+            # rather than looping on it.
             log.warning(
-                "cannot compact %s: the last %d turns already fill the window",
+                "cannot compact %s: nothing left to fold or trim in the last %d turns",
                 self.player.id,
                 self.limits.keep_turns,
             )
             return False
 
+        before_characters = compaction.sent_characters(rows)
         log.info(
-            "compacting %s at %d of %d tokens: folding %d messages, keeping %d",
+            "compacting %s at %s of %d tokens: folding %d, trimming %d, keeping %d",
             self.player.id,
-            occupied,
+            occupied if occupied is not None else "an unmeasured size",
             window.context,
             len(plan.fold),
+            len(plan.trim),
             len(plan.keep),
         )
 
-        try:
-            summary_cap = window.completion_cap(occupied, compaction.SUMMARY_MAX_TOKENS)
-        except compaction.NoRoomToAnswerError:
-            # There is not even room to *write* the summary. Normally impossible — the trigger
-            # fires while the reserve is still free, and the reserve is exactly this space — but a
-            # game resumed onto a smaller endpoint arrives here. Say so and let the caller decide,
-            # rather than spending a call that cannot answer.
-            log.warning(
-                "cannot compact %s: %d of %d tokens leaves no room to write a summary",
-                self.player.id,
-                occupied,
-                window.context,
-            )
-            return False
-
-        completion = await self.gateway.complete(
-            model=self.model,
-            messages=compaction.summary_request(plan),
-            # No tools: a model handed its schema mid-summary calls one, and the call would have to
-            # be discarded. And a small cap, which is what keeps this request inside the window it
-            # exists to make room in — the reserve the trigger held back is exactly this space.
-            max_tokens=summary_cap,
-            session_id=session_for_game(self.game.id),
-        )
-        await self._record_llm_call(turn, completion)
-        self._accumulate(result, completion)
-
-        summary = (completion.content or "").strip()
-        if not summary:
-            log.warning(
-                "compaction of %s produced nothing; leaving the transcript alone", self.player.id
-            )
-            return False
+        summary = ""
+        if plan.fold:
+            summary = await self._summarise(turn, result, plan, occupied, window)
+            if not summary:
+                # The summarising call failed or said nothing. Rung one still stands on its own —
+                # it needs no provider at all — so the pass proceeds with the trim rather than
+                # abandoning both and leaving the request exactly as large as it was.
+                plan = compaction.Plan(fold=[], keep=plan.keep, trim=plan.trim)
+                if not plan.worthwhile:
+                    return False
 
         await compaction.apply(
             self.session,
@@ -421,6 +411,10 @@ class TurnRunner:
         # The prefix was rewritten, so the old measurement describes a transcript that no longer
         # exists. `None` means unmeasured, which is the truth until the next response arrives.
         self._prompt_tokens = None
+        self.player.last_prompt_tokens = 0
+
+        after = await compaction.live_messages(self.session, self.player.id)
+        after_characters = compaction.sent_characters(after)
 
         await append_event(
             self.session,
@@ -431,14 +425,103 @@ class TurnRunner:
                 "colour": self.colour.value,
                 "model": self.model,
                 "folded": len(plan.fold),
+                "trimmed": len(plan.trim),
                 "kept": len(plan.keep),
+                #: What the provider counted before the pass, and `None` when nothing had been
+                #: measured yet. Reported as-is rather than filled in, because a number nobody
+                #: returned is the mistake this whole change exists to remove (AGENT-19).
                 "occupied_tokens": occupied,
                 "context_tokens": window.context,
-                "summary_tokens": completion.usage.completion,
+                #: **Characters, and labelled as characters.** How much the pass actually freed is
+                #: worth showing, and an exact count of something real beats a token estimate of
+                #: the right thing. `occupied_tokens` is the measured token size; these two say
+                #: what changed.
+                "characters_before": before_characters,
+                "characters_after": after_characters,
+                "summary_tokens": self._summary_tokens,
                 "compaction": self._compactions,
             },
         )
         return True
+
+    async def _summarise(
+        self,
+        turn: Turn,
+        result: TurnResult,
+        plan: compaction.Plan,
+        occupied: int | None,
+        window: compaction.Window,
+    ) -> str:
+        """Rung two: ask the model to summarise the turns being folded. "" when it could not.
+
+        The model summarises **itself**, on its own pinned endpoint, with tools withheld (ADR-0018)
+        — a cheaper third model would be cheaper and would put another model's prose into a
+        benchmark record.
+        """
+        try:
+            cap = window.completion_cap(occupied, compaction.SUMMARY_MAX_TOKENS)
+        except compaction.NoRoomToAnswerError:
+            # No room even to *write* the summary. Normally impossible, because the trigger fires
+            # while the reserve is still free and the reserve is exactly this space — but a game
+            # resumed onto a smaller endpoint arrives here. Rung one can still run.
+            log.warning(
+                "cannot summarise %s: %s of %d tokens leaves no room to answer in",
+                self.player.id,
+                occupied,
+                window.context,
+            )
+            return ""
+
+        completion = await self.gateway.complete(
+            model=self.model,
+            messages=compaction.summary_request(plan),
+            # No tools: a model handed its schema mid-summary calls one, and the call would have to
+            # be discarded. And a small cap, which is what keeps this request inside the window it
+            # exists to make room in — the reserve the trigger held back is exactly this space.
+            max_tokens=cap,
+            session_id=session_for_game(self.game.id),
+        )
+        await self._record_llm_call(turn, completion)
+        self._accumulate(result, completion)
+        self._summary_tokens = completion.usage.completion
+
+        summary = (completion.content or "").strip()
+        if not summary:
+            log.warning("compaction of %s produced no summary", self.player.id)
+        return summary
+
+    async def _compact_reactively(self, turn: Turn, result: TurnResult, error: LlmError) -> bool:
+        """The last rung: the endpoint refused the prompt for its size, so compact and try again.
+
+        **The provider's numbers, not ours.** *"maximum context length is 256000 tokens. However,
+        you requested about 262254"* is an exact measurement of the very request that failed, taken
+        by the only party that can take it — better than the stored endpoint window, which said
+        something different, and better than any arithmetic on this side.
+
+        Once per turn. A second refusal after a pass that folded and trimmed means the transcript
+        genuinely does not fit, and repeating would spend calls to be told so again — which is what
+        five identical rejections at ply 10 cost the first time (ADR-0021).
+
+        Returns False for anything that is not a context-length refusal, and for the second one, so
+        the caller re-raises and the error keeps its normal classification.
+        """
+        limit = llm.context_limit_from(error)
+        if limit is None or self._reactive_compactions:
+            return False
+
+        self._reactive_compactions += 1
+        log.warning(
+            "%s refused a %d-token prompt against a %d-token window; compacting and retrying",
+            self.model,
+            limit.requested,
+            limit.context,
+        )
+        window = compaction.Window(
+            context=limit.context, reserve=self.limits.context_reserve_tokens
+        )
+        # Deliberately *not* cached onto `self._cached_window`: this is what one endpoint said about
+        # one request, and the registry's figure is what the rest of the game is planned against.
+        return await self._compact(turn, result, limit.requested, window)
 
     # ------------------------------------------------------------------ the loop
 
@@ -471,21 +554,27 @@ class TurnRunner:
                 messages = await transcript.build_messages(self.session, self.player.id)
                 occupied = None
 
-            completion = await self.gateway.complete(
-                model=self.model,
-                messages=messages,
-                tools=self._tools,
-                # **Clamped to what the endpoint will accept** (AGENT-16). A flat 64,000 reconciled
-                # against nothing asked a 65,536-token endpoint for 65,810 tokens and was refused —
-                # a 400 that abandoned a game at ply 10. `max_tokens` is a ceiling on the answer, so
-                # asking for less than the model needs is a truncation and asking for more than
-                # fits is a rejection; this is the largest value that cannot be rejected.
-                max_tokens=window.completion_cap(occupied, self.limits.max_completion_tokens),
-                # One session per game, both seats included, so a match reads as a conversation
-                # on OpenRouter's own dashboard rather than as a hundred unrelated generations.
-                # See `agents/sessions.py` for why the unit is the game and not the turn.
-                session_id=session_for_game(self.game.id),
-            )
+            try:
+                completion = await self.gateway.complete(
+                    model=self.model,
+                    messages=messages,
+                    tools=self._tools,
+                    # **Clamped to what the endpoint will accept** (AGENT-16). A flat 64,000
+                    # reconciled against nothing asked a 65,536-token endpoint for 65,810 tokens
+                    # and was refused — a 400 that abandoned a game at ply 10. `max_tokens` is a
+                    # ceiling on the answer, so asking for less than the model needs is a
+                    # truncation and asking for more than fits is a rejection; this is the largest
+                    # value that cannot be rejected.
+                    max_tokens=window.completion_cap(occupied, self.limits.max_completion_tokens),
+                    # One session per game, both seats included, so a match reads as a conversation
+                    # on OpenRouter's own dashboard rather than as a hundred unrelated generations.
+                    # See `agents/sessions.py` for why the unit is the game and not the turn.
+                    session_id=session_for_game(self.game.id),
+                )
+            except LlmError as error:
+                if not await self._compact_reactively(turn, result, error):
+                    raise
+                continue
 
             await self._record_llm_call(turn, completion)
             self._accumulate(result, completion)

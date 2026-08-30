@@ -269,7 +269,7 @@ describe("compaction", () => {
     const { notices, moves } = foldEvents(events, []);
 
     expect(notices.map((n) => n.kind)).toEqual(["compacted"]);
-    expect(notices[0].text).toContain("40 messages folded");
+    expect(notices[0].text).toContain("40 messages summarised");
     // Play carries on around it: a compaction is not an interruption of the game.
     expect(moves).toEqual(["e4", "e5"]);
   });
@@ -301,7 +301,45 @@ describe("compaction", () => {
     seq = 0;
     const { notices } = foldEvents([event("compacted", {})], []);
 
-    expect(notices[0].text).toBe("history summarised");
+    expect(notices[0].text).toBe("history compacted");
+  });
+
+  it("says what the pass actually freed", () => {
+    /* Every one of these numbers was already in the event and none of it was on screen, which is
+       how one game "compacted" five times without ever making room (ADR-0021). */
+    seq = 0;
+    const { notices } = foldEvents(
+      [
+        event("compacted", {
+          folded: 26,
+          trimmed: 4,
+          kept: 12,
+          characters_before: 400_000,
+          characters_after: 40_000,
+          occupied_tokens: 261_751,
+          context_tokens: 256_000,
+        }),
+      ],
+      [],
+    );
+
+    expect(notices[0].text).toContain("26 messages summarised");
+    expect(notices[0].text).toContain("4 stale tool results dropped");
+    expect(notices[0].text).toContain("90% smaller");
+    expect(notices[0].text).toContain("was 262k of 256k tokens");
+  });
+
+  it("reports a trim-only pass without claiming anything was summarised", () => {
+    /* Rung one needs no provider call at all, and saying "summarised" would be a lie about where
+       the tokens went. */
+    seq = 0;
+    const { notices } = foldEvents(
+      [event("compacted", { folded: 0, trimmed: 3, kept: 12 })],
+      [],
+    );
+
+    expect(notices[0].text).toContain("3 stale tool results dropped");
+    expect(notices[0].text).not.toContain("summarised");
   });
 });
 
