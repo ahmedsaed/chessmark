@@ -103,6 +103,7 @@ This buys three properties at once:
 | Property | How |
 | --- | --- |
 | **Idempotency** | A job carries `expected_ply`. If the game has moved on, the job is a no-op. Redelivery is harmless. |
+| **One owner per ply** | `expected_ply` covers redelivery and not *concurrency* — two jobs running at once both read the same ply and both play it. The turn takes a `FOR UPDATE NOWAIT` row lock on the game, so a second worker learns immediately and drops its job ([ADR-0022](adr/0022-one-owner-per-ply.md)). |
 | **Crash resilience** | Kill the worker mid-turn: the ply was never committed, the job is redelivered, the turn simply reruns. Worst case is one wasted LLM call, never a corrupt game. |
 | **Uniformity** | Human-vs-model and model-vs-model use the identical code path. A human move is just a ply committed by the API instead of by a worker; it then enqueues the same `advance_turn` job. |
 
@@ -114,7 +115,10 @@ Within one turn, the agent runs a bounded tool-use loop:
 
 ```
 build messages = [system prompt] + full game transcript
-loop (bounded by max_tool_iterations, wall-clock budget, token budget):
+loop (bounded by max_tool_iterations and the completion-token budget — there is no per-turn clock):
+    if the measured prompt is near the endpoint window:
+        compact: trim stale tool results, then summarise, then shrink kept turns
+        proceed only if the result actually fits
     response = llm.completion(messages, tools=TOOL_SCHEMA)
     persist llm_call verbatim (request, response, reasoning, tokens, cost, latency)
     if no tool calls:

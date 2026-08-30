@@ -99,6 +99,26 @@ LiteLLM files it under `provider_specific_fields`, not at the top of the message
 refused — a 400 that abandoned a game at ply 10, and a failure the 64k floor would otherwise
 recreate for every model in the new band.
 
+**The clamp is computed from a measured prompt, never an estimated one** (AGENT-19,
+[ADR-0021](adr/0021-measured-windows-and-the-compaction-ladder.md)). Fed a character estimate that
+exceeded the window, the clamp's own floor asked an endpoint for **one output token**, every reply
+came back `finish_reason: "length"`, and the game was forfeited for truncation. On a game's first
+call, where nothing has been measured yet, the clamp uses half the window as a bound rather than
+guessing at the prompt.
+
+**A 400 does not tell you whose fault it is; the body does.** Three arrive here and take three
+different paths:
+
+| Body says | Meaning | Response |
+| --- | --- | --- |
+| `DEGRADED function cannot be invoked`, `no healthy`, `overloaded` | the endpoint is unwell | pause + cool down ([ADR-0017](adr/0017-rate-limits-pause-games.md)) |
+| `maximum context length is N … you requested about M` | our prompt is too large | compact against those numbers and retry once |
+| `Assistant messages require content, tool_calls, or function_call` | our transcript holds a message no provider will accept | genuinely rejected — and now unwritable |
+
+The last one is the only 400 that waiting can never clear: the transcript is append-only, so an empty
+assistant row refuses every later turn of that seat identically. `liquid/lfm-2.5-2.6b:free` refused
+`messages.126.content` at ply 57 of a real game.
+
 ## The free tier
 
 **Free models can play.** A note in this repository said otherwise for a long time, and it was

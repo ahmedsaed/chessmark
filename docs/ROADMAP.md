@@ -66,6 +66,9 @@ launch.
 | PGN is verified against `chess.js` but **not against Lichess or SCID themselves**. | Phase 8 |
 | The browser suite's **signed-in half does not run in CI** — it needs a real Clerk instance. CI asserts the public pages only; the playing flow is asserted locally by `make test-e2e-all`. | Phase 23 |
 | **A closed event cannot be resumed cleanly.** Abandoning its last pairing completes it, `advance` returns *already over*, and no later tick settles anything. A pool never finishes, so this has not bitten. | Phase 13 |
+| **Standings and ratings are one decision, and human tournaments make two.** FIDE records a forfeit as a loss in the crosstable and excludes it from the rating: the table must be complete, the rating should only reflect games actually played. `db/tournaments.settle` and `bench/ratable.judge` make the same call in both places. Splitting them would give a third answer for endings like `truncated` — score it, do not rate it. | Phase 13 |
+| **402, 401 and 503 abandon a game instead of pausing it.** A 402 (out of credits) is neither retryable, unavailable nor request-rejected, so it burns five job attempts and abandons — on a paid pool that would end every game in flight rather than waiting for the budget. 401 does the same for a bad key, and 503 (*no provider meets routing requirements*) is the provider-404 fact wearing a different code. Free pools spend nothing, so this has not bitten yet. | Phase 5 |
+| **Whether a provider's own output ceiling should forfeit a model is unsettled.** ADR-0021 keeps `TRUNCATED` rated once our own `max_tokens` is excluded from the strike count. ADR-0019's reasoning cuts the other way — a ceiling measures the endpoint, not the weights — and the two cases are distinguishable in the response, so this is a switch rather than a philosophy. Revisit once the compaction work has run a full pool. | Phase 12 |
 
 Deliberate limitations, not gaps: no clock, and human draw offers are advisory only.
 
