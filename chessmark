@@ -66,10 +66,15 @@ cmd_deploy() { # pull, drain the workers, migrate, restart, check /ready — the
   cmd_ready
 }
 
-cmd_status() { # what is running, and whether the API is ready
+cmd_status() { # containers, games, tournaments, budgets — and what needs a look
+  # Two halves on purpose. `docker ps` answers "are the containers up", which is not the same
+  # question as "is the harness healthy": a stack can be entirely up while every game is paused
+  # behind a rate limit, the free allowance is spent, and a pool has not moved a piece since
+  # yesterday. The second half is the one that answers that (OPS-21).
   "${COMPOSE[@]}" ps --format 'table {{.Service}}\t{{.Status}}'
   printf '\n'
   cmd_ready || true
+  api_script status.py "$@" || true
 }
 
 cmd_ready() { # ask the API whether it can reach Postgres and Redis
@@ -230,7 +235,18 @@ echo "select count(*) from games;" | ./chessmark sql'
   [resume]='./chessmark resume 5f8ee937-2e53-49df-877f-6879bcfc56b7
 ./chessmark resume <game-id> --max-usd 2.50        # raise the ceiling that stopped it
 ./chessmark resume <game-id> --max-plies 400
-./chessmark resume <game-id> --unclaimed-draw   # a threefold nobody was told about (ADR-0020)'
+./chessmark resume <game-id> --unclaimed-draw   # a threefold nobody was told about (ADR-0020)
+./chessmark resume <game-id> --harness-ceiling      # truncated by *our* max_tokens (ADR-0021)
+./chessmark resume <game-id> --overwritten-verdict  # a race replaced an earlier harness stop (ADR-0022)
+
+# The last three reopen a forfeit, which the general rule refuses. Each is gated on the
+# record, not on the flag: the stored calls or the event log decide whether it applies.'
+  [status]='./chessmark status                      # everything
+./chessmark status --games               # just the games
+./chessmark status --tournaments         # just the events
+
+# Green is working, amber is worth a look, red needs somebody. Anything not green is
+# repeated at the bottom, so "is anything wrong" never means reading every line.'
   [halt]='./chessmark halt                        # is it on, and why?
 ./chessmark halt "paying for a bug"      # stop every model call, now
 ./chessmark halt --clear                 # start again

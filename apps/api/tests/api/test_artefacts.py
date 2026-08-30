@@ -133,11 +133,40 @@ async def test_an_unknown_game_has_no_pgn(client: AsyncClient) -> None:
 # ====================================================================== raw transcript
 
 
-async def test_raw_payloads_are_withheld_while_the_game_is_live(
-    client: AsyncClient, db: AsyncSession, game: Fixture, make_worker
+async def test_raw_payloads_are_withheld_while_a_person_is_playing(
+    client: AsyncClient, db: AsyncSession, queue, redis, make_worker
 ) -> None:
     """Invariant 8. The raw response carries the reasoning trace, so an open raw endpoint would
-    route straight around the rule `/turns` enforces."""
+    route straight around the rule `/turns` enforces — where that rule bites, which is a seat held
+    by somebody who is deciding their own move."""
+    from chessmark.game import Colour
+    from tests.support import make_user, seat_human_match
+
+    user = await make_user(db)
+    human = await seat_human_match(db, queue, user=user, human_colour=Colour.BLACK)
+    worker = make_worker(
+        scripted(step(tool_call("make_move", move="e4"), reasoning="I intend Qh5 next."))
+    )
+    await run_next(worker, human.queue)
+
+    turn_id = await db.scalar(sa.select(Turn.id).where(Turn.game_id == human.game.id))
+    response = await client.get(f"/games/{human.game.id}/turns/{turn_id}/raw")
+
+    assert response.status_code == 409
+    assert "Qh5" not in response.text
+
+
+async def test_raw_payloads_are_open_on_a_live_model_game(
+    client: AsyncClient, db: AsyncSession, game: Fixture, make_worker
+) -> None:
+    """**The audit trail is not withheld from a game nobody is playing.**
+
+    This used to 409 for every live game, on a second and broader rule that lived in `games.py`
+    rather than in `redaction.py`. It protected nothing: a model's opponent is an LLM reading its
+    own transcript and cannot open the site, and the same reasoning is already streamed live to
+    spectators of this very game — so the only thing the gate achieved was making the numbers on a
+    live page untraceable to the payloads they came from (LOG-07).
+    """
     worker = make_worker(
         scripted(step(tool_call("make_move", move="e4"), reasoning="I intend Qh5 next."))
     )
@@ -146,8 +175,8 @@ async def test_raw_payloads_are_withheld_while_the_game_is_live(
     turn_id = await db.scalar(sa.select(Turn.id).where(Turn.game_id == game.game.id))
     response = await client.get(f"/games/{game.game.id}/turns/{turn_id}/raw")
 
-    assert response.status_code == 409
-    assert "Qh5" not in response.text
+    assert response.status_code == 200
+    assert "Qh5" in response.text
 
 
 async def test_raw_payloads_are_published_once_the_game_ends(

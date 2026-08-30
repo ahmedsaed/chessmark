@@ -31,7 +31,7 @@ from redis.asyncio import Redis  # noqa: E402
 from chessmark.agents.prompts import PROMPT_VERSION  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.enums import EventType, GameStatus  # noqa: E402
-from chessmark.db.models import TournamentGame  # noqa: E402
+from chessmark.db.models import GameEvent, TournamentGame  # noqa: E402
 from chessmark.db.repositories import append_event, get_game, rebuild_referee  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.game import (  # noqa: E402
@@ -43,6 +43,84 @@ from chessmark.orchestration import AdvanceTurn, TurnQueue  # noqa: E402
 
 #: The two draws that were applied without a claim before ADR-0020.
 _UNCLAIMED = frozenset({Termination.THREEFOLD_REPETITION, Termination.FIFTY_MOVE_RULE})
+
+
+async def _truncation_was_our_ceiling(session: Any, game: Any) -> tuple[bool, str]:
+    """Whether a `truncated` forfeit was caused by the harness rather than by the model.
+
+    **Evidence, not assertion.** The stored calls say what we asked for and what came back: a
+    response that stopped at *our* `max_tokens` was ended by us, and one that stopped short of it
+    hit the endpoint's own limit. This reads the record rather than trusting the operator, and
+    refuses when the record does not support it.
+
+    The case it exists for: a miscalculated window drove `completion_cap` negative, its `max(1,…)`
+    floor asked an endpoint for **one output token**, every reply came back `finish_reason:
+    "length"`, and a model was forfeited at ply 5 for a limit it never saw (ADR-0021). The turn
+    loop cannot produce that any more; this reopens the games it already did.
+    """
+    from chessmark.db.models import LlmCall, Turn
+
+    rows = list(
+        (
+            await session.execute(
+                sa.select(LlmCall.request, LlmCall.completion_tokens)
+                .join(Turn, Turn.id == LlmCall.turn_id)
+                .where(Turn.game_id == game.id, LlmCall.finish_reason == "length")
+                .order_by(LlmCall.id.desc())
+                .limit(20)
+            )
+        ).all()
+    )
+    if not rows:
+        return False, "no truncated call is recorded for this game"
+
+    ours = [
+        r
+        for r in rows
+        if (r.request or {}).get("max_tokens")
+        and r.completion_tokens
+        and r.completion_tokens >= int((r.request or {}).get("max_tokens", 0))
+    ]
+    if not ours:
+        return False, (
+            "every truncated call stopped short of the ceiling we asked for, so the endpoint's "
+            "own limit cut it — that is a finding about the model"
+        )
+
+    asked = int((ours[0].request or {}).get("max_tokens", 0))
+    return True, (
+        f"{len(ours)} of {len(rows)} truncated calls stopped at our own max_tokens ({asked})"
+    )
+
+
+async def _verdict_was_overwritten(session: Any, game: Any) -> tuple[bool, str]:
+    """Whether this game's stored ending replaced an earlier one written by a race.
+
+    A game should append one `game_ended` row. Before ADR-0022, two workers could play the same ply
+    at once and the loser wrote its verdict over the winner's — one game ended **seven** times.
+    Where the first ending was a harness stop and a later one is a forfeit, the rated verdict was
+    chosen by scheduling.
+
+    Reopens on the **first** ending, which is the one the race overwrote. Not the most favourable —
+    the first, whatever it says — because a script that picks among real endings is a script that
+    can improve a result by running it again.
+    """
+    endings = list(
+        await session.scalars(
+            sa.select(GameEvent)
+            .where(GameEvent.game_id == game.id, GameEvent.type == EventType.GAME_ENDED)
+            .order_by(GameEvent.seq)
+        )
+    )
+    if len(endings) < 2:
+        return False, "this game ended once; there is no overwritten verdict to restore"
+
+    first = str(endings[0].payload.get("termination") or "")
+    if first == str(game.termination):
+        return False, f"the stored verdict is already the first one written ({first})"
+    if first not in {str(t) for t in RESUMABLE_TERMINATIONS}:
+        return False, f"the first ending was {first}, which is a finding about a player"
+    return True, f"{len(endings)} endings recorded; the first was {first}, overwritten by a race"
 
 
 def _unclaimed_draw_is_reopenable(game: Any) -> tuple[bool, str]:
@@ -82,6 +160,22 @@ async def main() -> int:
     )
     parser.add_argument("--max-plies", type=int, default=None, help="New ply cap.")
     parser.add_argument(
+        "--harness-ceiling",
+        action="store_true",
+        help=(
+            "reopen a game forfeited for truncation when the record shows *our* max_tokens cut "
+            "the response. Refused when the endpoint's own limit did (ADR-0021)."
+        ),
+    )
+    parser.add_argument(
+        "--overwritten-verdict",
+        action="store_true",
+        help=(
+            "reopen a game whose stored ending replaced an earlier harness stop, written when two "
+            "workers played the same ply at once (ADR-0022)."
+        ),
+    )
+    parser.add_argument(
         "--unclaimed-draw",
         action="store_true",
         help=(
@@ -113,6 +207,23 @@ async def main() -> int:
                     return 2
                 print(f"reopening an unclaimed {game.termination} draw ({refusal})")
 
+            # Both of these reopen a *forfeit*, which the general rule refuses, so both are gated
+            # on the record rather than on the flag: the operator says which correction they mean
+            # and the stored calls or the event log decide whether it applies.
+            if not resumable and args.harness_ceiling:
+                resumable, why = await _truncation_was_our_ceiling(session, game)
+                if not resumable:
+                    print(why, file=sys.stderr)
+                    return 2
+                print(f"reopening a truncation the harness caused ({why})")
+
+            if not resumable and args.overwritten_verdict:
+                resumable, why = await _verdict_was_overwritten(session, game)
+                if not resumable:
+                    print(why, file=sys.stderr)
+                    return 2
+                print(f"reopening a verdict a race overwrote ({why})")
+
             if not resumable:
                 print(
                     f"refusing to reopen a game that ended by {game.termination}. "
@@ -123,7 +234,13 @@ async def main() -> int:
                         "reopened with --unclaimed-draw."
                         if game.termination in _UNCLAIMED
                         else ""
-                    ),
+                    )
+                    + (
+                        " If our own max_tokens cut the response, --harness-ceiling reopens it."
+                        if game.termination is Termination.TRUNCATED
+                        else ""
+                    )
+                    + " If a race overwrote an earlier harness stop, --overwritten-verdict does.",
                     file=sys.stderr,
                 )
                 return 2

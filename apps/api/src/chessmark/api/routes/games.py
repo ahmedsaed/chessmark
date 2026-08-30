@@ -14,6 +14,7 @@ from typing import Annotated, Any
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import PlainTextResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.registry import NoEndpointError
 from chessmark.api.deps import (
@@ -109,12 +110,25 @@ async def _served_by(
     return served
 
 
-def _reveal_reasoning(game: Game) -> bool:
-    """Reasoning is withheld until the game is over (invariant 8, HUMAN-07).
+async def _reveal_reasoning(session: AsyncSession, game: Game) -> bool:
+    """Whether this game's reasoning may be read right now (invariant 8, HUMAN-07).
 
-    Mid-game it would leak a model's plan to its opponent — or, in a human game, to the human.
+    **One rule, in one place.** This used to be a second, broader rule living here: reasoning was
+    withheld from *any* live game, on the reasoning that it "would leak a model's plan to its
+    opponent". `redaction.must_withhold_thinking` says something narrower and better argued — only
+    while a **person** is playing — and the two were applied side by side in this very module, the
+    narrow one to the event log and the broad one to `/turns` and `/turns/{id}/raw`.
+
+    The narrow rule is the correct one, and the broad one was protecting nothing. A model's
+    opponent is an LLM reading its own transcript; it cannot open the site. And the `thinking`
+    events for a model-vs-model game are already streamed live to spectators by design, so
+    withholding the same content from `/turns` denied a reader something they could watch arrive
+    on the next tab.
+
+    What remains is exactly the leak worth preventing: a person holding a seat must not read their
+    opponent's plan while deciding their own move.
     """
-    return game.status in {GameStatus.FINISHED, GameStatus.ABORTED}
+    return not await must_withhold_thinking(session, game)
 
 
 # ---------------------------------------------------------------------- listing
@@ -266,7 +280,7 @@ async def get_turns(session: SessionDep, game: GameDep) -> list[TurnDetail]:
     Reasoning traces are omitted while the game is live; `reasoning_available` says which it is,
     so a client can show "revealed after the game" rather than an unexplained blank.
     """
-    reveal = _reveal_reasoning(game)
+    reveal = await _reveal_reasoning(session, game)
 
     turns = list(
         await session.scalars(sa.select(Turn).where(Turn.game_id == game.id).order_by(Turn.id))
@@ -398,13 +412,16 @@ async def get_raw_calls(
     returned is asking to be taken on faith. Secrets are redacted at write time, not here — a key
     that reached the database is already leaked (see `agents/redaction.py`).
 
-    **Withheld while the game is live** (invariant 8). The raw response carries the reasoning
-    trace, so serving it mid-game would route around the very rule `/turns` enforces.
+    **Withheld while a person is playing** (invariant 8). The raw response carries the reasoning
+    trace, so serving it would route around the very rule `/turns` enforces — but only where that
+    rule bites, which is a game with a human seat. A model-vs-model game publishes its reasoning
+    live already, and gating the audit trail behind the end of the game protected nothing while
+    making the numbers on a live page untraceable.
     """
-    if not _reveal_reasoning(game):
+    if not await _reveal_reasoning(session, game):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Raw transcripts are available once the game has ended.",
+            detail="Raw transcripts are available once your game has ended.",
         )
 
     # Scoped to the game in the query rather than checked afterwards, so a turn id from another
