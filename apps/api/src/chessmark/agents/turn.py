@@ -494,19 +494,33 @@ class TurnRunner:
                     },
                 )
 
-            await transcript.append_message(
-                self.session,
-                player_id=self.player.id,
-                game_id=self.game.id,
-                turn_id=turn.id,
-                role="assistant",
-                content=completion.content,
-                tool_calls=self._serialise_tool_calls(completion),
-                # Stored so the next turn can hand it straight back. Gemini 3 rejects a function
-                # call whose `thought_signature` is missing and DeepSeek rejects a thinking-mode
-                # history without its `reasoning_content`; both travel in here.
-                reasoning_details=completion.reasoning_details,
-            )
+            # **Only when the model actually said or did something.** A response with neither
+            # content nor tool calls — an ordinary truncation for a small model — used to append a
+            # row with both columns null, which `to_provider_message` renders as a bare
+            # `{"role": "assistant"}`. Liquid refuses that outright: *"Assistant messages require
+            # `content`, `tool_calls`, or `function_call`"*, naming `messages.126.content`. The
+            # transcript is append-only (ADR-0003), so one such row refuses **every later turn of
+            # that seat** — the one 400 that no retry, pause or resume can ever clear. It abandoned
+            # a real game at ply 57.
+            #
+            # Nothing is lost by omitting it: the model said nothing and did nothing. The raw
+            # response is still in `llm_calls` and the turn is still in the event log, so the
+            # record stays verbatim (invariant 3) — only the request changes. The two consecutive
+            # user messages that result (the turn prompt, then the nudge) are accepted everywhere.
+            if completion.content or completion.tool_calls:
+                await transcript.append_message(
+                    self.session,
+                    player_id=self.player.id,
+                    game_id=self.game.id,
+                    turn_id=turn.id,
+                    role="assistant",
+                    content=completion.content,
+                    tool_calls=self._serialise_tool_calls(completion),
+                    # Stored so the next turn can hand it straight back. Gemini 3 rejects a
+                    # function call whose `thought_signature` is missing and DeepSeek rejects a
+                    # thinking-mode history without its `reasoning_content`; both travel in here.
+                    reasoning_details=completion.reasoning_details,
+                )
 
             if not completion.tool_calls:
                 if await self._no_action(turn, result, completion):

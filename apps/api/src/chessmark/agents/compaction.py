@@ -186,10 +186,26 @@ async def live_messages(session: AsyncSession, player_id: uuid.UUID) -> list[Tra
             .order_by(TranscriptMessage.seq)
         )
     )
+    rows = [r for r in rows if is_sendable(r)]
     system = [r for r in rows if r.role == "system"]
     summary = [r for r in rows if r.is_summary]
     rest = [r for r in rows if r.role != "system" and not r.is_summary]
     return system + summary + rest
+
+
+def is_sendable(row: TranscriptMessage) -> bool:
+    """Whether this row may be put in a request at all.
+
+    One rule: an assistant message needs *something* in it. `{"role": "assistant"}` with no content
+    and no tool calls is refused outright by Liquid — *"Assistant messages require `content`,
+    `tool_calls`, or `function_call`"* — and the transcript is append-only, so one such row refuses
+    every later turn of that seat until somebody edits the database.
+
+    The row is no longer written (`turn.py`), and this is the second line: it repairs a transcript
+    that already holds one, and it covers the summary request as well as the turn's, because both
+    build their messages from `live_messages`. A row with nothing in it has nothing to replay.
+    """
+    return row.role != "assistant" or bool(row.content) or bool(row.tool_calls)
 
 
 async def window_for(
