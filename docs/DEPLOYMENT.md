@@ -36,7 +36,7 @@ everything inside a container: no uv, no node, and no remembering which compose 
 | `deploy` | pull the published images, migrate, restart, check `/ready` |
 | `workers N` | how many turn workers to run (`WORKER_REPLICAS`) |
 | `catalogue` `endpoints` `models` `prune` | the model registry |
-| `latency <game-id>` `resume <game-id>` | one game |
+| `latency <game-id>` `resume <game-id>` `repair` | one game, and the transcripts behind it |
 | `tournament …` `standings <slug>` | events |
 | `credits` | grant or revoke; `--show` prints a balance with its ledger |
 | `psql` `sql` `backup` `migrate` | the database |
@@ -213,6 +213,125 @@ is a dump that runs happily for months and turns out to be missing a schema.
 The drill kills each container and brings it back. It does not test auto-restart, because no
 restart policy covers `docker kill` — Docker reads that as operator intent, and the same is true of
 `always`. Policies cover *crashes*, which is the case that actually happens.
+
+## Deploying a change that needs a data repair
+
+Most deploys are `./chessmark deploy` and nothing else. This section is for the ones that are not:
+a schema change plus a repair of records the old code wrote. The pattern generalises, and the
+worked example is the ADR-0021 / ADR-0022 release, because it has one of everything.
+
+**The order is not arbitrary.** Migrate before the new code runs, repair after it is running, and
+resume last — a game reopened before the repair simply fails the same way again.
+
+### 1. Back up first, and check the dump is real
+
+```
+./chessmark backup
+```
+
+A repair rewrites rows. `--verify` on a development machine compares row counts per table; on the
+server the dump's size is the check that catches the failure that actually happens, which is a
+backup that has been running happily for months and turns out to be empty.
+
+### 2. Deploy
+
+```
+./chessmark deploy
+```
+
+Pulls, **stops `worker` and `tournament`**, migrates, restarts, and waits on `/ready`. The drain is
+the part that matters: every `ALTER TABLE` takes `ACCESS EXCLUSIVE`, a worker holds one transaction
+open for a whole turn, and a free model's turn runs to 442 seconds — so a migration queues behind
+it and then blocks the API behind *itself*. Stopping a worker mid-turn is safe by design: the turn
+is one transaction, it rolls back whole, and its job is redelivered (`expected_ply`, ADR-0007).
+
+If the migration fails, `deploy` brings the workers back on the **old** image and stops. That is the
+intended outcome — a half-migrated database serving new code is the one state worth refusing.
+
+To migrate without restarting anything else: `./chessmark migrate`.
+
+**The two migrations in this release** are both additive column adds, so they take the lock for
+microseconds and need no backfill:
+
+| Migration | Column | Why |
+| --- | --- | --- |
+| `bd3b3902caa2` | `players.last_prompt_tokens` | the measured prompt size, carried between turns (AGENT-19) |
+| `09d20bf76afb` | `transcript_messages.trimmed_at` | a tool result kept in the request with its content elided (AGENT-20) |
+
+Both default to a value that means "nothing known yet", so a game in flight across the deploy
+behaves correctly on its next turn with no intervention.
+
+### 3. Repair the records the old code wrote
+
+```
+./chessmark repair            # reports; writes nothing
+./chessmark repair --write    # supersedes them
+```
+
+`repair` finds assistant messages carrying neither content nor tool calls. The transcript is
+append-only (ADR-0003), so one such row refuses **every later turn of that seat** — the single 400
+that no pause, retry or resume can ever clear. The new code cannot write one and filters any that
+exist, so this is about cleaning the record rather than restoring play.
+
+It **supersedes**, never deletes: `superseded_at` is set, `content` is untouched, and the row keeps
+its place. The record stays verbatim (invariant 3) and only the request changes.
+
+Read the dry run before writing. It names the game, the seat and the model for every row, and a
+count of rows far larger than you expected is a reason to stop rather than to add `--write`.
+
+### 4. Reopen what was abandoned
+
+```
+./chessmark resume <game-id>
+```
+
+Only endings **we** imposed can be reopened — a budget, a ply cap, a provider we could not reach.
+A checkmate is final and so is a forfeit: both are findings about a player, and a script that could
+replay one is a script that could replay a bad result until it improved. The refusal is the point
+of the command existing rather than a hand-written `UPDATE`.
+
+```
+./chessmark resume <game-id> --max-usd 2.50      # raise the ceiling that stopped it
+./chessmark resume <game-id> --max-plies 400
+./chessmark resume <game-id> --unclaimed-draw    # a threefold nobody was told about (ADR-0020)
+```
+
+A worker must be running for a resumed game to move; `resume` says so, and `./chessmark status`
+confirms it.
+
+**Resume last.** A game reopened before its transcript is repaired plays one turn, hits the same
+400, and is abandoned again — this time with two abandonments in its log instead of one.
+
+### 5. Watch it, briefly
+
+```
+./chessmark status
+./chessmark logs worker
+./chessmark standings pool-free
+```
+
+What you are looking for in the first few turns:
+
+- `compacting … folding N, trimming M, keeping K` — the ladder running, with the numbers that were
+  previously invisible (ADR-0021). `trimming 0, folding 0` repeated is the shape of the bug that
+  release fixed and would mean it had not taken.
+- `pausing … (pause 1, 0.0h of 24h used)` — ordinary. Free pools are hot; that is what a pause is
+  for.
+- `dropping job for … another worker is advancing it` — expected with more than one worker, and
+  not a failure (ADR-0022). Frequent enough to be noise means the stale threshold wants raising
+  again.
+
+### Rolling back
+
+The images are tagged `:<sha>`, so a rollback is a pull of the previous tag and a restart. **The
+migrations are not rolled back with them.** Both columns in this release are additive and unread by
+the old code, so an old image runs against the new schema without noticing — which is the property
+that makes the rollback safe, and it is worth checking per release rather than assuming. A
+migration that drops or renames does not have it, and there the rollback is the backup from step 1.
+
+A repair cannot be rolled back by redeploying, because it changed data rather than code. Undoing
+one means clearing `superseded_at` on the rows it set, which is why the dry run exists and why the
+backup comes first.
 
 ## Continuous deployment
 
