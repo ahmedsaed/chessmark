@@ -21,6 +21,7 @@ and is picked up on a later tick.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import logging
 import uuid
@@ -81,6 +82,8 @@ class ReconcileReport:
     resumed: list[str] = field(default_factory=list)
     #: The global halt was lifted this tick, because the account has credit again.
     unhalted: bool = False
+    #: Consumer names forgotten because their worker process is gone.
+    reaped: list[str] = field(default_factory=list)
     checked: int = 0
 
     def __str__(self) -> str:
@@ -370,6 +373,12 @@ async def reconcile(
             log.info("resuming %s at ply %s: %s", game.id, game.ply_count, game.pause_reason)
             jobs.append(await resume(session, game))
             report.resumed.append(str(game.id))
+
+    # Housekeeping, here because this sweep already holds the single-flight lock and runs on a
+    # timer. A worker's name outlives its process and Redis keeps it forever, so without this the
+    # group accumulates one name per restart and nothing in `status` can say which are alive.
+    with contextlib.suppress(Exception):
+        report.reaped = await queue.reap_consumers()
 
     for job in jobs:
         await queue.enqueue(job)

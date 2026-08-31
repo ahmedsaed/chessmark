@@ -72,11 +72,10 @@ PAUSE_WARN_FRACTION = 0.5
 #: deep · 3149 in the stream, 0 delivered and unacked", which was a warning about nothing.
 PENDING_WARN = 25
 
-#: A consumer holding a delivery longer than this is on a very slow turn or is dead. The queue
-#: reclaims at fifteen minutes, so past that it is already being taken over.
-CONSUMER_IDLE_WARN = dt.timedelta(minutes=15)
+#: When the queue takes an unacked delivery away from the consumer holding it.
+RECLAIM_AFTER = dt.timedelta(minutes=15)
 
-#: Past this with nothing held, a consumer is dead.
+#: Past this a consumer is dead — **whether or not it is holding a job**.
 #:
 #: **Sixty seconds, because a live worker touches the server every two.** It blocks on
 #: `XREADGROUP` for `block_ms=2000` and comes straight back, so a consumer that has not been seen
@@ -86,6 +85,13 @@ CONSUMER_IDLE_WARN = dt.timedelta(minutes=15)
 #: They accumulate because a worker's name is `worker-{uuid4}`, generated per **process**, so every
 #: restart abandons one. Redis keeps a consumer name forever; only `XGROUP DELCONSUMER` removes it,
 #: and this command is read-only.
+#:
+#: **The "holding nothing" qualifier was wrong.** A worker killed mid-turn — by a deploy, say —
+#: leaves its delivery *pending* under a dead name, so the old rule kept it in the table and marked
+#: it green. Two of those for one game read as two workers racing, which the row lock makes
+#: impossible (ADR-0022): a second live worker is refused the claim, returns `in_flight` and acks
+#: within milliseconds, so it can never sit on a delivery. Two pending entries for one ply always
+#: means at least one holder is gone.
 CONSUMER_DEAD_AFTER = dt.timedelta(seconds=60)
 
 
@@ -299,34 +305,41 @@ async def show_workers(report: Report, redis: Any) -> None:
     else:
         report.ok("queue", detail)
 
-    rows, marks, dead = [], [], 0
+    rows, marks, dead, orphaned = [], [], 0, 0
     for consumer in sorted(consumers, key=lambda c: int(c.get("idle", 0))):
         name = str(consumer.get("name", "?"))
         held = int(consumer.get("pending", 0))
         idle = int(int(consumer.get("idle", 0)) / 1000)
 
-        if held == 0 and idle > CONSUMER_DEAD_AFTER.total_seconds():
+        alive = idle <= CONSUMER_DEAD_AFTER.total_seconds()
+        if not alive and held == 0:
             dead += 1
             continue
 
-        stalled = held > 0 and idle > CONSUMER_IDLE_WARN.total_seconds()
-        rows.append(
-            [
-                _cut(name, 24, report.wide),
-                # What it is *doing*, which is the question a reader actually has. `XINFO` only
-                # counts deliveries; the game id comes from the pending entries themselves.
-                ", ".join(holding.get(name, [])) or ("waiting for work" if not held else str(held)),
-                _span(idle),
-            ]
-        )
-        marks.append(f"{AMBER}▲{OFF}" if stalled else f"{GREEN}●{OFF}")
-        if stalled:
-            report.concerns.append(f"{AMBER}▲{OFF} worker {name} has held a job for {_span(idle)}")
+        # What it is *doing*, which is the question a reader actually has. `XINFO` only counts
+        # deliveries; the game id comes from the pending entries themselves.
+        games = ", ".join(holding.get(name, []))
+        if alive:
+            doing = games or "waiting for work"
+        else:
+            # Gone, but still named on a delivery nobody has acked. The queue takes it back at
+            # `RECLAIM_AFTER` and the turn simply reruns — it was rolled back whole (ADR-0007).
+            left = RECLAIM_AFTER.total_seconds() - idle
+            doing = f"{games or held} — orphaned, reclaimed in {_span(int(max(left, 0)))}"
+            orphaned += held
+
+        rows.append([_cut(name, 24, report.wide), doing, _span(idle)])
+        marks.append(f"{GREEN}●{OFF}" if alive else f"{AMBER}▲{OFF}")
 
     if not rows:
         report.bad("no worker is consuming the queue", "nothing will play")
     else:
         report.table(["worker", "playing", "last seen"], rows, marks)
+    if orphaned:
+        report.warn(
+            f"{orphaned} delivery(ies) held by workers that are gone",
+            "a deploy or a crash mid-turn; the queue reclaims them and the turn reruns",
+        )
     if dead:
         # Not a fault: a name outlives its process and only `XGROUP DELCONSUMER` clears it.
         report.plain(f"{dead} name(s) left behind by earlier worker processes")

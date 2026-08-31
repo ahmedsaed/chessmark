@@ -36,6 +36,15 @@ DEFAULT_MAXLEN = 100_000
 #: robbed of a job it is still executing.
 DEFAULT_MIN_IDLE_MS = 15 * 60 * 1000
 
+#: How long a consumer name may go untouched before it is forgotten.
+#:
+#: Generous on purpose. A live worker blocks on `XREADGROUP` for two seconds and comes straight
+#: back, so ten minutes is three hundred poll intervals — nothing running can reach it. The cost of
+#: being wrong is a name deleted and immediately recreated on the next read, which is harmless;
+#: the cost of being *aggressive* would be deleting a name while its process still believed it
+#: owned deliveries.
+DEFAULT_CONSUMER_TTL_MS = 10 * 60 * 1000
+
 
 @dataclass(frozen=True, slots=True)
 class AdvanceTurn:
@@ -82,6 +91,20 @@ class Delivery:
     message_id: str
     job: AdvanceTurn
     redelivered: bool = False
+
+
+def _field(mapping: dict[Any, Any], key: str, default: Any) -> Any:
+    """Read a field from a Redis reply whose keys may be `str` or `bytes`.
+
+    Which one depends on how the client was built: the worker's `Redis.from_url` decodes nothing,
+    the operator scripts pass `decode_responses=True`, and both call this code. A plain
+    `mapping.get("name")` against a bytes-keyed reply returns the default and reports nothing —
+    which would have made `reap_consumers` a silent no-op in production, found only because a test
+    compared the names it expected against the ones it got.
+    """
+    if key in mapping:
+        return mapping[key]
+    return mapping.get(key.encode(), default)
 
 
 def _decode(value: Any) -> str:
@@ -141,6 +164,31 @@ class TurnQueue:
             self.stream, self.group, consumer, min_idle_time=min_idle_ms, count=count
         )
         return self._to_deliveries([(self.stream, messages)], redelivered=True)
+
+    async def reap_consumers(self, *, idle_ms: int = DEFAULT_CONSUMER_TTL_MS) -> list[str]:
+        """Forget consumer names whose process is gone. Returns the names removed.
+
+        A worker's name is generated per **process**, so every restart abandons one, and Redis
+        keeps a consumer in a group forever — only `XGROUP DELCONSUMER` removes it. Fifty-one names
+        had accumulated across a few days of deploys, and `status` could not tell a reader which
+        three of them were the running containers.
+
+        **Never removes one holding a delivery.** `XGROUP DELCONSUMER` discards that consumer's
+        pending entries, which would silently drop a turn; a worker mid-turn holds its job and is
+        therefore protected by the same check, and a worker between turns has an idle time three
+        hundred times under the threshold. Both safeguards are load-bearing and neither is enough
+        alone: a *dead* worker's orphaned delivery must be left for `XAUTOCLAIM` to reclaim, not
+        deleted along with the name.
+        """
+        removed: list[str] = []
+        consumers = await self.redis.xinfo_consumers(self.stream, self.group)  # type: ignore[no-untyped-call]
+        for consumer in consumers:
+            name = _decode(_field(consumer, "name", b""))
+            if int(_field(consumer, "pending", 0)) or int(_field(consumer, "idle", 0)) <= idle_ms:
+                continue
+            await self.redis.xgroup_delconsumer(self.stream, self.group, name)  # type: ignore[no-untyped-call]
+            removed.append(name)
+        return removed
 
     async def ack(self, message_id: str) -> None:
         """Acknowledge a job. Called only *after* the turn's transaction commits."""
