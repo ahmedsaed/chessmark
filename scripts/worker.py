@@ -30,7 +30,7 @@ from redis.asyncio import Redis  # noqa: E402
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
 from chessmark.agents.scripted import responsive  # noqa: E402
-from chessmark.core.budget import FreeTierBudget, GlobalBudget  # noqa: E402
+from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.halt import Halt  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import ProviderCooldown  # noqa: E402
@@ -125,11 +125,6 @@ async def main(argv: list[str] | None = None) -> int:
     # budget it is a way to spend money with no daily ceiling — the same hole `make play` had.
     budget = GlobalBudget(redis, daily_limit_usd=Decimal(str(settings.global_daily_usd_budget)))
 
-    # The free tier is bounded by a request count, not by money, and nothing reports it back to
-    # us. Counting our own attempts here is the only way anything downstream can know how much of
-    # the day's allowance is left — including the tournament runner, which refuses to start a new
-    # game once it is spent.
-    free_tier = FreeTierBudget(redis)
 
     # What is remembered between games about an endpoint that refused. Shared through Redis rather
     # than held per process, because the point is that the *next* game — and the tournament
@@ -140,9 +135,6 @@ async def main(argv: list[str] | None = None) -> int:
     # the harness once rather than pausing thirty games one at a time.
     halt = Halt(redis)
 
-    async def count_free_requests(model: str) -> None:
-        if model.endswith(":free"):
-            await free_tier.record()
 
     worker = TurnWorker(
         sessionmaker=sessionmaker,
@@ -153,13 +145,12 @@ async def main(argv: list[str] | None = None) -> int:
             # one does. `completion_fn` takes precedence, so the key is never read.
             LlmGateway(completion_fn=responsive(reasoning=SCRIPTED_REASONING), pricing=pricing)
             if args.scripted
-            else LlmGateway(api_key=api_key, pricing=pricing, on_attempt=count_free_requests)
+            else LlmGateway(api_key=api_key, pricing=pricing)
         ),
         redis=redis,
         budget=budget,
         cooldown=cooldown,
         halt=halt,
-        free_tier=free_tier,
     )
 
     loop = asyncio.get_running_loop()

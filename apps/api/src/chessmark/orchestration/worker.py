@@ -35,11 +35,11 @@ from chessmark.agents.llm import LlmGateway
 from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.turn import TurnLimits, TurnResult, TurnRunner
 from chessmark.agents.types import RateLimit
-from chessmark.core.budget import FreeTierBudget, GlobalBudget
+from chessmark.core.budget import GlobalBudget
 from chessmark.core.config import get_settings
 from chessmark.core.cooldown import ProviderCooldown, resume_at
 from chessmark.core.credits import fetch_balance
-from chessmark.core.halt import SOURCE_CREDITS, SOURCE_FREE_TIER, Halt, HaltState
+from chessmark.core.halt import SCOPE_FREE, SOURCE_CREDITS, SOURCE_FREE_TIER, Halt, HaltState
 from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
 from chessmark.db.models import Game, GameEvent, ModelRegistry, Player
 from chessmark.db.quotas import record_spend
@@ -79,9 +79,6 @@ GLOBAL_BUDGET = TurnOutcome("global_budget_halted")
 #: Treated exactly like the daily budget: the turn is not run, the job is dropped, and the game is
 #: left RUNNING for the reconciler to pick up once spending is possible again (OPS-19).
 HALTED = TurnOutcome("halted")
-#: The free-model allowance for the day is spent. Same treatment as the halt and the daily budget:
-#: the turn is not run, the game is left RUNNING, and it resumes when the allowance resets.
-FREE_TIER_SPENT = TurnOutcome("free_tier_spent")
 #: The side to move is a person. The worker does nothing and enqueues nothing — the game waits in
 #: RUNNING until the human's move endpoint commits a ply and enqueues the model's reply. Anything
 #: else would run an LLM turn on a human's behalf and play their move for them.
@@ -193,7 +190,6 @@ class TurnWorker:
         budget: GlobalBudget | None = None,
         cooldown: ProviderCooldown | None = None,
         halt: Halt | None = None,
-        free_tier: FreeTierBudget | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
         self.queue = queue
@@ -205,10 +201,6 @@ class TurnWorker:
         #: The global stop (OPS-19). Optional for the same reason: a scripted provider never runs
         #: out of credits, and a test that wires no Redis has nothing to read it from.
         self.halt = halt
-        #: The free tier's daily request count. Read before a turn against a `:free` model, not
-        #: only when starting a game — the counter existed to keep us under the cap and could only
-        #: describe it after the fact, because nothing on the playing path consulted it.
-        self.free_tier = free_tier
         #: What is remembered between games about an endpoint that refused. Optional for the same
         #: reason: a scripted provider never rate-limits anything. Without it a game still pauses
         #: — it just pauses on the first rung every time, and the matchmaker learns nothing.
@@ -321,15 +313,22 @@ class TurnWorker:
                 # again. Forfeiting a model for our budget would corrupt the benchmark.
                 return HandledJob(GLOBAL_BUDGET, game.id, referee.ply)
 
+            colour = referee.side_to_move
+            player = await self._player(session, game.id, colour)
+            opponent = await self._player(session, game.id, colour.opponent)
+
             # The global halt (OPS-19). Beside the budget rather than folded into it, because they
             # are different kinds of thing: that one is a *limit* that resets at midnight, this one
-            # is a *state* that persists until the account is topped up or somebody says so.
+            # is a *state* that persists until the account is topped up, the cap resets, or
+            # somebody says so.
             #
-            # **Free games stop too.** OpenRouter's own documentation says a 402 applies to free
-            # models when the balance is negative, so letting a free pool run on would spend the
-            # day rediscovering the same refusal thirty games at a time.
+            # **Checked after the seat is resolved**, because a halt has a scope and the scope is
+            # about the model. An empty account stops everything, free models included —
+            # OpenRouter's own documentation says a 402 applies to them when the balance is
+            # negative. The daily *free* allowance stops only `:free` models: a paid one does not
+            # draw on it, and stopping it would be an outage for a limit it is not subject to.
             halted = await self._halted()
-            if halted is not None:
+            if halted is not None and halted.covers(model_for(player)):
                 log.warning(
                     "harness halted (%s: %s); not running %s at ply %s",
                     halted.source,
@@ -339,37 +338,11 @@ class TurnWorker:
                 )
                 return HandledJob(HALTED, game.id, referee.ply)
 
-            colour = referee.side_to_move
-            player = await self._player(session, game.id, colour)
-            opponent = await self._player(session, game.id, colour.opponent)
-
             # A person is to move. Stop here, and crucially do **not** re-enqueue: a job that
             # requeued itself would spin at the poll interval for as long as the human took to
             # think. The move endpoint enqueues the model's turn when the ply lands (HUMAN-02).
             if PlayerKind(player.kind) is not PlayerKind.MODEL:
                 return HandledJob(AWAITING_HUMAN, game.id, referee.ply)
-
-            # The free tier is bounded by a request count, not by money, and OpenRouter reports
-            # nothing back — so the only defence is counting our own attempts and stopping short
-            # (OPS-10). That counter existed and **nothing on the playing path read it**: it gated
-            # starting a game and not taking a turn, so a pool already in flight spent past the
-            # allowance and then discovered the cap as a 429, one model at a time.
-            #
-            # Checked here rather than above because it is a fact about *this seat's* model: a paid
-            # model draws on no allowance and must not be stopped by a free one's.
-            if (
-                self.free_tier is not None
-                and model_for(player).endswith(":free")
-                and await self.free_tier.tripped()
-            ):
-                log.warning(
-                    "the free-model allowance is spent; not running %s at ply %s",
-                    game.id,
-                    referee.ply,
-                )
-                # Left RUNNING with its job dropped, like the budget and the halt. The allowance
-                # resets at UTC midnight and the reconciler picks the game up then.
-                return HandledJob(FREE_TIER_SPENT, game.id, referee.ply)
 
             # Route by *this player's* resolved policy. Per player rather than per game because
             # `only` names providers and providers are model-specific: one vendor's endpoint list
@@ -467,6 +440,9 @@ class TurnWorker:
                 limit.describe(""),
                 source=SOURCE_FREE_TIER,
                 until=limit.resets_at or next_utc_midnight(),
+                # Only free models. The cap is on the free distribution, and a paid seat that never
+                # touched the allowance must keep playing.
+                scope=SCOPE_FREE,
             )
             return True
 

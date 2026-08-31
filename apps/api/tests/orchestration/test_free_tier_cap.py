@@ -14,6 +14,11 @@ halt is written with that as its TTL and Redis lifts it. No probe, no midnight j
 
 The per-minute cap is deliberately *not* covered here. That one is a short wait and the cooldown
 ladder is right for it.
+
+**We no longer keep our own count** (ADR-0023). We did, and it was an over-count that declared the
+allowance spent at 1,010 attempts while OpenRouter was still serving us — freezing every free game
+for the rest of the UTC day. OpenRouter says when the allowance is gone; that is the only thing
+that stops us now.
 """
 
 from __future__ import annotations
@@ -24,12 +29,11 @@ from typing import Any
 import pytest
 
 from chessmark.agents import llm
-from chessmark.agents.scripted import plays, scripted, step, tool_call
-from chessmark.core.budget import FreeTierBudget
-from chessmark.core.halt import SOURCE_FREE_TIER, Halt
+from chessmark.agents.scripted import plays
+from chessmark.core.halt import SCOPE_FREE, SOURCE_FREE_TIER, Halt
 from chessmark.db.enums import GameStatus
 from chessmark.db.repositories import get_game
-from chessmark.orchestration.worker import FREE_TIER_SPENT, HALTED, next_utc_midnight
+from chessmark.orchestration.worker import HALTED, next_utc_midnight
 from tests.orchestration.conftest import Fixture
 
 pytestmark = pytest.mark.integration
@@ -160,6 +164,7 @@ async def test_the_daily_cap_halts_the_harness(
     assert state is not None
     assert state.source == SOURCE_FREE_TIER
     assert state.until is not None, "it lifts itself; nobody has to notice"
+    assert state.scope == SCOPE_FREE, "a cap on the free distribution must not stop a paid model"
 
 
 async def test_the_halt_expires_when_the_provider_said_it_would(
@@ -218,50 +223,32 @@ async def test_a_hot_pool_still_pauses_one_game(
     assert await worker.halt.state() is None, "one busy pool must not stop the harness"
 
 
-# ====================================================================== the counter we keep
-
-
-async def test_a_turn_is_not_run_once_the_allowance_is_spent(
+async def test_a_paid_model_plays_on_under_a_free_cap_halt(
     db: Any, game: Fixture, make_worker: Any, redis: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The counter gated *starting* a game and nothing else, so a pool already in flight spent
-    past the allowance and then met the cap as a 429 (OPS-10)."""
-    free_tier = FreeTierBudget(redis)
-    await free_tier.record(free_tier.usable + 1)
+    """The scope earning its place. A paid seat never drew on the free allowance, so stopping it
+    would be an outage for a limit it is not subject to."""
+    monkeypatch.setattr(
+        "chessmark.orchestration.worker.model_for", lambda _player: "vendor/paid-model"
+    )
+    worker = make_worker(plays(["e4"]))
+    worker.halt = Halt(redis)
+    await worker.halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
 
-    # The gate is per seat, so the seat has to be a free one. `seat_match` names its models
-    # `scripted/white`, which draws on no allowance and is correctly exempt.
+    handled = await worker.handle(game.first_job)
+
+    assert handled.outcome != HALTED
+    assert handled.result is not None, "a paid game keeps playing"
+
+
+async def test_a_free_model_stops_under_a_free_cap_halt(
+    db: Any, game: Fixture, make_worker: Any, redis: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         "chessmark.orchestration.worker.model_for", lambda _player: "vendor/model:free"
     )
     worker = make_worker(plays(["e4"]))
-    worker.free_tier = free_tier
+    worker.halt = Halt(redis)
+    await worker.halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
 
-    handled = await worker.handle(game.first_job)
-
-    assert handled.outcome == FREE_TIER_SPENT
-    assert handled.result is None, "nothing was spent discovering what we already knew"
-
-    db.expunge_all()
-    after = await get_game(db, game.game.id)
-    assert after.status is GameStatus.RUNNING, "it resumes when the allowance resets"
-
-
-async def test_a_paid_model_is_not_stopped_by_a_free_allowance(
-    db: Any, game: Fixture, make_worker: Any, redis: Any, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A paid seat draws on no allowance, and stopping it would be an outage for a limit it is
-    not subject to."""
-    free_tier = FreeTierBudget(redis)
-    await free_tier.record(free_tier.usable + 1)
-
-    monkeypatch.setattr(
-        "chessmark.orchestration.worker.model_for", lambda _player: "vendor/paid-model"
-    )
-    worker = make_worker(scripted(step(tool_call("make_move", move="e4"))))
-    worker.free_tier = free_tier
-
-    handled = await worker.handle(game.first_job)
-
-    assert handled.outcome != FREE_TIER_SPENT
-    assert handled.result is not None
+    assert (await worker.handle(game.first_job)).outcome == HALTED
