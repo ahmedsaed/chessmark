@@ -36,7 +36,7 @@ sys.path.insert(0, str(API_ROOT / "src"))
 import sqlalchemy as sa  # noqa: E402
 from redis.asyncio import Redis  # noqa: E402
 
-from chessmark.core.budget import FreeTierBudget, GlobalBudget  # noqa: E402
+from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import KEY_PREFIX as COOLDOWN_PREFIX  # noqa: E402
 from chessmark.core.halt import Halt  # noqa: E402
@@ -247,7 +247,8 @@ async def show_halt(report: Report, redis: Any) -> None:
         return
 
     # Red rather than amber: nothing is playing, and that is worth acting on even when deliberate.
-    report.bad(f"HALTED ({state.source})", state.reason)
+    scope = "every model" if state.scope == "all" else f"{state.scope} models"
+    report.bad(f"HALTED ({state.source})", f"{state.reason} — stops {scope}")
     report.plain(f"set {ago(state.at)} ago")
     if state.until is not None:
         report.plain(f"lifts by itself in {ahead(state.until)}")
@@ -271,22 +272,6 @@ async def show_budgets(report: Report, redis: Any) -> None:
         share = spent / spend.limit_usd
         line = f"${spent} of ${spend.limit_usd} today"
         (report.warn if share > Decimal("0.8") else report.ok)("spend", line)
-
-    free = FreeTierBudget(redis)
-    used, usable = await free.used_today(), free.usable
-    left = max(usable - used, 0)
-    detail = f"{_count(used)} attempts of {_count(usable)} usable today"
-    if left == 0:
-        report.bad("free-model allowance spent", detail)
-        # Worth being exact about whose number this is. It is *ours*, counted before each attempt
-        # and deliberately an over-count — retries and calls that never reached a provider are in
-        # it. A halt would mean OpenRouter refused us; this only means we decided to stop.
-        report.plain("our own count of attempts, not a refusal from OpenRouter")
-        report.plain("free games wait for the UTC midnight reset")
-    elif left < usable * 0.15:
-        report.warn("free-model allowance nearly spent", f"{detail} ({left} left)")
-    else:
-        report.ok("free tier", f"{detail} ({left} left)")
 
 
 async def show_workers(report: Report, redis: Any) -> None:

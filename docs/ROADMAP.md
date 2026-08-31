@@ -70,6 +70,7 @@ launch.
 | **Whether a provider's own output ceiling should forfeit a model is unsettled.** ADR-0021 keeps `TRUNCATED` rated once our own `max_tokens` is excluded from the strike count. ADR-0019's reasoning cuts the other way — a ceiling measures the endpoint, not the weights — and the two cases are distinguishable in the response, so this is a switch rather than a philosophy. Revisit once the compaction work has run a full pool. | Phase 12 |
 
 | **A 402 may not always mean the account is empty.** OpenRouter is reported — by users, not by their docs — to check a key's remaining budget against `max_tokens`, the maximum *possible* output, so a large request can be refused against a balance that would serve a smaller one. `worker._halt_on_credits` handles it by consulting the balance first and pausing only that game when the account visibly has money, but the better answer would be to retry with a smaller ceiling. Never yet observed here. | Phase 5 |
+| **Nothing reports how much of the free allowance is left**, and nothing can (ADR-0023). We deleted our own count because it was an over-count that stopped play while OpenRouter was still serving us; the cost is that `status` can say the harness is halted but never how close it is to being. A header would fix it if one ever appears. | Phase 5 |
 
 Deliberate limitations, not gaps: no clock, and human draw offers are advisory only.
 

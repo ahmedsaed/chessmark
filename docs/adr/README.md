@@ -16,7 +16,7 @@ supersedes the old one, rather than an edit.
 | [0008](0008-game-events-log.md) | A single `game_events` log powers live, reconnect, and replay | Accepted |
 | [0009](0009-dedicated-say-tool.md) | Trash talk via a dedicated `say` tool | Accepted |
 | [0010](0010-defer-stockfish.md) | Defer Stockfish, but ship the schema for it now | Accepted |
-| [0011](0011-server-keys-layered-budgets.md) | Server-held API keys with four layers of budget control | Accepted |
+| [0011](0011-server-keys-layered-budgets.md) | Server-held API keys with four layers of budget control | Amended by [0023](0023-one-source-of-truth-for-the-free-allowance.md) |
 | [0012](0012-nonstandard-local-ports.md) | Non-standard local ports | Accepted |
 | [0013](0013-design-system.md) | Design system: Board & Amber, dark only, conversation-led | Accepted |
 | [0014](0014-provider-routing-and-quantization.md) | Pin provider routing and exclude sub-8-bit quantization | Superseded in part by [0015](0015-quantization-as-identity-and-pinned-endpoints.md) |
@@ -28,6 +28,7 @@ supersedes the old one, rather than an edit.
 | [0020](0020-claimable-draws.md) | Threefold and the fifty-move rule are claimed, not applied | Accepted |
 | [0021](0021-measured-windows-and-the-compaction-ladder.md) | The window is measured, and compaction trims before it summarises | Accepted |
 | [0022](0022-one-owner-per-ply.md) | A ply has one owner, and a game that ended stays ended | Accepted |
+| [0023](0023-one-source-of-truth-for-the-free-allowance.md) | The free allowance is OpenRouter's number, not ours | Accepted |
 
 ## Template
 

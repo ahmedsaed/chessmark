@@ -57,6 +57,14 @@ SOURCE_OPERATOR = "operator"
 #: it and there is no midnight job to fail to run — the same reasoning the spend counters use.
 SOURCE_FREE_TIER = "free_tier"
 
+#: Everything stops: the account cannot serve any request, or somebody said stop.
+SCOPE_ALL = "all"
+
+#: Only `:free` models stop. OpenRouter's daily allowance is a cap on the *free* distribution, so a
+#: paid model is unaffected by it and stopping one would be an outage for a limit it is not subject
+#: to. The 402 and the operator halt are `all`; only the daily cap is this.
+SCOPE_FREE = "free"
+
 
 @dataclass(frozen=True, slots=True)
 class HaltState:
@@ -78,10 +86,18 @@ class HaltState:
     #: When this halt lifts on its own, for the one source that knows. `None` means it does not.
     until: dt.datetime | None = None
 
+    #: What this halt stops. `all` for an empty account or an operator; `free` for the daily
+    #: free-model allowance, which paid models do not draw on.
+    scope: str = SCOPE_ALL
+
     @property
     def self_clearing(self) -> bool:
         """Whether a credit probe may lift this. Not the same as expiring on its own."""
         return self.source == SOURCE_CREDITS
+
+    def covers(self, model: str) -> bool:
+        """Whether this halt stops a call to `model`."""
+        return self.scope == SCOPE_ALL or model.endswith(":free")
 
 
 class Halt:
@@ -116,6 +132,7 @@ class Halt:
                     if data.get("until") is not None
                     else None
                 ),
+                scope=str(data.get("scope") or SCOPE_ALL),
             )
         except (ValueError, KeyError, TypeError):
             log.exception("unreadable halt value; treating the system as running")
@@ -131,6 +148,7 @@ class Halt:
         source: str = SOURCE_OPERATOR,
         balance_usd: Decimal | None = None,
         until: dt.datetime | None = None,
+        scope: str = SCOPE_ALL,
         now: dt.datetime | None = None,
     ) -> HaltState:
         """Stop everything.
@@ -151,6 +169,7 @@ class Halt:
             at=stamp,
             balance_usd=balance_usd,
             until=until,
+            scope=scope,
         )
         payload = json.dumps(
             {
@@ -159,6 +178,7 @@ class Halt:
                 "at": state.at.isoformat(),
                 "balance_usd": str(state.balance_usd) if state.balance_usd is not None else None,
                 "until": state.until.isoformat() if state.until is not None else None,
+                "scope": state.scope,
             }
         )
 
@@ -174,7 +194,12 @@ class Halt:
             await self._redis.set(KEY, payload, ex=seconds)
         else:
             await self._redis.set(KEY, payload)
-        log.error("halting every model call (%s): %s", state.source, state.reason)
+        log.error(
+            "halting %s model calls (%s): %s",
+            "every" if state.scope == SCOPE_ALL else state.scope,
+            state.source,
+            state.reason,
+        )
         return state
 
     async def clear(self) -> bool:

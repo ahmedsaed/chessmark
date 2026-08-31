@@ -15,7 +15,7 @@ import datetime as dt
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from chessmark.core.budget import FreeTierBudget
+from chessmark.core.halt import SCOPE_FREE, Halt
 from chessmark.db import tournaments as repo
 from chessmark.db.models import Tournament
 from chessmark.orchestration.tournament import advance, within_window
@@ -100,10 +100,11 @@ async def test_the_same_event_plays_inside_its_hours(
     assert step.started == 1
 
 
-async def test_a_spent_free_tier_allowance_stops_a_pool(
+async def test_a_halt_stops_a_pool_scheduling_into_it(
     db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue, redis
 ) -> None:
-    """The failure this exists to prevent: past the allowance, every game abandons."""
+    """Starting a game under a halt produces one the worker can only answer with `halted`, and a
+    pool that keeps scheduling fills its concurrency with games that cannot move (OPS-19)."""
     tournament_id, _ = await make_tournament(
         db,
         models=4,
@@ -111,21 +112,22 @@ async def test_a_spent_free_tier_allowance_stops_a_pool(
         free=True,
     )
 
-    budget = FreeTierBudget(redis, daily_limit=100, reserve=10)
-    await budget.record(95)  # past the 90 usable
+    halt = Halt(redis)
+    await halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
 
-    step = await advance(sessionmaker, queue, tournament_id=tournament_id, free_tier=budget)
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id, halt=halt)
     db.expire_all()
 
     assert step.started == 0
-    assert "free-tier allowance is spent" in step.holding
+    assert "harness is halted" in step.holding
     assert len(await repo.in_flight(db, tournament_id)) == 0
 
 
-async def test_an_event_of_paid_models_ignores_the_free_allowance(
+async def test_a_paid_event_ignores_a_free_scoped_halt(
     db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue, redis
 ) -> None:
-    """The allowance is a free-tier limit. A paid event is bounded by money instead."""
+    """The daily cap is a limit on the *free* distribution. A paid event never drew on it, and
+    stopping one would be an outage for a limit it is not subject to."""
     tournament_id, _ = await make_tournament(
         db,
         models=4,
@@ -133,13 +135,33 @@ async def test_an_event_of_paid_models_ignores_the_free_allowance(
         free=False,
     )
 
-    budget = FreeTierBudget(redis, daily_limit=100, reserve=10)
-    await budget.record(500)
+    halt = Halt(redis)
+    await halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
 
-    step = await advance(sessionmaker, queue, tournament_id=tournament_id, free_tier=budget)
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id, halt=halt)
 
     assert step.holding == ""
     assert step.started == 1
+
+
+async def test_an_account_wide_halt_stops_a_paid_event_too(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue, redis
+) -> None:
+    """An empty account or an operator's stop covers everything, whatever it costs."""
+    tournament_id, _ = await make_tournament(
+        db,
+        models=4,
+        config=TournamentConfig(format=Format.ROUND_ROBIN, max_concurrent=1),
+        free=False,
+    )
+
+    halt = Halt(redis)
+    await halt.set("our provider account is out of credits (402)")
+
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id, halt=halt)
+
+    assert step.started == 0
+    assert "harness is halted" in step.holding
 
 
 async def test_a_daily_game_cap_holds_the_event(
@@ -164,36 +186,3 @@ async def test_a_daily_game_cap_holds_the_event(
 
     assert second.started == 0
     assert "daily cap" in second.holding
-
-
-# ====================================================================== the counter
-
-
-async def test_the_counter_counts_attempts_not_completions(redis) -> None:
-    """A failed call never reaches `llm_calls` — the row is written from a completion — so a count
-    taken from the database misses exactly the retries a rate limit produces."""
-    budget = FreeTierBudget(redis, daily_limit=1000, reserve=100)
-
-    for _ in range(5):
-        await budget.record()
-
-    assert await budget.used_today() == 5
-    assert await budget.remaining() == 895
-
-
-async def test_a_limit_of_zero_means_no_limit(redis) -> None:
-    """Matching `GlobalBudget`: an unset budget must not silently stop the whole system."""
-    budget = FreeTierBudget(redis, daily_limit=0)
-    await budget.record(10_000)
-
-    assert not await budget.tripped()
-
-
-async def test_the_reserve_is_held_back(redis) -> None:
-    """So a pool running unattended cannot consume the last of the day and leave a person unable
-    to start a game."""
-    budget = FreeTierBudget(redis, daily_limit=1000, reserve=100)
-    await budget.record(900)
-
-    assert await budget.tripped(), "the usable allowance is 900, not 1000"
-    assert await budget.remaining() == 0

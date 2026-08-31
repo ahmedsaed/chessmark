@@ -37,7 +37,7 @@ sys.path.insert(0, str(API_ROOT / "src"))
 import sqlalchemy as sa  # noqa: E402
 from redis.asyncio import Redis  # noqa: E402
 
-from chessmark.core.budget import FreeTierBudget  # noqa: E402
+from chessmark.core.halt import Halt  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import ProviderCooldown  # noqa: E402
 from chessmark.db import tournaments as repo  # noqa: E402
@@ -188,7 +188,7 @@ async def cmd_run(args: argparse.Namespace) -> int:
     redis: Redis[Any] = Redis.from_url(str(settings.redis_url))
     queue = TurnQueue(redis)
     await queue.ensure_group()
-    free_tier = FreeTierBudget(redis)
+    halt = Halt(redis)
     # Read, not written, here: the worker records a cooldown when a provider refuses, and this
     # reads it to decide who may be paired. Two containers, one Redis, one fact.
     cooldown = ProviderCooldown(redis)
@@ -209,7 +209,7 @@ async def cmd_run(args: argparse.Namespace) -> int:
                 sessionmaker,
                 queue,
                 tournament_id=tournament_id,
-                free_tier=free_tier,
+                halt=halt,
                 cooldown=cooldown,
             )
 

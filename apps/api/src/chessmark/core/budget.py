@@ -1,5 +1,13 @@
 """The global daily spend kill switch — layer 1 of ADR-0011 (AUTH-05).
 
+**The free tier used to be counted here and is not any more** (ADR-0023). We kept our own tally of
+free-model requests because OpenRouter reports no header for the allowance, and it was always an
+over-count: it incremented before each attempt, so retries and calls that never reached a provider
+were in it. Two sources of truth for one number, and ours could not be right — it declared the
+allowance spent at 1,010 attempts while OpenRouter was still serving us, and froze every free game
+for the rest of the UTC day. OpenRouter says when the allowance is gone, in a 429 that names
+`free-models-per-day` and carries the reset time; that is now the only thing that stops us.
+
 The outermost defence, and the only one that does not care who is spending or on what. It exists
 because the other three layers all trust something: the per-user quota trusts that we identified
 the user, the per-game cap trusts that the game is the unit of abuse, the per-turn ceiling trusts
@@ -106,92 +114,3 @@ class GlobalBudget:
         if self._limit <= 0:
             return None
         return max(Decimal(0), self._limit - await self.spent_today(day=day))
-
-
-# ---------------------------------------------------------------------- the free tier
-
-
-#: OpenRouter allows 1,000 free-model requests a day once ten credits have been purchased (50
-#: before that). It is **per account**, not per model or per event, so every pool, every human
-#: game against a free model and every `make play` draw on the same allowance.
-FREE_TIER_DAILY_REQUESTS = 1000
-
-#: What we will actually use. The gap is not caution for its own sake:
-#:
-#: 1. A *failed* call leaves no `llm_calls` row — the row is written after a completion, and an
-#:    error raises before it — so anything counted from the database undercounts by however many
-#:    retries and 429s occurred. This counter is kept in Redis for that reason, but a process that
-#:    dies mid-call still loses one.
-#: 2. A pool running unattended must not consume the last of the day's allowance and leave a
-#:    person unable to start a game.
-FREE_TIER_RESERVE = 100
-
-FREE_KEY_PREFIX = "chessmark:free-requests"
-
-
-def free_key_for(day: dt.date) -> str:
-    return f"{FREE_KEY_PREFIX}:{day.isoformat()}"
-
-
-class FreeTierBudget:
-    """Today's free-model request count, and whether the allowance has run out.
-
-    Layer 1 of ADR-0011 counts dollars; this counts *requests*, because the free tier is not
-    limited by money — it is limited by a number that no response header reports and no endpoint
-    exposes. The only way to stay under it is to count our own calls and stop early.
-
-    Exceeding it does not fail loudly. OpenRouter starts refusing with its own daily 429, which
-    the gateway cannot tell apart from a provider's shared-pool 429, so it backs off politely and
-    then abandons the game — meaning a pool would spend the rest of the day churning through
-    pairings and producing nothing. Stopping first is the only way to avoid that.
-    """
-
-    def __init__(
-        self,
-        redis: Any,
-        *,
-        daily_limit: int = FREE_TIER_DAILY_REQUESTS,
-        reserve: int = FREE_TIER_RESERVE,
-    ) -> None:
-        self._redis = redis
-        self._limit = daily_limit
-        self._reserve = reserve
-
-    @property
-    def limit(self) -> int:
-        return self._limit
-
-    @property
-    def usable(self) -> int:
-        """The allowance minus the reserve — what an unattended event may actually spend."""
-        return max(self._limit - self._reserve, 0)
-
-    async def used_today(self, *, day: dt.date | None = None) -> int:
-        raw = await self._redis.get(free_key_for(day or today()))
-        return int(raw) if raw else 0
-
-    async def record(self, requests: int = 1, *, day: dt.date | None = None) -> int:
-        """Count calls we have made. Returns the new total.
-
-        Called for **every attempt**, including ones that fail, because the provider counts those
-        too and they are exactly what a database-derived count would miss.
-        """
-        key = free_key_for(day or today())
-        pipe = self._redis.pipeline()
-        pipe.incrby(key, requests)
-        pipe.expire(key, KEY_TTL_SECONDS)
-        total, _ = await pipe.execute()
-        return int(total)
-
-    async def remaining(self, *, day: dt.date | None = None) -> int:
-        return max(self.usable - await self.used_today(day=day), 0)
-
-    async def tripped(self, *, day: dt.date | None = None) -> bool:
-        """True when the usable allowance is gone.
-
-        A limit of zero or less means **no limit**, matching `GlobalBudget`: an unset budget must
-        not silently stop the whole system.
-        """
-        if self._limit <= 0:
-            return False
-        return await self.used_today(day=day) >= self.usable
