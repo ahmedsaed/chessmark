@@ -76,11 +76,17 @@ PENDING_WARN = 25
 #: reclaims at fifteen minutes, so past that it is already being taken over.
 CONSUMER_IDLE_WARN = dt.timedelta(minutes=15)
 
-#: Past this with nothing held, a consumer is a ghost: Redis remembers a consumer name forever, so
-#: every worker process that has ever run leaves one behind. Twenty-two of them at 2.6 days idle
-#: told a reader nothing except that the container had been restarted a lot, and buried the one
-#: line that mattered.
-CONSUMER_GHOST_AFTER = dt.timedelta(hours=2)
+#: Past this with nothing held, a consumer is dead.
+#:
+#: **Sixty seconds, because a live worker touches the server every two.** It blocks on
+#: `XREADGROUP` for `block_ms=2000` and comes straight back, so a consumer that has not been seen
+#: for a minute is not "quiet", it is gone. The first threshold here was two hours, which listed
+#: six consumers for three running containers and left a reader counting.
+#:
+#: They accumulate because a worker's name is `worker-{uuid4}`, generated per **process**, so every
+#: restart abandons one. Redis keeps a consumer name forever; only `XGROUP DELCONSUMER` removes it,
+#: and this command is read-only.
+CONSUMER_DEAD_AFTER = dt.timedelta(seconds=60)
 
 
 class Report:
@@ -275,12 +281,13 @@ async def show_budgets(report: Report, redis: Any) -> None:
 
 
 async def show_workers(report: Report, redis: Any) -> None:
-    """Who is consuming the queue, and what each of them is holding."""
+    """Who is consuming the queue, what each of them holds, and which game that is."""
     report.head("workers")
     try:
         groups = await redis.xinfo_groups(DEFAULT_STREAM)
         consumers = await redis.xinfo_consumers(DEFAULT_STREAM, DEFAULT_GROUP)
         length = await redis.xlen(DEFAULT_STREAM)
+        holding = await _held_games(redis)
     except Exception as error:  # a broken queue is a status line, not a crash
         report.bad("could not read the queue", str(error)[:80])
         return
@@ -292,32 +299,58 @@ async def show_workers(report: Report, redis: Any) -> None:
     else:
         report.ok("queue", detail)
 
-    if not consumers:
-        report.bad("no workers are consuming the queue", "nothing will play")
-        return
-
-    rows, marks, ghosts = [], [], 0
+    rows, marks, dead = [], [], 0
     for consumer in sorted(consumers, key=lambda c: int(c.get("idle", 0))):
         name = str(consumer.get("name", "?"))
         held = int(consumer.get("pending", 0))
         idle = int(int(consumer.get("idle", 0)) / 1000)
 
-        if held == 0 and idle > CONSUMER_GHOST_AFTER.total_seconds():
-            ghosts += 1
+        if held == 0 and idle > CONSUMER_DEAD_AFTER.total_seconds():
+            dead += 1
             continue
 
         stalled = held > 0 and idle > CONSUMER_IDLE_WARN.total_seconds()
-        rows.append([_cut(name, 24, report.wide), str(held), _span(idle)])
+        rows.append(
+            [
+                _cut(name, 24, report.wide),
+                # What it is *doing*, which is the question a reader actually has. `XINFO` only
+                # counts deliveries; the game id comes from the pending entries themselves.
+                ", ".join(holding.get(name, [])) or ("waiting for work" if not held else str(held)),
+                _span(idle),
+            ]
+        )
         marks.append(f"{AMBER}▲{OFF}" if stalled else f"{GREEN}●{OFF}")
         if stalled:
             report.concerns.append(f"{AMBER}▲{OFF} worker {name} has held a job for {_span(idle)}")
 
     if not rows:
-        report.warn("no worker has touched the queue recently", f"{ghosts} idle consumer(s)")
+        report.bad("no worker is consuming the queue", "nothing will play")
     else:
-        report.table(["worker", "holding", "idle"], rows, marks)
-    if ghosts:
-        report.plain(f"{ghosts} consumer(s) from earlier worker processes, holding nothing")
+        report.table(["worker", "playing", "last seen"], rows, marks)
+    if dead:
+        # Not a fault: a name outlives its process and only `XGROUP DELCONSUMER` clears it.
+        report.plain(f"{dead} name(s) left behind by earlier worker processes")
+
+
+async def _held_games(redis: Any) -> dict[str, list[str]]:
+    """Which game each consumer is currently holding a job for.
+
+    `XINFO CONSUMERS` gives a count and no identity, so the pending entries are read and their
+    message bodies looked up — the job carries `game_id`, which is the only thing a reader wants
+    to know when a worker has been busy for twenty minutes.
+    """
+    held: dict[str, list[str]] = {}
+    entries = await redis.xpending_range(DEFAULT_STREAM, DEFAULT_GROUP, min="-", max="+", count=50)
+    for entry in entries:
+        consumer = str(entry.get("consumer", ""))
+        message_id = str(entry.get("message_id", ""))
+        rows = await redis.xrange(DEFAULT_STREAM, min=message_id, max=message_id)
+        for _id, fields in rows:
+            game = str(fields.get("game_id", ""))[:8]
+            ply = str(fields.get("expected_ply", "?"))
+            if game:
+                held.setdefault(consumer, []).append(f"{game}@{ply}")
+    return held
 
 
 async def show_cooldowns(report: Report, redis: Any) -> None:
@@ -376,16 +409,27 @@ async def show_games(report: Report, session: Any) -> None:
     rows: list[list[str]] = []
     marks: list[str] = []
     notes: list[str] = []
+    # Whether each event is already running as many games as it may. A paused game that is due to
+    # resume and cannot is waiting on this, not on a provider.
+    at_capacity = await _events_at_capacity(session)
+
     for game, last_at in in_flight:
+        blocked = await _event_of(session, game.id) in at_capacity
         seats = await _seat_names(session, game.id)
         waited, pauses = await _pause_history(session, game.id)
         stale = last_at is None or _now() - _aware(last_at) > STUCK_AFTER
 
         if game.status is GameStatus.PAUSED:
-            state, worry = (
-                f"paused {ahead(game.resume_after)}",
-                waited / 86_400 > PAUSE_WARN_FRACTION,
+            # **"paused due" said nothing.** A game whose `resume_after` has passed and which is
+            # still paused is not stuck: `reconciler.with_room_to_run` holds it because its event
+            # is at its concurrency bound — a pool of one runs one game and queues the rest, which
+            # is the whole point of the bound. Saying which of the two it is turns a puzzling line
+            # into an obvious one.
+            due = game.resume_after is None or _aware(game.resume_after) <= _now()
+            state = (
+                "waiting for a slot" if due and blocked else f"resumes {ahead(game.resume_after)}"
             )
+            worry = waited / 86_400 > PAUSE_WARN_FRACTION
         else:
             state, worry = "live", stale
 
@@ -443,10 +487,17 @@ async def show_tournaments(report: Report, session: Any) -> None:
                 str(event.max_concurrent),
             ]
         )
-        if share > 0.25:
+        # **A free pool abandons games, and that is not news.** Free endpoints go dark for hours
+        # and a 24-hour patience window runs out; a third of the field lost is the ordinary shape
+        # of a free event, and an alert that always fires is one nobody reads. The count stays in
+        # the table either way — what changes is whether it interrupts.
+        #
+        # A *paid* event is different: an abandonment there is money spent for no result.
+        free = await _uses_free_models(session, event)
+        if share > (0.75 if free else 0.10):
             marks.append(f"{RED}✖{OFF}")
             report.concerns.append(f"{RED}✖{OFF} {event.slug}: {share:.0%} of the field abandoned")
-        elif share > 0.1:
+        elif share > 0.25 and not free:
             marks.append(f"{AMBER}▲{OFF}")
             report.concerns.append(f"{AMBER}▲{OFF} {event.slug}: {share:.0%} abandoned")
         else:
@@ -454,34 +505,40 @@ async def show_tournaments(report: Report, session: Any) -> None:
 
     report.table(["event", "status", "settled", "aband", "to come", "conc"], rows, marks)
 
-    for event in events:
-        if event.status.value == "running":
-            await _standings(report, session, event)
 
-
-async def _standings(report: Report, session: Any, event: Any, top: int = 5) -> None:
-    """The leading entrants, so a glance says who is actually winning."""
-    pairings = list(
+async def _uses_free_models(session: Any, event: Any) -> bool:
+    """Whether any entrant is a free variant, and so is expected to be refused sometimes."""
+    keys = list(
         await session.scalars(
-            sa.select(TournamentGame).where(
-                TournamentGame.tournament_id == event.id, TournamentGame.white_score.is_not(None)
-            )
+            sa.select(TournamentGame.white_key).where(TournamentGame.tournament_id == event.id)
         )
     )
-    if not pairings:
-        return
+    return any(str(key).endswith(":free") for key in keys)
 
-    scores: dict[str, float] = {}
-    for pairing in pairings:
-        white = float(pairing.white_score)
-        scores[pairing.white_key] = scores.get(pairing.white_key, 0.0) + white
-        scores[pairing.black_key] = scores.get(pairing.black_key, 0.0) + (1.0 - white)
 
-    ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)[:top]
-    report.plain(f"{event.slug} — leaders")
-    report.table(
-        ["entrant", "points"],
-        [[_cut(key, 48, report.wide), f"{points:g}"] for key, points in ranked],
+async def _events_at_capacity(session: Any) -> set[Any]:
+    """Events already running `max_concurrent` games, so nothing else may start or resume."""
+    at_capacity = set()
+    for event in await session.scalars(sa.select(Tournament)):
+        running = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(TournamentGame)
+            .join(Game, Game.id == TournamentGame.game_id)
+            .where(
+                TournamentGame.tournament_id == event.id,
+                TournamentGame.white_score.is_(None),
+                TournamentGame.abandoned_reason.is_(None),
+                Game.status.in_([GameStatus.PENDING, GameStatus.RUNNING]),
+            )
+        )
+        if int(running or 0) >= event.max_concurrent:
+            at_capacity.add(event.id)
+    return at_capacity
+
+
+async def _event_of(session: Any, game_id: Any) -> Any:
+    return await session.scalar(
+        sa.select(TournamentGame.tournament_id).where(TournamentGame.game_id == game_id)
     )
 
 
