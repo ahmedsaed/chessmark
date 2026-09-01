@@ -153,11 +153,22 @@ class Window:
     """What the endpoint serving this seat will accept.
 
     `context` of 0 means unknown, and unknown disables compaction rather than guessing: a provider
-    that declares nothing is not a provider to make arithmetic about.
+    that declares nothing is not a provider to make arithmetic about. `max_completion` reads the
+    same way.
+
+    **Two ceilings, not one.** The context window bounds prompt *plus* answer; `max_completion`
+    bounds the answer alone, and an endpoint can be generous with the first and strict with the
+    second — Poolside serves `laguna-s-2.1` in a 256,000-token window and will not emit more than
+    32,768 tokens in one response. Clamping against context alone therefore asked for 64,000
+    output, got 32,768 with `finish_reason: "length"`, and could not tell that apart from a model
+    that had rambled to a stop of its own accord. That mis-attribution forfeited a model holding
+    rook and two bishops against a lone pawn (ADR-0024).
     """
 
     context: int = 0
     reserve: int = DEFAULT_RESERVE_TOKENS
+    #: The endpoint's own ceiling on a single response. 0 means it declares none.
+    max_completion: int = 0
 
     @property
     def known(self) -> bool:
@@ -195,6 +206,11 @@ class Window:
         Raises `NoRoomToAnswerError` rather than returning a number too small to answer in. That is a
         state for the caller to act on — compact, or stop — not a value to pass to a provider.
         """
+        # The endpoint's own answer ceiling binds first, and binds even when the window is unknown:
+        # it is a flat fact about the endpoint rather than arithmetic over the transcript. Asking
+        # for more than this is not a bigger request, it is an unattributable truncation.
+        requested = min(requested, self.max_completion) if self.max_completion else requested
+
         if not self.known:
             return requested
         if prompt_tokens is None:
@@ -303,11 +319,19 @@ async def window_for(
 
     Falls back to the model's figure when the endpoint declares nothing, and to unknown when
     neither does — and unknown disables compaction rather than guessing.
+
+    Reads the endpoint's `max_completion_tokens` alongside it. That column has been synced from
+    OpenRouter since the registry existed and nothing had ever read it, which is how we came to ask
+    an endpoint for twice the output it will ever produce (ADR-0024).
     """
     from chessmark.db.models import ModelEndpoint, ModelRegistry
 
     query = (
-        sa.select(ModelEndpoint.context_length, ModelRegistry.context_length)
+        sa.select(
+            ModelEndpoint.context_length,
+            ModelEndpoint.max_completion_tokens,
+            ModelRegistry.context_length,
+        )
         .join(ModelRegistry, ModelRegistry.id == ModelEndpoint.model_id)
         .where(ModelRegistry.openrouter_id == model_slug)
     )
@@ -321,8 +345,15 @@ async def window_for(
         )
         return Window(context=int(model_context or 0), reserve=reserve)
 
-    endpoint_context, model_context = row
-    return Window(context=int(endpoint_context or model_context or 0), reserve=reserve)
+    endpoint_context, endpoint_max_completion, model_context = row
+    # **No fallback for `max_completion`.** The model's advertised figure describes the model, and
+    # the ceiling that refuses is the endpoint's; where the endpoint declares none, unknown is the
+    # honest answer and the request goes out unclamped, as it always did.
+    return Window(
+        context=int(endpoint_context or model_context or 0),
+        reserve=reserve,
+        max_completion=int(endpoint_max_completion or 0),
+    )
 
 
 def plan_compaction(

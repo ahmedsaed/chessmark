@@ -59,7 +59,6 @@ def test_every_chess_result_counts(termination: Termination) -> None:
     [
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
-        Termination.TRUNCATED,
         Termination.CONTEXT_EXCEEDED,
     ],
 )
@@ -85,6 +84,12 @@ def test_a_forfeit_counts(termination: Termination) -> None:
         # `game/referee.py` and stayed rated here, which is the half that actually reaches the
         # leaderboard.
         Termination.TIMEOUT,
+        # **`TRUNCATED` moved here too, and for the same reason** (ADR-0024). ADR-0021 excluded the
+        # case where *our* `max_tokens` cut the answer and kept the endpoint's own ceiling rated,
+        # calling it a generous natural budget. It is not a budget, it is a property of the host:
+        # Poolside stops `laguna-s-2.1` at 32,768 output tokens and we were asking for 64,000, so
+        # a game the model had won by rook and two bishops against a lone pawn was scored a loss.
+        Termination.TRUNCATED,
     ],
 )
 def test_a_harness_stop_does_not_count(termination: Termination) -> None:

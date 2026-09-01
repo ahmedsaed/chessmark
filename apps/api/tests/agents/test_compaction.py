@@ -143,6 +143,47 @@ class TestTheCompletionCap:
         assert Window(context=0).completion_cap(None, 64_000) == 64_000
 
 
+class TestTheEndpointsOwnAnswerCeiling:
+    """The second ceiling, and it was never read (ADR-0024).
+
+    `ModelEndpoint.max_completion_tokens` has been synced from OpenRouter since the registry
+    existed and nothing consulted it, so a 256,000-token window was taken as licence to ask for
+    64,000 output from an endpoint that never emits more than 32,768. Every long answer came back
+    at `finish_reason: "length"` having stopped *short* of what we asked, which is exactly the
+    signature the attribution check reads as "the model could not finish" — so `laguna-s-2.1` was
+    forfeited out of a game it had won by rook and two bishops against a lone pawn.
+    """
+
+    def test_it_clamps_to_what_the_endpoint_will_emit(self) -> None:
+        window = Window(context=256_000, max_completion=32_768)
+
+        assert window.completion_cap(34_000, 64_000) == 32_768
+
+    def test_it_binds_even_when_the_window_is_unknown(self) -> None:
+        """A flat fact about the endpoint, not arithmetic over the transcript — so it does not need
+        a context length to be true."""
+        assert Window(context=0, max_completion=32_768).completion_cap(None, 64_000) == 32_768
+
+    def test_it_binds_on_a_games_first_call(self) -> None:
+        """The one call with nothing measured yet. Half a 256k window is 128,000, which is four
+        times what the endpoint would ever return."""
+        assert Window(context=256_000, max_completion=32_768).completion_cap(None, 64_000) == 32_768
+
+    def test_the_tighter_of_the_two_wins(self) -> None:
+        """Whichever binds first. A nearly-full window still governs when it leaves less room than
+        the endpoint's answer ceiling."""
+        window = Window(context=64_000, max_completion=32_768)
+
+        assert window.completion_cap(60_000, 64_000) == 64_000 - 60_000 - 256
+
+    def test_an_undeclared_ceiling_changes_nothing(self) -> None:
+        """0 means the endpoint declares none, and unknown is not a number to clamp with."""
+        assert Window(context=256_000, max_completion=0).completion_cap(1_000, 64_000) == 64_000
+
+    def test_it_is_still_a_ceiling_and_not_a_target(self) -> None:
+        assert Window(context=256_000, max_completion=32_768).completion_cap(1_000, 4_000) == 4_000
+
+
 # ====================================================================== what to fold
 
 

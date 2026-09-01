@@ -31,7 +31,9 @@ from tests.agents.conftest import Table, play_turn
 pytestmark = pytest.mark.integration
 
 
-async def _register(db: AsyncSession, *, slug: str, context: int) -> None:
+async def _register(
+    db: AsyncSession, *, slug: str, context: int, max_completion: int | None = None
+) -> None:
     await sync_model_registry(
         db, [{"openrouter_id": slug, "display_name": slug, "context_length": context}]
     )
@@ -44,6 +46,7 @@ async def _register(db: AsyncSession, *, slug: str, context: int) -> None:
             model_id=model_id,
             provider_name="TestProvider",
             context_length=context,
+            max_completion_tokens=max_completion,
             supports_tools=True,
             is_active=True,
         )
@@ -134,6 +137,67 @@ async def test_a_full_window_fails_the_turn_instead_of_forfeiting_the_model(
     assert result.outcome is None, "a harness bound is never a finding about a player (ADR-0019)"
     assert "leaves" in (result.error or ""), result.error
     assert await _max_tokens_asked(db) == [], "and no doomed request was sent"
+
+
+async def test_we_never_ask_for_more_output_than_the_endpoint_will_give(
+    db: AsyncSession, table: Table
+) -> None:
+    """The window is not the only ceiling, and the other one had never been read (ADR-0024).
+
+    Poolside serves `laguna-s-2.1` in a 256,000-token window and stops at 32,768 output tokens. We
+    asked for 64,000, so every long answer came back at `finish_reason: "length"` having stopped
+    short of what we asked — which is precisely the signature `_our_ceiling_bound` reads as "the
+    endpoint cut it, so the model could not finish". A game won by rook and two bishops against a
+    lone pawn was scored a loss on it.
+
+    Asking for what the endpoint will actually give is what closes that: the response then stops at
+    *our* number, which the harness already knew not to blame anybody for.
+    """
+    slug = "scripted/capped-output"
+    await _register(db, slug=slug, context=256_000, max_completion=32_768)
+
+    await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("make_move", move="e4"), prompt_tokens=34_000)),
+        model=slug,
+        colour=Colour.WHITE,
+    )
+
+    assert await _max_tokens_asked(db) == [32_768], (
+        "half of a 256,000-token window is 128,000, and the endpoint would never have emitted it"
+    )
+
+
+async def test_an_endpoint_that_declares_no_output_ceiling_is_unaffected(
+    db: AsyncSession, table: Table
+) -> None:
+    """Unknown is not a number to clamp with, so the request goes out exactly as it always did."""
+    slug = "scripted/uncapped-output"
+    await _register(db, slug=slug, context=256_000, max_completion=None)
+
+    await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("make_move", move="e4"))),
+        model=slug,
+        colour=Colour.WHITE,
+    )
+
+    assert await _max_tokens_asked(db) == [64_000], (
+        "the full request, bounded only by half the window — which is larger here"
+    )
+
+
+async def test_the_endpoints_ceiling_reaches_the_window(db: AsyncSession) -> None:
+    """`window_for` reads both columns off the one row it already fetches."""
+    slug = "scripted/window-read"
+    await _register(db, slug=slug, context=256_000, max_completion=32_768)
+
+    window = await compaction.window_for(db, model_slug=slug, provider="TestProvider")
+
+    assert window.context == 256_000
+    assert window.max_completion == 32_768
 
 
 def test_the_estimate_is_gone() -> None:

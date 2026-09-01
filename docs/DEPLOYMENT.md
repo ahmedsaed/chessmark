@@ -334,10 +334,15 @@ count of rows far larger than you expected is a reason to stop rather than to ad
 ./chessmark resume <game-id>
 ```
 
-Only endings **we** imposed can be reopened — a budget, a ply cap, a provider we could not reach.
+Only endings **we** imposed can be reopened — a budget, a ply cap, a provider we could not reach,
+an answer cut off by an output ceiling ([ADR-0024](adr/0024-endpoint-output-ceilings-are-not-findings.md)).
 A checkmate is final and so is a forfeit: both are findings about a player, and a script that could
 replay one is a script that could replay a bad result until it improved. The refusal is the point
 of the command existing rather than a hand-written `UPDATE`.
+
+Reopening also **clears a stale forfeit on the seat**. The flag is a verdict written by the ending
+being reopened, and it is published — it is the leaderboard's forfeits column — so leaving it
+behind is the same mistake as leaving a resumed pairing scored.
 
 ```
 ./chessmark resume <game-id> --max-usd 2.50      # raise the ceiling that stopped it

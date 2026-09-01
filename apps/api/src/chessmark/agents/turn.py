@@ -38,13 +38,23 @@ from chessmark.agents.types import Completion, LlmError, RateLimit, ToolInvocati
 from chessmark.db.enums import EventType, ModerationStatus, TurnStatus
 from chessmark.db.models import Game, LlmCall, Message, Player, ToolCall, Turn
 from chessmark.db.repositories import append_event, record_ply
-from chessmark.game import Colour, MoveOutcome, Outcome, Referee, Termination
+from chessmark.game import (
+    FORFEIT_TERMINATIONS,
+    Colour,
+    MoveOutcome,
+    Outcome,
+    Referee,
+    Termination,
+)
 
 log = logging.getLogger(__name__)
 
-#: How many truncated responses a model may produce in one turn before forfeiting. More than one
-#: because the first truncation is often a model discovering how long its own reasoning runs; a
-#: model that cannot act in three attempts, having been told each time, is genuinely stuck.
+#: How many truncated responses a model may produce in one turn before the *turn* is failed. More
+#: than one because the first truncation is often a model discovering how long its own reasoning
+#: runs, and a nudge to think briefly frequently recovers the turn.
+#:
+#: Nobody is forfeited when they run out: the ceiling that cut the answer is ours or the endpoint's
+#: (ADR-0024).
 MAX_TRUNCATIONS = 3
 
 #: How many times a model may reply without calling a tool before forfeiting the turn (AGENT-05).
@@ -58,6 +68,21 @@ MAX_TRUNCATIONS = 3
 #: toolless reply in one turn ends it. A model that has been told four times, in the same turn,
 #: that prose does not move a piece is not going to move one.
 MAX_NUDGES = 3
+
+
+def _is_forfeit(result: TurnResult) -> bool:
+    """Whether this turn ended the game *against* its player.
+
+    Both halves are needed. A turn can carry `TurnStatus.FORFEITED` for a harness ceiling, and an
+    outcome can be a forfeit-shaped ending the referee had already recorded — so the status says
+    "this turn ended it" and the termination says "and that is a finding about the player".
+    """
+    outcome = result.outcome
+    return (
+        result.status is TurnStatus.FORFEITED
+        and outcome is not None
+        and outcome.termination in FORFEIT_TERMINATIONS
+    )
 
 
 class HarnessCeilingError(Exception):
@@ -548,7 +573,11 @@ class TurnRunner:
             limit.context,
         )
         window = compaction.Window(
-            context=limit.context, reserve=self.limits.context_reserve_tokens
+            context=limit.context,
+            reserve=self.limits.context_reserve_tokens,
+            # The endpoint corrected us about its *context*; it said nothing about its answer
+            # ceiling, and that one is still whatever the registry knows.
+            max_completion=(await self._endpoint_window()).max_completion,
         )
         # Deliberately *not* cached onto `self._cached_window`: this is what one endpoint said about
         # one request, and the registry's figure is what the rest of the game is planned against.
@@ -794,18 +823,25 @@ class TurnRunner:
     async def _retry_truncated(
         self, turn: Turn, result: TurnResult, completion: Completion
     ) -> bool:
-        """A response cut off at `finish_reason: "length"`. Whose ceiling did the cutting?
+        """A response cut off at `finish_reason: "length"`. **Nobody is forfeited for it.**
 
-        **Ours does not count.** We know exactly what we asked for, so this is a fact about the
-        response and not a judgement call: if the model stopped at our own `max_tokens`, the
-        harness ended the answer and blaming the model for it publishes a finding it did not earn
-        (invariant 11, ADR-0019). That is not hypothetical — a miscalculated window asked an
-        endpoint for **one** output token, every reply came back truncated, and four of them ended
-        a game `truncated`, `1-0`, against a model that had done nothing wrong.
+        The ceiling that cut the answer is either ours or the endpoint's, and neither is a property
+        of the weights (ADR-0024). Ours was never a finding — a miscalculated window once asked an
+        endpoint for **one** output token, every reply came back truncated, and four of them ended a
+        game `truncated`, `1-0`, against a model that had done nothing wrong (ADR-0021). The
+        endpoint's used to be, on the reasoning that its ceiling was a generous natural budget, and
+        that was wrong for the reason `TIMEOUT` was wrong: it measures the host. Poolside stops
+        `laguna-s-2.1` at 32,768 output tokens; the same weights served with a larger ceiling are
+        not cut off, and the difference decided a game the model had won by rook and two bishops
+        against a lone pawn.
 
-        A ceiling the *provider* imposed still counts, and `TRUNCATED` stays rated: with the window
-        arithmetic fixed (AGENT-19), what remains is a model that could not finish a turn inside a
-        budget set well above what any of them need, and reliability is the benchmark.
+        A cut-off answer is still *retried* — up to `MAX_TRUNCATIONS`, told each time to think
+        briefly and act, because a model often recovers on the second attempt and that is worth
+        more than failing the turn. What changed is the ending when the retries run out: the turn
+        fails and the worker decides, exactly as for a provider outage.
+
+        Raised immediately when the number was plainly ours: there is nothing for a nudge to fix if
+        we asked for less than the model needed to finish a sentence.
         """
         if self._our_ceiling_bound(completion):
             log.warning(
@@ -817,13 +853,12 @@ class TurnRunner:
 
         self._truncations += 1
         if self._truncations > MAX_TRUNCATIONS:
-            result.status = TurnStatus.FORFEITED
-            result.outcome = self._forfeit(
-                Termination.TRUNCATED,
-                f"{self.colour.value.capitalize()} was cut off by the output limit "
-                f"{self._truncations} times without ever acting.",
+            log.warning(
+                "%s was cut off %d times without acting; failing the turn, not the player",
+                self.model,
+                self._truncations,
             )
-            return False
+            raise HarnessCeilingError(self.model, self._requested_max_tokens or 0)
 
         await transcript.append_message(
             self.session,
@@ -1030,7 +1065,14 @@ class TurnRunner:
                 reasoning_tokens=Player.reasoning_tokens + result.reasoning_tokens,
                 cached_tokens=Player.cached_tokens + result.cached_tokens,
                 total_cost_usd=Player.total_cost_usd + result.cost_usd,
-                forfeited=Player.forfeited | (result.status is TurnStatus.FORFEITED),
+                # **The ending decides, not the turn's status.** `TurnStatus.FORFEITED` is also
+                # how a *harness* stop travels — `_over_budget` sets it for `BUDGET_EXCEEDED`,
+                # which `ratable.HARNESS_TERMINATIONS` explicitly says is not a finding — so ORing
+                # the status in marked a player forfeited for a ceiling of ours. Two games in the
+                # free pool were budget-stopped, reopened, and played on to a real checkmate and a
+                # real threefold draw; both stayed ratable and both carried a forfeit their model
+                # never earned onto the leaderboard's `forfeits` column (invariant 11, ADR-0024).
+                forfeited=Player.forfeited | _is_forfeit(result),
             )
         )
         await self.session.execute(

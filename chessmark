@@ -236,7 +236,6 @@ echo "select count(*) from games;" | ./chessmark sql'
 ./chessmark resume <game-id> --max-usd 2.50        # raise the ceiling that stopped it
 ./chessmark resume <game-id> --max-plies 400
 ./chessmark resume <game-id> --unclaimed-draw   # a threefold nobody was told about (ADR-0020)
-./chessmark resume <game-id> --harness-ceiling      # truncated by *our* max_tokens (ADR-0021)
 ./chessmark resume <game-id> --overwritten-verdict  # a race replaced an earlier harness stop (ADR-0022)
 
 # The last three reopen a forfeit, which the general rule refuses. Each is gated on the
