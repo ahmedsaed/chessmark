@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from chessmark import __version__
 from chessmark.api.deps import close_redis
 from chessmark.api.routes import (
     admin,
@@ -48,7 +49,7 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="Chessmark API",
-        version="0.1.0",
+        version=__version__,
         description=(
             "LLM agents playing chess. Reading is open to everyone — spectating and replays are "
             "the shareable surface. Creating a game spends money and is gated from Phase 9."

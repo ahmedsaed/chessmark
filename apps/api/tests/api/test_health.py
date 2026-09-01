@@ -6,6 +6,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from chessmark import __version__
 from chessmark.api.deps import get_redis, get_session
 from chessmark.main import create_app
 
@@ -21,7 +22,33 @@ async def test_liveness_needs_no_dependency() -> None:
         response = await client.get("/health")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "version": "0.1.0"}
+    assert response.json() == {"status": "ok", "version": __version__}
+
+
+async def test_the_reported_version_is_the_one_that_shipped() -> None:
+    """The assertion that used to be `== "0.1.0"`, and could not catch what it was for.
+
+    A literal has to be edited on every bump, so the failure it produces always reads as "the test
+    is stale" — never as "the API is reporting a version it is not". Meanwhile `0.1.0` was written
+    in three independently-editable places and nothing tied them: bump `pyproject.toml` and
+    `/health` keeps serving the old number while `/openapi.json` disagrees with both.
+
+    Comparing against the installed distribution is the whole point. It never needs editing, and it
+    fails exactly when a copy has drifted back in.
+    """
+    from importlib.metadata import version as distribution_version
+
+    app = create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        health = await client.get("/health")
+        spec = await client.get("/openapi.json")
+
+    packaged = distribution_version("chessmark-api")
+    assert health.json()["version"] == packaged
+    assert spec.json()["info"]["version"] == packaged, (
+        "the OpenAPI metadata is a third copy, and it is the frontend's contract"
+    )
 
 
 async def test_readiness_reports_both_dependencies(client: AsyncClient) -> None:

@@ -5,12 +5,14 @@ from __future__ import annotations
 import sqlalchemy as sa
 from fastapi import APIRouter, Response, status
 
+from chessmark import __version__
 from chessmark.api.deps import RedisDep, SessionDep
 from chessmark.api.schemas import HealthResponse, ReadinessResponse
 
 router = APIRouter(tags=["health"])
 
-VERSION = "0.1.0"
+#: Read from the installed distribution, never written here — see `chessmark/__init__.py`.
+VERSION = __version__
 
 
 @router.get("/health", response_model=HealthResponse)
