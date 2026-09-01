@@ -3,14 +3,17 @@
 Notable changes, newest first. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-**Chessmark is in beta**, so `0.x` releases are tagged `-beta.N` and the API and data model may
-still change between them.
+**Chessmark is in beta.** That is what `0.x` means under SemVer — *"anything MAY change at any
+time; the public API SHOULD NOT be considered stable"* — so the version carries it and the tags do
+not repeat it. Releases are published normally rather than marked pre-release: there is no stabler
+version to point people at, and a repository whose every release is a pre-release advertises no
+current version at all.
 
-This file starts at `0.1.0-beta.1`. Everything before it is in the git history and, where it was a
+This file starts at `0.1.0`. Everything before it is in the git history and, where it was a
 decision rather than a change, in [docs/adr](docs/adr/) — an ADR is the record of *why*, and this
 file is only the record of *what shipped when*.
 
-## [0.1.0-beta.1] — 2026-09-01
+## [0.1.0] — 2026-09-01
 
 First tagged release. Three fixes found by reading the live `pool-free` event.
 
@@ -32,6 +35,12 @@ First tagged release. Three fixes found by reading the live `pool-free` event.
   `BUDGET_EXCEEDED` ends a game, so it travelled as a forfeit and set a published flag; two games
   were budget-stopped, reopened, and played on to a genuine checkmate and a genuine threefold draw
   while still carrying a forfeit on the leaderboard. `resume` now clears a stale flag too.
+- **The version is read from the packaged distribution**, not written in three places.
+  `api/routes/health.py`, `main.py`'s OpenAPI metadata and `pyproject.toml` each held their own
+  literal, tied together only by two tests asserting the string `"0.1.0"` — which had to be edited
+  on every bump, so the failure always read as "the test is stale" rather than "the API is
+  reporting a version it is not". The tests now assert that `/health` and `/openapi.json` agree
+  with the installed distribution.
 
 ### Added
 
@@ -50,4 +59,4 @@ deploy — no backfill and no migration. Run `./chessmark repair-forfeits` after
 flags the old code wrote.
 
 [ADR-0024]: docs/adr/0024-endpoint-output-ceilings-are-not-findings.md
-[0.1.0-beta.1]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0-beta.1
+[0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0
