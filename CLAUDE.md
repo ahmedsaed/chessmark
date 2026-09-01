@@ -17,6 +17,7 @@ where a change belongs** — not here.
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | system shape, the turn loop, tool surface, data model |
 | [ROADMAP.md](docs/ROADMAP.md) | phases, exit criteria, **and the known gaps** |
 | [adr/](docs/adr/) | every decision, why it was made, and what we live with |
+| [CHANGELOG.md](CHANGELOG.md) | what shipped, and when — an ADR says *why*, this says *when* |
 | [TESTING.md](docs/TESTING.md) | the three suites and the rules they hold to |
 | [TOURNAMENTS.md](docs/TOURNAMENTS.md) | formats, fields, pools, settling |
 | [PROVIDERS.md](docs/PROVIDERS.md) | OpenRouter reality, the catalogue, the free tier |
