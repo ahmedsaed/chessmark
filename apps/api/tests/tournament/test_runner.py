@@ -7,6 +7,7 @@ without replaying, and stops when its budget is reached.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from decimal import Decimal
 
@@ -26,7 +27,12 @@ from chessmark.db.models import (
     TournamentGame,
 )
 from chessmark.game import GameResult, Termination
-from chessmark.orchestration.tournament import advance
+from chessmark.orchestration.tournament import (
+    DEAD_ATTEMPTS,
+    DEAD_REST,
+    _fruitless_entrants,
+    advance,
+)
 from chessmark.tournament import FieldFilter, Format, TournamentConfig, standings
 
 pytestmark = pytest.mark.integration
@@ -924,3 +930,132 @@ async def test_one_resting_provider_does_not_ground_a_multi_endpoint_model(
     step = await advance(sessionmaker, queue, tournament_id=tournament_id, cooldown=cooldown)
 
     assert step.started == 1
+
+
+# ============================================== a fixture that cannot be played (OPS-21)
+#
+# Seen on the production pool: `gemma-4-26b` v `gemma-4-31b`, both unrated and both served only by
+# the same rate-limited Google pool, scheduled seven times over five days and never past ply 0.
+# Each game paused until the 24-hour patience ran out, was abandoned — which records no result —
+# and was chosen again within the hour, because "least known first" and "prefer an unmet opponent"
+# both point straight back at the one pairing that can never inform either.
+
+
+async def abandon_all_in_flight(db: AsyncSession, tournament_id: uuid.UUID) -> int:
+    """Abort every in-flight game the way a provider we cannot reach eventually does."""
+    rows = await repo.in_flight(db, tournament_id)
+    for row in rows:
+        game = await db.get(Game, row.game_id)
+        assert game is not None
+        game.status = GameStatus.ABORTED
+        game.termination = Termination.ABANDONED
+        game.termination_detail = "Abandoned after 24.0h and 16 pauses: rate-limited upstream"
+    await db.commit()
+    return len(rows)
+
+
+async def test_a_pool_does_not_re_pair_a_fixture_it_abandoned(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """The loop, in the smallest form that reproduces it.
+
+    An abandoned pairing carries no score, so it is absent from `results_so_far` — deliberately,
+    because it must never be *scored* (invariant 11). Reading that absence as "these two have never
+    met" is the step that was wrong: the rematch penalty never fired, and the same two entrants
+    were handed the slot again on the very next tick.
+    """
+    tournament_id, _ = await make_tournament(
+        db,
+        models=4,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    first = await repo.in_flight(db, tournament_id)
+    assert len(first) == 1
+    doomed = frozenset({first[0].white_key, first[0].black_key})
+
+    assert await abandon_all_in_flight(db, tournament_id) == 1
+    # One tick settles the abandonment, the next chooses what to play instead.
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    rows = await repo.in_flight(db, tournament_id)
+    assert len(rows) == 1, "the slot is free again and the pool uses it"
+    assert frozenset({rows[0].white_key, rows[0].black_key}) != doomed, (
+        "the pairing that produced nothing was scheduled again — seven times, in production"
+    )
+
+
+async def test_an_entrant_that_keeps_producing_nothing_is_rested(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """Counting rematches alone would make this worse, not better.
+
+    It stops one fixture repeating; it does not stop a model that cannot play. That model is still
+    permanently the least-known entrant, so it takes the slot anyway and now burns a *fresh*
+    opponent each time — and both seats of a paused game are parked, so every attempt removes a
+    healthy entrant from the pool for as long as the dead one takes to give up.
+    """
+    tournament_id, _ = await make_tournament(
+        db,
+        models=6,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+
+    seen: list[frozenset[str]] = []
+    for _ in range(DEAD_ATTEMPTS):
+        await advance(sessionmaker, queue, tournament_id=tournament_id)
+        db.expire_all()
+        rows = await repo.in_flight(db, tournament_id)
+        assert len(rows) == 1
+        seen.append(frozenset({rows[0].white_key, rows[0].black_key}))
+        await abandon_all_in_flight(db, tournament_id)
+
+    # Whoever was in both dead pairings has now failed `DEAD_ATTEMPTS` running.
+    exhausted = seen[0] & seen[1]
+    assert exhausted, "the matchmaker chose the same least-known entrant twice, as it always does"
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    rows = await repo.in_flight(db, tournament_id)
+    assert len(rows) == 1, "the pool plays on — this rests an entrant, it does not withdraw one"
+    assert not exhausted & {rows[0].white_key, rows[0].black_key}, (
+        "an entrant that has produced nothing twice running was given a third healthy opponent"
+    )
+
+
+async def test_a_rested_entrant_comes_back_by_itself(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """Skipped, not withdrawn. A bad afternoon must not remove a model from the benchmark, so the
+    rest is measured from the last dead attempt and lapses on its own."""
+    tournament_id, _ = await make_tournament(
+        db,
+        models=4,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+
+    seen: list[frozenset[str]] = []
+    for _ in range(DEAD_ATTEMPTS):
+        await advance(sessionmaker, queue, tournament_id=tournament_id)
+        db.expire_all()
+        rows = await repo.in_flight(db, tournament_id)
+        seen.append(frozenset({rows[0].white_key, rows[0].black_key}))
+        await abandon_all_in_flight(db, tournament_id)
+    exhausted = seen[0] & seen[1]
+
+    # Age every abandonment past the rest, as the clock would.
+    await db.execute(
+        sa.update(TournamentGame)
+        .where(TournamentGame.tournament_id == tournament_id)
+        .values(ended_at=dt.datetime.now(dt.UTC) - DEAD_REST - dt.timedelta(minutes=1))
+    )
+    await db.commit()
+
+    entrants = await repo.entrants_of(db, tournament_id)
+    assert await _fruitless_entrants(db, tournament_id, list(entrants)) == set(), (
+        f"{exhausted} is still rested after the window lapsed"
+    )

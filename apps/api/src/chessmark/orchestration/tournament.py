@@ -43,6 +43,26 @@ from chessmark.tournament import Form, Format, matchmake, round_robin, swiss_rou
 log = logging.getLogger(__name__)
 
 
+#: How many finished attempts in a row may come to nothing before an entrant is rested.
+#:
+#: One abandoned game is ordinary on a free pool — a provider was hot for a day. Two in a row is a
+#: different claim: this entrant cannot currently finish a game against anybody, and every slot it
+#: is given is a slot nothing comes out of.
+DEAD_ATTEMPTS = 2
+
+#: How long such an entrant rests before the pool tries it again.
+#:
+#: **Not a withdrawal, and deliberately not indefinite.** A free pool that is hot today is usually
+#: serving by morning, and the entrant has to be able to come back on its own or a bad afternoon
+#: would remove a model from the benchmark permanently. Six hours is four attempts a day, which is
+#: enough to notice a recovery and few enough that the pool is not rediscovering the same rate limit
+#: within the hour.
+#:
+#: It is measured from the *end* of the last dead attempt, and that attempt already spent
+#: `worker.PAUSE_WINDOW` — a full day — proving the point.
+DEAD_REST = dt.timedelta(hours=6)
+
+
 def within_window(active_from: dt.time | None, active_until: dt.time | None, now: dt.time) -> bool:
     """Whether the clock is inside an event's active hours.
 
@@ -320,7 +340,7 @@ async def _resting_entrants(
     entrants: list[Any],
     tournament_id: uuid.UUID,
 ) -> set[str]:
-    """Which entrants cannot be played right now.
+    """Which entrants cannot be played right now, as far as the *cooldown* knows.
 
     Three reasons, and the last two are the ones production taught us:
 
@@ -328,10 +348,13 @@ async def _resting_entrants(
     * **every endpoint it has belongs to a provider resting a shared pool.** `gemma-4-26b` was
       cooled down and correctly skipped, so the matchmaker paired `gemma-4-31b` — a different model
       on the same hot Google AI Studio pool — which paused a minute later for the same reason.
+    * it already has a paused game, whatever its cooldown says.
 
     "Every endpoint" and not "any": a paid model served by nineteen providers is not unavailable
     because one of them is resting, and the router would simply pick another. A free model has
     exactly one, so for the pool that caused this the two readings coincide.
+
+    All three are questions about *this minute*. `_fruitless_entrants` asks the longer one.
     """
     slugs = [e.key.split("@", 1)[0] for e in entrants]
     by_model = await cooldown.resting(slugs)
@@ -385,6 +408,89 @@ async def _resting_entrants(
     return {e.key for e in entrants if e.key.split("@", 1)[0] in by_model}
 
 
+async def _fruitless_entrants(
+    session: AsyncSession, tournament_id: uuid.UUID, entrants: list[Any]
+) -> set[str]:
+    """Entrants whose last `DEAD_ATTEMPTS` finished pairings all came to nothing, recently.
+
+    **This is what makes counting rematches safe**, and it is not optional alongside it. Teaching
+    the matchmaker that a dead pairing is a rematch stops it repeating one fixture; it does not stop
+    a model that cannot play, it only sends that model looking for a *different* opponent. Both
+    seats of a paused game are parked while it waits, so each attempt would take a healthy entrant
+    out of the pool for the day with it. `gemma-4-26b` v `gemma-4-31b` failing seven times wasted
+    two entrants that were failing anyway — the same model working through thirteen fresh opponents
+    would empty the pool. Fixing the rematch half alone makes the event worse, not better.
+
+    Consecutive and counted *from the end*, not a total: a model that failed twice last week and has
+    played since is not the model this is about. What it is about is an entrant that currently
+    cannot get a game out of anybody.
+
+    The reason to ask the pairing table rather than the cooldown is the timescale. A cooldown
+    answers "is this provider hot this minute" and its first rung lapses in sixty seconds; a free
+    shared pool stays hot for a day and a half. Every one of those six abandoned `gemma-4-26b`
+    games was scheduled at a moment when nothing was resting.
+
+    Only *finished* attempts count. A pairing still waiting or in flight has not come to nothing
+    yet, and reading it as failure would rest a model for the crime of having a game in progress.
+    """
+    rows = (
+        await session.execute(
+            sa.select(
+                TournamentGame.white_key,
+                TournamentGame.black_key,
+                TournamentGame.abandoned_reason,
+                TournamentGame.ended_at,
+            )
+            .where(
+                TournamentGame.tournament_id == tournament_id,
+                sa.or_(
+                    TournamentGame.white_score.is_not(None),
+                    TournamentGame.abandoned_reason.is_not(None),
+                ),
+            )
+            # Most recent first, so the walk below can stop at the first attempt that produced a
+            # result. `round_number` breaks the tie a null `ended_at` would otherwise leave open.
+            .order_by(
+                TournamentGame.ended_at.desc().nullslast(),
+                TournamentGame.round_number.desc(),
+            )
+        )
+    ).all()
+
+    wanted = {e.key for e in entrants}
+    run: dict[str, int] = {}
+    last_death: dict[str, dt.datetime | None] = {}
+    #: Keys whose most recent finished attempt produced a result. Everything older is history.
+    alive: set[str] = set()
+    for white_key, black_key, abandoned_reason, ended_at in rows:
+        for key in (white_key, black_key):
+            if key is None or key not in wanted or key in alive:
+                continue
+            if abandoned_reason is None:
+                alive.add(key)
+                continue
+            run[key] = run.get(key, 0) + 1
+            last_death.setdefault(key, ended_at)
+
+    now = dt.datetime.now(dt.UTC)
+    resting: set[str] = set()
+    for key, deaths in run.items():
+        if deaths < DEAD_ATTEMPTS:
+            continue
+        ended = last_death.get(key)
+        # A null `ended_at` cannot be aged, so it reads as just-ended rather than as licence to
+        # schedule another one.
+        if ended is None:
+            resting.add(key)
+            continue
+        # Rows come back naive when the driver drops the timezone; they are stored in UTC.
+        if ended.tzinfo is None:
+            ended = ended.replace(tzinfo=dt.UTC)
+        if now - ended < DEAD_REST:
+            resting.add(key)
+    return resting
+
+
 async def _schedule_pool(
     session: AsyncSession,
     tournament: Tournament,
@@ -429,11 +535,13 @@ async def _schedule_pool(
     # Whoever cannot play right now is skipped rather than paired. This is the difference between
     # a pool that spends its one concurrency slot on a model that can move and one that spends
     # ninety minutes rediscovering that a provider is rate-limited — see `core/cooldown.py`.
-    resting: set[str] = set()
+    # Asked of the pairing table, so it holds with or without a cooldown wired: it is a fact about
+    # what this event has produced, not about what Redis remembers.
+    resting: set[str] = await _fruitless_entrants(session, tournament.id, entrants)
     if cooldown is not None:
-        resting = await _resting_entrants(session, cooldown, entrants, tournament.id)
-        if resting:
-            log.info("pool %s skipping %d resting entrants", tournament.slug, len(resting))
+        resting |= await _resting_entrants(session, cooldown, entrants, tournament.id)
+    if resting:
+        log.info("pool %s skipping %d resting entrants", tournament.slug, len(resting))
 
     games = matchmake(
         entrants,
@@ -442,6 +550,10 @@ async def _schedule_pool(
         count=room,
         round_number=round_number,
         unavailable=resting,
+        # Abandoned and in-flight pairings, which carry no result and so are invisible to
+        # `results_so_far`. Without them a fixture that cannot be played is permanently unmet, and
+        # the rematch penalty — the one thing that would stop it being chosen again — never fires.
+        attempts=await repo.attempted(session, tournament.id),
     )
     if not games:
         return None

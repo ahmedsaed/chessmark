@@ -97,6 +97,37 @@ Asking about paused games is the precise fix. A *ceiling* on paused games was th
 was reverted: it stalled the pool completely, and the failure it guarded against is already prevented
 by the cooldown. See [ADR-0017](adr/0017-rate-limits-pause-games.md).
 
+### A pairing that produced nothing is still a rematch
+
+An abandoned pairing carries **no score**, deliberately — it must never be scored, because a
+provider we could not reach is our failure and not a finding (invariant 11). The matchmaker used to
+read the same absence as *"these two have never met"*, and those are different statements.
+
+The result was a lock. `gemma-4-26b` and `gemma-4-31b` were both unrated and both served only by the
+same rate-limited Google pool, so each was the entrant least known about and each was the other's
+nearest unmet opponent. They were scheduled **seven times over five days and never made a move**:
+every game paused until the 24-hour patience ran out, was abandoned, recorded nothing, and was
+chosen again within the hour.
+
+So `matchmake` now takes `attempts` — every pairing written down that produced no result — alongside
+`results`, and counts both as meetings. `db.tournaments.attempted` supplies them; `results_so_far`
+is untouched, because scoring and rematch-avoidance are different questions of the same rows.
+
+**That half alone would make the event worse.** It stops one fixture repeating; it does not stop a
+model that cannot play, which is still permanently the least-known entrant and now goes looking for
+a *fresh* opponent each time. Both seats of a paused game are parked while it waits, so every
+attempt would take a healthy entrant out of the pool for a day with it — seven dead games wasting
+two models that were failing anyway becomes thirteen wasting the field.
+
+So the second half: an entrant whose **last two finished pairings both came to nothing** rests for
+six hours (`DEAD_ATTEMPTS`, `DEAD_REST`). It is asked of the pairing table rather than the cooldown
+because the timescales differ by two orders of magnitude — a cooldown's first rung lapses in sixty
+seconds, and a free shared pool stays hot for a day and a half. Every one of those six abandoned
+games was scheduled at a moment when nothing was resting.
+
+Rested, **not withdrawn**: the span is measured from the last dead attempt and lapses on its own, so
+a bad afternoon cannot quietly remove a model from the benchmark.
+
 ## Bounds
 
 The **ply cap is a cost bound, not a rules bound.** Games terminate on their own because the hard

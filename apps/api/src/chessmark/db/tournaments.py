@@ -336,6 +336,34 @@ async def results_so_far(session: AsyncSession, tournament_id: uuid.UUID) -> lis
     ]
 
 
+async def attempted(session: AsyncSession, tournament_id: uuid.UUID) -> list[Pairing]:
+    """Every pairing written down that has produced no result — the other half of
+    `results_so_far`.
+
+    The matchmaker needs both halves to know what a rematch is. `results_so_far` deliberately
+    withholds abandoned pairings because they must not be *scored* (invariant 11) — but "do not
+    score it" and "pretend it never happened" are different instructions, and the pool was reading
+    the second. A pairing that cannot complete therefore stayed permanently unmet, which is also
+    permanently the most attractive thing to schedule: `gemma-4-26b` v `gemma-4-31b` was written
+    down seven times over five days and never reached ply 1.
+
+    Pairings still waiting or in flight are included for the same reason: a fixture already on the
+    schedule is not one to write down a second copy of.
+    """
+    rows = await session.scalars(
+        sa.select(TournamentGame)
+        .where(
+            TournamentGame.tournament_id == tournament_id,
+            TournamentGame.white_score.is_(None),
+        )
+        .order_by(TournamentGame.round_number, TournamentGame.id)
+    )
+    return [
+        Pairing(white=row.white_key, black=row.black_key, round_number=row.round_number)
+        for row in rows
+    ]
+
+
 async def unplayed(
     session: AsyncSession, tournament_id: uuid.UUID, *, round_number: int | None = None
 ) -> list[TournamentGame]:
