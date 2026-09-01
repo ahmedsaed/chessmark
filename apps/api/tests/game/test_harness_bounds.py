@@ -13,15 +13,23 @@ from chessmark.game import FORFEIT_TERMINATIONS, RESUMABLE_TERMINATIONS, Termina
 class TestWhatCountsAsAFinding:
     def test_the_model_s_own_failures_still_count(self) -> None:
         """Each of these is something the model did, and is the same on any endpoint that serves
-        it: it played illegally six times, answered in prose four times running, could not stop
-        talking, filled its own window."""
+        it: it played illegally six times, answered in prose four times running, filled its own
+        window."""
         for termination in (
             Termination.ILLEGAL_MOVE_FORFEIT,
             Termination.ERROR_FORFEIT,
-            Termination.TRUNCATED,
             Termination.CONTEXT_EXCEEDED,
         ):
             assert termination in FORFEIT_TERMINATIONS
+
+    def test_an_output_ceiling_is_not_a_finding(self) -> None:
+        """`TRUNCATED` was here, on the reading that a model which cannot finish inside a generous
+        output budget has failed. The budget is not generous or ungenerous — it belongs to the
+        endpoint, and the same weights served with a larger one are not cut off. `laguna-s-2.1`
+        lost a game holding rook and two bishops against a lone pawn to Poolside's 32,768-token
+        response ceiling, which we had never read and were asking 64,000 against (ADR-0024)."""
+        assert Termination.TRUNCATED not in FORFEIT_TERMINATIONS
+        assert Termination.TRUNCATED in RESUMABLE_TERMINATIONS
 
     def test_wall_clock_is_not_a_finding(self) -> None:
         """It measures the *provider's* latency. The same model on two endpoints got two verdicts —

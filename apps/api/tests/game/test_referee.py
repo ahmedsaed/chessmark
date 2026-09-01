@@ -79,14 +79,14 @@ def test_agreed_draw() -> None:
 # --------------------------------------------------------------------- forfeits
 
 
-# `TIMEOUT` and `BUDGET_EXCEEDED` are deliberately absent: they measure the provider's latency and
-# the harness's own prompt replay, not the play. See `tests/game/test_harness_bounds.py`.
+# `TIMEOUT`, `BUDGET_EXCEEDED` and `TRUNCATED` are deliberately absent: they measure the provider's
+# latency, the harness's own prompt replay, and the endpoint's response ceiling — not the play. See
+# `tests/game/test_harness_bounds.py`.
 @pytest.mark.parametrize(
     "termination",
     [
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
-        Termination.TRUNCATED,
         Termination.CONTEXT_EXCEEDED,
     ],
 )

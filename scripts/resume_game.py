@@ -31,10 +31,11 @@ from redis.asyncio import Redis  # noqa: E402
 from chessmark.agents.prompts import PROMPT_VERSION  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.enums import EventType, GameStatus  # noqa: E402
-from chessmark.db.models import GameEvent, TournamentGame  # noqa: E402
+from chessmark.db.models import GameEvent, Player, TournamentGame  # noqa: E402
 from chessmark.db.repositories import append_event, get_game, rebuild_referee  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.game import (  # noqa: E402
+    FORFEIT_TERMINATIONS,
     RESUMABLE_TERMINATIONS,
     GameResult,
     Termination,
@@ -45,52 +46,33 @@ from chessmark.orchestration import AdvanceTurn, TurnQueue  # noqa: E402
 _UNCLAIMED = frozenset({Termination.THREEFOLD_REPETITION, Termination.FIFTY_MOVE_RULE})
 
 
-async def _truncation_was_our_ceiling(session: Any, game: Any) -> tuple[bool, str]:
-    """Whether a `truncated` forfeit was caused by the harness rather than by the model.
+async def _clear_stale_forfeits(session: Any, game: Any, previous: Any) -> int:
+    """Drop the seat's `forfeited` flag when the ending that wrote it is being reopened.
 
-    **Evidence, not assertion.** The stored calls say what we asked for and what came back: a
-    response that stopped at *our* `max_tokens` was ended by us, and one that stopped short of it
-    hit the endpoint's own limit. This reads the record rather than trusting the operator, and
-    refuses when the record does not support it.
+    **The same shape as un-settling the pairing, and it was missed for the same reason.** The flag
+    is a *verdict*, it was written by the ending this reopens, and unlike the pairing's score it is
+    published: `bench.service` counts it into the leaderboard's forfeits column, over exactly the
+    games a resume makes ratable again.
 
-    The case it exists for: a miscalculated window drove `completion_cap` negative, its `max(1,…)`
-    floor asked an endpoint for **one output token**, every reply came back `finish_reason:
-    "length"`, and a model was forfeited at ply 5 for a limit it never saw (ADR-0021). The turn
-    loop cannot produce that any more; this reopens the games it already did.
+    It gets set for a harness stop because `BUDGET_EXCEEDED` travels as `TurnStatus.FORFEITED` —
+    the turn does end the game — while `ratable.HARNESS_TERMINATIONS` says just as plainly that it
+    is not a finding. Two free-pool games were budget-stopped, reopened, and played on to a real
+    checkmate and a real threefold draw; both stayed ratable and both models carried a forfeit
+    nothing in their play had earned (ADR-0024). The turn loop no longer writes one; this clears
+    the ones it already wrote.
+
+    Refuses when the ending being reopened *was* a forfeit. No resumable termination is one today,
+    so this never fires — it is what keeps the function honest if that ever changes, because
+    clearing the flag on a genuine forfeit would erase the finding rather than a mistake.
     """
-    from chessmark.db.models import LlmCall, Turn
-
-    rows = list(
-        (
-            await session.execute(
-                sa.select(LlmCall.request, LlmCall.completion_tokens)
-                .join(Turn, Turn.id == LlmCall.turn_id)
-                .where(Turn.game_id == game.id, LlmCall.finish_reason == "length")
-                .order_by(LlmCall.id.desc())
-                .limit(20)
-            )
-        ).all()
+    if previous in FORFEIT_TERMINATIONS:
+        return 0
+    cleared = await session.execute(
+        sa.update(Player)
+        .where(Player.game_id == game.id, Player.forfeited.is_(True))
+        .values(forfeited=False)
     )
-    if not rows:
-        return False, "no truncated call is recorded for this game"
-
-    ours = [
-        r
-        for r in rows
-        if (r.request or {}).get("max_tokens")
-        and r.completion_tokens
-        and r.completion_tokens >= int((r.request or {}).get("max_tokens", 0))
-    ]
-    if not ours:
-        return False, (
-            "every truncated call stopped short of the ceiling we asked for, so the endpoint's "
-            "own limit cut it — that is a finding about the model"
-        )
-
-    asked = int((ours[0].request or {}).get("max_tokens", 0))
-    return True, (
-        f"{len(ours)} of {len(rows)} truncated calls stopped at our own max_tokens ({asked})"
-    )
+    return int(cleared.rowcount or 0)
 
 
 async def _verdict_was_overwritten(session: Any, game: Any) -> tuple[bool, str]:
@@ -160,14 +142,6 @@ async def main() -> int:
     )
     parser.add_argument("--max-plies", type=int, default=None, help="New ply cap.")
     parser.add_argument(
-        "--harness-ceiling",
-        action="store_true",
-        help=(
-            "reopen a game forfeited for truncation when the record shows *our* max_tokens cut "
-            "the response. Refused when the endpoint's own limit did (ADR-0021)."
-        ),
-    )
-    parser.add_argument(
         "--overwritten-verdict",
         action="store_true",
         help=(
@@ -207,16 +181,15 @@ async def main() -> int:
                     return 2
                 print(f"reopening an unclaimed {game.termination} draw ({refusal})")
 
-            # Both of these reopen a *forfeit*, which the general rule refuses, so both are gated
-            # on the record rather than on the flag: the operator says which correction they mean
-            # and the stored calls or the event log decide whether it applies.
-            if not resumable and args.harness_ceiling:
-                resumable, why = await _truncation_was_our_ceiling(session, game)
-                if not resumable:
-                    print(why, file=sys.stderr)
-                    return 2
-                print(f"reopening a truncation the harness caused ({why})")
-
+            # This reopens a *forfeit*, which the general rule refuses, so it is gated on the
+            # record rather than on the flag: the operator says which correction they mean and the
+            # event log decides whether it applies.
+            #
+            # `--harness-ceiling` stood here too, reopening a `truncated` forfeit where the stored
+            # calls showed our own `max_tokens` had cut the response. It is gone because the
+            # question it asked no longer has two answers: a truncation is a harness stop either
+            # way (ADR-0024), so `TRUNCATED` is in `RESUMABLE_TERMINATIONS` and a plain resume
+            # reopens it. A flag that can never fire is worse than no flag.
             if not resumable and args.overwritten_verdict:
                 resumable, why = await _verdict_was_overwritten(session, game)
                 if not resumable:
@@ -233,11 +206,6 @@ async def main() -> int:
                         " An automatic threefold or fifty-move draw from before ADR-0020 can be "
                         "reopened with --unclaimed-draw."
                         if game.termination in _UNCLAIMED
-                        else ""
-                    )
-                    + (
-                        " If our own max_tokens cut the response, --harness-ceiling reopens it."
-                        if game.termination is Termination.TRUNCATED
                         else ""
                     )
                     + " If a race overwrote an earlier harness stop, --overwritten-verdict does.",
@@ -292,6 +260,13 @@ async def main() -> int:
             game.termination = None
             game.termination_detail = None
             game.ended_at = None
+
+            cleared = await _clear_stale_forfeits(session, game, previous)
+            if cleared:
+                print(
+                    f"cleared a stale forfeit on {cleared} seat(s) "
+                    f"(written by the {previous} this reopens)"
+                )
 
             await append_event(
                 session,

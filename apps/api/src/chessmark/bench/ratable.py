@@ -38,6 +38,9 @@ from chessmark.game import Termination
 #: completion. That change did not reach this module, so a timed-out game stopped being called a
 #: forfeit and went on counting toward the rating anyway. Four sets classify a termination and
 #: nothing linked them; `tests/bench/test_classification.py` now does.
+#: **`TRUNCATED` joined them (ADR-0024)**, for the reason `TIMEOUT` did: it measured the endpoint.
+#: An endpoint's `max_completion_tokens` is a fact about the host, the same model on a host with a
+#: larger one is not cut off, and a routing lottery is not a finding.
 HARNESS_TERMINATIONS = frozenset(
     {
         Termination.PLY_CAP,
@@ -45,6 +48,7 @@ HARNESS_TERMINATIONS = frozenset(
         Termination.ABANDONED,
         Termination.ADJUDICATION,
         Termination.TIMEOUT,
+        Termination.TRUNCATED,
     }
 )
 
@@ -69,7 +73,6 @@ RATED_TERMINATIONS = frozenset(
         Termination.SEVENTY_FIVE_MOVE_RULE,
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
-        Termination.TRUNCATED,
         Termination.CONTEXT_EXCEEDED,
     }
 )

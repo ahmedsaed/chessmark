@@ -158,6 +158,14 @@ cmd_repair() { # supersede transcript rows no provider will accept:  ./chessmark
   api_script repair_transcripts.py "$@"
 }
 
+cmd_repair-forfeits() { # make forfeit flags agree with their games:  ./chessmark repair-forfeits --write
+  # Reports by default and writes nothing. `Player.forfeited` is a stored verdict and a published
+  # one — it is the leaderboard's forfeits column — so a stale flag is a claim about a model on a
+  # page people read. A harness stop used to set it and a resume never cleared it (ADR-0024).
+  # Changes no result and reopens no game: the game record decides, as it always does.
+  api_script repair_forfeits.py "$@"
+}
+
 cmd_halt() { # stop every model call, or resume:  ./chessmark halt "reason" | --clear
   # A *state*, not a limit — the daily kill switch is config read at startup and cannot be flipped
   # while the stack runs. Games are left RUNNING and nothing is forfeited (OPS-19); a halt set by a
@@ -236,7 +244,6 @@ echo "select count(*) from games;" | ./chessmark sql'
 ./chessmark resume <game-id> --max-usd 2.50        # raise the ceiling that stopped it
 ./chessmark resume <game-id> --max-plies 400
 ./chessmark resume <game-id> --unclaimed-draw   # a threefold nobody was told about (ADR-0020)
-./chessmark resume <game-id> --harness-ceiling      # truncated by *our* max_tokens (ADR-0021)
 ./chessmark resume <game-id> --overwritten-verdict  # a race replaced an earlier harness stop (ADR-0022)
 
 # The last three reopen a forfeit, which the general rule refuses. Each is gated on the
@@ -258,6 +265,13 @@ echo "select count(*) from games;" | ./chessmark sql'
 ./chessmark repair --game <game-id>      # look at one game
 
 # Then reopen anything that was abandoned on it:  ./chessmark resume <game-id>'
+  [repair-forfeits]='./chessmark repair-forfeits              # report only; writes nothing
+./chessmark repair-forfeits --write      # apply
+./chessmark repair-forfeits --game <id>  # look at one game
+
+# A seat is forfeited exactly when its game ended by a forfeit against that seat. Anything
+# else is drift: a harness stop that set the flag, or a resume that left it behind.
+# Changes no result and reopens no game — for that, use resume.'
   [credits]='./chessmark credits someone@example.com 50
 ./chessmark credits someone@example.com 10 --note "beta invite"
 ./chessmark credits user_2abc123 -5              # take them back, clamped at zero
@@ -303,6 +317,7 @@ ${AMBER}games${OFF}
 $(row latency)
 $(row resume)
 $(row repair)
+$(row repair-forfeits)
 
 ${AMBER}tournaments${OFF}
 $(row tournament)
@@ -323,7 +338,7 @@ EOF
 
 # The one-line description is the comment on the function, so it cannot drift from the code.
 describe() { sed -n "s/^cmd_$1() { # \(.*\)$/\1/p" "${BASH_SOURCE[0]}" | head -1; }
-row() { printf '  %-12s %s\n' "$1" "$(describe "$1")"; }
+row() { printf '  %-15s %s\n' "$1" "$(describe "$1")"; }
 
 # ---------------------------------------------------------------------------- dispatch
 

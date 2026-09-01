@@ -23,6 +23,15 @@ games keep failing is *permanently* the one we know least about: an abandoned ga
 ratings, so its deviation never moves, so it is chosen again. One free model went dark for ninety
 minutes and the pool paired it fourteen consecutive times, each pairing dying at ply 0. Nothing in
 "least known first" can escape that on its own — the policy has to be told who is unavailable.
+
+**A rematch is counted from every pairing attempted, not only from the ones that produced a
+result.** The rematch penalty used to read `results` alone, and a result is exactly what a dead
+pairing never has — so a fixture that could not be played was permanently *unmet*, and permanently
+the most attractive thing to schedule. `gemma-4-26b` and `gemma-4-31b`, both unrated and both on
+the same rate-limited Google pool, were paired against each other **seven times over five days and
+never made a single move**: each game paused until the 24-hour window ran out, was abandoned,
+recorded nothing, and was chosen again within the hour. Attempting a pairing is what makes it a
+rematch; whether it survived is a separate question.
 """
 
 from __future__ import annotations
@@ -62,6 +71,7 @@ def matchmake(
     count: int = 1,
     round_number: int = 1,
     unavailable: frozenset[str] | set[str] = frozenset(),
+    attempts: Sequence[Pairing] = (),
 ) -> list[Pairing]:
     """The next `count` games to play.
 
@@ -75,6 +85,11 @@ def matchmake(
     the entrant returns by itself when its cooldown expires. A pool has no deadline, so the cost of
     waiting is nothing and the cost of pairing a model that cannot play is a wasted slot.
 
+    `attempts` names pairings that were scheduled and produced **no** result — abandoned, or still
+    in flight. They count as meetings, so a fixture the harness could not play is not offered again
+    as though it were fresh. It is the complement of `results`, and passing a pairing in both would
+    count it twice: `results` is what was settled, `attempts` is what was not.
+
     Fewer than two available entrants returns no games rather than pairing regardless. The pool
     holds for a tick, which is correct: there is no game worth starting.
     """
@@ -82,7 +97,7 @@ def matchmake(
     if len(field) < 2:
         return []
 
-    met = _meetings(results)
+    met = _meetings(results, attempts)
     balance = _colour_balance(results)
     # Form is built over the whole field, not the available subset. A resting entrant's rating is
     # still real and is still what an opponent is chosen for proximity to; only its own turn to
@@ -147,11 +162,18 @@ def _colours(home: str, away: str, balance: dict[str, int]) -> tuple[str, str]:
     return home, away
 
 
-def _meetings(results: Sequence[Result]) -> dict[frozenset[str], int]:
-    """How many times each pair has already played.
+def _meetings(
+    results: Sequence[Result], attempts: Sequence[Pairing] = ()
+) -> dict[frozenset[str], int]:
+    """How many times each pair has already been put on the board.
 
     A count rather than a set: a pool runs long enough that every pair eventually meets, so the
     question stops being *whether* and becomes *how recently and how often*.
+
+    **A pairing counts once it is attempted, whether or not it finished.** Reading results alone
+    made a fixture that could never complete look permanently unmet — the one shape of pairing the
+    penalty most needs to catch, because it is also the one the "least known first" rule keeps
+    reaching for. Seven dead `gemma-4-26b` v `gemma-4-31b` schedulings, nought plies between them.
     """
     counts: dict[frozenset[str], int] = {}
     for result in results:
@@ -159,4 +181,8 @@ def _meetings(results: Sequence[Result]) -> dict[frozenset[str], int]:
             continue
         pair = frozenset(result.players)
         counts[pair] = counts.get(pair, 0) + 1
+    for attempt in attempts:
+        if attempt.black is None:
+            continue
+        counts[attempt.pair] = counts.get(attempt.pair, 0) + 1
     return counts

@@ -64,7 +64,11 @@ class Termination(StrEnum):
     ILLEGAL_MOVE_FORFEIT = "illegal_move_forfeit"
     ERROR_FORFEIT = "error_forfeit"
     TRUNCATED = "truncated"
-    """Ran out of output budget mid-reasoning, repeatedly, without ever acting."""
+    """Ran out of output budget mid-reasoning, repeatedly, without ever acting.
+
+    A **harness stop**, not a forfeit (ADR-0024): the budget that ran out is one of ours or the
+    endpoint's, and neither is a property of the weights.
+    """
 
     TIMEOUT = "timeout"
     BUDGET_EXCEEDED = "budget_exceeded"
@@ -86,6 +90,7 @@ RESUMABLE_TERMINATIONS = frozenset(
         Termination.PLY_CAP,
         Termination.ABANDONED,
         Termination.TIMEOUT,
+        Termination.TRUNCATED,
     }
 )
 
@@ -95,6 +100,20 @@ RESUMABLE_TERMINATIONS = frozenset(
 #: Each one is something the model did: it played illegally six times, it answered in prose four
 #: times running, it could not stop talking, it filled its own window. Reproducible, and the same
 #: on any endpoint that serves the model.
+#:
+#: **`TRUNCATED` was here and is not a finding either (ADR-0024).** It named two different events
+#: with one word. When a response stops at the ceiling *we* asked for, we ended it — ADR-0021
+#: already excluded that. When it stops *below* our ask, the endpoint's own `max_completion_tokens`
+#: ended it, and ADR-0021 kept that rated on the reasoning that the provider's ceiling was a
+#: generous natural budget. It is not: it is a property of the endpoint, exactly like latency, and
+#: the same weights on a host with a larger ceiling would not have been cut off. `laguna-s-2.1`
+#: lost a game holding rook and two bishops against a lone pawn because Poolside stops at 32,768
+#: output tokens and we had asked for 64,000 — a number no response from that endpoint could ever
+#: reach, so the check that distinguishes the two cases could never fire.
+#:
+#: The clamp added alongside this (`compaction.Window.max_completion`) means we now ask for exactly
+#: what an endpoint will give, so the two cases mostly collapse; this set is what makes the
+#: remainder honest rather than depending on the registry being current.
 #:
 #: **`TIMEOUT` and `BUDGET_EXCEEDED` were here and are not findings.** Wall clock measures the
 #: *provider's* latency — the same model on two endpoints got two verdicts, which is the routing
@@ -111,7 +130,6 @@ FORFEIT_TERMINATIONS = frozenset(
     {
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
-        Termination.TRUNCATED,
         Termination.CONTEXT_EXCEEDED,
     }
 )

@@ -1,17 +1,20 @@
-"""A ceiling we imposed is not a strike against a player (invariant 11, ADR-0019, ADR-0021).
+"""A ceiling is never a strike against a player (invariant 11, ADR-0019, ADR-0021, ADR-0024).
 
 `finish_reason: "length"` says an answer was cut off and nothing about who cut it. Two cases, and
 they are distinguishable from the response rather than arguable: we know what `max_tokens` we asked
-for, and the provider reports what it generated.
+for, and the provider reports what it generated. **Neither is a finding**, and they differ only in
+how quickly the turn gives up.
 
-* Our ceiling bound it → the harness ended the answer. The turn fails; nobody is forfeited.
-* The provider's own ceiling bound it → a strike, and after enough of them a `truncated` forfeit.
-  `TRUNCATED` stays rated: with the window arithmetic measured rather than estimated, what is left
-  is a model that could not finish a turn inside a budget set far above what any of them need.
+* Our ceiling bound it → fail immediately. There is nothing for a nudge to fix.
+* The provider's own ceiling bound it → retry up to `MAX_TRUNCATIONS`, telling the model it was cut
+  off, because a model often recovers on the second attempt. Then fail the turn.
 
-The first case is not hypothetical. A miscalculated window asked an endpoint for **one** output
-token, every reply came back truncated, and four of them ended a real game `truncated`, `1-0`,
-against `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` at ply 5.
+Neither case is hypothetical. A miscalculated window asked an endpoint for **one** output token,
+every reply came back truncated, and four of them ended a real game `truncated`, `1-0`, against
+`nvidia/nemotron-3-nano-omni-30b-a3b-reasoning` at ply 5 (ADR-0021). And `poolside/laguna-s-2.1`
+lost a game holding rook and two bishops against a lone pawn because Poolside stops at 32,768
+output tokens while we asked for 64,000 — a number no response from that endpoint could reach, so
+the check above could never fire (ADR-0024).
 """
 
 from __future__ import annotations
@@ -88,8 +91,14 @@ async def test_it_does_not_spend_the_strike_budget(db: AsyncSession, table: Tabl
     assert calls == 1, f"our own ceiling is not retried into a forfeit, got {calls} calls"
 
 
-async def test_a_providers_own_ceiling_still_forfeits(db: AsyncSession, table: Table) -> None:
-    """Stopping *short* of what we allowed is the endpoint's limit, and that still counts."""
+async def test_a_providers_own_ceiling_fails_the_turn_too(db: AsyncSession, table: Table) -> None:
+    """Stopping *short* of what we allowed is the endpoint's own limit — and that is a fact about
+    the host, not the weights (ADR-0024).
+
+    It used to forfeit, on the reasoning that the provider's ceiling was a generous natural budget
+    a model ought to finish inside. That is the same argument `TIMEOUT` lost: the same weights on an
+    endpoint with a larger ceiling are not cut off, so the verdict was decided by routing.
+    """
     result = await play_turn(
         db,
         table,
@@ -97,9 +106,23 @@ async def test_a_providers_own_ceiling_still_forfeits(db: AsyncSession, table: T
         limits=TurnLimits(max_completion_tokens=64_000),
     )
 
-    assert result.status is TurnStatus.FORFEITED
-    assert result.outcome is not None
-    assert result.outcome.termination is Termination.TRUNCATED
+    assert result.status is TurnStatus.FAILED
+    assert result.outcome is None, "the endpoint's ceiling is not a finding about a player either"
+
+
+async def test_the_retries_are_spent_before_the_turn_fails(db: AsyncSession, table: Table) -> None:
+    """The nudge is worth keeping even though the ending changed: a model told it was cut off often
+    acts on the next attempt, and failing the turn immediately would throw that away."""
+    calls = 0
+
+    async def counting(**kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return truncated(completion_tokens=900)
+
+    await play_turn(db, table, counting, limits=TurnLimits(max_completion_tokens=64_000))
+
+    assert calls == MAX_TRUNCATIONS + 1, f"expected the strike budget to be spent, got {calls}"
 
 
 async def test_a_provider_truncation_is_retried_first(db: AsyncSession, table: Table) -> None:
@@ -118,10 +141,11 @@ async def test_a_provider_truncation_is_retried_first(db: AsyncSession, table: T
     assert result.move is not None and result.move.move.san == "e4"
 
 
-async def test_an_unreported_generation_count_keeps_the_old_behaviour(
+async def test_an_unreported_generation_count_is_still_not_a_finding(
     db: AsyncSession, table: Table
 ) -> None:
-    """Unattributable, so nothing changes silently: it is a strike, as it was before."""
+    """Unattributable — an endpoint that reports no usage — takes the retry path and then fails the
+    turn. It cannot be blamed on the model, because nothing here says the model did anything."""
     result = await play_turn(
         db,
         table,
@@ -129,7 +153,18 @@ async def test_an_unreported_generation_count_keeps_the_old_behaviour(
         limits=TurnLimits(max_completion_tokens=64_000),
     )
 
-    assert result.status is TurnStatus.FORFEITED
-    assert result.outcome is not None
-    assert result.outcome.termination is Termination.TRUNCATED
+    assert result.status is TurnStatus.FAILED
+    assert result.outcome is None
     assert MAX_TRUNCATIONS >= 1
+
+
+async def test_a_truncated_ending_is_reopenable_and_unrated(db: AsyncSession, table: Table) -> None:
+    """The classification that follows from all of the above, asserted where a reader of this file
+    will look for it. `tests/bench/test_classification.py` holds the four sets to each other."""
+    from chessmark.bench.ratable import HARNESS_TERMINATIONS, RATED_TERMINATIONS
+    from chessmark.game import FORFEIT_TERMINATIONS, RESUMABLE_TERMINATIONS
+
+    assert Termination.TRUNCATED in RESUMABLE_TERMINATIONS
+    assert Termination.TRUNCATED in HARNESS_TERMINATIONS
+    assert Termination.TRUNCATED not in FORFEIT_TERMINATIONS
+    assert Termination.TRUNCATED not in RATED_TERMINATIONS

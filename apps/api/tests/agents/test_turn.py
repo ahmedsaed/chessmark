@@ -475,6 +475,47 @@ async def test_a_runaway_output_stops_the_turn(db: AsyncSession, table: Table) -
     assert result.outcome.termination is Termination.BUDGET_EXCEEDED
 
 
+async def test_a_harness_bound_does_not_mark_the_seat_forfeited(
+    db: AsyncSession, table: Table
+) -> None:
+    """`Player.forfeited` is *published* — it is the leaderboard's forfeits column — and it was
+    written by the turn's status rather than by the ending (ADR-0024).
+
+    `BUDGET_EXCEEDED` travels as `TurnStatus.FORFEITED` because it does end the game, but
+    `ratable.HARNESS_TERMINATIONS` says plainly that it is not a finding. Two games in the free
+    pool were budget-stopped, reopened, and played on to a real checkmate and a real threefold
+    draw; both stayed ratable and both carried a forfeit their model never earned.
+    """
+    result = await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("get_board"), completion_tokens=5000), repeat_last=True),
+        limits=TurnLimits(max_completion_budget=4000, max_tool_iterations=10),
+    )
+
+    assert result.outcome is not None
+    assert result.outcome.termination is Termination.BUDGET_EXCEEDED
+
+    await db.refresh(table.white)
+    assert not table.white.forfeited, "our own ceiling is not a forfeit against the player"
+
+
+async def test_a_real_forfeit_still_marks_the_seat(db: AsyncSession, table: Table) -> None:
+    """The other half, or the fix above would simply empty the column."""
+    result = await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("get_board")), repeat_last=True),
+        limits=TurnLimits(max_tool_iterations=4),
+    )
+
+    assert result.outcome is not None
+    assert result.outcome.termination is Termination.ERROR_FORFEIT
+
+    await db.refresh(table.white)
+    assert table.white.forfeited, "a model that never called a tool did forfeit"
+
+
 async def test_replaying_the_prompt_is_not_the_model_s_spending(
     db: AsyncSession, table: Table
 ) -> None:
@@ -647,22 +688,21 @@ async def test_a_truncated_response_gets_a_prompt_that_says_so(
     assert not any("did not call a tool" in text for text in prompts_sent)
 
 
-async def test_repeated_truncation_forfeits_under_its_own_termination(
+async def test_repeated_truncation_fails_the_turn_rather_than_the_player(
     db: AsyncSession, table: Table
 ) -> None:
-    """Still a failure to operate, but a distinct one — the leaderboard must be able to tell
-    "wouldn't use tools" from "couldn't fit its reasoning in the output budget"."""
+    """It used to forfeit under `TRUNCATED`. The output budget that ran out belongs to the harness
+    or the endpoint and never to the weights, so the turn fails and the worker decides — the same
+    treatment a provider outage gets (ADR-0024)."""
     result = await play_turn(
         db,
         table,
         scripted(step(content="thinking...", finish_reason="length"), repeat_last=True),
     )
 
-    assert result.status is TurnStatus.FORFEITED
-    assert result.outcome is not None
-    assert result.outcome.termination is Termination.TRUNCATED
-    assert result.outcome.is_forfeit
-    assert "output limit" in result.outcome.detail
+    assert result.status is TurnStatus.FAILED
+    assert result.outcome is None, "nothing is recorded against either player"
+    assert result.error
 
 
 async def test_truncation_and_refusal_have_separate_budgets(db: AsyncSession, table: Table) -> None:

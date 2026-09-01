@@ -77,6 +77,9 @@ resume: ## Reopen a game the harness stopped: make resume GAME=<id> USD=1.50
 repair-transcripts: ## Supersede transcript rows no provider will accept. ARGS=--write to apply
 	cd $(API) && uv run python ../../scripts/repair_transcripts.py $(ARGS)
 
+repair-forfeits: ## Make forfeit flags agree with their games. ARGS=--write to apply
+	cd $(API) && uv run python ../../scripts/repair_forfeits.py $(ARGS)
+
 # Schedules; does not play. A worker must be running for the games to advance.
 # A backup nobody has restored is a hypothesis. `--verify` restores into a scratch database and
 # compares every table's row count with the source, then drops it.

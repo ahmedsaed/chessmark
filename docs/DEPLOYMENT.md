@@ -37,7 +37,7 @@ everything inside a container: no uv, no node, and no remembering which compose 
 | `deploy` | pull the published images, migrate, restart, check `/ready` |
 | `workers N` | how many turn workers to run (`WORKER_REPLICAS`) |
 | `catalogue` `endpoints` `models` `prune` | the model registry |
-| `latency <game-id>` `resume <game-id>` `repair` | one game, and the transcripts behind it |
+| `latency <game-id>` `resume <game-id>` `repair` `repair-forfeits` | one game, and the records behind it |
 | `halt` | stop every model call, or resume; `--clear` lifts it |
 | `tournament …` `standings <slug>` | events |
 | `credits` | grant or revoke; `--show` prints a balance with its ledger |
@@ -328,16 +328,40 @@ its place. The record stays verbatim (invariant 3) and only the request changes.
 Read the dry run before writing. It names the game, the seat and the model for every row, and a
 count of rows far larger than you expected is a reason to stop rather than to add `--write`.
 
+```
+./chessmark repair-forfeits            # reports; writes nothing
+./chessmark repair-forfeits --write
+```
+
+A different repair, and the one to reach for when a **result is already correct**. `Player.forfeited`
+is a stored verdict and a published one — it is the leaderboard's forfeits column — and it drifted
+two ways: a harness stop set it (`BUDGET_EXCEEDED` ends the game, so it travelled as a forfeit), and
+a resume never cleared it. Two free-pool games were budget-stopped, reopened, and played on to a
+genuine checkmate and a genuine threefold draw, and both models carried a forfeit nothing in their
+play had earned ([ADR-0024](adr/0024-endpoint-output-ceilings-are-not-findings.md)).
+
+It changes **no result and reopens no game** — the rule is derived from the game record, which is
+the authority (invariant 1): a seat is forfeited exactly when its game ended by a forfeit against
+that seat. Reach for `resume` when the *ending* is wrong; reach for this when only the flag is.
+
+It reports what it would clear and what it would set **apart**, because they are not the same risk:
+clearing drops a claim we cannot support, setting adds one to a published column.
+
 ### 4. Reopen what was abandoned
 
 ```
 ./chessmark resume <game-id>
 ```
 
-Only endings **we** imposed can be reopened — a budget, a ply cap, a provider we could not reach.
+Only endings **we** imposed can be reopened — a budget, a ply cap, a provider we could not reach,
+an answer cut off by an output ceiling ([ADR-0024](adr/0024-endpoint-output-ceilings-are-not-findings.md)).
 A checkmate is final and so is a forfeit: both are findings about a player, and a script that could
 replay one is a script that could replay a bad result until it improved. The refusal is the point
 of the command existing rather than a hand-written `UPDATE`.
+
+Reopening also **clears a stale forfeit on the seat**. The flag is a verdict written by the ending
+being reopened, and it is published — it is the leaderboard's forfeits column — so leaving it
+behind is the same mistake as leaving a resumed pairing scored.
 
 ```
 ./chessmark resume <game-id> --max-usd 2.50      # raise the ceiling that stopped it

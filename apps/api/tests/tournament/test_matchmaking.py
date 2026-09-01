@@ -6,7 +6,7 @@ fairness: does a newly-listed model get played, and are the games it gets inform
 
 from __future__ import annotations
 
-from chessmark.tournament import Entrant, Form, Result, matchmake
+from chessmark.tournament import Entrant, Form, Pairing, Result, matchmake
 
 FIELD = [Entrant(key=k, seed=i) for i, k in enumerate("ABCD", start=1)]
 
@@ -163,4 +163,67 @@ class TestUnavailable:
         """The default has to be inert, or every closed format pays for a pool's problem."""
         assert matchmake(FIELD, [], SETTLED, count=2) == matchmake(
             FIELD, [], SETTLED, count=2, unavailable=set()
+        )
+
+
+# ================================================================ a pairing that produced nothing
+
+
+class TestAttempts:
+    """A rematch is counted from what was scheduled, not from what survived (OPS-21).
+
+    The production failure: `gemma-4-26b` and `gemma-4-31b`, both unrated and both on the same
+    rate-limited Google pool, were paired seven times over five days and never reached ply 1. Every
+    game paused until the 24-hour patience ran out and was abandoned — which records no result, so
+    `results` never saw the fixture, so the rematch penalty never fired, so the pool chose it again
+    within the hour. Two entrants nothing was known about, and the one pairing guaranteed to keep
+    it that way.
+    """
+
+    def test_an_abandoned_pairing_still_counts_as_a_rematch(self) -> None:
+        """The bug, in one assertion. B is nearest to A and has no *result* against it — but they
+        have already been put on the board, and doing it again is how the loop ran for five days."""
+        ratings = form(A=(1500, 350), B=(1505, 40), C=(1600, 40), D=(1200, 40))
+        dead = [Pairing(white="A", black="B", round_number=1)]
+
+        games = matchmake(FIELD, [], ratings, attempts=dead)
+
+        assert games[0].pair == frozenset({"A", "C"}), (
+            "B is nearer, but that pairing has been tried and produced nothing"
+        )
+
+    def test_repeated_dead_attempts_are_not_forgotten_one_by_one(self) -> None:
+        """A count, not a flag. Seven attempts must not read as one."""
+        ratings = form(A=(1500, 350), B=(1505, 40), C=(1600, 40), D=(1200, 40))
+        dead = [Pairing(white="A", black="B", round_number=n) for n in range(1, 8)]
+
+        games = matchmake(FIELD, [], ratings, attempts=dead)
+
+        assert "B" not in games[0].pair
+
+    def test_a_result_and_an_attempt_are_both_meetings(self) -> None:
+        """The two halves are complementary — settled games arrive as `results`, unsettled ones as
+        `attempts` — so an entrant that has met everybody by either route is out of fresh
+        opponents and falls back to rating proximity."""
+        ratings = form(A=(1500, 350), B=(1505, 40), C=(1600, 40), D=(1200, 40))
+        played = [Result(white="A", black="C", white_score=1.0, round_number=1)]
+        dead = [Pairing(white="A", black="B", round_number=2)]
+
+        games = matchmake(FIELD, played, ratings, attempts=dead, count=1)
+
+        assert games[0].pair == frozenset({"A", "D"}), "the only opponent A has not been given"
+
+    def test_a_bye_is_not_a_meeting(self) -> None:
+        """There was no opponent, so there is nobody to have met."""
+        ratings = form(A=(1500, 350), B=(1505, 40), C=(1600, 40), D=(1200, 40))
+        dead = [Pairing(white="A", black=None, round_number=1)]
+
+        games = matchmake(FIELD, [], ratings, attempts=dead)
+
+        assert games[0].pair == frozenset({"A", "B"}), "the nearest rating, unaffected by the bye"
+
+    def test_nothing_attempted_behaves_exactly_as_before(self) -> None:
+        """The default has to be inert, or every closed format pays for a pool's problem."""
+        assert matchmake(FIELD, [], SETTLED, count=2) == matchmake(
+            FIELD, [], SETTLED, count=2, attempts=[]
         )
