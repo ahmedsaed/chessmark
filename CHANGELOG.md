@@ -27,6 +27,13 @@ Three fixes from an audit of the live `pool-free` event, which had abandoned 21 
   at ± 150 to ± 265 over two to nine games each, which is the honest thing for the page to say.
   Provisional never reorders anything, and an *unrated* entrant is not marked provisional. Ratings
   are recomputed from the games on every request, so this needs no migration. (BENCH-12)
+- **A rating deviation is capped at the prior it started from** ([ADR-0029]). `_decay` widened it
+  every idle rating period and nothing bounded it, so it could pass the deviation we give a model
+  nobody has ever seen — and there is no state of knowledge worse than that. Measured, the breach
+  needed about 2,270 idle daily periods (six years), so nothing was close to it; the cap is
+  Glickman's own rule and the leaderboard is meant to outlive its first year. Applied to the
+  deviation a period *starts* from, so games still shrink it and a long-idle model stays
+  measurable. (BENCH-12)
 - **A pool's standings are ranked by a rating computed over that pool's games** ([ADR-0027]), with
   the deviation as the tiebreak; a closed event still ranks by score, Sonneborn-Berger and direct
   encounter. A pool has no fixed schedule, so its entrants finish unequal numbers of games and a sum
@@ -114,4 +121,5 @@ flags the old code wrote.
 [ADR-0026]: docs/adr/0026-a-repeated-question-gets-a-different-answer.md
 [ADR-0027]: docs/adr/0027-a-pool-is-ranked-by-its-own-rating.md
 [ADR-0028]: docs/adr/0028-a-wider-prior-and-a-provisional-mark.md
+[ADR-0029]: docs/adr/0029-a-deviation-has-a-ceiling.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

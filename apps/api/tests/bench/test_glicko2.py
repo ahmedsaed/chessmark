@@ -18,6 +18,7 @@ from chessmark.bench.glicko2 import (
     DEFAULT_RATING,
     DEFAULT_RD,
     DEFAULT_VOLATILITY,
+    MAX_RD,
     PROVISIONAL_RD,
     Glicko2,
     Outcome,
@@ -319,3 +320,65 @@ def test_a_long_unbeaten_run_does_not_break_the_solver() -> None:
     assert rating.rating > 1500
     assert 0.0 < rating.volatility < 1.0
     assert rating.rd > 0
+
+
+# ====================================================================== the ceiling
+
+
+def test_an_idle_contestant_never_grows_less_known_than_a_stranger() -> None:
+    """**The bug this closes.** `_decay` compounds the volatility every period a contestant does not
+    play, and nothing bounded it — so a rating deviation could pass the one we give a model nobody
+    has ever seen. There is no state of knowledge worse than never having seen somebody, and `± 662`
+    is not a stronger admission of ignorance than `± 500`, only a meaningless one.
+
+    **Eleven years of daily periods, because that is what it actually takes.** From ± 60 the
+    uncapped decay needs about 2,270 idle periods — six years — to reach 500, so a shorter run
+    passes with or without the cap and would be an assertion that could never fail. The bound is
+    still worth having: it is Glickman's rule, the leaderboard is meant to outlive its first year,
+    and a number nothing constrains is one nobody can reason about.
+    """
+    system = Glicko2()
+    player = Rating(rating=1700, rd=60)
+
+    for _ in range(4000):
+        player = system.rate(player, [])
+
+    assert player.rd <= MAX_RD
+    assert player.rating == 1700, "an absence says nothing about strength, only about confidence"
+
+
+def test_the_ceiling_is_the_prior() -> None:
+    """One number, not two. Below the prior it would clamp every new contestant on their first
+    period; above it, an absence could make a model *less* known than a stranger."""
+    assert MAX_RD == DEFAULT_RD
+
+
+def test_the_ceiling_is_approached_rather_than_jumped_to() -> None:
+    """It is a bound on a decay, not a reset. A model idle for a week is less well known than it
+    was and much better known than one that has never played.
+
+    Passes with or without the cap, deliberately: it pins the behaviour the cap must not break,
+    which is the failure a ceiling makes easy — clamping early and reporting every quiet model as a
+    stranger. The test above is the one that catches the bug.
+    """
+    system = Glicko2()
+    player = Rating(rating=1700, rd=60)
+
+    for _ in range(7):
+        player = system.rate(player, [])
+
+    assert 60 < player.rd < 200
+
+
+def test_a_contestant_at_the_ceiling_is_still_moved_by_a_game() -> None:
+    """The cap bounds the prior a period starts from; it does not stop the games shrinking it.
+    Otherwise a long-idle model could never be measured again — the cap would be a trap rather than
+    a bound. Like the test above, this guards the cap rather than demonstrating it.
+    """
+    system = Glicko2()
+    stale = Rating(rating=1500, rd=MAX_RD)
+
+    after = system.rate(stale, [Outcome(Rating(rating=1500, rd=50), score=1.0)])
+
+    assert after.rd < MAX_RD
+    assert after.rating > 1500

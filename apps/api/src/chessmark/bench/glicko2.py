@@ -39,6 +39,19 @@ DEFAULT_RD = 500.0
 
 DEFAULT_VOLATILITY = 0.06
 
+#: The ceiling on a rating deviation, and deliberately the *same number* as the prior.
+#:
+#: Glickman's rule, and it follows from what a deviation means: it is our uncertainty about a
+#: contestant, and there is no state of knowledge worse than never having seen them. A model idle
+#: for two years is no better known than a new one — and no worse. Left uncapped, `_decay` compounds
+#: every idle period and eventually publishes `± 900`, a band wider than the entire plausible rating
+#: range, which is not a stronger admission of ignorance but a meaningless one.
+#:
+#: Written as an alias rather than as its own literal because the two must not drift: a ceiling
+#: below the prior would clamp every new contestant on their first period, and one above it would
+#: let an absence make a model *less* known than a stranger.
+MAX_RD = DEFAULT_RD
+
 #: Above this deviation a rating is **provisional** and says so.
 #:
 #: 110, Lichess's threshold, adopted verbatim rather than tuned — a number chosen to make our own
@@ -118,6 +131,19 @@ def _expected(mu: float, opponent_mu: float, opponent_phi: float) -> float:
     return 1.0 / (1.0 + math.exp(-_g(opponent_phi) * (mu - opponent_mu)))
 
 
+def _phi_star(phi: float, volatility: float) -> float:
+    """The deviation a period *starts* from: last period's, widened by the volatility, capped.
+
+    Both paths through `rate` go through here, because the cap belongs to the pre-period step in
+    Glickman's formulation rather than to the answer. Capping the output instead would clamp the
+    number after the games had already been weighed against an unbounded prior — the reported
+    deviation would be right and the rating computed from it would not.
+
+    A period with games then shrinks this further; a period without them keeps it.
+    """
+    return min(math.sqrt(phi * phi + volatility * volatility), MAX_RD / SCALE)
+
+
 class Glicko2:
     """A rating system at one value of τ."""
 
@@ -150,7 +176,7 @@ class Glicko2:
 
         # The rating deviation grows by the volatility before the games shrink it again. This is
         # what makes a long absence widen the uncertainty rather than freeze it.
-        phi_star = math.sqrt(phi * phi + volatility * volatility)
+        phi_star = _phi_star(phi, volatility)
         new_phi = 1.0 / math.sqrt(1.0 / (phi_star * phi_star) + 1.0 / v)
         new_mu = mu + new_phi * new_phi * delta_sum
 
@@ -160,10 +186,13 @@ class Glicko2:
         """A period with no games. The rating holds; the confidence in it does not.
 
         Not a formality — a model that played once in March and is still shown at ± 60 in December
-        is a lie the leaderboard is telling.
+        is a lie the leaderboard is telling. Bounded by `MAX_RD`, which is the other half of the
+        same honesty: after long enough the right thing to say is "we do not know", and there is
+        nothing further out than that.
         """
-        phi_star = math.sqrt(player.phi**2 + player.volatility**2)
-        return Rating.from_internal(player.mu, phi_star, player.volatility)
+        return Rating.from_internal(
+            player.mu, _phi_star(player.phi, player.volatility), player.volatility
+        )
 
     def _new_volatility(self, phi: float, v: float, delta: float, volatility: float) -> float:
         """Solve for the new volatility by the Illinois variant of regula falsi.
