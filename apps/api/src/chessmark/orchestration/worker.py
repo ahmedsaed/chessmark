@@ -75,9 +75,12 @@ BUDGET = TurnOutcome("budget_exceeded")
 #: The global kill switch was tripped. The turn is not run and the game is left RUNNING, so it
 #: resumes when the budget resets rather than being forfeited for an outage of our own making.
 GLOBAL_BUDGET = TurnOutcome("global_budget_halted")
-#: The global halt is on — our account is out of credits, or somebody stopped the harness by hand.
-#: Treated exactly like the daily budget: the turn is not run, the job is dropped, and the game is
-#: left RUNNING for the reconciler to pick up once spending is possible again (OPS-19).
+#: The global halt is on — our account is out of credits, the free allowance is spent, or somebody
+#: stopped the harness by hand. The turn is not run, nothing is spent and nothing is forfeited; the
+#: game is **paused** so the board says so, and the reconciler resumes it once the halt lifts
+#: (OPS-19). It was left RUNNING with the job silently dropped, which is correct about the record
+#: and invisible on the page: a game stopped by the daily free cap goes on pulsing "live" until UTC
+#: midnight, and somebody sits watching it.
 HALTED = TurnOutcome("halted")
 #: The side to move is a person. The worker does nothing and enqueues nothing — the game waits in
 #: RUNNING until the human's move endpoint commits a ply and enqueues the model's reply. Anything
@@ -177,6 +180,20 @@ class ProviderFailureError(Exception):
         self.result = result
 
 
+class HarnessHaltedError(Exception):
+    """Raised to abandon a turn the global halt forbids, and pause the game where it can be seen.
+
+    Raised rather than returned because the halt is discovered *inside* the transaction that
+    claimed the game's row, and the pause has to be written by a transaction of its own: rolling
+    this one back releases the lock and leaves the record exactly as it was, which is the same
+    discipline `ProviderFailureError` uses for a turn that must not be half-written.
+    """
+
+    def __init__(self, state: HaltState) -> None:
+        super().__init__(state.reason)
+        self.state = state
+
+
 @dataclass(slots=True)
 class HandledJob:
     outcome: TurnOutcome
@@ -261,6 +278,10 @@ class TurnWorker:
             # owner dies the queue's `XAUTOCLAIM` and the reconciler both still cover it.
             log.info("dropping job for %s: another worker is advancing it", job.game_id)
             return HandledJob(IN_FLIGHT, job.game_id, job.expected_ply)
+        except HarnessHaltedError as halted:
+            # The turn never started, so there is nothing to roll back and nothing to retry. The
+            # game is paused so the page can say why it stopped instead of simply stopping.
+            return await self._pause_for_halt(job, halted.state)
         except ProviderFailureError as failure:
             # An endpoint declining to serve is not a failure to retry harder at — the position is
             # untouched and the answer is to come back. Burning the job's retry budget on it spent
@@ -270,8 +291,12 @@ class TurnWorker:
                 # time would have each of them wake every fifteen minutes to rediscover it — about
                 # 120 doomed requests an hour against an account that can serve none of them. One
                 # switch instead (OPS-19).
-                if await self._halt_on_account(failure.result.rate_limit):
-                    return HandledJob(HALTED, job.game_id, job.expected_ply, result=failure.result)
+                stopped = await self._halt_on_account(failure.result.rate_limit)
+                if stopped is not None:
+                    # The refusal that set the halt is also this game's refusal, so this
+                    # game pauses like any other the halt covers — with the halt's own
+                    # expiry as the time to come back.
+                    return await self._pause_for_halt(job, stopped, result=failure.result)
                 return await self._pause(job, failure.result)
             return await self._retry_or_abandon(job, failure.result)
 
@@ -345,7 +370,9 @@ class TurnWorker:
                     game.id,
                     referee.ply,
                 )
-                return HandledJob(HALTED, game.id, referee.ply)
+                # Raised rather than returned: the pause is a write, and it must not ride on the
+                # transaction that claimed this row — see `HarnessHaltedError`.
+                raise HarnessHaltedError(halted)
 
             # A person is to move. Stop here, and crucially do **not** re-enqueue: a job that
             # requeued itself would spin at the poll interval for as long as the human took to
@@ -428,8 +455,13 @@ class TurnWorker:
             return None
         return await self.halt.state()
 
-    async def _halt_on_account(self, limit: RateLimit) -> bool:
+    async def _halt_on_account(self, limit: RateLimit) -> HaltState | None:
         """An account-wide refusal stops the whole harness rather than this one game.
+
+        Returns the halt that now stands, or `None` when this refusal was not account-wide. The
+        state rather than a bare flag, because the caller pauses this game with the halt's own
+        expiry as the time to come back, and the first halt wins — so what `set` returns may not
+        be what this refusal asked for.
 
         Two of them, and the free-model daily cap is the one that will actually happen: it arrives
         as a 429 like a hot shared pool, and means something entirely different. The allowance is
@@ -442,10 +474,10 @@ class TurnWorker:
         conservative fallback when the header is missing.
         """
         if self.halt is None:
-            return False
+            return None
 
         if limit.free_daily_cap:
-            await self.halt.set(
+            return await self.halt.set(
                 limit.describe(""),
                 source=SOURCE_FREE_TIER,
                 until=limit.resets_at or next_utc_midnight(),
@@ -453,12 +485,11 @@ class TurnWorker:
                 # touched the allowance must keep playing.
                 scope=SCOPE_FREE,
             )
-            return True
 
         return await self._halt_on_credits(limit)
 
-    async def _halt_on_credits(self, limit: RateLimit) -> bool:
-        """A 402 stops the whole harness rather than this one game. True when it did.
+    async def _halt_on_credits(self, limit: RateLimit) -> HaltState | None:
+        """A 402 stops the whole harness rather than this one game. The halt when it did.
 
         **Only a 402, and only when we cannot see credit.** A 401 stays a per-game pause: it is
         also account-level, but a rejected key is as likely to be one misconfigured worker as a
@@ -474,7 +505,7 @@ class TurnWorker:
         (ADR-0019).
         """
         if self.halt is None or limit.status_code != 402:
-            return False
+            return None
 
         balance = await fetch_balance(get_settings().openrouter_api_key)
         if balance is not None and balance.positive:
@@ -483,14 +514,97 @@ class TurnWorker:
                 "account, and pausing only this game",
                 balance.remaining,
             )
-            return False
+            return None
 
-        await self.halt.set(
+        return await self.halt.set(
             "our provider account is out of credits (402)",
             source=SOURCE_CREDITS,
             balance_usd=balance.remaining if balance is not None else None,
         )
-        return True
+
+    async def _pause_for_halt(
+        self, job: AdvanceTurn, state: HaltState, *, result: TurnResult | None = None
+    ) -> HandledJob:
+        """Stop the board where a person can see it, and say why (OPS-19, OPS-20).
+
+        A halt used to leave the game `RUNNING` with its job simply dropped. That is right about
+        the *record* — no turn ran, nothing was spent, nothing was forfeited (invariant 11) — and
+        wrong about the *page*: the header goes on pulsing "live" over a board that will not move
+        again until the allowance resets, and somebody sits watching it. The daily free-model cap
+        is the halt that actually happens and it lasts until UTC midnight, so that is up to
+        twenty-four hours of a game that looks alive and is not.
+
+        `PAUSED` rather than a status of its own, because it is the same fact a provider pause
+        already states and the whole read path is built on it: the header renders `paused` with
+        `pause_reason` in its tooltip, `foldEvents` turns the `game_paused` event into a notice in
+        the stream, and the reconciler's resume sweep is what puts the game back. One shape, one
+        set of tests.
+
+        **No abandonment clock.** `_pause` gives up on a game that cannot get a turn in a day,
+        because a provider that stays hot that long is not coming back. A halt is *ours* — an empty
+        account, our allowance, an operator — and writing off a game over it would be a harness
+        bound becoming a finding about a player (ADR-0019). It waits as long as the halt does.
+
+        `resume_after` is the halt's own expiry when it has one and `None` when it does not.
+        `find_resumable` reads `None` as due, and the reconciler refuses to sweep at all while a
+        halt stands — so an unbounded halt resumes on the first tick after somebody lifts it,
+        rather than sitting until a timestamp nobody could have predicted.
+        """
+        async with self.sessionmaker() as session, session.begin():
+            game = await get_game(session, job.game_id)
+
+            # A game that ended stays ended, for the reason `_pause` spells out: a second worker
+            # finishing after the first concluded the game would write `PAUSED` over a finished
+            # record, and the reconciler would then correctly resume it (ADR-0022, OPS-16).
+            if game.status in TERMINAL_STATUSES:
+                log.info("not pausing %s: it is already %s", game.id, game.status.value)
+                return HandledJob(HALTED, game.id, job.expected_ply, result=result)
+
+            # **One notice per pause.** Every game the halt covers arrives here separately, and a
+            # redelivered job — or the reconciler requeueing a game it already paused — would
+            # otherwise append a second `game_paused` and publish a second notice for a board that
+            # has not moved. The status is the flag, so nothing extra has to be remembered.
+            if game.status is GameStatus.PAUSED:
+                return HandledJob(HALTED, game.id, job.expected_ply, result=result)
+
+            player = await self._seat_to_play(session, job)
+            model = model_for(player)
+            reason = f"the harness is halted: {state.reason}"
+
+            game.status = GameStatus.PAUSED
+            game.resume_after = state.until
+            game.pause_reason = reason
+            log.warning(
+                "pausing %s at ply %s: %s (lifts %s)",
+                game.id,
+                job.expected_ply,
+                reason,
+                state.until.isoformat() if state.until else "when the halt is lifted",
+            )
+            await append_event(
+                session,
+                game_id=game.id,
+                type=EventType.GAME_PAUSED,
+                payload={
+                    "reason": reason,
+                    "player_id": str(player.id),
+                    "colour": player.colour.value,
+                    "model": model,
+                    # Named so an operator reading the log can tell our account running dry from
+                    # the free allowance running out from somebody having typed `halt` — three very
+                    # different things that all stop a board.
+                    "halt_source": state.source,
+                    "halt_scope": state.scope,
+                    "resume_after": state.until.isoformat() if state.until else None,
+                },
+            )
+            before_seq = game.event_seq - 1
+            events = await load_events(session, game.id, after_seq=before_seq)
+
+        # After the commit, like every other event: a subscriber must never be told about a state
+        # the database has not accepted.
+        await self._publish(job.game_id, events)
+        return HandledJob(HALTED, job.game_id, job.expected_ply, result=result)
 
     async def _pause(self, job: AdvanceTurn, result: TurnResult) -> HandledJob:
         """Stop the game until the provider will serve it again.

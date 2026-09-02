@@ -53,6 +53,13 @@ Three fixes from an audit of the live `pool-free` event, which had abandoned 21 
 
 ### Fixed
 
+- **A halt now pauses the board instead of stopping it silently** ([ADR-0030]). A turn the global
+  halt forbade was dropped and the game left `RUNNING` — correct about the record and invisible on
+  the page: the header went on pulsing **live** over a board that would not move again until the
+  free-model allowance reset, which is most of a UTC day. Every game a halt covers is now paused
+  with one `game_paused` event carrying the reason and, where the halt knows it, the time it lifts.
+  Nothing is forfeited and no abandonment clock runs — a halt is ours, not the model's
+  (ADR-0019) — and a paid seat is still untouched by a free-model cap. (OPS-19, OPS-20)
 - **A game due to resume keeps its concurrency slot** ([ADR-0025]). The tournament runner bounded
   itself on running games only, so a pairing whose pause had expired was invisible to it and
   visible to the reconciler; the two raced for one slot and the waiting game lost. Measured across
@@ -122,4 +129,5 @@ flags the old code wrote.
 [ADR-0027]: docs/adr/0027-a-pool-is-ranked-by-its-own-rating.md
 [ADR-0028]: docs/adr/0028-a-wider-prior-and-a-provisional-mark.md
 [ADR-0029]: docs/adr/0029-a-deviation-has-a-ceiling.md
+[ADR-0030]: docs/adr/0030-a-halt-pauses-the-board.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0
