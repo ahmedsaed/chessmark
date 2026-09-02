@@ -45,6 +45,13 @@ Three fixes from an audit of the live `pool-free` event, which had abandoned 21 
 
 ### Added
 
+- **A tournament's schedule shows the latest ten matches and loads more on request.** A pool never
+  ends, so its schedule only grows — and it was rendered whole, several hundred linked rows in one
+  column, under the standings table that is the reason most people open the page. The order was
+  already newest-round-first, so the first page is the part worth seeing. Every pairing is already
+  on the page, so "load more" is a slice rather than a request: nothing to wait for and nothing to
+  fail. The count says `10 of 312` while there is more, and the button says how much is left.
+
 - **`tournament set <slug> --max-concurrent N`** changes a running event's concurrency without a
   hand-written `UPDATE`. It was settable only at `create`, which is the one moment nobody knows the
   right value — it depends on how many workers are up, how hot the free pools are that day, and how
