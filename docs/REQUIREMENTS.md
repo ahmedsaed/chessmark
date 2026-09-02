@@ -99,6 +99,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | BENCH-08 | Schema carries nullable evaluation columns from day one so BENCH-06/07 land without migration churn. | M |
 | BENCH-09 | Public CSV/JSON export of aggregate results. | C |
 | BENCH-10 | Leaderboard states its methodology and its known limitations in plain language on the page. | M |
+| BENCH-11 | **The format decides what a standings table means.** A closed event is ranked by score, Sonneborn-Berger and direct encounter — every entrant plays the same schedule, which is what makes a sum a ranking. A **pool** is ranked by Glicko-2 over *that pool's* games, because its entrants play unequal numbers of them: in `pool-free` two models that won all five they played stood third and fourth behind one that had lost a game in eight. The scope is a `where` clause and never a second set of rules, so a game the leaderboard excludes is excluded here too. An entrant with no ratable game is shown **unrated** and sorted last, never defaulted to 1500 (ADR-0027). | M |
 
 ## 7. Frontend (UI)
 

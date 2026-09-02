@@ -913,6 +913,14 @@ class StandingOut(Schema):
     byes: int
     score: float
     sonneborn_berger: float
+    #: Glicko-2 over this event's games alone, and `None` for a closed event.
+    #:
+    #: A pool has no fixed schedule, so its entrants play unequal numbers of games and a sum of
+    #: points ranks partly by volume — `score` and `sonneborn_berger` stay in the payload because
+    #: they are facts worth reading, but for a pool they do not decide the order (ADR-0027).
+    #: `None` on a rated event means the model has not yet completed a game that counts.
+    rating: float | None = None
+    rating_deviation: float | None = None
 
 
 class TournamentPairingOut(Schema):

@@ -17,6 +17,17 @@ file is only the record of *what shipped when*.
 
 Three fixes from an audit of the live `pool-free` event, which had abandoned 21 of 56 pairings.
 
+### Changed
+
+- **A pool's standings are ranked by a rating computed over that pool's games** ([ADR-0027]), with
+  the deviation as the tiebreak; a closed event still ranks by score, Sonneborn-Berger and direct
+  encounter. A pool has no fixed schedule, so its entrants finish unequal numbers of games and a sum
+  of points partly measures how many they were handed — in `pool-free`, two models that had won
+  every game they played stood third and fourth behind one that had lost a game in eight. Points and
+  W/D/L stay on the page; they no longer decide the order. The rating is that pool's own, so a place
+  cannot move because of a game played elsewhere, and the eligibility rules are unchanged by the
+  scope. An entrant with no ratable game reads `unrated` and sorts last, never 1500. (BENCH-11)
+
 ### Added
 
 - **`tournament set <slug> --max-concurrent N`** changes a running event's concurrency without a
@@ -93,4 +104,5 @@ flags the old code wrote.
 [ADR-0024]: docs/adr/0024-endpoint-output-ceilings-are-not-findings.md
 [ADR-0025]: docs/adr/0025-finishing-a-game-beats-starting-one.md
 [ADR-0026]: docs/adr/0026-a-repeated-question-gets-a-different-answer.md
+[ADR-0027]: docs/adr/0027-a-pool-is-ranked-by-its-own-rating.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0
