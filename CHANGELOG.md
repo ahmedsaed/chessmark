@@ -13,6 +13,30 @@ This file starts at `0.1.0`. Everything before it is in the git history and, whe
 decision rather than a change, in [docs/adr](docs/adr/) — an ADR is the record of *why*, and this
 file is only the record of *what shipped when*.
 
+## [Unreleased]
+
+Three fixes from an audit of the live `pool-free` event, which had abandoned 21 of 56 pairings.
+
+### Fixed
+
+- **A game due to resume keeps its concurrency slot** ([ADR-0025]). The tournament runner bounded
+  itself on running games only, so a pairing whose pause had expired was invisible to it and
+  visible to the reconciler; the two raced for one slot and the waiting game lost. Measured across
+  the five deepest abandoned games, **48–99% of every pause was our own queue** rather than the
+  provider's — one game was asked to wait sixty seconds and sat for 16.4 hours. (OPS-22)
+- **Patience is measured from a game's last move, not its first pause** ([ADR-0025]). The window
+  claimed to mean "cannot get a turn in a day" and actually meant "has been pausing on and off for
+  a day", so a game that paused at ply 4 and then played eighty-eight more moves was abandoned
+  anyway. Three games died at plies 71, 68 and 56 having never gone more than 17.4 hours without
+  moving, each within seven playing-hours of a real result. (OPS-22)
+- **A read-only tool asked the same question three times gets a nudge, not the answer**
+  ([ADR-0026]). `nemotron-3-super-120b` called `get_move_history` twenty times in one turn, received
+  a byte-identical result and emitted identical reasoning each time, and forfeited on
+  `max_tool_iterations` — 1.96M prompt tokens and twenty of the thousand daily free requests for a
+  ply that never happened. The nudge says what it has asked, that nothing changes until it moves,
+  and how many rounds it has left. Games already lost this way stand: both seats ran the same
+  harness. (AGENT-22)
+
 ## [0.1.0] — 2026-09-01
 
 First tagged release. Three fixes found by reading the live `pool-free` event.
@@ -59,4 +83,6 @@ deploy — no backfill and no migration. Run `./chessmark repair-forfeits` after
 flags the old code wrote.
 
 [ADR-0024]: docs/adr/0024-endpoint-output-ceilings-are-not-findings.md
+[ADR-0025]: docs/adr/0025-finishing-a-game-beats-starting-one.md
+[ADR-0026]: docs/adr/0026-a-repeated-question-gets-a-different-answer.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0
