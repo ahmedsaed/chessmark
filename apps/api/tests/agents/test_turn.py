@@ -460,6 +460,110 @@ async def test_a_model_that_never_moves_runs_out_of_iterations(
     assert result.outcome.termination is Termination.ERROR_FORFEIT
 
 
+# ====================================================================== a loop, broken
+
+
+async def test_a_third_identical_read_is_answered_with_a_nudge(
+    db: AsyncSession, table: Table
+) -> None:
+    """**The loop this exists to break.** `nemotron-3-super-120b` called `get_move_history` with no
+    arguments twenty times in one turn, got a byte-identical result each time, emitted the same
+    2,303-token reasoning each time, and lost a ranked game to `max_tool_iterations` — 1.96 million
+    prompt tokens and twenty of a thousand daily free requests for a ply that never happened.
+
+    Nothing broke it because nothing could: the exchange was deterministic, so handing back the same
+    answer again was guaranteed to produce the same call. The third answer is therefore a different
+    one, and it says how many rounds are left, because a model that cannot see it is running out
+    cannot act on it.
+    """
+    result = await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("get_move_history")), repeat_last=True),
+        limits=TurnLimits(max_tool_iterations=5),
+    )
+
+    calls = (
+        await db.scalars(
+            sa.select(ToolCall).where(ToolCall.game_id == table.game.id).order_by(ToolCall.sequence)
+        )
+    ).all()
+
+    assert [c.ok for c in calls] == [True, True, False, False, False]
+    assert all(c.name == "get_move_history" for c in calls)
+
+    nudge = calls[2].result
+    assert nudge["error"] == "repeated_call"
+    assert "already called `get_move_history`" in nudge["detail"]
+    assert "2 tool rounds left" in nudge["detail"], "the count has to be actionable, not decorative"
+
+    # And it is still a forfeit. The harness declined to answer; it did not excuse the model.
+    assert result.status is TurnStatus.FORFEITED
+    assert result.outcome is not None
+    assert result.outcome.termination is Termination.ERROR_FORFEIT
+
+
+async def test_two_identical_reads_are_answered_normally(db: AsyncSession, table: Table) -> None:
+    """Deliberately generous. A model just refused an illegal move may reasonably re-read the board,
+    and the position genuinely has not changed — what it may not do is ask a third time."""
+    await play_turn(
+        db,
+        table,
+        scripted(
+            step(tool_call("get_board")),
+            step(tool_call("get_board")),
+            step(tool_call("make_move", move="e4")),
+        ),
+    )
+
+    calls = (
+        await db.scalars(
+            sa.select(ToolCall).where(ToolCall.game_id == table.game.id).order_by(ToolCall.sequence)
+        )
+    ).all()
+
+    assert [c.ok for c in calls] == [True, True, True]
+    assert all(c.result.get("error") != "repeated_call" for c in calls)
+
+
+async def test_different_questions_are_not_repeats(db: AsyncSession, table: Table) -> None:
+    """The signature is the name *and* the arguments together, so three different reads are three
+    questions. Keyed on the name alone this would have refused a model that read the board, listed
+    its moves and checked the history — the ordinary way to play a turn."""
+    result = await play_turn(
+        db,
+        table,
+        scripted(
+            step(tool_call("get_board")),
+            step(tool_call("get_legal_moves")),
+            step(tool_call("get_move_history")),
+            step(tool_call("make_move", move="e4")),
+        ),
+    )
+
+    assert result.moved
+    calls = (await db.scalars(sa.select(ToolCall).where(ToolCall.game_id == table.game.id))).all()
+    assert all(c.result.get("error") != "repeated_call" for c in calls)
+
+
+async def test_a_repeated_move_is_left_to_the_illegal_move_rule(
+    db: AsyncSession, table: Table
+) -> None:
+    """`make_move` is not read-only, and a repeated one is an illegal-move retry. ADR-0002 already
+    answers those with the full legal move list five times over; intercepting them here would take
+    a rule away from the module that owns it and cut the retries short."""
+    result = await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("make_move", move="Qh8")), repeat_last=True),
+        limits=TurnLimits(max_tool_iterations=10),
+    )
+
+    assert result.outcome is not None
+    assert result.outcome.termination is Termination.ILLEGAL_MOVE_FORFEIT
+    assert result.illegal_attempts == 6, "the first try and all five retries, not two"
+
+
 async def test_a_runaway_output_stops_the_turn(db: AsyncSession, table: Table) -> None:
     """The budget counts what the model *generated*. 400k tokens of output in one turn is
     pathological and worth stopping."""
