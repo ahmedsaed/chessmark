@@ -22,8 +22,33 @@ from dataclasses import dataclass
 
 #: A player nobody has seen. 1500 is conventional; the deviation is what says "we know nothing".
 DEFAULT_RATING = 1500.0
-DEFAULT_RD = 350.0
+
+#: How unsure we are of a contestant nobody has seen.
+#:
+#: **500, following Lichess, rather than Glickman's 350.** The initial deviation is a statement
+#: about how fast the first few games are allowed to move a rating, and 350 is calibrated for a
+#: rating pool where a new player is a rare event among many settled ones. Ours is the opposite:
+#: the matchmaker deliberately pairs whoever is *least* known (`tournament/matchmaking.py`), so the
+#: population is mostly new and the games we spend are mostly spent on models that have barely
+#: played. A wider prior lets those first games count for what they are worth.
+#:
+#: It is a prior, not a licence: the same evidence still produces the same ordering, and the
+#: deviation is published beside the rating so a fast-moving early number cannot be mistaken for a
+#: settled one.
+DEFAULT_RD = 500.0
+
 DEFAULT_VOLATILITY = 0.06
+
+#: Above this deviation a rating is **provisional** and says so.
+#:
+#: 110, Lichess's threshold, adopted verbatim rather than tuned — a number chosen to make our own
+#: table look settled would be worth nothing. `± 208` is honest and most readers do not know what
+#: to do with it; "provisional" is the same fact in a word.
+#:
+#: **Every contestant is provisional today**, at 150 to 265 over two to nine games each, and that
+#: is the correct thing for the page to say: nine games do not settle a rating. The flag starts
+#: discriminating at roughly fifteen to twenty games, which is where a pool gets to on its own.
+PROVISIONAL_RD = 110.0
 
 #: Glicko-2 works on an internal scale where a rating point is worth 1/173.7178.
 SCALE = 173.7178
@@ -40,9 +65,19 @@ EPSILON = 1e-6
 class Rating:
     """One contestant's standing. `rd` is the honest half — it is what a leaderboard must show."""
 
+    # `provisional` is below, and is `rd` said in a word for readers who do not think in deviations.
+
     rating: float = DEFAULT_RATING
     rd: float = DEFAULT_RD
     volatility: float = DEFAULT_VOLATILITY
+
+    @property
+    def provisional(self) -> bool:
+        """Whether this rating is still too unsure to be read as a placing.
+
+        Derived rather than stored, so it cannot drift from the deviation it describes.
+        """
+        return self.rd > PROVISIONAL_RD
 
     @property
     def mu(self) -> float:

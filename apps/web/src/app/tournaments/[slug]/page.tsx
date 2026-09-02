@@ -241,6 +241,16 @@ function Standings({ rows }: { rows: Standing[] }) {
                 ) : (
                   <>
                     {Math.round(row.rating)}
+                    {/* Same mark as the leaderboard, for the same reason: a reader who does not
+                        think in deviations still has to be told this one is not settled yet. */}
+                    {row.rating_provisional && (
+                      <span
+                        className="text-ink-faint"
+                        title="Provisional — too few games in this event to settle the rating"
+                      >
+                        ?
+                      </span>
+                    )}
                     {row.rating_deviation !== null && (
                       /* The deviation is not decoration: it is what stops a two-game rating being
                          read as a two-hundred-game one. */

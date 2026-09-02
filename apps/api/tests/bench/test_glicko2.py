@@ -18,6 +18,7 @@ from chessmark.bench.glicko2 import (
     DEFAULT_RATING,
     DEFAULT_RD,
     DEFAULT_VOLATILITY,
+    PROVISIONAL_RD,
     Glicko2,
     Outcome,
     Rating,
@@ -105,13 +106,49 @@ def test_the_scale_round_trips() -> None:
 
 
 def test_a_new_contestant_starts_maximally_uncertain() -> None:
-    """The default RD is the whole point: 1500 ± 350 says "we know nothing", and a leaderboard that
+    """The default RD is the whole point: 1500 ± 500 says "we know nothing", and a leaderboard that
     prints it next to 1500 ± 40 is telling the truth about both."""
     new = Rating()
 
     assert new.rating == DEFAULT_RATING
     assert new.rd == DEFAULT_RD
     assert new.volatility == DEFAULT_VOLATILITY
+
+
+def test_the_prior_is_wider_than_glickmans_350() -> None:
+    """Asserted as a policy rather than an implementation detail. 350 is calibrated for a pool where
+    a new player is rare among many settled ones; ours is the opposite — the matchmaker deliberately
+    pairs whoever is least known, so most of what we spend is spent on models that have barely
+    played, and the first few games should be allowed to say more. Lichess's number, for the same
+    reason."""
+    assert DEFAULT_RD == 500.0
+
+
+def test_a_new_rating_is_provisional_and_a_settled_one_is_not() -> None:
+    """`± 208` is honest and most readers cannot act on it. This is the same fact in a word."""
+    assert Rating().provisional
+    assert Rating(rd=PROVISIONAL_RD + 0.1).provisional
+    assert not Rating(rd=PROVISIONAL_RD).provisional, "the threshold itself is settled"
+    assert not Rating(rd=40).provisional
+
+
+def test_the_provisional_threshold_is_lichesss_not_ours() -> None:
+    """Adopted verbatim rather than tuned. A threshold picked to make our own table look settled
+    would be worth nothing — and today it does the opposite: every contestant in `pool-free` sits
+    between 150 and 265 over two to nine games, so every one of them is provisional, which is the
+    correct thing for the page to say."""
+    assert PROVISIONAL_RD == 110.0
+
+
+def test_games_settle_a_rating_out_of_provisional() -> None:
+    """Or the flag would be permanent, which is a different way of saying nothing."""
+    system = Glicko2()
+    player = Rating()
+
+    for _ in range(12):
+        player = system.rate(player, [Outcome(Rating(rating=1500, rd=60), score=0.5)])
+
+    assert not player.provisional
 
 
 def test_playing_games_reduces_uncertainty() -> None:

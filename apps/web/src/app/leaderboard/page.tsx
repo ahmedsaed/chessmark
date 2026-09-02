@@ -102,6 +102,17 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
               </td>
               <td className="tabular px-3 py-2.5 text-right font-mono text-xs text-ink">
                 {Math.round(row.rating)}
+                {/* The `?` is the deviation said in a word. "± 208" is honest and most readers
+                    cannot act on it; the mark is the same fact in a form they can. The number
+                    stays, in the title, for readers who do think in deviations. */}
+                {row.provisional && (
+                  <span
+                    className="ml-0.5 text-ink-faint"
+                    title={`Provisional — too few games to settle this rating (± ${Math.round(row.rating_deviation)})`}
+                  >
+                    ?
+                  </span>
+                )}
                 {/* The deviation is not decoration: it is what stops a three-game rating being
                     read as a three-hundred-game one. */}
                 <span className="ml-1 text-ink-faint">± {Math.round(row.rating_deviation)}</span>

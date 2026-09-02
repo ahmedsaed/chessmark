@@ -270,6 +270,7 @@ async def get_tournament(session: SessionDep, slug: str) -> TournamentDetail:
                 sonneborn_berger=s.sonneborn_berger,
                 rating=s.rating,
                 rating_deviation=s.rating_deviation,
+                rating_provisional=s.rating_provisional,
             )
             for s in table
         ],

@@ -47,6 +47,10 @@ class Standing:
     #: The honest half. A rating without it says "1650" where the truth is "1650, and we have seen
     #: four games".
     rating_deviation: float | None = None
+    #: Whether that rating is still too unsure to read as a placing. The threshold belongs to the
+    #: rating system, not to a table, so the caller decides it and hands the answer in — the same
+    #: bargain as the rating itself, and what keeps this module free of `bench`.
+    rating_provisional: bool = False
 
     @property
     def key(self) -> str:
@@ -56,7 +60,7 @@ class Standing:
 def standings(
     entrants: Sequence[Entrant],
     results: Sequence[Result],
-    ratings: Mapping[str, tuple[float, float]] | None = None,
+    ratings: Mapping[str, tuple[float, float, bool]] | None = None,
 ) -> list[Standing]:
     """The table, best first, with places assigned.
 
@@ -64,7 +68,8 @@ def standings(
     be recomputed after a model was withdrawn, and losing the whole table over one stale row would
     be a worse failure than omitting it.
 
-    `ratings` maps an entrant key to `(rating, deviation)` and, when given, decides the order:
+    `ratings` maps an entrant key to `(rating, deviation, provisional)` and, when given, decides
+    the order:
     highest rating first, then narrowest deviation, then seed. Pass it for a pool, where games
     played are unequal and a sum of points ranks partly by volume; omit it for a closed event,
     where every entrant plays the same schedule and points are what the event is for.
@@ -111,6 +116,7 @@ def standings(
             sonneborn_berger=_sonneborn_berger(key, relevant, scores),
             rating=ratings[key][0] if ratings and key in ratings else None,
             rating_deviation=ratings[key][1] if ratings and key in ratings else None,
+            rating_provisional=ratings[key][2] if ratings and key in ratings else False,
         )
         for key in known
     ]

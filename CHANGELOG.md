@@ -19,6 +19,14 @@ Three fixes from an audit of the live `pool-free` event, which had abandoned 21 
 
 ### Changed
 
+- **A new contestant starts at 1500 ± 500, and a rating above ± 110 is marked provisional**
+  ([ADR-0028]). Both numbers are Lichess's, adopted verbatim rather than tuned. The wider prior
+  suits a field the matchmaker keeps refreshing — it pairs whoever is *least* known, so most games
+  are spent on models that have barely played, and Glickman's 350 is calibrated for the opposite
+  population. The mark is the deviation said in a word; today it applies to **every** contestant,
+  at ± 150 to ± 265 over two to nine games each, which is the honest thing for the page to say.
+  Provisional never reorders anything, and an *unrated* entrant is not marked provisional. Ratings
+  are recomputed from the games on every request, so this needs no migration. (BENCH-12)
 - **A pool's standings are ranked by a rating computed over that pool's games** ([ADR-0027]), with
   the deviation as the tiebreak; a closed event still ranks by score, Sonneborn-Berger and direct
   encounter. A pool has no fixed schedule, so its entrants finish unequal numbers of games and a sum
@@ -105,4 +113,5 @@ flags the old code wrote.
 [ADR-0025]: docs/adr/0025-finishing-a-game-beats-starting-one.md
 [ADR-0026]: docs/adr/0026-a-repeated-question-gets-a-different-answer.md
 [ADR-0027]: docs/adr/0027-a-pool-is-ranked-by-its-own-rating.md
+[ADR-0028]: docs/adr/0028-a-wider-prior-and-a-provisional-mark.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

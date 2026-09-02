@@ -820,7 +820,9 @@ class LeaderboardRow(Schema):
     rating: float
     rating_deviation: float
     volatility: float
-
+    #: `rating_deviation` said in a word. Most readers do not know what to do with "± 208";
+    #: "provisional" is the same fact in a form they can act on.
+    provisional: bool
     games: int
     wins: int
     draws: int
@@ -863,6 +865,7 @@ class LeaderboardRow(Schema):
             rating=rating.rating,
             rating_deviation=rating.rd,
             volatility=rating.volatility,
+            provisional=rating.provisional,
             games=aggregate.games if aggregate else 0,
             wins=aggregate.wins if aggregate else 0,
             draws=aggregate.draws if aggregate else 0,
@@ -921,6 +924,10 @@ class StandingOut(Schema):
     #: `None` on a rated event means the model has not yet completed a game that counts.
     rating: float | None = None
     rating_deviation: float | None = None
+    #: Whether that rating is still too unsure to read as a placing. `False` when there is no
+    #: rating at all — an entrant with no ratable game is *unrated*, which the table says outright,
+    #: rather than a provisional one.
+    rating_provisional: bool = False
 
 
 class TournamentPairingOut(Schema):

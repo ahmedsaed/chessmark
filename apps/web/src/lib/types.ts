@@ -317,6 +317,8 @@ export interface LeaderboardRow {
    * games against three hundred as though the numbers meant the same thing.
    */
   rating_deviation: number;
+  /** `rating_deviation` said in a word, for readers who do not think in deviations. */
+  provisional: boolean;
   volatility: number;
 
   games: number;
@@ -373,6 +375,11 @@ export interface Standing {
    */
   rating: number | null;
   rating_deviation: number | null;
+  /**
+   * Whether that rating is too unsure to read as a placing. `false` when there is no rating —
+   * an entrant with no ratable game is *unrated*, which is a different statement.
+   */
+  rating_provisional: boolean;
 }
 
 /**

@@ -26,7 +26,7 @@ def test_a_perfect_record_outranks_a_longer_one() -> None:
         Result(white="perfect", black="prolific", white_score=1.0, round_number=n + 1)
         for n in range(5)
     ]
-    ratings = {"perfect": (1780.0, 90.0), "prolific": (1610.0, 70.0)}
+    ratings = {"perfect": (1780.0, 90.0, False), "prolific": (1610.0, 70.0, False)}
 
     table = standings(field, results, ratings)
 
@@ -51,7 +51,7 @@ def test_points_still_rank_a_closed_event() -> None:
 def test_the_deviation_breaks_a_tie_on_rating() -> None:
     """Two equal ratings are not equally known, and the better-measured one is the stronger claim."""
     field = _field("vague", "settled")
-    ratings = {"vague": (1600.0, 300.0), "settled": (1600.0, 45.0)}
+    ratings = {"vague": (1600.0, 300.0, True), "settled": (1600.0, 45.0, False)}
 
     table = standings(field, [], ratings)
 
@@ -64,7 +64,7 @@ def test_an_unrated_entrant_sorts_last_not_mid_table() -> None:
     deviation exists to avoid making. `pool-free` had three such entrants, all of whom had never
     completed a game."""
     field = _field("strong", "weak", "unseen")
-    ratings = {"strong": (1700.0, 80.0), "weak": (1300.0, 80.0)}
+    ratings = {"strong": (1700.0, 80.0, False), "weak": (1300.0, 80.0, False)}
 
     table = standings(field, [], ratings)
 
@@ -77,7 +77,7 @@ def test_the_unrated_share_a_place_and_the_rated_never_do() -> None:
     different games are only equal by accident, and sharing a place on that would claim an
     inseparability the arithmetic never found."""
     field = _field("rated", "nothing", "also-nothing")
-    ratings = {"rated": (1700.0, 80.0)}
+    ratings = {"rated": (1700.0, 80.0, False)}
 
     table = standings(field, [], ratings)
 
@@ -92,9 +92,35 @@ def test_the_score_columns_survive_the_reordering() -> None:
     field = _field("winner", "loser")
     results = [Result(white="winner", black="loser", white_score=1.0, round_number=1)]
 
-    table = standings(field, results, {"winner": (1700.0, 80.0), "loser": (1300.0, 80.0)})
+    table = standings(
+        field, results, {"winner": (1700.0, 80.0, False), "loser": (1300.0, 80.0, True)}
+    )
 
     assert table[0].score == 1.0
     assert table[0].wins == 1
     assert table[1].losses == 1
     assert table[1].score == 0.0
+
+
+def test_the_provisional_flag_is_carried_but_never_reorders() -> None:
+    """A provisional rating is still the best estimate there is, so it ranks where it ranks. The
+    flag is a caveat for the reader, not a penalty — demoting an unsure model below a sure one
+    would be a second, hidden ranking rule nobody asked for."""
+    field = _field("unsure", "sure")
+    ratings = {"unsure": (1900.0, 260.0, True), "sure": (1600.0, 50.0, False)}
+
+    table = standings(field, [], ratings)
+
+    assert [s.key for s in table] == ["unsure", "sure"]
+    assert table[0].rating_provisional
+    assert not table[1].rating_provisional
+
+
+def test_an_unrated_entrant_is_not_provisional() -> None:
+    """Two different statements. "Provisional" says we measured it and are unsure; "unrated" says
+    we have not measured it. Flagging the second as the first would imply a number exists."""
+    table = standings(_field("rated", "unseen"), [], {"rated": (1700.0, 80.0, True)})
+
+    unseen = next(s for s in table if s.key == "unseen")
+    assert unseen.rating is None
+    assert not unseen.rating_provisional

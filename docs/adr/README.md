@@ -32,7 +32,8 @@ supersedes the old one, rather than an edit.
 | [0024](0024-endpoint-output-ceilings-are-not-findings.md) | An endpoint's output ceiling is not a finding about a model | Accepted |
 | [0025](0025-finishing-a-game-beats-starting-one.md) | A game due to resume keeps its slot, and patience is measured from the last move | Accepted |
 | [0026](0026-a-repeated-question-gets-a-different-answer.md) | A repeated read-only tool call is answered with a nudge | Accepted |
-| [0027](0027-a-pool-is-ranked-by-its-own-rating.md) | A pool is ranked by a rating over its own games; a closed event by points | Accepted |
+| [0027](0027-a-pool-is-ranked-by-its-own-rating.md) | A pool is ranked by a rating over its own games; a closed event by points | Amended by [0028](0028-a-wider-prior-and-a-provisional-mark.md) |
+| [0028](0028-a-wider-prior-and-a-provisional-mark.md) | A wider prior, and a rating that says when it is not settled | Accepted |
 
 ## Template
 
