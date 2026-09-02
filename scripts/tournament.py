@@ -12,6 +12,9 @@
     make tournament ARGS="run free-1"
     make tournament ARGS="standings free-1"
 
+    # the one setting worth changing once it is running
+    make tournament ARGS="set free-1 --max-concurrent 4"
+
 **This schedules; it does not play.** Turns are played by `scripts/worker.py`, which must be
 running separately — one of them, because a job goes to whichever worker reaches it first.
 
@@ -320,6 +323,67 @@ async def cmd_resume(args: argparse.Namespace) -> int:
     return 0
 
 
+#: The smallest concurrency an event can be given.
+#:
+#: Zero reads as "run nothing" and would do exactly that: the runner ticks quietly forever, starts
+#: no games and reports no error — a pause that leaves no record of having been chosen. `pause`
+#: says so out loud, sets a status the page can render, and can abort what is in flight.
+MIN_CONCURRENT = 1
+
+
+async def apply_concurrency(session: Any, *, slug: str, value: int) -> tuple[int, int]:
+    """Set an event's concurrency bound. Returns what it was and what it now is.
+
+    Split from `cmd_set` so the rule can be tested against a real event without the command's own
+    engine — the same reason `repair_forfeits.should_be_forfeited` is a function.
+    """
+    tournament = await resolve_slug(session, slug)
+    was = tournament.max_concurrent
+    tournament.max_concurrent = value
+    return was, value
+
+
+async def cmd_set(args: argparse.Namespace) -> int:
+    """Change a running event's concurrency bound.
+
+    Concurrency is the only knob here because it is the one whose right value is not knowable at
+    `create` time: it depends on how many workers are up, how hot the free pools are today, and how
+    long a turn is taking — none of which the operator knows before the event has run. Everything
+    else `create` sets is either a statement about what is being measured (format, field, ranked)
+    and must not drift under a running event, or already has its own command (`resume --max-usd`).
+
+    Takes effect on the runner's next tick; nothing needs restarting. Lowering it below what is
+    already running does not stop anything — `_start_games` and the reconciler simply start nothing
+    new until the count falls — which is the honest behaviour: a game in progress outranks a bound
+    changed after it began (ADR-0025).
+    """
+    if args.max_concurrent is not None and args.max_concurrent < MIN_CONCURRENT:
+        print(
+            f"{RED}--max-concurrent must be at least {MIN_CONCURRENT}; "
+            f"use `pause` to stop an event{OFF}",
+            file=sys.stderr,
+        )
+        return 1
+
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as session:
+        if args.max_concurrent is None:
+            tournament = await resolve_slug(session, args.slug)
+            print(f"{BOLD}{tournament.slug}{OFF}  concurrency : {tournament.max_concurrent}")
+            return 0
+
+        was, now = await apply_concurrency(session, slug=args.slug, value=args.max_concurrent)
+        await session.commit()
+
+    print(f"{GREEN}{args.slug}{OFF}  concurrency : {was} -> {now}")
+    if now > was:
+        # Said every time it is raised, because it is the mistake this command makes easy: a worker
+        # plays one turn at a time, start to finish, so more slots against one worker only lengthen
+        # the queue it is already working through.
+        print(f"{DIM}a worker plays one turn at a time — raise `./chessmark workers N` too{OFF}")
+    return 0
+
+
 async def cmd_abandon(args: argparse.Namespace) -> int:
     """End an event for good. Its games stay readable; its table is final but incomplete."""
     sessionmaker = get_sessionmaker()
@@ -466,6 +530,15 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("slug")
     resume.add_argument("--max-usd", type=float, help="raise the ceiling that stopped it")
     resume.set_defaults(run=cmd_resume)
+
+    concurrency = sub.add_parser("set", help="change a running event's concurrency")
+    concurrency.add_argument("slug")
+    concurrency.add_argument(
+        "--max-concurrent",
+        type=int,
+        help="how many of this event's games may run at once; omit to print the current value",
+    )
+    concurrency.set_defaults(run=cmd_set)
 
     abandon = sub.add_parser("abandon", help="end an event for good")
     abandon.add_argument("slug")

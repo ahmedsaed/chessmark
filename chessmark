@@ -128,7 +128,7 @@ cmd_prune() { # report models that cannot finish a game; --apply to disable them
 
 # ---------------------------------------------------------------------------- tournaments
 
-cmd_tournament() { # any tournament subcommand: field / create / run / pause / standings / withdraw
+cmd_tournament() { # any tournament subcommand: field / create / run / pause / set / standings
   "${COMPOSE[@]}" run --rm tournament "$@"
 }
 
@@ -231,6 +231,8 @@ LINES=500 ./chessmark logs tournament'
 ./chessmark tournament create --name "Free Models" --slug pool-free --free --format pool
 ./chessmark tournament run pool-free --interval 30
 ./chessmark tournament pause pool-free --abort-live
+./chessmark tournament set pool-free --max-concurrent 4    # how many games run at once
+./chessmark tournament set pool-free                       # what it is now
 ./chessmark tournament withdraw pool-free vendor/model:free'
   [standings]='./chessmark standings pool-free'
   [psql]='./chessmark psql'

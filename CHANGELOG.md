@@ -17,6 +17,14 @@ file is only the record of *what shipped when*.
 
 Three fixes from an audit of the live `pool-free` event, which had abandoned 21 of 56 pairings.
 
+### Added
+
+- **`tournament set <slug> --max-concurrent N`** changes a running event's concurrency without a
+  hand-written `UPDATE`. It was settable only at `create`, which is the one moment nobody knows the
+  right value — it depends on how many workers are up, how hot the free pools are that day, and how
+  long a turn is taking. Takes effect on the next tick; refuses zero, which is a pause that does not
+  say it is one. Omit the value to print the current setting. (OPS-22)
+
 ### Fixed
 
 - **A game due to resume keeps its concurrency slot** ([ADR-0025]). The tournament runner bounded
