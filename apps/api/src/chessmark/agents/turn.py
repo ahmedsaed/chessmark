@@ -33,7 +33,13 @@ from chessmark.agents import compaction, llm, prompts, transcript
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.mangled import ProviderMangledError, mangled_tool_call
 from chessmark.agents.sessions import session_for_game
-from chessmark.agents.tools import ToolDispatcher, ToolName, TurnState, tool_schemas
+from chessmark.agents.tools import (
+    READ_ONLY_TOOLS,
+    ToolDispatcher,
+    ToolName,
+    TurnState,
+    tool_schemas,
+)
 from chessmark.agents.types import Completion, LlmError, RateLimit, ToolInvocation
 from chessmark.db.enums import EventType, ModerationStatus, TurnStatus
 from chessmark.db.models import Game, LlmCall, Message, Player, ToolCall, Turn
@@ -97,6 +103,27 @@ class HarnessCeilingError(Exception):
         super().__init__(f"{model} was cut off by our own max_tokens of {max_tokens}")
         self.model = model
         self.max_tokens = max_tokens
+
+
+#: How many times a read-only tool may be called with the *same* arguments in one turn before the
+#: harness stops answering and says so.
+#:
+#: A read-only tool is a pure function of a position that cannot change mid-turn, so the second
+#: identical answer is already in the transcript and the third is the model looping. It does loop:
+#: `nemotron-3-super-120b` called `get_move_history` with no arguments **twenty times**, received a
+#: byte-identical result each time, emitted the same 2,303-token reasoning each time, and lost a
+#: ranked game to `max_tool_iterations` — 1.96 million prompt tokens, and twenty of a thousand
+#: daily free requests, for one ply that never happened.
+#:
+#: Two is deliberately generous. A model that has just been refused an illegal move may reasonably
+#: re-read the board, and the position genuinely has not changed; what it may not do is ask a third
+#: time and expect a different answer. The nudge replaces the result *payload*, never the tool
+#: schema, so the cached prefix is untouched (invariant 2) and this is not a new tool surface.
+#:
+#: **This is not a reprieve.** A model that spins to the ceiling anyway still forfeits, and games
+#: already lost that way stay lost: both seats ran the same harness, and a model that cannot
+#: operate its tools is exactly the finding the benchmark is for (ADR-0019, `bench/ratable.py`).
+REPEATED_CALL_LIMIT = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -293,6 +320,12 @@ class TurnRunner:
         self._requested_max_tokens: int | None = None
         self._truncations = 0
         self._move_committed = False
+        #: How often each read-only tool has been called with the same arguments this turn.
+        #: Keyed by name and arguments together, so `get_legal_moves` for two different positions
+        #: is two questions and not a repeat. See `REPEATED_CALL_LIMIT`.
+        self._read_signatures: dict[str, int] = {}
+        #: Which pass of `_loop` we are on, so a repeated call can be told what it has left.
+        self._iteration = 0
 
     # ------------------------------------------------------------------ entry point
 
@@ -586,7 +619,8 @@ class TurnRunner:
     # ------------------------------------------------------------------ the loop
 
     async def _loop(self, turn: Turn, result: TurnResult) -> None:
-        for _iteration in range(self.limits.max_tool_iterations):
+        for iteration in range(self.limits.max_tool_iterations):
+            self._iteration = iteration
             if self._over_budget(result):
                 return
 
@@ -730,6 +764,9 @@ class TurnRunner:
         `tool_call_id`, and a missing result corrupts the transcript for every later turn.
         """
         for call in calls:
+            if await self._is_a_repeat(turn, call):
+                continue
+
             if self._move_committed and call.name in {ToolName.MAKE_MOVE, ToolName.RESIGN}:
                 await self._append_tool_result(
                     turn,
@@ -796,6 +833,67 @@ class TurnRunner:
             result.status = TurnStatus.COMPLETED
             return True
         return False
+
+    async def _is_a_repeat(self, turn: Turn, call: ToolInvocation) -> bool:
+        """Answer a read-only tool the model has already asked twice with a nudge instead.
+
+        Returns True when the call was answered here and must not be executed.
+
+        The loop this breaks is deterministic, which is why nothing else broke it: identical
+        messages in, identical reasoning out, identical tool call, identical result, twenty times
+        until `max_tool_iterations` ended the game. Handing back the same answer a third time is
+        the one response guaranteed not to change it, so the third answer is a different one — and
+        it says how many rounds are left, because a model that does not know it is running out
+        cannot act on it.
+
+        Read-only tools only. A repeated `make_move` is an illegal-move retry and belongs to
+        ADR-0002, which already answers it with the full legal move list; intercepting that here
+        would take a rule away from the module that owns it.
+
+        The call is still logged verbatim (invariant 3) — with `repeat`, so the record shows both
+        that the model asked and that we declined to answer.
+        """
+        if call.name not in READ_ONLY_TOOLS:
+            return False
+
+        signature = f"{call.name}:{json.dumps(call.arguments, sort_keys=True)}"
+        seen = self._read_signatures.get(signature, 0) + 1
+        self._read_signatures[signature] = seen
+        if seen <= REPEATED_CALL_LIMIT:
+            return False
+
+        left = self.limits.max_tool_iterations - self._iteration - 1
+        payload = {
+            "ok": False,
+            "error": "repeated_call",
+            "detail": (
+                f"You have already called `{call.name}` with these arguments {seen - 1} times this "
+                "turn. Nothing about the position changes until you move, so the answer is the one "
+                f"already above in this conversation. You have {left} tool rounds left before you "
+                "forfeit this game — call `make_move` now."
+            ),
+        }
+        log.warning(
+            "%s asked %s for the %s time this turn; answering with a nudge",
+            self.model,
+            call.name,
+            seen,
+        )
+        await self._append_tool_result(turn, call, payload, ok=False)
+        await append_event(
+            self.session,
+            game_id=self.game.id,
+            type=EventType.TOOL_CALLED,
+            payload={
+                "player_id": str(self.player.id),
+                "tool": call.name,
+                "ok": False,
+                "args": call.arguments,
+                "result": payload,
+                "repeat": seen,
+            },
+        )
+        return True
 
     async def _no_action(self, turn: Turn, result: TurnResult, completion: Completion) -> bool:
         """A response with no tool call. Returns True to try again, False to end the turn.

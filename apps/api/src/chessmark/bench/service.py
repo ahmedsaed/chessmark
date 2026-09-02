@@ -24,7 +24,15 @@ from chessmark.bench.glicko2 import Glicko2, Outcome
 from chessmark.bench.glicko2 import Rating as Glicko2Rating
 from chessmark.bench.ratable import GameFacts, judge
 from chessmark.db.enums import GameStatus
-from chessmark.db.models import Game, LlmCall, ModelRegistry, Player, Rating, Turn
+from chessmark.db.models import (
+    Game,
+    LlmCall,
+    ModelRegistry,
+    Player,
+    Rating,
+    TournamentGame,
+    Turn,
+)
 from chessmark.game import Colour, GameResult, Termination
 
 #: One rating period per calendar day, UTC. Glicko-2 is defined over batches, and a period short
@@ -200,8 +208,27 @@ async def _quantization_by_player(
     }
 
 
+def _finished(tournament_id: uuid.UUID | None) -> sa.Select[tuple[Game]]:
+    """Games that have ended, optionally only one event's.
+
+    The scope exists so a pool's own table can be ordered by a rating computed over that pool's
+    games alone (ADR-0027). It is a `where` clause and nothing else: **the eligibility rules do not
+    change with it**, so a game the leaderboard excluded is excluded from the pool table too, and
+    the two can never disagree about which games count.
+    """
+    query = sa.select(Game).where(Game.status.in_([GameStatus.FINISHED, GameStatus.ABORTED]))
+    if tournament_id is not None:
+        query = query.join(TournamentGame, TournamentGame.game_id == Game.id).where(
+            TournamentGame.tournament_id == tournament_id
+        )
+    return query.order_by(Game.created_at)
+
+
 async def ratable_games(
-    session: AsyncSession, *, prompt_version: str | None = PROMPT_VERSION
+    session: AsyncSession,
+    *,
+    prompt_version: str | None = PROMPT_VERSION,
+    tournament_id: uuid.UUID | None = None,
 ) -> list[tuple[Game, list[Player], dict[uuid.UUID, str]]]:
     """Every game that may move a rating, with its seats and their precisions.
 
@@ -211,13 +238,7 @@ async def ratable_games(
     """
     counted: list[tuple[Game, list[Player], dict[uuid.UUID, str]]] = []
 
-    games = list(
-        await session.scalars(
-            sa.select(Game)
-            .where(Game.status.in_([GameStatus.FINISHED, GameStatus.ABORTED]))
-            .order_by(Game.created_at)
-        )
-    )
+    games = list(await session.scalars(_finished(tournament_id)))
 
     for game in games:
         players = list(await session.scalars(sa.select(Player).where(Player.game_id == game.id)))
@@ -229,18 +250,31 @@ async def ratable_games(
 
 
 async def compute_ratings(
-    session: AsyncSession, *, prompt_version: str | None = PROMPT_VERSION, tau: float = 0.5
+    session: AsyncSession,
+    *,
+    prompt_version: str | None = PROMPT_VERSION,
+    tau: float = 0.5,
+    tournament_id: uuid.UUID | None = None,
 ) -> RatingRun:
     """Rebuild every rating from every eligible game.
 
     Games are grouped into periods and each period is rated as a batch — Glicko-2 is defined that
     way, and rating game by game gives a different and less defensible answer.
+
+    `tournament_id` narrows the games to one event, which is what a pool's own table is ordered by.
+    Everything else is identical — the same eligibility, the same engine, the same daily periods —
+    so the two numbers differ only in what they were computed over, which is the whole point of
+    having a local one (ADR-0027).
     """
     system = Glicko2(tau=tau)
     run = RatingRun()
 
-    counted = await ratable_games(session, prompt_version=prompt_version)
-    run.excluded = await excluded_games(session, prompt_version=prompt_version)
+    counted = await ratable_games(
+        session, prompt_version=prompt_version, tournament_id=tournament_id
+    )
+    run.excluded = await excluded_games(
+        session, prompt_version=prompt_version, tournament_id=tournament_id
+    )
 
     by_period: dict[int, list[tuple[Game, list[Player], dict[uuid.UUID, str]]]] = {}
     for game, players, quantizations in counted:
@@ -287,8 +321,52 @@ async def compute_ratings(
     return run
 
 
+async def ratings_by_key(
+    session: AsyncSession,
+    *,
+    tournament_id: uuid.UUID,
+    prompt_version: str | None = PROMPT_VERSION,
+) -> dict[str, tuple[float, float, bool]]:
+    """One event's rating, deviation and provisional flag, keyed the way a tournament keys its
+    entrants (ADR-0027).
+
+    The leaderboard is keyed by `Contestant` — model **and quantization**, because that is what is
+    actually being rated (ADR-0015). A tournament's entrants are keyed by model slug alone, and the
+    table has to join to something. Within one event the two almost always coincide: a seat is
+    pinned at creation, so a model plays every game of a pool on one endpoint at one precision.
+
+    Almost. A registry change mid-event can leave one model with two contestants, and then a slug
+    has two ratings and neither is wrong. The one with more games wins, because it is the one the
+    reader is looking at — and the alternative, averaging them, would invent a number no game
+    produced.
+    """
+    run = await compute_ratings(session, prompt_version=prompt_version, tournament_id=tournament_id)
+
+    played: dict[Contestant, int] = {}
+    for _game, players, quantizations in await ratable_games(
+        session, prompt_version=prompt_version, tournament_id=tournament_id
+    ):
+        for player in players:
+            contestant = await _contestant(session, player, quantizations)
+            if contestant is not None:
+                played[contestant] = played.get(contestant, 0) + 1
+
+    best: dict[str, tuple[float, float, bool]] = {}
+    chosen: dict[str, int] = {}
+    for contestant, rating in run.ratings.items():
+        games = played.get(contestant, 0)
+        if contestant.model_slug not in best or games > chosen[contestant.model_slug]:
+            chosen[contestant.model_slug] = games
+            best[contestant.model_slug] = (rating.rating, rating.rd, rating.provisional)
+
+    return best
+
+
 async def excluded_games(
-    session: AsyncSession, *, prompt_version: str | None = PROMPT_VERSION
+    session: AsyncSession,
+    *,
+    prompt_version: str | None = PROMPT_VERSION,
+    tournament_id: uuid.UUID | None = None,
 ) -> list[Excluded]:
     """Finished games that did not count, with the sentence explaining each.
 
@@ -297,13 +375,7 @@ async def excluded_games(
     """
     excluded: list[Excluded] = []
 
-    games = list(
-        await session.scalars(
-            sa.select(Game)
-            .where(Game.status.in_([GameStatus.FINISHED, GameStatus.ABORTED]))
-            .order_by(Game.created_at)
-        )
-    )
+    games = list(await session.scalars(_finished(tournament_id)))
 
     for game in games:
         players = list(await session.scalars(sa.select(Player).where(Player.game_id == game.id)))

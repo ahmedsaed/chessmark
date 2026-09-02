@@ -128,6 +128,32 @@ games was scheduled at a moment when nothing was resting.
 Rested, **not withdrawn**: the span is measured from the last dead attempt and lapses on its own, so
 a bad afternoon cannot quietly remove a model from the benchmark.
 
+## The table means different things in different formats
+
+A **closed** event — round robin or Swiss — is ranked by **score**, then Sonneborn-Berger, then
+direct encounter. Everybody plays the same schedule, and that is exactly what makes a sum of points
+a ranking.
+
+A **pool** is ranked by **Glicko-2 computed over that pool's games**, deviation as the tiebreak.
+It has to be: a pool has no schedule, it pairs whoever is least known, and its entrants finish very
+unequal numbers of games. In `pool-free`, entrants had completed between 0 and 10 — and two models
+that had won *every* game they played stood third and fourth behind one that had lost a game in
+eight. Points there partly measure how many games a model was handed.
+
+Points and W/D/L stay on the page. They are what lets a reader check the rating against something;
+they just stop deciding the order.
+
+Three things worth knowing about that rating ([ADR-0027](adr/0027-a-pool-is-ranked-by-its-own-rating.md)):
+
+- **It is that pool's, not the platform's.** A place here cannot move because of a game played in
+  another event. It will therefore disagree with the leaderboard, which is correct — they were
+  computed over different games.
+- **The eligibility rules are identical.** The scope is a `where` clause on which games are read,
+  not a second set of rules, so a game the leaderboard excludes is excluded here too.
+- **An entrant with no ratable game reads `unrated` and sorts last**, never 1500. An unmeasured
+  model is not an average one, and seating it mid-table would make exactly the claim the rating
+  deviation exists to avoid.
+
 ## Bounds
 
 The **ply cap is a cost bound, not a rules bound.** Games terminate on their own because the hard
@@ -140,3 +166,33 @@ player claims it.
 
 A **harness bound is never a finding about a player**. See
 [ADR-0019](adr/0019-harness-bounds-are-not-findings.md).
+
+### Concurrency, and the one setting worth changing later
+
+`max_concurrent` is how many of an event's games may run at once, and it is the only thing about a
+running event that `set` will change:
+
+```
+./chessmark tournament set pool-free --max-concurrent 4
+./chessmark tournament set pool-free            # what it is now
+```
+
+Everything else `create` fixes is either a statement about what is being measured — format, field,
+ranked — which must not drift under an event that is halfway through, or it already has its own
+command (`resume --max-usd` raises a budget that stopped one). Concurrency is different because its
+right value is not knowable when the event is created: it depends on how many workers are up, how
+hot the free pools are today, and how long a turn is taking.
+
+It takes effect on the runner's next tick and nothing needs restarting. Lowering it below what is
+already in flight stops nothing — the runner and the reconciler simply start nothing new until the
+count falls, because a game in progress outranks a bound changed after it began
+([ADR-0025](adr/0025-finishing-a-game-beats-starting-one.md)).
+
+**Raising it without raising `WORKER_REPLICAS` mostly buys nothing.** A worker plays one turn at a
+time, start to finish, so extra slots against one worker lengthen the queue it is already working
+through rather than shortening the wall clock. `./chessmark workers 3` is the other half.
+
+What a pool with `max_concurrent = 1` costs is not obvious and was measured: every rate limit
+stalls the whole event, and a game whose pause expires waits for the single running game before it
+can move. Paused games hold no slot ([ADR-0017](adr/0017-rate-limits-pause-games.md)) and the
+matchmaker already skips resting providers, so the bound is doing less work here than it looks.

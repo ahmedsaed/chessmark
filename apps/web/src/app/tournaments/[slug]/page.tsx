@@ -166,6 +166,11 @@ function Metrics({ tournament }: { tournament: TournamentDetail }) {
 }
 
 function Standings({ rows }: { rows: Standing[] }) {
+  /* A pool is ordered by a rating computed over its own games, a closed event by points
+     (ADR-0027). The API decides which and says so by sending a rating at all, so the table reads
+     the data rather than re-deriving the format — one place makes the choice. */
+  const rated = rows.some((row) => row.rating !== null);
+
   return (
     <section>
       <div className="mb-4 flex items-baseline gap-3">
@@ -176,19 +181,49 @@ function Standings({ rows }: { rows: Standing[] }) {
       </div>
 
       <ul className="flex flex-col gap-px border border-line-soft bg-line-soft">
-        <li className="tabular grid grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem] items-center gap-2 bg-surface-2 px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.12em] text-ink-faint">
+        <li
+          className={`tabular grid ${
+            rated
+              ? "grid-cols-[2rem_1fr_5.5rem_3rem_4.5rem]"
+              : "grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem]"
+          } items-center gap-2 bg-surface-2 px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.12em] text-ink-faint`}
+        >
           <span>#</span>
           <span>Model</span>
-          <span className="text-right">Pts</span>
-          <span className="text-right">W/D/L</span>
-          <span className="text-right" title="Sonneborn-Berger: beating strong opponents counts more">
-            SB
-          </span>
+          {rated ? (
+            <span
+              className="text-right"
+              title="Glicko-2 over this event's games only, so a place here cannot move because of a game played elsewhere"
+            >
+              Rating
+            </span>
+          ) : (
+            <span className="text-right">Pts</span>
+          )}
+          {rated ? (
+            <span className="text-right">Pts</span>
+          ) : (
+            <span className="text-right">W/D/L</span>
+          )}
+          {rated ? (
+            <span className="text-right">W/D/L</span>
+          ) : (
+            <span
+              className="text-right"
+              title="Sonneborn-Berger: beating strong opponents counts more"
+            >
+              SB
+            </span>
+          )}
         </li>
         {rows.map((row) => (
           <li
             key={row.key}
-            className="tabular grid grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem] items-center gap-2 bg-surface px-3 py-2 font-mono text-xs"
+            className={`tabular grid ${
+              rated
+                ? "grid-cols-[2rem_1fr_5.5rem_3rem_4.5rem]"
+                : "grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem]"
+            } items-center gap-2 bg-surface px-3 py-2 font-mono text-xs`}
           >
             <span className={row.place === 1 ? "text-accent" : "text-ink-faint"}>{row.place}</span>
             <Link
@@ -197,13 +232,47 @@ function Standings({ rows }: { rows: Standing[] }) {
             >
               {row.key.split("/").slice(1).join("/") || row.key}
             </Link>
-            <span className="text-right text-ink">{row.score.toFixed(1)}</span>
+            {rated && (
+              <span className="text-right text-ink">
+                {row.rating === null ? (
+                  /* Not 1500. An unrated model is not an average one, and printing a number here
+                     would make exactly the claim the deviation exists to avoid. */
+                  <span className="text-[10px] text-ink-faint">unrated</span>
+                ) : (
+                  <>
+                    {Math.round(row.rating)}
+                    {/* Same mark as the leaderboard, for the same reason: a reader who does not
+                        think in deviations still has to be told this one is not settled yet. */}
+                    {row.rating_provisional && (
+                      <span
+                        className="text-ink-faint"
+                        title="Provisional — too few games in this event to settle the rating"
+                      >
+                        ?
+                      </span>
+                    )}
+                    {row.rating_deviation !== null && (
+                      /* The deviation is not decoration: it is what stops a two-game rating being
+                         read as a two-hundred-game one. */
+                      <span className="ml-1 text-[10px] text-ink-faint">
+                        ± {Math.round(row.rating_deviation)}
+                      </span>
+                    )}
+                  </>
+                )}
+              </span>
+            )}
+            <span className={`text-right ${rated ? "text-[10px] text-ink-faint" : "text-ink"}`}>
+              {row.score.toFixed(1)}
+            </span>
             <span className="text-right text-[10px] text-ink-faint">
               {row.wins}/{row.draws}/{row.losses}
             </span>
-            <span className="text-right text-[10px] text-ink-faint">
-              {row.sonneborn_berger.toFixed(1)}
-            </span>
+            {!rated && (
+              <span className="text-right text-[10px] text-ink-faint">
+                {row.sonneborn_berger.toFixed(1)}
+              </span>
+            )}
           </li>
         ))}
       </ul>

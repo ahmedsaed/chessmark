@@ -26,6 +26,7 @@ from chessmark.api.schemas import (
     TournamentStats,
     TournamentSummary,
 )
+from chessmark.bench.service import ratings_by_key
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import GameStatus
 from chessmark.db.models import (
@@ -36,6 +37,7 @@ from chessmark.db.models import (
     TournamentGame,
 )
 from chessmark.game import GameResult
+from chessmark.tournament import Format
 from chessmark.tournament import standings as compute_standings
 
 router = APIRouter(prefix="/tournaments", tags=["tournaments"])
@@ -211,7 +213,16 @@ async def get_tournament(session: SessionDep, slug: str) -> TournamentDetail:
 
     entrants = await repo.entrants_of(session, tournament.id)
     results = await repo.results_so_far(session, tournament.id)
-    table = compute_standings(entrants, results)
+
+    # **A pool is ordered by rating; a closed event by points** (ADR-0027). The format decides,
+    # rather than a flag, because it is the format that decides whether a sum of points means
+    # anything: a round robin gives everybody the same schedule and a pool gives nobody one.
+    ratings = (
+        await ratings_by_key(session, tournament_id=tournament.id)
+        if tournament.format == str(Format.POOL)
+        else None
+    )
+    table = compute_standings(entrants, results, ratings)
 
     pairing_pairs = (
         await session.execute(
@@ -257,6 +268,9 @@ async def get_tournament(session: SessionDep, slug: str) -> TournamentDetail:
                 byes=s.byes,
                 score=s.score,
                 sonneborn_berger=s.sonneborn_berger,
+                rating=s.rating,
+                rating_deviation=s.rating_deviation,
+                rating_provisional=s.rating_provisional,
             )
             for s in table
         ],

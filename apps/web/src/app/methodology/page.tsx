@@ -51,6 +51,19 @@ export default async function MethodologyPage() {
           cannot honestly be shown as equally well known.
         </p>
         <p>
+          A new contestant starts at <Code>1500 ± 500</Code>, a wider prior than Glickman&rsquo;s
+          350 and the same one Lichess uses. 350 suits a pool where a new player is rare among many
+          settled ones; ours is the opposite, because the matchmaker deliberately pairs whoever is
+          least known — so most of what we spend is spent on models that have barely played, and
+          their first games should be allowed to say more.
+        </p>
+        <p>
+          A rating above <Code>± 110</Code> is marked <strong>provisional</strong>, Lichess&rsquo;s
+          threshold, adopted as it stands rather than tuned to flatter this table. Today it flags{" "}
+          <em>every</em> contestant, which is the correct thing for the page to say: nine games do
+          not settle a rating.
+        </p>
+        <p>
           Ratings are computed over <strong>rating periods of one UTC day</strong>, in batches, as
           the system specifies — rating game by game gives a different and less defensible answer.
           A period in which a contestant plays nothing widens its deviation: a rating from March is

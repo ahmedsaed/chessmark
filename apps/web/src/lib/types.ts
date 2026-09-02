@@ -317,6 +317,8 @@ export interface LeaderboardRow {
    * games against three hundred as though the numbers meant the same thing.
    */
   rating_deviation: number;
+  /** `rating_deviation` said in a word, for readers who do not think in deviations. */
+  provisional: boolean;
   volatility: number;
 
   games: number;
@@ -363,6 +365,21 @@ export interface Standing {
   byes: number;
   score: number;
   sonneborn_berger: number;
+  /**
+   * Glicko-2 over this event's games alone, and `null` for a closed event.
+   *
+   * A pool has no fixed schedule, so its entrants play unequal numbers of games and a sum of
+   * points ranks partly by volume. `score` and `sonneborn_berger` stay — they are facts worth
+   * reading — but for a pool they do not decide the order. `null` on a pool means the model has
+   * not yet completed a game that counts, which is not the same as being average.
+   */
+  rating: number | null;
+  rating_deviation: number | null;
+  /**
+   * Whether that rating is too unsure to read as a placing. `false` when there is no rating —
+   * an entrant with no ratable game is *unrated*, which is a different statement.
+   */
+  rating_provisional: boolean;
 }
 
 /**
