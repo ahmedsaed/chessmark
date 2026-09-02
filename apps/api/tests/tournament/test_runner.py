@@ -758,6 +758,10 @@ async def test_a_paused_game_does_not_hold_the_concurrency_slot(
     would stop a pool with `max_concurrent=1` dead for as long as one provider was hot, which is
     exactly what happened. Deliberately looser than "never more than one game exists" — it means
     "never more than one game is *running*".
+
+    **While the clock is still running.** A pause whose `resume_after` has passed is a different
+    thing — it is waiting on us, and it does hold the slot; see the test below. So the pause here
+    carries a real future time, which is what the worker always writes.
     """
     tournament_id, _ = await make_tournament(
         db,
@@ -775,6 +779,7 @@ async def test_a_paused_game_does_not_hold_the_concurrency_slot(
     assert paused is not None
     paused.status = GameStatus.PAUSED
     paused.pause_reason = "rate-limited upstream"
+    paused.resume_after = dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)
     await db.commit()
 
     # The slot is free, so the next tick starts something else rather than holding.
@@ -863,6 +868,9 @@ async def test_a_pool_starts_another_game_while_others_are_paused(
             assert paused_game is not None
             paused_game.status = GameStatus.PAUSED
             paused_game.pause_reason = "rate-limited upstream"
+            # Still waiting on the provider. A pause whose clock has run out reserves the slot
+            # instead, which is the test below.
+            paused_game.resume_after = dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)
             started.append(row.game_id)
         await db.commit()
 
@@ -870,6 +878,52 @@ async def test_a_pool_starts_another_game_while_others_are_paused(
         f"the pool started {len(started)} games while the others sat paused; a paused game is not "
         "spending and must not hold the bound"
     )
+
+
+async def test_a_game_due_to_resume_outranks_a_new_pairing(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """**The bug this exists to prevent.** Two things spent the same concurrency slot and neither
+    knew about the other: `_start_games` counted `in_flight` — `PENDING` or `RUNNING` — while
+    `reconciler.with_room_to_run` resumed paused games against the same bound. A game whose wait had
+    expired was invisible to the first, so the runner filled the slot with a brand-new pairing and
+    the game that was ready to move went round again.
+
+    In `pool-free` that cost 48% to 99% of every pause. Five abandoned games were told by their
+    providers to wait between 9 minutes and 12 hours in total and actually waited 20 to 27 hours;
+    one was asked for sixty seconds and sat for 16.4 hours — all of it counting against the patience
+    window that then abandoned it at ply 71.
+
+    Finishing a game beats starting one, so the due game keeps the slot and the reconciler fills it.
+    """
+    tournament_id, _ = await make_tournament(
+        db,
+        models=8,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    rows = await repo.in_flight(db, tournament_id)
+    assert len(rows) == 1
+    waiting_id = rows[0].game_id
+
+    # Paused, and its wait is already over: it is queued behind us, not behind the provider.
+    paused = await db.get(Game, waiting_id)
+    assert paused is not None
+    paused.status = GameStatus.PAUSED
+    paused.pause_reason = "rate-limited upstream"
+    paused.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=5)
+    await db.commit()
+
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    assert step.started == 0, (
+        "the pool started a new game over one that was ready to move; a due pause reserves its slot"
+    )
+    assert len(await repo.due_to_resume(db, tournament_id)) == 1
+    assert not await repo.in_flight(db, tournament_id), "nothing new took the slot"
 
 
 async def test_a_resting_provider_rests_every_model_it_serves(

@@ -506,7 +506,10 @@ async def _schedule_pool(
     """
     waiting = len(await repo.unplayed(session, tournament.id))
     running = len(await repo.in_flight(session, tournament.id))
-    room = tournament.max_concurrent - waiting - running
+    # A game whose wait is over is counted here, not because it is running but because it is next.
+    # See `_start_games` for what leaving it out cost.
+    due = len(await repo.due_to_resume(session, tournament.id))
+    room = tournament.max_concurrent - waiting - running - due
     if room <= 0:
         return None
 
@@ -622,9 +625,22 @@ async def _is_complete(session: AsyncSession, tournament: Tournament) -> bool:
 async def _start_games(
     session: AsyncSession, queue: TurnQueue, tournament: Tournament
 ) -> tuple[int, list[AdvanceTurn]]:
-    """Create and start as many games as the concurrency bound allows."""
+    """Create and start as many games as the concurrency bound allows.
+
+    **A game due to resume outranks a new pairing for the slot**, and it did not: the runner
+    counted only `in_flight` — `PENDING` or `RUNNING` — so a paused game whose wait had expired was
+    invisible to this bound while being perfectly visible to `reconciler.with_room_to_run`. The two
+    then raced for the one slot on whichever ticked first, and every loss cost the waiting game
+    another full cycle. With `max_concurrent = 1` and turns that run for minutes, a game told to
+    come back in sixty seconds waited 16.4 hours, and the 24-hour patience window ran throughout.
+
+    Finishing a game beats starting one: the position is real, its allowance is already spent, and
+    an abandoned game at ply 71 is worth less than nothing. So the due game keeps its slot and the
+    reconciler puts it back on the queue.
+    """
     running = len(await repo.in_flight(session, tournament.id))
-    room = tournament.max_concurrent - running
+    due = len(await repo.due_to_resume(session, tournament.id))
+    room = tournament.max_concurrent - running - due
     if room <= 0:
         return 0, []
 

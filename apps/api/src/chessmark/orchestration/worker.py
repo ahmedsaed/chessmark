@@ -115,7 +115,7 @@ def next_utc_midnight(now: dt.datetime | None = None) -> dt.datetime:
 #: Rate limits no longer come through here at all; they pause the game instead.
 MAX_JOB_ATTEMPTS = 5
 
-#: How long a game may keep trying before the harness gives up on it.
+#: How long a game may go **without making a move** before the harness gives up on it.
 #:
 #: **A span, not a count.** It was six pauses, which on the cooldown ladder came to a little over
 #: three hours — and that was not enough: four games were abandoned in one afternoon because
@@ -125,6 +125,15 @@ MAX_JOB_ATTEMPTS = 5
 #: A day is the honest number for a free pool. Allowances reset daily and a provider hot at 14:00
 #: is usually serving again by morning, so a game that cannot get a turn in twenty-four hours is
 #: not waiting on a busy pool — it is waiting on something that is not coming back.
+#:
+#: **Measured from the last move, not from the first pause**, which is the sentence above finally
+#: being true of the code. It used to run from the earliest `GAME_PAUSED` event and nothing ever
+#: reset it, so the window measured *"has been pausing on and off for a day"* rather than *"cannot
+#: get a turn"* — and a game that pauses at ply 4 and then plays eighty-eight more moves was
+#: abandoned anyway. Three games in `pool-free` were killed at plies 71, 68 and 56 having never
+#: once gone more than 17.4 hours without moving; all three were within seven playing-hours of a
+#: normal finish. Progress is the only evidence that a pairing is still worth waiting for, so
+#: progress is what the clock is anchored to.
 PAUSE_WINDOW = dt.timedelta(hours=24)
 
 #: How long a game waits when the refusal is about our *account* rather than a provider's pool.
@@ -523,8 +532,9 @@ class TurnWorker:
             # than hours. Everything else about the mechanism is the same.
             human = await self._has_human_seat(session, game.id)
             window = HUMAN_PAUSE_WINDOW if human else PAUSE_WINDOW
-            pauses, first_pause = await self._pause_history(session, game.id)
-            waited = dt.datetime.now(dt.UTC) - first_pause if first_pause else dt.timedelta()
+            pauses = await self._pause_count(session, game.id)
+            since = await self._last_progress_at(session, game)
+            waited = dt.datetime.now(dt.UTC) - since
 
             seconds = 0
             if limit.account:
@@ -553,12 +563,13 @@ class TurnWorker:
             # resume is worse open than closed — and abandoning is honest: it says the harness gave
             # up, and it keeps the result out of the ratings rather than inventing a loss.
             #
-            # Measured from the *first* pause, so the window is wall-clock patience and not a
-            # function of how the cooldown ladder happens to be tuned.
+            # Measured from the last move, so the window is wall-clock patience with a *moving*
+            # game, and neither a function of how the cooldown ladder happens to be tuned nor of
+            # how long ago this game first met a busy provider.
             if waited >= window:
                 hours = waited.total_seconds() / 3600
                 log.error(
-                    "abandoning %s at ply %s: %s, still rate-limited after %.1fh and %d pauses",
+                    "abandoning %s at ply %s: %s, no move in %.1fh over %d pauses",
                     game.id,
                     job.expected_ply,
                     reason,
@@ -568,7 +579,7 @@ class TurnWorker:
                 await self._abandon(
                     session,
                     game,
-                    f"Abandoned after {hours:.1f}h and {pauses} pauses: {reason}",
+                    f"Abandoned after {hours:.1f}h without a move and {pauses} pauses: {reason}",
                 )
                 return HandledJob(ABORTED, game.id, job.expected_ply, result=result)
 
@@ -576,7 +587,7 @@ class TurnWorker:
             game.resume_after = resume_at(seconds)
             game.pause_reason = reason
             log.warning(
-                "pausing %s at ply %s for %ss (pause %s, %.1fh of %.0fh used): %s",
+                "pausing %s at ply %s for %ss (pause %s, %.1fh of %.0fh since the last move): %s",
                 game.id,
                 job.expected_ply,
                 seconds,
@@ -600,7 +611,10 @@ class TurnWorker:
                     "resume_after": game.resume_after.isoformat(),
                     "seconds": seconds,
                     "pause": pauses + 1,
+                    # Since the last *move*, not since the first pause: the page and the operator
+                    # should read the same clock the abandonment is decided on.
                     "waited_seconds": int(waited.total_seconds()),
+                    "last_progress_at": since.isoformat(),
                     "window_seconds": int(window.total_seconds()),
                 },
             )
@@ -612,27 +626,43 @@ class TurnWorker:
         await self._publish(job.game_id, events)
         return HandledJob(PAUSED, job.game_id, job.expected_ply, result=result)
 
-    async def _pause_history(
-        self, session: AsyncSession, game_id: uuid.UUID
-    ) -> tuple[int, dt.datetime | None]:
-        """How often this game has been paused, and when it first was.
+    async def _pause_count(self, session: AsyncSession, game_id: uuid.UUID) -> int:
+        """How often this game has been paused.
 
         Read from the event log rather than a column on the game. The log is append-only and is
         already the authority on what happened (ADR-0008), so a counter beside it would be a second
-        copy of one fact with its own way of being wrong — and the *first* pause is the one the
-        patience window is measured from, which no counter would have recorded at all.
+        copy of one fact with its own way of being wrong.
+
+        Reported, never acted on. The patience window used to be a count of these and then a span
+        measured from the first of them; both made the harness's patience a function of how the
+        cooldown ladder happened to be tuned. It is a number for the log line and the event payload
+        so an operator can see how hard a game fought, and nothing decides anything from it.
         """
-        row = (
-            await session.execute(
-                sa.select(sa.func.count(GameEvent.id), sa.func.min(GameEvent.created_at)).where(
-                    GameEvent.game_id == game_id, GameEvent.type == EventType.GAME_PAUSED
-                )
+        count = await session.scalar(
+            sa.select(sa.func.count(GameEvent.id)).where(
+                GameEvent.game_id == game_id, GameEvent.type == EventType.GAME_PAUSED
             )
-        ).one()
-        count, first = int(row[0] or 0), row[1]
-        if first is not None and first.tzinfo is None:
-            first = first.replace(tzinfo=dt.UTC)
-        return count, first
+        )
+        return int(count or 0)
+
+    async def _last_progress_at(self, session: AsyncSession, game: Game) -> dt.datetime:
+        """When this game last moved — the instant the patience window counts from.
+
+        A move is the only evidence that a pairing is still going somewhere. Anything else a game
+        emits while it is stuck (a pause, a resume, a timed-out turn) is the harness talking to
+        itself, and counting those was how a game could look busy for a day and have advanced
+        nothing.
+
+        Falls back to when the game started, so one that has never moved is on the same clock as
+        one that has: a pairing that cannot reach ply 1 gets the full window and no more.
+        """
+        at: dt.datetime | None = await session.scalar(
+            sa.select(sa.func.max(GameEvent.created_at)).where(
+                GameEvent.game_id == game.id, GameEvent.type == EventType.MOVE_MADE
+            )
+        )
+        at = at or game.started_at or game.created_at
+        return at.replace(tzinfo=dt.UTC) if at.tzinfo is None else at
 
     async def _has_human_seat(self, session: AsyncSession, game_id: uuid.UUID) -> bool:
         seats = await session.scalars(sa.select(Player.kind).where(Player.game_id == game_id))

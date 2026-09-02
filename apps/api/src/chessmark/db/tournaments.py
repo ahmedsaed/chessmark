@@ -11,6 +11,7 @@ rather than trusting the memory of a process that died.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -390,6 +391,42 @@ async def in_flight(session: AsyncSession, tournament_id: uuid.UUID) -> list[Tou
             TournamentGame.white_score.is_(None),
             TournamentGame.abandoned_reason.is_(None),
             Game.status.in_({GameStatus.PENDING, GameStatus.RUNNING}),
+        )
+    )
+    return list(rows)
+
+
+async def due_to_resume(
+    session: AsyncSession, tournament_id: uuid.UUID, *, now: dt.datetime | None = None
+) -> list[TournamentGame]:
+    """Pairings paused past their `resume_after` — waiting on a slot rather than on a provider.
+
+    A paused game holds no concurrency slot (ADR-0017), which is right while it is *waiting on the
+    provider* and wrong the moment the wait is over: from then on it is queued behind whatever the
+    runner starts next. Nothing counted it, so `_start_games` saw a free slot and filled it with a
+    brand-new pairing, and the game that was ready to move went round again.
+
+    That is not a small effect. Five abandoned games in `pool-free` were told by their providers to
+    wait 9 minutes to 12 hours in total, and actually waited 20 to 27 — **48% to 99% of the pause
+    was our own queue**. One was asked for sixty seconds and sat for 16.4 hours, all of it counting
+    against the patience window that then abandoned it at ply 71.
+
+    So a due game reserves its slot here, and the reconciler fills it on its next sweep.
+    `resume_after IS NULL` counts as due for the same reason `find_resumable` includes it: a pause
+    with no clock should not wait forever.
+    """
+    rows = await session.scalars(
+        sa.select(TournamentGame)
+        .join(Game, Game.id == TournamentGame.game_id)
+        .where(
+            TournamentGame.tournament_id == tournament_id,
+            TournamentGame.white_score.is_(None),
+            TournamentGame.abandoned_reason.is_(None),
+            Game.status == GameStatus.PAUSED,
+            sa.or_(
+                Game.resume_after.is_(None),
+                Game.resume_after <= (now or dt.datetime.now(dt.UTC)),
+            ),
         )
     )
     return list(rows)
