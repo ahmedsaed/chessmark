@@ -45,6 +45,18 @@ Three fixes from an audit of the live `pool-free` event, which had abandoned 21 
 
 ### Added
 
+- **The model catalogue now refreshes itself** (OPS-23). `refresh_catalogue.py` was written to be
+  scheduled — its own header says so — and nothing scheduled it: no cron container, no timer, no
+  workflow, no call from the API, the worker or the tournament runner. It ran when somebody
+  remembered the command. Prices set the spend caps *and* what a user is charged in credits
+  (ADR-0016) and endpoint rows are what the picker pins to, so every day nobody remembered was a
+  day of wrong caps, wrong prices and models the field could not play. A `catalogue` service now
+  runs it at start-up and every `CATALOGUE_INTERVAL_HOURS` (12); a failed pass is logged and the
+  loop waits, because a scheduled sweep that exits on a bad night is restarted straight back into
+  it. `--every HOURS` is on the script, so `make refresh-catalogue` and `./chessmark catalogue`
+  still run one pass and still fail loudly. It spends nothing — `/models` and `/endpoints` are
+  metadata, not inference.
+
 - **A tournament's schedule shows the latest ten matches and loads more on request.** A pool never
   ends, so its schedule only grows — and it was rendered whole, several hundred linked rows in one
   column, under the standings table that is the reason most people open the page. The order was
