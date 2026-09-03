@@ -17,6 +17,21 @@ the alternative is a second loop asking Postgres the same thing.
 Resuming respects the event's concurrency bound, which is less obvious than it sounds: a paused game
 holds no slot (ADR-0017), so coming back it has to ask for one. Whatever does not fit stays paused
 and is picked up on a later tick.
+
+**And it reads the global halt per game, not once for the whole sweep.** A halt has a scope
+(OPS-20): the daily free-model cap stops `:free` seats and nothing else. This asked `halt.active()`
+and returned, which was right when a halt was global and became an outage the moment it was not — a
+free cap left every *paid* game unrescuable for as long as it stood, up to a UTC day. The scope
+lives in `HaltState.covers`, and every question here is asked through it.
+
+The two sweeps then want opposite things from a covered game, which is the part worth stating:
+
+* **A stalled game the halt covers is still requeued.** The job is not wasted — the worker turns it
+  into a `game_paused` with the reason on it (ADR-0030), which is exactly what a reader staring at
+  a board that will not move needs. It happens once: a paused game is no longer running, so the
+  next sweep does not see it.
+* **A paused game the halt covers is not resumed.** It would take a slot, reach the worker, and
+  pause again having moved nothing.
 """
 
 from __future__ import annotations
@@ -32,12 +47,13 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from chessmark.core.credits import fetch_balance
-from chessmark.core.halt import Halt
+from chessmark.core.halt import Halt, HaltState
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import EventType, GameStatus, PlayerKind
 from chessmark.db.models import Game, GameEvent, Player, Tournament, TournamentGame
 from chessmark.db.repositories import append_event, finish_game, rebuild_referee
 from chessmark.game import Colour, GameResult, Outcome, Termination
+from chessmark.orchestration.match import model_for
 from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
 
 log = logging.getLogger(__name__)
@@ -82,6 +98,9 @@ class ReconcileReport:
     resumed: list[str] = field(default_factory=list)
     #: The global halt was lifted this tick, because the account has credit again.
     unhalted: bool = False
+    #: Left alone because the halt covers them. Reported so a quiet tick is explicable: a sweep
+    #: that rescued nothing because everything is halted looks identical to one with nothing to do.
+    held: list[str] = field(default_factory=list)
     #: Consumer names forgotten because their worker process is gone.
     reaped: list[str] = field(default_factory=list)
     checked: int = 0
@@ -90,7 +109,9 @@ class ReconcileReport:
         return (
             f"checked {self.checked} running games, requeued {len(self.requeued)}, "
             f"abandoned {len(self.abandoned)}, waiting on a person {len(self.waiting)}, "
-            f"resumed {len(self.resumed)}" + (", lifted the halt" if self.unhalted else "")
+            f"resumed {len(self.resumed)}"
+            + (f", held {len(self.held)} behind the halt" if self.held else "")
+            + (", lifted the halt" if self.unhalted else "")
         )
 
 
@@ -289,6 +310,34 @@ async def resume(session: AsyncSession, game: Game) -> AdvanceTurn:
     return AdvanceTurn(game_id=game.id, expected_ply=game.ply_count)
 
 
+async def halted_games(
+    session: AsyncSession, games: list[Game], state: HaltState | None
+) -> set[uuid.UUID]:
+    """Of these, the ids the halt stops. Empty when nothing is halted.
+
+    **The scope is a fact about the model, so the question has to be asked per game.** A 402 or an
+    operator stops everything; the daily free-model cap stops `:free` seats and leaves a paid one
+    entirely alone, because it never drew on the allowance. Asking `halt.active()` once for the
+    whole sweep answered a question nobody had, and made a free cap an outage for every paid game.
+
+    A game is covered when the halt covers **either** seat. Not "the seat to move": that would cost
+    a referee rebuild per game to learn something worth almost nothing, since a paid seat facing a
+    halted one can play exactly one ply before stopping anyway. Holding it is the quieter of two
+    defensible answers.
+
+    `HaltState.covers` decides, not a `LIKE '%:free'` written here. The rule for what a scope
+    reaches belongs in one place, and a copy of it in SQL is a copy that drifts. The model comes
+    from `sampling` rather than from `model_registry`, which is `model_for`'s reason too: a game
+    must stay readable after a model is renamed or retired.
+    """
+    if state is None or not games:
+        return set()
+
+    ids = [game.id for game in games]
+    players = await session.scalars(sa.select(Player).where(Player.game_id.in_(ids)))
+    return {player.game_id for player in players if state.covers(model_for(player))}
+
+
 async def lift_credit_halt(halt: Halt, *, api_key: str, redis: Any = None) -> bool:
     """Lift a halt set by a 402, once the account has credit again. True when it was lifted.
 
@@ -338,13 +387,12 @@ async def reconcile(
     report = ReconcileReport()
     jobs: list[AdvanceTurn] = []
 
-    # First, because everything below it is pointless while the harness is stopped: a game
-    # re-enqueued under a halt is a job the worker can only answer with `halted`.
+    # First, so the rest of the sweep reads a halt that is already as lifted as it can be — a
+    # top-up noticed here saves every game below it from being held for another minute.
+    state: HaltState | None = None
     if halt is not None:
         report.unhalted = await lift_credit_halt(halt, api_key=api_key, redis=redis)
-        if await halt.active():
-            log.info("harness is halted; skipping the sweep")
-            return report
+        state = await halt.state()
 
     async with sessionmaker() as session, session.begin():
         stalled = await find_stalled(session, stale_after=stale_after)
@@ -364,15 +412,41 @@ async def reconcile(
                     report.waiting.append(str(game.id))
                 continue
 
+            # **Requeued even when the halt covers it.** The worker answers such a job by pausing
+            # the game with the reason on it (ADR-0030) rather than by running a turn, and a
+            # stalled game the halt stopped is precisely the one showing a reader a board that
+            # will not move with nothing to say why. It costs one job and no provider call, and it
+            # happens once — a paused game is not running, so the next sweep does not see it.
             jobs.append(AdvanceTurn(game_id=game.id, expected_ply=game.ply_count))
 
         # Resumed in the same transaction as the stall sweep, so one pass over the database
         # decides everything and two callers cannot resume the same game twice.
-        resumable = await with_room_to_run(session, await find_resumable(session))
-        for game in resumable:
+        due = await find_resumable(session)
+
+        # The other half of the scope. A paused game the halt covers would take a concurrency
+        # slot, reach the worker and pause again having moved nothing, so it stays where it is;
+        # one the halt does not cover is rescued exactly as before, which is the whole point —
+        # a free-model cap must not strand a paid game for a day.
+        held = await halted_games(session, due, state)
+        report.held = [str(game.id) for game in due if game.id in held]
+
+        playable = [game for game in due if game.id not in held]
+        for game in await with_room_to_run(session, playable):
             log.info("resuming %s at ply %s: %s", game.id, game.ply_count, game.pause_reason)
             jobs.append(await resume(session, game))
             report.resumed.append(str(game.id))
+
+    if report.held and state is not None:
+        # Said every tick, deliberately. This is the line that explains a pool sitting still, and
+        # the sweep it replaced logged "harness is halted; skipping the sweep" just as often — the
+        # difference is that this one names how many games and which halt, rather than implying
+        # the whole harness stopped when only the free half did.
+        log.info(
+            "holding %d paused game(s) behind the %s halt: %s",
+            len(report.held),
+            state.scope,
+            state.reason,
+        )
 
     # Housekeeping, here because this sweep already holds the single-flight lock and runs on a
     # timer. A worker's name outlives its process and Redis keeps it forever, so without this the

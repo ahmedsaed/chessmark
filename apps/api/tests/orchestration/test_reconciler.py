@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime as dt
 import uuid
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -16,10 +17,12 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.scripted import plays
+from chessmark.core.halt import SCOPE_FREE, SOURCE_CREDITS, SOURCE_OPERATOR, Halt
 from chessmark.db.enums import EventType, GameStatus
-from chessmark.db.models import Game, GameEvent, TournamentGame
+from chessmark.db.models import Game, GameEvent, Player, TournamentGame
+from chessmark.game import Colour
 from chessmark.orchestration.reconciler import find_resumable, find_stalled, reconcile
-from chessmark.orchestration.worker import ADVANCED, STALE
+from chessmark.orchestration.worker import ADVANCED, HALTED, STALE
 from tests.orchestration.conftest import Fixture, both_sides, run_next, seat_match
 
 pytestmark = pytest.mark.integration
@@ -356,3 +359,175 @@ async def test_without_redis_it_never_blocks(sessionmaker: Any) -> None:
 
     async with SingleFlight(None) as held:
         assert held
+
+
+# ====================================================================== the halt has a scope
+
+
+"""A halt stops the sweep for the games it covers, and only those (OPS-19, OPS-20, ADR-0030).
+
+`reconcile` asked `halt.active()` once and returned. That was right while a halt was global and
+became wrong the moment it was not: OpenRouter's daily free-model cap is scoped to `:free` seats,
+and under it **no paid game could be rescued at all** — not resumed when its provider pause came
+due, not requeued when its job was lost — for as long as the cap stood, which is up to a UTC day.
+
+The worker and the tournament runner both read the scope correctly; only this path did not, and
+nothing here passed a halt to `reconcile`, so nothing could have caught it.
+"""
+
+
+async def _seat_models(db: AsyncSession, game_id: Any, model: str) -> None:
+    """Rewrite what both seats are playing.
+
+    `model_for` reads `sampling`, not the registry FK — a game must stay readable after a model is
+    renamed — so this is exactly what seating that model would have recorded.
+    """
+    await db.execute(
+        sa.update(Player).where(Player.game_id == game_id).values(sampling={"model": model})
+    )
+    await db.commit()
+
+
+async def _paused_and_due(db: AsyncSession, game_id: Any) -> None:
+    """A game waiting on a provider whose wait is over — what the resume sweep exists for."""
+    await db.execute(
+        sa.update(Game)
+        .where(Game.id == game_id)
+        .values(
+            status=GameStatus.PAUSED,
+            resume_after=dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1),
+            pause_reason="rate-limited by Google AI Studio (upstream_provider_shared_pool)",
+        )
+    )
+    await db.commit()
+
+
+async def test_a_free_cap_does_not_strand_a_paid_game(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, redis: Any
+) -> None:
+    """The bug. A paid seat never drew on the free allowance, so a cap on it must not leave that
+    game unrescuable — and "unrescuable" here lasts as long as the cap does."""
+    await _seat_models(db, game.game.id, "vendor/paid-model")
+    await _paused_and_due(db, game.game.id)
+
+    halt = Halt(redis)
+    await halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
+
+    report = await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+
+    assert report.resumed == [str(game.game.id)]
+    assert report.held == []
+
+
+async def test_a_free_cap_holds_a_free_game(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, redis: Any
+) -> None:
+    """The other half. Resuming it would take a concurrency slot, reach the worker and pause again
+    having moved nothing."""
+    await _seat_models(db, game.game.id, "vendor/model:free")
+    await _paused_and_due(db, game.game.id)
+
+    halt = Halt(redis)
+    await halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
+
+    report = await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+
+    assert report.resumed == []
+    assert report.held == [str(game.game.id)]
+
+    db.expunge_all()
+    still = await db.get(Game, game.game.id)
+    assert still is not None and still.status is GameStatus.PAUSED
+
+
+async def test_one_free_seat_is_enough_to_hold_a_game(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, redis: Any
+) -> None:
+    """A paid seat facing a halted one can play exactly one ply before stopping, so the game is
+    held rather than resumed. Deliberately not "the seat to move", which would cost a referee
+    rebuild per game to decide something worth almost nothing."""
+    await _seat_models(db, game.game.id, "vendor/paid-model")
+    await db.execute(
+        sa.update(Player)
+        .where(Player.game_id == game.game.id, Player.colour == Colour.BLACK)
+        .values(sampling={"model": "vendor/model:free"})
+    )
+    await db.commit()
+    await _paused_and_due(db, game.game.id)
+
+    halt = Halt(redis)
+    await halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
+
+    report = await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+
+    assert report.held == [str(game.game.id)]
+
+
+async def test_an_account_wide_halt_holds_a_paid_game_too(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, redis: Any
+) -> None:
+    """The scope earning its keep in the other direction. An empty account or an operator stops
+    everything, free and paid alike — OpenRouter's own docs say a 402 reaches free models."""
+    await _seat_models(db, game.game.id, "vendor/paid-model")
+    await _paused_and_due(db, game.game.id)
+
+    halt = Halt(redis)
+    await halt.set("stopped by hand", source=SOURCE_OPERATOR)
+
+    report = await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+
+    assert report.resumed == []
+    assert report.held == [str(game.game.id)]
+
+
+async def test_a_stalled_game_is_still_requeued_so_it_can_say_why(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, make_worker: Any, redis: Any
+) -> None:
+    """The job is not wasted under a halt any more. The worker answers it by pausing the game with
+    the reason on it (ADR-0030) — which is exactly what a reader looking at a stalled board needs,
+    and what leaving it `RUNNING` and unrescued could never provide."""
+    await run_next(make_worker(plays(["e4"])), game.queue)
+    await game.queue.consume("drain", block_ms=100)  # swallow the follow-up job
+    await _age_events(db, game.game.id, minutes=60)
+
+    halt = Halt(redis)
+    await halt.set("stopped by hand", source=SOURCE_OPERATOR)
+
+    report = await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+    assert report.requeued == [str(game.game.id)]
+
+    worker = make_worker(plays(["e5"]))
+    worker.halt = halt
+    handled = await run_next(worker, game.queue, consumer="after-halt")
+
+    assert handled is not None and handled.outcome == HALTED
+
+    db.expunge_all()
+    after = await db.get(Game, game.game.id)
+    assert after is not None
+    assert after.status is GameStatus.PAUSED
+    assert after.pause_reason is not None and "stopped by hand" in after.pause_reason
+
+
+async def test_a_lifted_halt_is_read_before_the_sweep_decides(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, redis: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The credit probe runs first, so a top-up noticed this tick saves every game below it from
+    being held for another minute rather than costing them one."""
+    from chessmark.core import credits
+
+    async def _funded(_key: str, **_kwargs: Any) -> credits.Balance:
+        return credits.Balance(total=Decimal("10.00"), used=Decimal(0))
+
+    monkeypatch.setattr("chessmark.orchestration.reconciler.fetch_balance", _funded)
+
+    await _seat_models(db, game.game.id, "vendor/paid-model")
+    await _paused_and_due(db, game.game.id)
+
+    halt = Halt(redis)
+    await halt.set("out of credits", source=SOURCE_CREDITS, balance_usd=Decimal(0))
+
+    report = await reconcile(sessionmaker, game.queue, halt=halt, api_key="k")
+
+    assert report.unhalted
+    assert report.resumed == [str(game.game.id)], "resumed on the same tick, not the next"

@@ -35,6 +35,7 @@ supersedes the old one, rather than an edit.
 | [0027](0027-a-pool-is-ranked-by-its-own-rating.md) | A pool is ranked by a rating over its own games; a closed event by points | Amended by [0028](0028-a-wider-prior-and-a-provisional-mark.md) |
 | [0028](0028-a-wider-prior-and-a-provisional-mark.md) | A wider prior, and a rating that says when it is not settled | Amended by [0029](0029-a-deviation-has-a-ceiling.md) |
 | [0029](0029-a-deviation-has-a-ceiling.md) | A rating deviation is capped at the prior | Accepted |
+| [0030](0030-a-halt-pauses-the-board.md) | A halt pauses every game it covers, and says so on the page | Accepted |
 
 ## Template
 

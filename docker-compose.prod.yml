@@ -19,9 +19,9 @@
 # for `docker compose pull` to fetch, and the deploy would have to build on the host — which is
 # slower, needs the toolchain there, and can produce an image nobody has tested.
 #
-# Four services, one backend image. The worker and the tournament runner are the API's own code
-# under different entrypoints: building them separately would give them three chances to drift
-# apart at exactly the point where they must not.
+# Five services, one backend image. The worker, the tournament runner and the catalogue refresher
+# are the API's own code under different entrypoints: building them separately would give them
+# several chances to drift apart at exactly the point where they must not.
 
 name: chessmark
 
@@ -129,6 +129,39 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+
+  # Keeps the model registry current (OPS-23). Prices set the spend caps **and** what users are
+  # charged in credits (ADR-0016), and which endpoints serve a model is what the picker pins to —
+  # so a stale catalogue is a wrong cap, a wrong price and a field of models that cannot be played.
+  # `refresh_catalogue.py` was written to be scheduled and then nothing scheduled it, which is how
+  # a checked-in snapshot went stale for months with nothing noticing.
+  #
+  # **A service rather than a host timer**, for the reason the rest of this file exists: a crontab
+  # is one more thing that lives nowhere in this repository, that a rebuilt server loses silently,
+  # and that nobody discovers is missing until a price is six months old. Here, `docker compose ps`
+  # is how you check the schedule is running.
+  #
+  # It spends nothing. OpenRouter's `/models` and `/endpoints` are metadata, not inference, so
+  # nothing here touches the daily free allowance or the credit balance.
+  catalogue:
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      DATABASE_URL: *database_url
+    # The first pass runs at start-up and then every `CATALOGUE_INTERVAL_HOURS`. Twelve by default:
+    # OpenRouter's field changes daily, and half a day is short enough that a price is never more
+    # than one sleep out of date while still being 2 sweeps a day rather than 24.
+    command:
+      ["python", "/app/scripts/refresh_catalogue.py", "--every", "${CATALOGUE_INTERVAL_HOURS:-12}"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      # After the schema exists. A refresh against an unmigrated database is a crash loop that
+      # says nothing useful about the real problem.
+      migrate: {condition: service_completed_successfully}
 
   web:
     image: ${WEB_IMAGE:-ghcr.io/ahmedsaed/chessmark-web:latest}
