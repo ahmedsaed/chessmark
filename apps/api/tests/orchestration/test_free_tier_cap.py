@@ -27,12 +27,15 @@ import datetime as dt
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 
 from chessmark.agents import llm
 from chessmark.agents.scripted import plays
-from chessmark.core.halt import SCOPE_FREE, SOURCE_FREE_TIER, Halt
-from chessmark.db.enums import GameStatus
+from chessmark.core.halt import SCOPE_FREE, SOURCE_FREE_TIER, SOURCE_OPERATOR, Halt
+from chessmark.db.enums import EventType, GameStatus
+from chessmark.db.models import GameEvent
 from chessmark.db.repositories import get_game
+from chessmark.orchestration.reconciler import find_resumable
 from chessmark.orchestration.worker import HALTED, next_utc_midnight
 from tests.orchestration.conftest import Fixture
 
@@ -201,7 +204,7 @@ async def test_the_daily_cap_never_ends_a_game(
 
     db.expunge_all()
     after = await get_game(db, game.game.id)
-    assert after.status is GameStatus.RUNNING
+    assert after.status is GameStatus.PAUSED, "a stop it comes back from, not an ending"
     assert after.termination is None
 
 
@@ -252,3 +255,147 @@ async def test_a_free_model_stops_under_a_free_cap_halt(
     await worker.halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
 
     assert (await worker.handle(game.first_job)).outcome == HALTED
+
+
+# ====================================================================== saying so on the board
+
+
+async def _pauses(db: Any, game_id: Any) -> list[Any]:
+    rows = await db.scalars(
+        sa.select(GameEvent).where(
+            GameEvent.game_id == game_id, GameEvent.type == EventType.GAME_PAUSED
+        )
+    )
+    return list(rows)
+
+
+async def test_the_cap_pauses_the_game_rather_than_leaving_it_looking_live(
+    db: Any, game: Fixture, make_worker: Any, redis: Any
+) -> None:
+    """The gap this closes. The halt is right about the *record* — no turn ran, nothing was spent
+    — and it used to be invisible: the game stayed `RUNNING`, the header went on pulsing "live",
+    and the board would not move again until UTC midnight. Up to a day of a game that looks alive.
+    """
+
+    async def capped(**_: Any) -> dict[str, Any]:
+        raise _RateLimitedError(DAILY_CAP)
+
+    worker = make_worker(capped)
+    worker.halt = Halt(redis)
+
+    handled = await worker.handle(game.first_job)
+
+    assert handled.outcome == HALTED, "still a halt, not a hot pool — one switch, not a cooldown"
+
+    db.expunge_all()
+    after = await get_game(db, game.game.id)
+    assert after.status is GameStatus.PAUSED
+    assert after.pause_reason is not None
+    assert "free-model allowance" in after.pause_reason, "why, not just that"
+
+
+async def test_the_pause_is_in_the_event_log(
+    db: Any, game: Fixture, make_worker: Any, redis: Any
+) -> None:
+    """Invariant 7. Live, reconnect and replay all read that one table, so a stop the log does not
+    carry is a stop the page can never show — which is exactly what a halt used to be."""
+
+    async def capped(**_: Any) -> dict[str, Any]:
+        raise _RateLimitedError(DAILY_CAP)
+
+    worker = make_worker(capped)
+    worker.halt = Halt(redis)
+    await worker.handle(game.first_job)
+
+    db.expunge_all()
+    events = await _pauses(db, game.game.id)
+
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["halt_source"] == SOURCE_FREE_TIER
+    assert payload["halt_scope"] == SCOPE_FREE
+    assert payload["resume_after"], "the cap says when it lifts, so the page can count down to it"
+    assert payload["reason"]
+
+
+async def test_the_game_comes_back_when_the_cap_does(
+    db: Any, game: Fixture, make_worker: Any, redis: Any
+) -> None:
+    """`resume_after` is the halt's own expiry, so the reconciler puts the game back at the moment
+    the allowance returns rather than on a schedule of its own."""
+    at = dt.datetime.now(dt.UTC) + dt.timedelta(hours=3)
+
+    async def capped(**_: Any) -> dict[str, Any]:
+        raise _RateLimitedError(
+            DAILY_CAP,
+            _Response(_Headers(**{"x-ratelimit-reset": str(int(at.timestamp() * 1000))})),
+        )
+
+    worker = make_worker(capped)
+    worker.halt = Halt(redis)
+    await worker.handle(game.first_job)
+
+    db.expunge_all()
+    after = await get_game(db, game.game.id)
+    assert after.resume_after is not None
+    assert abs((after.resume_after - at).total_seconds()) < 2
+
+    assert game.game.id not in {g.id for g in await find_resumable(db)}, "not yet — the cap stands"
+    due = await find_resumable(db, now=at + dt.timedelta(seconds=1))
+    assert game.game.id in {g.id for g in due}
+
+
+async def test_an_open_ended_halt_pauses_with_no_time_to_come_back(
+    db: Any, game: Fixture, make_worker: Any, redis: Any
+) -> None:
+    """An operator halt lifts when somebody lifts it, and inventing a timestamp would be a
+    countdown to a moment nothing has promised. `find_resumable` reads a missing `resume_after` as
+    due, and the reconciler refuses to sweep while a halt stands — so it resumes on the first tick
+    after the halt goes, which is the earliest honest answer."""
+    worker = make_worker(plays(["e4"]))
+    worker.halt = Halt(redis)
+    await worker.halt.set("stopped by hand", source=SOURCE_OPERATOR)
+
+    await worker.handle(game.first_job)
+
+    db.expunge_all()
+    after = await get_game(db, game.game.id)
+    assert after.status is GameStatus.PAUSED
+    assert after.resume_after is None
+    assert game.game.id in {g.id for g in await find_resumable(db)}
+
+
+async def test_a_second_job_does_not_append_a_second_notice(
+    db: Any, game: Fixture, make_worker: Any, redis: Any
+) -> None:
+    """A redelivered job, or the reconciler requeueing a game it already paused, would otherwise
+    publish another "paused" for a board that has not moved since the last one."""
+    worker = make_worker(plays(["e4"]))
+    worker.halt = Halt(redis)
+    await worker.halt.set("stopped by hand", source=SOURCE_OPERATOR)
+
+    await worker.handle(game.first_job)
+    await worker.handle(game.first_job)
+
+    db.expunge_all()
+    assert len(await _pauses(db, game.game.id)) == 1
+
+
+async def test_a_paid_game_is_not_paused_by_a_free_cap(
+    db: Any, game: Fixture, make_worker: Any, redis: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scope again, on the new path. Pausing a paid seat for a limit it is not subject to would
+    be an outage we invented."""
+    monkeypatch.setattr(
+        "chessmark.orchestration.worker.model_for", lambda _player: "vendor/paid-model"
+    )
+    worker = make_worker(plays(["e4"]))
+    worker.halt = Halt(redis)
+    await worker.halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
+
+    await worker.handle(game.first_job)
+
+    db.expunge_all()
+    after = await get_game(db, game.game.id)
+    assert after.status is GameStatus.RUNNING
+    assert await _pauses(db, game.game.id) == []

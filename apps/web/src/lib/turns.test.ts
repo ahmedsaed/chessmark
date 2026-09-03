@@ -248,6 +248,39 @@ describe("pauses", () => {
     expect(turns[0].seq).toBe(1);
     expect(notices[0].seq).toBeGreaterThan(turns[0].seq);
   });
+
+  /* A halt is a pause too (OPS-19, OPS-20). It arrives as the same event with a different reason
+     — the free-model allowance, an empty account, an operator — and the panel must not need to
+     know which, or a fourth kind of stop would need a fourth branch here. */
+  it("shows a harness halt the same way it shows a busy provider", () => {
+    seq = 0;
+    const events = [
+      event("game_paused", {
+        reason: "the harness is halted: the free-model allowance for the day is spent (429)",
+        halt_source: "free_tier",
+        resume_after: "2026-09-04T00:00:00Z",
+      }),
+    ];
+
+    const { paused } = foldEvents(events, []);
+
+    expect(paused?.text).toContain("free-model allowance");
+    expect(paused?.resumeAfter).toBe("2026-09-04T00:00:00Z");
+  });
+
+  /* `paused.seq` is what tells the page to refetch the game record — see `useGameDetail`. A halt
+     with no known end still has to move it, or a game stopped at ply 0 would go on rendering the
+     server's snapshot, which says "running". */
+  it("an open-ended halt still moves the seq the page keys its refetch on", () => {
+    seq = 0;
+    const paused = foldEvents(
+      [event("game_paused", { reason: "the harness is halted: stopped by hand" })],
+      [],
+    ).paused;
+
+    expect(paused?.seq).toBeGreaterThan(0);
+    expect(paused?.resumeAfter).toBeNull();
+  });
 });
 
 /**

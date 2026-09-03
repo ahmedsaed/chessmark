@@ -1,0 +1,37 @@
+# Secret scanning, with one thing taught to it.
+#
+# The default ruleset is kept whole — `useDefault`, nothing disabled — because the value of a
+# scanner is that nobody trimmed it to make a build go green. This file exists to name a single
+# false positive precisely enough that it cannot hide a real one.
+#
+# **The global `[[allowlists]]` form in the upstream README does not work here.** gitleaks 8.24.3,
+# which the action pins, reads the global list as `[allowlist]` (singular) and *silently ignores*
+# the plural — a config copied from the docs scans clean and allowlists nothing. Verified against
+# the exact binary CI runs. Scoped to one rule below instead, which is narrower anyway.
+
+title = "Chessmark"
+
+[extend]
+useDefault = true
+
+# **A contestant key is not an API key.** A tournament pairing names its two seats by their
+# contestant key — `vendor/model`, the slug a model plays under — in the fields `white_key` and
+# `black_key`. `generic-api-key` fires on the word *key* beside a string with enough entropy, so
+# `black_key: "vendor/black"` in a test fixture reads to it as a credential. Nothing was ever
+# exposed; the finding was the field's name.
+#
+# Attached to that one rule, and scoped by the **shape of the value** rather than by the file it
+# sits in — the narrower of the two, and the one that stays true when a fixture moves. The value
+# must be a lowercase slug containing a `/`, which no credential format this scanner knows is.
+#
+# Checked, not assumed. Against 8.24.3 with this config, `black_key: "vendor/black"` and
+# `white_key: "vendor/white"` are allowed, while an AWS-shaped and an `sk-proj-` key assigned to
+# **those same two fields** are both still reported. An allowlist nobody probed is an allowlist
+# that turns out to have disabled the rule.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "white_key / black_key are contestant slugs, not credentials"
+  regexTarget = "line"
+  regexes = ['''(white|black)_key["']?\s*[:=]\s*["'][a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._@:-]*["']''']

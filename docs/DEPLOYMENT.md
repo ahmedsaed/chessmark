@@ -18,11 +18,12 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 | `web` | the built Next.js app | published on `WEB_PORT` (3010) |
 | `worker` | plays turns | **exactly one** |
 | `tournament` | ticks an event | also the management CLI |
+| `catalogue` | refreshes the model registry | every `CATALOGUE_INTERVAL_HOURS` (12) |
 
-`api`, `worker`, `tournament` and `migrate` are **one image**. They share every line of code — the
-worker is the API's own turn loop, the tournament runner drives the same orchestration — so
-building them separately would give them three chances to drift apart at the point where they must
-not.
+`api`, `worker`, `tournament`, `catalogue` and `migrate` are **one image**. They share every line
+of code — the worker is the API's own turn loop, the tournament runner drives the same
+orchestration — so building them separately would give them several chances to drift apart at the
+point where they must not.
 
 ## `./chessmark` — the stack without a toolchain
 
@@ -96,6 +97,38 @@ docker compose run --rm tournament pause pool-free --abort-live
 
 The long-running `tournament` container ticks whichever slug `TOURNAMENT_SLUG` names. One container
 per event you want running.
+
+## The catalogue keeps itself current
+
+`refresh_catalogue.py` registers what OpenRouter offers and then sweeps each model's endpoints —
+the two halves are useless apart, because a model with no endpoint rows has no contestants and
+cannot be picked. It opens with *"built to be scheduled rather than remembered"*, and for a long
+time **nothing scheduled it** (OPS-23): it ran when somebody typed the command. Prices set the
+spend caps *and* what a user is charged in credits (ADR-0016), so every day nobody remembered was a
+day of wrong caps and wrong prices.
+
+The `catalogue` service is the schedule. It refreshes at start-up and then every
+`CATALOGUE_INTERVAL_HOURS` (12 by default), and it spends nothing — `/models` and `/endpoints` are
+metadata, not inference, so the daily free allowance and the credit balance are untouched.
+
+A **service rather than a host timer**, deliberately. A crontab lives nowhere in this repository, a
+rebuilt server loses it silently, and nobody discovers it is missing until a price is six months
+old. Here, `docker compose ps` is how you check the schedule is running and `./chessmark logs
+catalogue` is how you read what it did.
+
+**A pass that fails does not stop the schedule.** OpenRouter down, the network gone, Postgres
+restarting — the failure is logged and the loop waits for the next interval. Exiting would hand it
+to the restart policy, which puts the process straight back into the same failure; this stack has
+already watched its tournament runner exit-loop for exactly that reason. A pass that reaches
+OpenRouter and gets an empty catalogue **refuses to touch the registry** rather than disabling every
+model at once.
+
+Run one by hand any time — it is idempotent:
+
+```
+./chessmark catalogue                 # once, now
+./chessmark catalogue --skip-endpoints   # the fast half only
+```
 
 ## How many workers
 

@@ -11,9 +11,9 @@ The halt is also useful on its own — there was no runtime way to stop spending
 kill switch is config read at startup.
 
 Two properties do most of the work here. A halt **never ends or forfeits a game**: the turn is not
-run, the job is dropped, and the game stays `RUNNING` (invariant 11). And a credit halt **lifts
-itself**, because one that only a command lifts leaves the pool idle from an 11pm top-up until
-somebody remembers.
+run and the game is *paused*, which is a stop it comes back from (invariant 11). And a credit halt
+**lifts itself**, because one that only a command lifts leaves the pool idle from an 11pm top-up
+until somebody remembers.
 """
 
 from __future__ import annotations
@@ -114,7 +114,7 @@ async def test_a_halt_never_ends_a_game(
 
     db.expunge_all()
     after = await get_game(db, game.game.id)
-    assert after.status is GameStatus.RUNNING, "left for the reconciler, not ended"
+    assert after.status is GameStatus.PAUSED, "stopped where it can be seen, not ended"
     assert after.termination is None
 
 
@@ -139,7 +139,7 @@ async def test_a_402_halts_everything_rather_than_pausing_one_game(
 
     db.expunge_all()
     after = await get_game(db, game.game.id)
-    assert after.status is GameStatus.RUNNING, "not paused — the halt is what holds it"
+    assert after.status is GameStatus.PAUSED, "the halt decides when it resumes; the board says so"
 
 
 async def test_a_402_against_a_funded_account_pauses_only_that_game(

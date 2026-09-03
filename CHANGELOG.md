@@ -45,6 +45,25 @@ Three fixes from an audit of the live `pool-free` event, which had abandoned 21 
 
 ### Added
 
+- **The model catalogue now refreshes itself** (OPS-23). `refresh_catalogue.py` was written to be
+  scheduled — its own header says so — and nothing scheduled it: no cron container, no timer, no
+  workflow, no call from the API, the worker or the tournament runner. It ran when somebody
+  remembered the command. Prices set the spend caps *and* what a user is charged in credits
+  (ADR-0016) and endpoint rows are what the picker pins to, so every day nobody remembered was a
+  day of wrong caps, wrong prices and models the field could not play. A `catalogue` service now
+  runs it at start-up and every `CATALOGUE_INTERVAL_HOURS` (12); a failed pass is logged and the
+  loop waits, because a scheduled sweep that exits on a bad night is restarted straight back into
+  it. `--every HOURS` is on the script, so `make refresh-catalogue` and `./chessmark catalogue`
+  still run one pass and still fail loudly. It spends nothing — `/models` and `/endpoints` are
+  metadata, not inference.
+
+- **A tournament's schedule shows the latest ten matches and loads more on request.** A pool never
+  ends, so its schedule only grows — and it was rendered whole, several hundred linked rows in one
+  column, under the standings table that is the reason most people open the page. The order was
+  already newest-round-first, so the first page is the part worth seeing. Every pairing is already
+  on the page, so "load more" is a slice rather than a request: nothing to wait for and nothing to
+  fail. The count says `10 of 312` while there is more, and the button says how much is left.
+
 - **`tournament set <slug> --max-concurrent N`** changes a running event's concurrency without a
   hand-written `UPDATE`. It was settable only at `create`, which is the one moment nobody knows the
   right value — it depends on how many workers are up, how hot the free pools are that day, and how
@@ -53,6 +72,22 @@ Three fixes from an audit of the live `pool-free` event, which had abandoned 21 
 
 ### Fixed
 
+- **The reconciler reads the halt's scope instead of standing down for any halt** ([ADR-0030]).
+  It asked `halt.active()` once and returned, which was right while a halt was global and wrong the
+  moment it had one: under OpenRouter's daily free-model cap **no paid game could be rescued at
+  all** — not resumed when its provider pause came due, not requeued when its job was lost — for as
+  long as the cap stood, up to a UTC day. The worker and the tournament runner both read the scope
+  correctly; nothing had ever passed a halt to `reconcile`, so nothing could have caught it. A
+  paused game the halt covers is now held (resuming it would take a concurrency slot and pause
+  again having moved nothing) and a *stalled* one is requeued anyway, because the worker answers
+  that job by writing the pause below. (OPS-19, OPS-20)
+- **A halt now pauses the board instead of stopping it silently** ([ADR-0030]). A turn the global
+  halt forbade was dropped and the game left `RUNNING` — correct about the record and invisible on
+  the page: the header went on pulsing **live** over a board that would not move again until the
+  free-model allowance reset, which is most of a UTC day. Every game a halt covers is now paused
+  with one `game_paused` event carrying the reason and, where the halt knows it, the time it lifts.
+  Nothing is forfeited and no abandonment clock runs — a halt is ours, not the model's
+  (ADR-0019) — and a paid seat is still untouched by a free-model cap. (OPS-19, OPS-20)
 - **A game due to resume keeps its concurrency slot** ([ADR-0025]). The tournament runner bounded
   itself on running games only, so a pairing whose pause had expired was invisible to it and
   visible to the reconciler; the two raced for one slot and the waiting game lost. Measured across
@@ -122,4 +157,5 @@ flags the old code wrote.
 [ADR-0027]: docs/adr/0027-a-pool-is-ranked-by-its-own-rating.md
 [ADR-0028]: docs/adr/0028-a-wider-prior-and-a-provisional-mark.md
 [ADR-0029]: docs/adr/0029-a-deviation-has-a-ceiling.md
+[ADR-0030]: docs/adr/0030-a-halt-pauses-the-board.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

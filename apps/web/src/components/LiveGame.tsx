@@ -85,6 +85,10 @@ export function LiveGame({
     apiUrl,
     plyCount: moves.length,
     ended: ended !== null,
+    /* A pause is the other moment the record changes without a ply. Without it the header kept
+       pulsing "live" over a board the harness had stopped — which is the whole thing the `paused`
+       branch below was written to prevent, arriving through a status the page never refetched. */
+    statusSeq: paused?.seq ?? 0,
   });
 
   const { fen, lastMove, toMove } = useMemo(() => {

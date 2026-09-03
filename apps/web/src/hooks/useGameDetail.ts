@@ -12,6 +12,13 @@
  * Refetched **per ply, not on a timer**. A move landing is exactly the moment those numbers change,
  * so polling would be a worse approximation of the same thing — and one request per ply on a game
  * that takes seconds per move is nothing.
+ *
+ * A ply is not the only such moment. **A game that pauses stops producing plies**, which is
+ * precisely when the record changes in the way a reader most needs to see: `status` becomes
+ * `paused` and `pause_reason` fills in. Keyed on plies alone, the header went on pulsing "live"
+ * over a board halted until the free-model allowance reset — for up to a day. `statusSeq` is the
+ * `seq` of the pause the game is sitting in, so a pause *and* the resume that clears it each move
+ * it and each trigger one refetch.
  */
 
 import { useEffect, useState } from "react";
@@ -23,6 +30,7 @@ export function useGameDetail({
   apiUrl,
   plyCount,
   ended,
+  statusSeq = 0,
 }: {
   initial: GameDetail;
   apiUrl: string;
@@ -30,12 +38,15 @@ export function useGameDetail({
   plyCount: number;
   /** True once the stream reports an ending — the last refetch, and the one that matters most. */
   ended: boolean;
+  /** `seq` of the pause the game is in, or 0 when it is not in one. Changes on pause and resume. */
+  statusSeq?: number;
 }) {
   const [detail, setDetail] = useState<GameDetail>(initial);
 
   useEffect(() => {
-    // Nothing has happened since the server rendered it.
-    if (plyCount === 0 && !ended) return;
+    // Nothing has happened since the server rendered it. A pause counts as something: a game can
+    // be stopped at ply 0, and that is the case where the page has least else to go on.
+    if (plyCount === 0 && !ended && statusSeq === 0) return;
 
     const controller = new AbortController();
 
@@ -53,7 +64,7 @@ export function useGameDetail({
     })();
 
     return () => controller.abort();
-  }, [initial.id, apiUrl, plyCount, ended]);
+  }, [initial.id, apiUrl, plyCount, ended, statusSeq]);
 
   return detail;
 }
