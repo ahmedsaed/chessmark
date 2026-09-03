@@ -546,8 +546,8 @@ class TurnWorker:
         bound becoming a finding about a player (ADR-0019). It waits as long as the halt does.
 
         `resume_after` is the halt's own expiry when it has one and `None` when it does not.
-        `find_resumable` reads `None` as due, and the reconciler refuses to sweep at all while a
-        halt stands — so an unbounded halt resumes on the first tick after somebody lifts it,
+        `find_resumable` reads `None` as due, and the reconciler holds back any paused game the
+        halt still covers — so an unbounded halt resumes on the first tick after somebody lifts it,
         rather than sitting until a timestamp nobody could have predicted.
         """
         async with self.sessionmaker() as session, session.begin():

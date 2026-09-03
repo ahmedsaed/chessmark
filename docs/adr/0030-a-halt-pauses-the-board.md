@@ -39,8 +39,17 @@ puts the game back. One shape, one set of tests, no fourth branch in the panel.
 **`resume_after` is the halt's own expiry, or nothing.** The free-model cap knows when it lifts —
 `X-RateLimit-Reset`, or the next UTC midnight — and that timestamp becomes the game's. A credit or
 operator halt does not know, and gets `None` rather than a guess: `find_resumable` reads a missing
-`resume_after` as due, and the reconciler refuses to sweep at all while a halt stands, so the game
+`resume_after` as due, and the reconciler holds back any paused game the halt still covers, so it
 resumes on the first tick after the halt goes. That is the earliest honest answer.
+
+**The reconciler asks the halt per game, not once.** It used to ask `halt.active()` and return,
+which was right while a halt was global and wrong the moment it had a scope: under a free-model cap
+no *paid* game could be resumed or requeued either, for as long as the cap stood. `HaltState.covers`
+is the one place that decides, and the two sweeps want opposite things from a game it covers — a
+paused one is **held**, because resuming it would take a concurrency slot and pause again having
+moved nothing; a stalled one is **requeued anyway**, because the job is no longer wasted. The worker
+answers it by writing the pause above, which is precisely what a reader looking at a stalled board
+needs.
 
 **No abandonment clock.** `_pause` writes a game off after a day without a move, because a provider
 hot for that long is not coming back. A halt is *ours* — our account, our allowance, our operator —
@@ -60,7 +69,7 @@ redelivered job or a requeue cannot append a second stop for a board that has no
 silence more expensive.
 
 **A `HALTED` game status of its own.** It reads well and costs a migration, a fourth branch in
-every status check, a new case in the reconciler, and a second way for a game to be stopped. The
+every status check, another case in the reconciler, and a second way for a game to be stopped. The
 difference it would express — *why* it stopped — is already in `pause_reason` and in the event
 payload's `halt_source`.
 
@@ -79,6 +88,11 @@ other.
 A pause frees the concurrency slot it was holding, so a paused free game no longer counts against
 its event's `max_concurrent`. Under a free-scope halt that is inert, because the tournament runner
 already refuses to start anything while a halt covers it.
+
+Every path that decides whether a turn happens now reads the same scope: the worker through
+`covers`, the tournament runner through its own free-entrant check, and the reconciler through
+`halted_games`. Nothing had tested the reconciler's halt behaviour at all, which is how it stayed
+global for as long as it did.
 
 The `HALTED` outcome still means *the harness is stopped* rather than *this provider is busy* — the
 distinction the cooldown ladder depends on. What changed is what the game record does about it, not

@@ -72,6 +72,15 @@ Three fixes from an audit of the live `pool-free` event, which had abandoned 21 
 
 ### Fixed
 
+- **The reconciler reads the halt's scope instead of standing down for any halt** ([ADR-0030]).
+  It asked `halt.active()` once and returned, which was right while a halt was global and wrong the
+  moment it had one: under OpenRouter's daily free-model cap **no paid game could be rescued at
+  all** — not resumed when its provider pause came due, not requeued when its job was lost — for as
+  long as the cap stood, up to a UTC day. The worker and the tournament runner both read the scope
+  correctly; nothing had ever passed a halt to `reconcile`, so nothing could have caught it. A
+  paused game the halt covers is now held (resuming it would take a concurrency slot and pause
+  again having moved nothing) and a *stalled* one is requeued anyway, because the worker answers
+  that job by writing the pause below. (OPS-19, OPS-20)
 - **A halt now pauses the board instead of stopping it silently** ([ADR-0030]). A turn the global
   halt forbade was dropped and the game left `RUNNING` — correct about the record and invisible on
   the page: the header went on pulsing **live** over a board that would not move again until the
