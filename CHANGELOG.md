@@ -15,9 +15,70 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
-Three fixes from an audit of the live `pool-free` event, which had abandoned 21 of 56 pairings.
+Two audits of the live `pool-free` event. The first found three rating problems; the second
+followed 17 abandoned pairings of 65 back to a turn loop that was refilling its own context faster
+than compaction could empty it.
+
+### Fixed
+
+- **A turn may no longer inflate its own context** ([ADR-0031]). A reply cut off by the endpoint
+  before it reached a tool call is now elided from the *replayed* transcript — the message keeps
+  its place, role and structure, and carries a placeholder instead of the fragment. Measured on
+  turn 1041 of `29e7f004`: compaction ran at the top of the turn and left a 731-token prompt, and
+  the same turn put it back to **516,877** across ten calls, five of them cut off at the
+  endpoint's undeclared 32,768-token ceiling and each appended in full. Every failed attempt made
+  the next one harder. The row is untouched and `llm_calls` still holds the raw response, so the
+  record stays verbatim (invariant 3); only the request shrinks. A reply truncated *after* it
+  managed a tool call is kept whole, because that one may carry reasoning its provider requires.
+- **A compaction keeps its measurement instead of discarding it** ([ADR-0031]). `_compact` set the
+  measured prompt size to `None`, which sent the next request down the unmeasured path — a bound of
+  half the window, sized for a game's genuine first call. On a resumed game holding 227,440 tokens
+  that asked for 64,000 output against 27,802 tokens of room, and the endpoint refused it. The
+  reset was persisted too, so a reopened game began blind and could not even compact its way out;
+  `29e7f004` and `e601f9af` each re-threw the same 400 within seconds of being reopened, twice.
+- **Compaction may fire again when the transcript has grown since the last fold** ([ADR-0031]).
+  The guard was once per turn, which is right for a turn making three round-trips and useless for
+  one making twenty.
+- **A summary that hits its own cap is discarded** ([ADR-0031]). Fifteen summarising calls across
+  the pool returned `finish_reason: "length"` at 2,000 tokens, eight from one model — each writing
+  a sentence that stops mid-word into the transcript as that game's memory of itself. The pass
+  falls back to the trim-only rung, which needs no provider at all.
+- **Reopening an abandoned game restarts its patience window** ([ADR-0031]). The 24-hour clock ran
+  from the last move alone, which also counted every hour the game spent dead and every hour it
+  spent queued. `b5546c1b` was reopened 32 hours after its last move, ran 6.7 real hours, met one
+  rate limit and was abandoned again at "38.9h without a move". Only a deliberate reopening resets
+  it — an expiring pause writes a different event — so a failing provider still reaches 24 hours
+  exactly as intended. The abandonment message now names the instant it counted from.
+- **An entrant mid-pairing is not given a second concurrent game** ([ADR-0031]). A paused game
+  holds no concurrency slot, so the freed slot went straight back to a matchmaker that still saw
+  the same least-known entrant — and `_fruitless_entrants` counts only *finished* attempts, which
+  a failure here takes a full day to become. `gemma-4-26b` held four games inside nine hours, all
+  scheduled before the first had ended, all four abandoned.
+- **Each pooled game gets its own round number.** A batch carried one number for every game in it,
+  which is right for a Swiss round and wrong for a pool, where each game is matched independently
+  against ratings the previous one has already moved. `pool-free` showed 63 rounds of one game and
+  a single round of two.
+- **A game abandoned before its first move shows its log.** `eventsThroughPly` returned nothing at
+  ply 0, so a zero-ply game folded an empty list and rendered "The starting position — step forward
+  to begin." over a pairing that never began. Five games in `pool-free`, every one with its reason
+  recorded and none of it on the page.
+- **The event stream says when a game ended, and why.** `game_ended` was the one lifecycle event
+  that pushed no notice, so a log ran pause → resume → pause → resume and stopped. On a game
+  reopened and then abandoned again, the last thing a reader saw was "resumed".
+- **A reasoning bubble is bounded.** Degenerate output — three thousand characters of multilingual
+  noise and eighty consecutive newlines, from a model whose serving stack collapsed mid-game —
+  rendered at full height and pushed the rest of the conversation out of the column.
+- **The event log never loses its ending.** `/games/{id}/events` takes rows from the front, which
+  replay needs, so a game longer than the cap dropped its tail. `a59a388e` already emits 1,093
+  events over 147 plies.
 
 ### Changed
+
+- **`context_exceeded` is a harness ending, not a forfeit** ([ADR-0031]). While the agent had no
+  way to shrink its own history, filling the window was something the model did; now that it folds
+  its history when the window fills, reaching the wall says our fold did not keep up. It leaves
+  the rated set and becomes resumable, following `timeout` and `truncated`.
+
 
 - **A new contestant starts at 1500 ± 500, and a rating above ± 110 is marked provisional**
   ([ADR-0028]). Both numbers are Lichess's, adopted verbatim rather than tuned. The wider prior
@@ -158,4 +219,5 @@ flags the old code wrote.
 [ADR-0028]: docs/adr/0028-a-wider-prior-and-a-provisional-mark.md
 [ADR-0029]: docs/adr/0029-a-deviation-has-a-ceiling.md
 [ADR-0030]: docs/adr/0030-a-halt-pauses-the-board.md
+[ADR-0031]: docs/adr/0031-a-turn-may-not-inflate-its-own-context.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0
