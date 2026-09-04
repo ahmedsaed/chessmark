@@ -13,14 +13,26 @@ from chessmark.game import FORFEIT_TERMINATIONS, RESUMABLE_TERMINATIONS, Termina
 class TestWhatCountsAsAFinding:
     def test_the_model_s_own_failures_still_count(self) -> None:
         """Each of these is something the model did, and is the same on any endpoint that serves
-        it: it played illegally six times, answered in prose four times running, filled its own
-        window."""
+        it: it played illegally six times, or it answered in prose four times running."""
         for termination in (
             Termination.ILLEGAL_MOVE_FORFEIT,
             Termination.ERROR_FORFEIT,
-            Termination.CONTEXT_EXCEEDED,
         ):
             assert termination in FORFEIT_TERMINATIONS
+
+    def test_filling_the_window_is_not_a_finding_either(self) -> None:
+        """`CONTEXT_EXCEEDED` was here, on the reading that a model which fills its own window has
+        failed. That was true while the agent had no way to shrink its history. It now folds its
+        own earlier turns when the window fills (ADR-0018), so reaching the wall says the fold did
+        not keep up — a fact about this harness, not about the weights (ADR-0031).
+
+        The games that prompted it make the point: one model was cut off at its endpoint's
+        undeclared 32,768-token ceiling five times in a single turn, each unfinished fragment
+        appended and re-sent, until the request no longer fit. Nothing in that sequence was a
+        choice the weights made.
+        """
+        assert Termination.CONTEXT_EXCEEDED not in FORFEIT_TERMINATIONS
+        assert Termination.CONTEXT_EXCEEDED in RESUMABLE_TERMINATIONS
 
     def test_an_output_ceiling_is_not_a_finding(self) -> None:
         """`TRUNCATED` was here, on the reading that a model which cannot finish inside a generous
