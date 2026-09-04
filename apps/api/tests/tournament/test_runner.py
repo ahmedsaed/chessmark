@@ -30,6 +30,7 @@ from chessmark.game import GameResult, Termination
 from chessmark.orchestration.tournament import (
     DEAD_ATTEMPTS,
     DEAD_REST,
+    _engaged_entrants,
     _fruitless_entrants,
     advance,
 )
@@ -1113,3 +1114,109 @@ async def test_a_rested_entrant_comes_back_by_itself(
     assert await _fruitless_entrants(db, tournament_id, list(entrants)) == set(), (
         f"{exhausted} is still rested after the window lapsed"
     )
+
+
+async def _seated(db: AsyncSession, tournament_id: uuid.UUID) -> list[str]:
+    """Every entrant key holding an unsettled pairing — no score and not abandoned."""
+    rows = (
+        await db.execute(
+            sa.select(TournamentGame.white_key, TournamentGame.black_key).where(
+                TournamentGame.tournament_id == tournament_id,
+                TournamentGame.white_score.is_(None),
+                TournamentGame.abandoned_reason.is_(None),
+            )
+        )
+    ).all()
+    return [key for white, black in rows for key in (white, black) if key]
+
+
+async def _pause_all(db: AsyncSession, tournament_id: uuid.UUID) -> None:
+    """Park every unfinished game on a provider, as a rate limit does."""
+    await db.execute(
+        sa.update(Game)
+        .where(
+            Game.id.in_(
+                sa.select(TournamentGame.game_id).where(
+                    TournamentGame.tournament_id == tournament_id,
+                    TournamentGame.game_id.is_not(None),
+                )
+            ),
+            Game.status.in_({GameStatus.PENDING, GameStatus.RUNNING}),
+        )
+        .values(
+            status=GameStatus.PAUSED,
+            # An hour out, as the cooldown ladder sets it. Without a future `resume_after` the
+            # pairing is *due*, and a due game holds the slot itself (ADR-0025) — which would mask
+            # the hole this is about rather than exercise it.
+            resume_after=dt.datetime.now(dt.UTC) + dt.timedelta(hours=1),
+        )
+    )
+    await db.commit()
+
+
+async def test_an_entrant_mid_pairing_is_not_given_a_second_game(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """**The day-long blind spot in the strike counter** (ADR-0031).
+
+    A paused game holds no concurrency slot, which is right — it is not spending (ADR-0017) — and
+    it means the freed slot goes straight back to the matchmaker while the paused pairing is still
+    unsettled. `_fruitless_entrants` cannot help there: it counts only *finished* attempts, and a
+    failure here takes a full `PAUSE_WINDOW` to become one. So for a day the counter sees nothing,
+    the least-known entrant is still the one nobody can play, and it is chosen again.
+
+    That is how `gemma-4-26b` came to hold four games inside nine hours, every one scheduled before
+    the first had ended, all four abandoned. There had not been a strike yet.
+
+    So: start a game, park it on a provider exactly as a rate limit would, and tick again. The
+    entrants already mid-pairing may not be handed another.
+    """
+    tournament_id, _ = await make_tournament(
+        db,
+        models=6,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    engaged = set(await _seated(db, tournament_id))
+    assert engaged, "nothing was scheduled, so this test asserts nothing"
+
+    # Parked on a hot provider — unsettled, and holding no slot.
+    await _pause_all(db, tournament_id)
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    seats = await _seated(db, tournament_id)
+    assert len(seats) == len(set(seats)), (
+        f"an entrant was given a second concurrent game: {sorted(seats)}"
+    )
+
+
+async def test_a_paused_pairing_still_holds_its_entrants(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """The bound reads the *pairing* table, not `in_flight`.
+
+    `in_flight` is `PENDING` or `RUNNING`. Nearly every one of those four `gemma-4-26b` games was
+    **paused** when the next was scheduled — that is exactly what a rate-limited free pool looks
+    like — so a bound that only saw executing games would have let all four through unchanged.
+    """
+    tournament_id, _ = await make_tournament(
+        db,
+        models=4,
+        config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+    )
+
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    engaged = set(await _seated(db, tournament_id))
+
+    await _pause_all(db, tournament_id)
+    assert not await repo.in_flight(db, tournament_id), "a paused game is not in flight"
+
+    entrants = await repo.entrants_of(db, tournament_id)
+    held = await _engaged_entrants(db, tournament_id, list(entrants))
+
+    assert held == engaged, "a paused pairing stopped holding its seats"
