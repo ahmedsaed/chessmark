@@ -17,13 +17,18 @@ the single thing that keeps a 60-move game affordable.
 
 from __future__ import annotations
 
+import datetime as dt
 import uuid
 from typing import Any
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.agents.compaction import TRIMMED_PLACEHOLDER, live_messages
+from chessmark.agents.compaction import (
+    TRIMMED_PLACEHOLDER,
+    TRUNCATED_PLACEHOLDER,
+    live_messages,
+)
 from chessmark.db.models import Player, TranscriptMessage
 
 
@@ -44,6 +49,7 @@ async def append_message(
     reasoning_details: list[dict[str, Any]] | None = None,
     turn_id: int | None = None,
     is_summary: bool = False,
+    truncated: bool = False,
 ) -> TranscriptMessage:
     """Append one message.
 
@@ -72,6 +78,10 @@ async def append_message(
         tool_call_id=tool_call_id,
         name=name,
         reasoning_details=reasoning_details,
+        # Marked on the way in rather than patched afterwards. The row is still written verbatim —
+        # `content` and `reasoning_details` hold exactly what came back — but the decision belongs
+        # with the response that prompted it, and this table has no update path to patch it later.
+        truncated_at=dt.datetime.now(dt.UTC) if truncated else None,
     )
     session.add(message)
     await session.flush()
@@ -120,6 +130,17 @@ def to_provider_message(row: TranscriptMessage) -> dict[str, Any]:
         # requested it still has an answer — and carries a placeholder instead of what the tool
         # returned (ADR-0021). The row is untouched; only the request shrinks.
         message["content"] = TRIMMED_PLACEHOLDER if row.trimmed_at else (row.content or "")
+        return message
+
+    # A reply the endpoint cut off before the model reached a tool call. The message keeps its
+    # place and its role — so nothing is orphaned and a provider that requires a well-formed
+    # alternation still gets one — and carries the placeholder instead of the fragment. Returned
+    # early because `reasoning_details` must go with it: an unfinished thought is the bulk of what
+    # was truncated, and replaying it is what made each retry harder than the last
+    # (`TranscriptMessage.truncated_at`). Only ever set on a message with no tool calls, so there
+    # is no `thought_signature` being separated from a function call here.
+    if row.truncated_at:
+        message["content"] = TRUNCATED_PLACEHOLDER
         return message
 
     if row.content is not None:
