@@ -60,7 +60,7 @@ from chessmark.db.models import (
     Turn,
 )
 from chessmark.db.quotas import note_game_started
-from chessmark.db.repositories import load_events, rebuild_referee
+from chessmark.db.repositories import load_events, load_terminal_events, rebuild_referee
 from chessmark.game import Colour, IllegalMoveError
 from chessmark.game.pgn import PgnMetadata, to_pgn
 from chessmark.orchestration import human as human_play
@@ -332,6 +332,19 @@ async def get_event_log(
     opponent's thinking here either (`api/redaction.py`).
     """
     events = await load_events(session, game.id, after_seq=after_seq, limit=limit)
+
+    # **The ending is never the thing that gets dropped.** `limit` takes rows from the front, which
+    # is what replay needs — the board is rebuilt by replaying moves from the start — but it means
+    # a game longer than the cap loses its *tail*, and the tail is where the result is. No error,
+    # no gap, just a game that stops mid-move-list and never says how it finished. A 147-ply game
+    # already writes 1,093 events; a reasoning-heavy one near the 300-ply cap will cross 5,000.
+    #
+    # So when the log was cut, the terminal events are fetched separately and appended. The result
+    # is still ordered by `seq` and still starts at the beginning; what changes is that the last
+    # thing in it is the ending rather than an arbitrary ply.
+    if len(events) == limit:
+        events += await load_terminal_events(session, game.id, after_seq=events[-1].seq)
+
     withhold = await must_withhold_thinking(session, game)
 
     out = [EventOut.from_model(event) for event in events]

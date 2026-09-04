@@ -30,7 +30,13 @@ export function plyCount(events: GameEvent[]): number {
  * truncating at the last `move_made` would silently drop the ending.
  */
 export function eventsThroughPly(events: GameEvent[], ply: number): GameEvent[] {
-  if (ply <= 0) return [];
+  // **A game that never moved is all tail.** `ply <= 0` returned nothing, which is right when
+  // there are later plies to scrub forward to — ply 0 is the starting position and no thinking
+  // belongs to it yet. It is exactly wrong when there are none: a game abandoned before its first
+  // move has `plyCount === 0`, so the replay opens at ply 0 and folds an *empty* list. Five games
+  // in one pool rendered "The starting position — step forward to begin." over a pairing that
+  // never began, with their pauses and the reason they were abandoned sitting in the log unread.
+  if (ply <= 0) return plyCount(events) === 0 ? events : [];
 
   let seen = 0;
   for (let index = 0; index < events.length; index += 1) {

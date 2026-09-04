@@ -27,6 +27,25 @@ function asNumber(value: unknown): number {
  * transcript, so the size it can measure exactly is what it reports; `occupied_tokens` is the one
  * token figure, and it is the provider's own count of the prompt before the pass.
  */
+/**
+ * How an ending reads in the timeline.
+ *
+ * The termination is the headline and the detail is the reason, because the reason is the whole
+ * point: a game that says only "abandoned" is indistinguishable from one that is broken, and every
+ * abandonment already records why — a rate-limited provider, a window it could not fit inside, a
+ * patience window spent. The detail was in the payload the entire time and never had anywhere to
+ * appear.
+ */
+export function endedText(ended: {
+  result: string;
+  termination: string;
+  detail: string;
+}): string {
+  const label = ended.termination || "ended";
+  const head = ended.result && ended.result !== "*" ? `${label} · ${ended.result}` : label;
+  return ended.detail ? `${head} — ${ended.detail}` : head;
+}
+
 export function compactionText(payload: Record<string, unknown>): string {
   const folded = asNumber(payload.folded);
   const trimmed = asNumber(payload.trimmed);
@@ -301,6 +320,19 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
           termination: asString(payload.termination),
           detail: asString(payload.detail),
         };
+        /* **The ending is a notice like every other interruption.** It was the one lifecycle event
+           that set state and pushed nothing, so a stream ran pause → resume → pause → resume and
+           simply stopped — and on a game that had been reopened and then abandoned again, the last
+           thing a reader saw was "resumed", with the abandonment two rows later in the log and
+           nowhere on the page. The header carries the ending too, but only at the final ply; the
+           timeline is where a reader looks for *when*, and it has to say so itself. */
+        notices.push({
+          key: `ended-${event.seq}`,
+          seq: event.seq,
+          kind: "ended",
+          text: endedText(ended),
+          resumeAfter: null,
+        });
         break;
       }
 
