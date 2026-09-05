@@ -408,6 +408,41 @@ async def _resting_entrants(
     return {e.key for e in entrants if e.key.split("@", 1)[0] in by_model}
 
 
+async def _engaged_entrants(
+    session: AsyncSession, tournament_id: uuid.UUID, entrants: list[Any]
+) -> set[str]:
+    """Entrants that already hold an unsettled pairing in this pool.
+
+    **A model cannot usefully play two games at once, and pairing it again is how one dead endpoint
+    ran four games in parallel.** `_fruitless_entrants` only counts *finished* attempts — correctly,
+    since a pairing still in progress has not come to nothing yet — but a failure here takes a full
+    `PAUSE_WINDOW` to register. So there is a day-long blind spot, and the matchmaker filled it:
+    `gemma-4-26b` was given four games inside nine hours, every one of them scheduled before the
+    first had ended, and all four were abandoned. The strike counter never saw a strike because
+    there had not been one yet.
+
+    Counted from the pairing table rather than `in_flight`, which reads `PENDING` and `RUNNING`
+    only. Nearly every one of those four games was **paused** at the time the next was scheduled —
+    that is what a rate-limited free pool looks like — so the bound has to be "has an unsettled
+    pairing", not "is executing right now".
+
+    This does not rest anybody. It says only that an entrant's next game waits for its current one,
+    which is what a reader of the schedule already assumes is true.
+    """
+    wanted = {e.key for e in entrants}
+    rows = (
+        await session.execute(
+            sa.select(TournamentGame.white_key, TournamentGame.black_key).where(
+                TournamentGame.tournament_id == tournament_id,
+                TournamentGame.white_score.is_(None),
+                TournamentGame.abandoned_reason.is_(None),
+            )
+        )
+    ).all()
+
+    return {key for white, black in rows for key in (white, black) if key in wanted}
+
+
 async def _fruitless_entrants(
     session: AsyncSession, tournament_id: uuid.UUID, entrants: list[Any]
 ) -> set[str]:
@@ -541,6 +576,10 @@ async def _schedule_pool(
     # Asked of the pairing table, so it holds with or without a cooldown wired: it is a fact about
     # what this event has produced, not about what Redis remembers.
     resting: set[str] = await _fruitless_entrants(session, tournament.id, entrants)
+    # Whoever is already mid-pairing here. Not a punishment and not a rest — an entrant's next game
+    # simply waits for its current one, which closes the day-long window in which a failing model
+    # could be handed game after game before its first failure had registered.
+    resting |= await _engaged_entrants(session, tournament.id, entrants)
     if cooldown is not None:
         resting |= await _resting_entrants(session, cooldown, entrants, tournament.id)
     if resting:

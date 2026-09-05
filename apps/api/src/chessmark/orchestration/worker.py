@@ -690,10 +690,15 @@ class TurnWorker:
                     hours,
                     pauses,
                 )
+                # The instant the clock started is named, not just the span. "38.9h without a move"
+                # is true of a game that fought for 39 hours and of one reopened six hours ago
+                # carrying an old clock, and an operator deciding whether to reopen it again needs
+                # to tell those apart without reading the event log.
                 await self._abandon(
                     session,
                     game,
-                    f"Abandoned after {hours:.1f}h without a move and {pauses} pauses: {reason}",
+                    f"Abandoned after {hours:.1f}h without a move and {pauses} pauses, "
+                    f"counted from {since.isoformat(timespec='seconds')}: {reason}",
                 )
                 return HandledJob(ABORTED, game.id, job.expected_ply, result=result)
 
@@ -760,22 +765,42 @@ class TurnWorker:
         return int(count or 0)
 
     async def _last_progress_at(self, session: AsyncSession, game: Game) -> dt.datetime:
-        """When this game last moved — the instant the patience window counts from.
+        """When this game last moved, or was last reopened — the instant the window counts from.
 
-        A move is the only evidence that a pairing is still going somewhere. Anything else a game
-        emits while it is stuck (a pause, a resume, a timed-out turn) is the harness talking to
-        itself, and counting those was how a game could look busy for a day and have advanced
-        nothing.
+        A move is the evidence that a pairing is going somewhere. Anything the harness emits while
+        stuck (a pause, an expiring cooldown, a timed-out turn) is it talking to itself, and
+        counting those was how a game could look busy for a day and have advanced nothing.
 
-        Falls back to when the game started, so one that has never moved is on the same clock as
-        one that has: a pairing that cannot reach ply 1 gets the full window and no more.
+        **A deliberate reopening counts too, and it is the only kind of resume that does.** The
+        window means *this provider has not answered in a day*, and measured from the last move
+        alone it silently also counted every hour the game spent abandoned — dead, with nothing
+        retrying it — and every hour it spent queued behind a concurrency slot. A game reopened
+        32 hours after its last move was therefore over the limit before it ran at all: it got
+        6.7 real hours, met a single rate limit, and was abandoned again at "38.9h without a move".
+        Reopening it bought it nothing, which is the opposite of what asking for a retry means.
+
+        The two resumes are different events and always have been. An expiring pause writes
+        `{"detail": "the wait is over: …"}`; reopening a *terminated* game writes
+        `previous_termination`. Only the second resets the clock — so a provider that keeps failing
+        still pauses, auto-resumes, pauses again and reaches 24 hours exactly as intended, and the
+        ladder cannot launder itself into an unreachable window.
         """
         at: dt.datetime | None = await session.scalar(
             sa.select(sa.func.max(GameEvent.created_at)).where(
                 GameEvent.game_id == game.id, GameEvent.type == EventType.MOVE_MADE
             )
         )
-        at = at or game.started_at or game.created_at
+        reopened: dt.datetime | None = await session.scalar(
+            sa.select(sa.func.max(GameEvent.created_at)).where(
+                GameEvent.game_id == game.id,
+                GameEvent.type == EventType.GAME_RESUMED,
+                # Postgres `?` on JSONB: the key is present. An auto-resume has only `detail`.
+                GameEvent.payload.has_key("previous_termination"),
+            )
+        )
+        # Falls back to when the game started, so a pairing that never reached ply 1 is on the same
+        # clock as one that moved: the full window, and no more.
+        at = max(filter(None, (at, reopened)), default=None) or game.started_at or game.created_at
         return at.replace(tzinfo=dt.UTC) if at.tzinfo is None else at
 
     async def _has_human_seat(self, session: AsyncSession, game_id: uuid.UUID) -> bool:

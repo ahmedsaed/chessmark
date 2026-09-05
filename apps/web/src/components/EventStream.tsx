@@ -312,17 +312,77 @@ const NOTICE_LABEL: Record<StreamNotice["kind"], string> = {
   paused: "paused",
   resumed: "resumed",
   compacted: "compacted",
+  ended: "game over",
 };
+
+/** How tall one block of model prose may be before it is clipped, in rem. */
+const BUBBLE_CLAMP = "22rem";
+
+/**
+ * One block of what a model said or thought, bounded.
+ *
+ * Unbounded `whitespace-pre-wrap` renders exactly what arrived, which is right until what arrives
+ * is degenerate. A model whose serving stack collapsed emitted three thousand characters of
+ * multilingual noise and **eighty consecutive newlines**, which is eighty empty lines pushing the
+ * rest of the conversation out of the column — the turn that ended the game was unreachable
+ * without scrolling past the wreckage of the turn that ended it.
+ *
+ * Two bounds, because the two failures are different shapes. `collapse` folds runs of blank lines
+ * down to one, so vertical noise costs what a paragraph break costs; the clamp caps the rendered
+ * height and offers the rest on a click. Neither edits the text — the full string is one press
+ * away here and one press away in the raw payload (LOG-07), which is the record.
+ */
+function Bubble({
+  text,
+  title,
+  className,
+}: {
+  text: string;
+  title: string;
+  className: string;
+}) {
+  const [open, setOpen] = useState(false);
+  /* Three or more newlines become two: one blank line still reads as a paragraph break, which is
+     information, while eighty read as a rendering fault. */
+  const collapsed = text.replace(/\n{3,}/g, "\n\n");
+  const long = collapsed.length > 1200 || (collapsed.match(/\n/g)?.length ?? 0) > 24;
+
+  return (
+    <div className={`flex max-w-[94%] flex-col items-start gap-1 ${className}`}>
+      <p
+        title={title}
+        className="w-full overflow-hidden whitespace-pre-wrap leading-relaxed"
+        style={long && !open ? { maxHeight: BUBBLE_CLAMP } : undefined}
+      >
+        {collapsed}
+      </p>
+      {long && (
+        <button
+          type="button"
+          onClick={() => setOpen((shown) => !shown)}
+          className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint transition-colors hover:text-accent"
+        >
+          {open ? "show less" : "show all"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 function Notice({ notice }: { notice: StreamNotice }) {
   const paused = notice.kind === "paused";
   /* A compaction is machinery, not a fault — the model doing its own housekeeping — so it reads in
-     the `machine` register the tool calls use rather than in `bad`. Only a pause is a problem. */
+     the `machine` register the tool calls use rather than in `bad`. Only a pause is a problem.
+     An ending is neither: it is the last thing that happened, so it gets the accent the rest of
+     the site uses for a real chess result and enough weight to be findable when a reader scrolls
+     to the bottom asking "so what happened". */
   const tone = paused
     ? "border-bad-deep bg-surface text-bad"
     : notice.kind === "compacted"
       ? "border-machine-deep bg-surface text-machine"
-      : "border-line bg-surface-3 text-ink-faint";
+      : notice.kind === "ended"
+        ? "border-accent-deep bg-surface-2 text-accent"
+        : "border-line bg-surface-3 text-ink-faint";
 
   return (
     <div role="status" className={`border px-3 py-2 font-mono text-[11px] leading-relaxed ${tone}`}>
@@ -496,24 +556,22 @@ function Turn({
 
         {show("reasoning") &&
           turn.reasoning.map((text, index) => (
-            <p
+            <Bubble
               key={`${turn.key}-r${index}`}
               title="reasoning"
-              className={`max-w-[94%] whitespace-pre-wrap text-xs leading-relaxed text-ink-dim border-machine-deep ${edge}`}
-            >
-              {text}
-            </p>
+              text={text}
+              className={`text-xs text-ink-dim border-machine-deep ${edge}`}
+            />
           ))}
 
         {show("output") &&
           turn.output.map((text, index) => (
-            <p
+            <Bubble
               key={`${turn.key}-o${index}`}
               title="model output"
-              className={`max-w-[94%] whitespace-pre-wrap border-accent-deep text-[13px] leading-relaxed text-ink ${edge}`}
-            >
-              {text}
-            </p>
+              text={text}
+              className={`border-accent-deep text-[13px] text-ink ${edge}`}
+            />
           ))}
 
         {show("tools") &&

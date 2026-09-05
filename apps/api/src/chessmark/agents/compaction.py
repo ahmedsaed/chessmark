@@ -84,9 +84,35 @@ TRIMMED_PLACEHOLDER = (
     "Call the tool again if you need it — the board is authoritative.]"
 )
 
+#: What an assistant message says once it has been elided for being cut off mid-thought.
+#:
+#: Addressed to the model, because it is the only reader that matters here and the fragment it
+#: replaces was the model's own. Saying *why* the text is gone is what stops the elision reading as
+#: amnesia: a model that finds its previous turn replaced by silence has no reason to behave
+#: differently, and one told it ran out of room has every reason to be brief.
+#:
+#: See `TranscriptMessage.truncated_at` for what this costs and why it is worth it.
+TRUNCATED_PLACEHOLDER = (
+    "[Your previous reply was cut off by the endpoint's output limit before you called a tool, "
+    "so it has been dropped to save context. Be brief and call a tool — the board is "
+    "authoritative and you can always read it again.]"
+)
+
 #: The summary is a paragraph or two, not an essay. It is also the cap that keeps the compacting
 #: call inside the window it is trying to make room in.
+#:
+#: **A summary that hits this cap is not a summary.** Fifteen summarising calls across one pool
+#: came back `finish_reason: "length"`, eight of them from a single model, and each wrote a
+#: sentence that stops mid-word into the transcript *as that game's memory of itself*. The cap is
+#: still right — it is what keeps the compacting call inside the window it exists to make room in —
+#: so the fix is not a larger number but refusing to store a truncated one. See
+#: `TurnRunner._summarise`.
 SUMMARY_MAX_TOKENS = 2_000
+
+#: What the provider adds around our messages that we cannot see and cannot count: role markers,
+#: the tool schema's envelope, whatever a given endpoint counts as overhead. Small, and subtracted
+#: rather than ignored so a request sized to the exact byte is not refused by a rounding error.
+FRAMING_TOKENS = 256
 
 #: The smallest answer worth asking for. Below this, `completion_cap` raises rather than clamping.
 #:
@@ -216,9 +242,7 @@ class Window:
         if prompt_tokens is None:
             return max(1, min(requested, self.context // FIRST_CALL_FRACTION))
 
-        # 256 for the framing the provider adds around our messages: role markers, the tool schema's
-        # envelope, whatever a given endpoint counts that we cannot see.
-        available = self.context - prompt_tokens - 256
+        available = self.context - prompt_tokens - FRAMING_TOKENS
         if available < MIN_USEFUL_COMPLETION:
             raise NoRoomToAnswerError(
                 context=self.context, prompt_tokens=prompt_tokens, available=available
@@ -490,6 +514,12 @@ def sent_characters(rows: list[TranscriptMessage]) -> int:
     """
     total = 0
     for row in rows:
+        # An elided row costs its placeholder and nothing else. A truncated one also stops sending
+        # its `reasoning_details`, which is most of its weight — counting them here would report a
+        # pass as having freed less than it did.
+        if row.truncated_at:
+            total += len(TRUNCATED_PLACEHOLDER)
+            continue
         total += len(TRIMMED_PLACEHOLDER if row.trimmed_at else (row.content or ""))
         for value in (row.tool_calls, row.reasoning_details):
             if value:
@@ -501,9 +531,11 @@ __all__ = [
     "DEFAULT_KEEP_TURNS",
     "DEFAULT_MAX_KEPT_MESSAGES",
     "DEFAULT_RESERVE_TOKENS",
+    "FRAMING_TOKENS",
     "MIN_USEFUL_COMPLETION",
     "SUMMARY_MAX_TOKENS",
     "TRIMMED_PLACEHOLDER",
+    "TRUNCATED_PLACEHOLDER",
     "NoRoomToAnswerError",
     "Plan",
     "Window",

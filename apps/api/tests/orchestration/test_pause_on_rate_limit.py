@@ -260,6 +260,112 @@ class TestPatienceRunsOut:
         assert final.termination_detail is not None
         assert "without a move" in final.termination_detail
 
+    async def test_reopening_a_dead_game_restarts_the_clock(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """**A reopened game gets a window, not a formality** (ADR-0031).
+
+        The span used to run from the last move alone, which also counted every hour the game spent
+        *abandoned* — dead, with nothing retrying it — and every hour it spent queued behind a
+        concurrency slot. `b5546c1b` was reopened 32 hours after its last move, ran 6.7 real hours,
+        met a single rate limit and was abandoned again at "38.9h without a move". Reopening it
+        bought it nothing, which is the opposite of what asking for a retry means.
+
+        So: a game far past the window, reopened just now. The operator's decision is the whole
+        assertion.
+        """
+        worker = make_worker(rate_limited, cooldown=ProviderCooldown(redis))
+
+        assert (await worker.handle(game.first_job)).outcome == PAUSED
+        db.expunge_all()
+        reloaded = await db.get(Game, game.game.id)
+        assert reloaded is not None
+
+        # Two days without a move: fatal on the old rule, and on the new one too until it is
+        # reopened.
+        await _backdate_progress(db, game.game.id, PAUSE_WINDOW + dt.timedelta(hours=24))
+
+        # An operator reopening a terminated game. `previous_termination` is what marks it as one —
+        # an expiring pause writes `detail` and nothing else.
+        await append_event(
+            db,
+            game_id=game.game.id,
+            type=EventType.GAME_RESUMED,
+            payload={"ply": 0, "previous_termination": "abandoned"},
+        )
+        await resume(db, reloaded)
+        await db.commit()
+
+        handled = await worker.handle(game.first_job)
+
+        assert handled.outcome == PAUSED, "a game reopened a moment ago was abandoned on sight"
+        db.expunge_all()
+        final = await db.get(Game, game.game.id)
+        assert final is not None and final.status is GameStatus.PAUSED
+
+    async def test_an_expiring_pause_does_not_restart_the_clock(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """**And the window stays reachable**, which is the constraint the fix had to respect.
+
+        A failing provider produces pause → auto-resume → pause → auto-resume for as long as it
+        keeps failing. If *every* resume reset the clock, 24 hours could never elapse and the
+        harness would wait on a dead endpoint forever — the ladder would launder itself into an
+        unreachable window. Only a deliberate reopening counts, so this one still dies.
+        """
+        worker = make_worker(rate_limited, cooldown=ProviderCooldown(redis))
+
+        assert (await worker.handle(game.first_job)).outcome == PAUSED
+        db.expunge_all()
+        reloaded = await db.get(Game, game.game.id)
+        assert reloaded is not None
+
+        await _backdate_progress(db, game.game.id, PAUSE_WINDOW + dt.timedelta(minutes=1))
+
+        # What the reconciler writes when a cooldown lapses: a detail, and no termination.
+        await append_event(
+            db,
+            game_id=game.game.id,
+            type=EventType.GAME_RESUMED,
+            payload={"detail": "the wait is over: rate-limited by Google AI Studio"},
+        )
+        await resume(db, reloaded)
+        await db.commit()
+
+        handled = await worker.handle(game.first_job)
+
+        assert handled.outcome == "aborted", "an expiring pause reset a window it must not touch"
+        db.expunge_all()
+        final = await db.get(Game, game.game.id)
+        assert final is not None and final.termination is Termination.ABANDONED
+
+    async def test_the_abandonment_says_which_clock_it_used(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """A span alone is ambiguous.
+
+        "38.9h without a move" is true of a game that fought for 39 hours and of one reopened six
+        hours ago carrying an old clock. An operator deciding whether to reopen it again should not
+        have to read the event log to tell those apart.
+        """
+        worker = make_worker(rate_limited, cooldown=ProviderCooldown(redis))
+
+        assert (await worker.handle(game.first_job)).outcome == PAUSED
+        db.expunge_all()
+        reloaded = await db.get(Game, game.game.id)
+        assert reloaded is not None
+
+        await _backdate_progress(db, game.game.id, PAUSE_WINDOW + dt.timedelta(minutes=1))
+        await resume(db, reloaded)
+        await db.commit()
+
+        await worker.handle(game.first_job)
+
+        db.expunge_all()
+        final = await db.get(Game, game.game.id)
+        assert final is not None and final.termination_detail is not None
+        assert "counted from" in final.termination_detail, final.termination_detail
+
     async def test_a_day_of_patience(self) -> None:
         """The number itself, asserted because it is a policy rather than an implementation detail:
         allowances reset daily and a pool hot at 14:00 is usually serving by morning, so a game that

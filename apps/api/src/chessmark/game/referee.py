@@ -91,15 +91,25 @@ RESUMABLE_TERMINATIONS = frozenset(
         Termination.ABANDONED,
         Termination.TIMEOUT,
         Termination.TRUNCATED,
+        Termination.CONTEXT_EXCEEDED,
     }
 )
 
 
 #: Endings that are findings **about a player**, and so count for ratings.
 #:
-#: Each one is something the model did: it played illegally six times, it answered in prose four
-#: times running, it could not stop talking, it filled its own window. Reproducible, and the same
-#: on any endpoint that serves the model.
+#: Each one is something the model did: it played illegally six times, or it answered in prose
+#: four times running. Reproducible, and the same on any endpoint that serves the model.
+#:
+#: **`CONTEXT_EXCEEDED` was here and is not a finding either (ADR-0031).** It read as "it filled
+#: its own window", which was true when a model simply ran out of room and there was nothing to be
+#: done. Compaction changed what the ending means: the agent now folds its own history when the
+#: window fills (ADR-0018), so reaching the wall no longer says the model was verbose — it says
+#: **our compaction failed to keep up**, which is a fact about this harness on a par with the ply
+#: cap and the budget. The games that prompted it make the point: one model was cut off at its
+#: endpoint's undeclared 32,768-token ceiling five times in a single turn, each unfinished
+#: fragment appended and re-sent, until the request no longer fit. Nothing in that sequence was a
+#: choice the weights made.
 #:
 #: **`TRUNCATED` was here and is not a finding either (ADR-0024).** It named two different events
 #: with one word. When a response stops at the ceiling *we* asked for, we ended it — ADR-0021
@@ -130,7 +140,6 @@ FORFEIT_TERMINATIONS = frozenset(
     {
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
-        Termination.CONTEXT_EXCEEDED,
     }
 )
 

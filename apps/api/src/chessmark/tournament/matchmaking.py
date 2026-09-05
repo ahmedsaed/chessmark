@@ -122,7 +122,15 @@ def matchmake(
             break
 
         white, black = _colours(home, away, balance)
-        games.append(Pairing(white=white, black=black, round_number=round_number))
+        # **One round number per game, not per batch.** Every game in a batch used to carry
+        # `round_number` unchanged, which is right for a Swiss round — those games *are* one round,
+        # paired together off one set of standings. A pool has no such thing: each game is matched
+        # independently, against ratings that the previous game in the same batch has already
+        # changed, and the batch size is only however many concurrency slots happened to be free.
+        # Calling them a round grouped two unrelated fixtures under one heading, and the schedule
+        # showed it — 63 rounds of one game and a single round of two, on the tick after
+        # concurrency went to 2.
+        games.append(Pairing(white=white, black=black, round_number=round_number + len(games)))
 
         # Reflect this game before choosing the next, so a batch does not hand the same model
         # White three times or repeat a pairing it just made.

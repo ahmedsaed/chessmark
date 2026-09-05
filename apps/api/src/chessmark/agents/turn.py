@@ -315,6 +315,10 @@ class TurnRunner:
         self._compactions = 0
         self._summary_tokens = 0
         self._reactive_compactions = 0
+        #: The player's `transcript_seq` at the last fold, so a second pass inside one turn can ask
+        #: whether anything has been appended since rather than merely whether a fold has happened.
+        #: `None` means no fold yet.
+        self._folded_at_seq: int | None = None
         #: What the last call was allowed to generate. Kept so a truncation can be attributed:
         #: a response that stopped at *our* number was ended by the harness, not by the model.
         self._requested_max_tokens: int | None = None
@@ -427,6 +431,18 @@ class TurnRunner:
             )
         return self._cached_window
 
+    def _grew_since_fold(self) -> bool:
+        """Whether the transcript has been added to since the last compaction.
+
+        True before any fold, so the first pass is unconditional. `transcript_seq` is append-only
+        and allocated under a row lock, so this is an exact fact about the table rather than a
+        guess about size — a fold that freed nothing leaves it unmoved and the second pass is
+        correctly skipped.
+        """
+        if self._folded_at_seq is None:
+            return True
+        return self.player.transcript_seq > self._folded_at_seq
+
     async def _compact(
         self, turn: Turn, result: TurnResult, occupied: int | None, window: compaction.Window
     ) -> bool:
@@ -490,10 +506,38 @@ class TurnRunner:
             summary=summary,
         )
         self._compactions += 1
-        # The prefix was rewritten, so the old measurement describes a transcript that no longer
-        # exists. `None` means unmeasured, which is the truth until the next response arrives.
-        self._prompt_tokens = None
-        self.player.last_prompt_tokens = 0
+        # **The old measurement is kept as a bound, not thrown away.**
+        #
+        # It used to become `None` here, on the reasoning that the prefix had been rewritten so the
+        # number described a transcript that no longer exists. True, and it discarded the only
+        # thing we knew: a fold *removes* messages and adds at most `SUMMARY_MAX_TOKENS`, so the
+        # size afterwards cannot exceed the size before plus the summary. That is a bound derived
+        # from a measurement — not the estimate AGENT-19 forbids — and it is far better than the
+        # unmeasured fallback, which is half the window and was sized for a game's genuine first
+        # call, where the prompt is a few thousand tokens.
+        #
+        # On a resumed game at ply 18 holding 227k tokens, half a window is not conservative, it is
+        # catastrophic: `max_tokens` went out at 64,000 against a prompt with 27,802 tokens of room
+        # and the endpoint refused the request. The reset was persisted too, so the resume began
+        # blind — and `should_compact` is gated on having a measurement, so the game could not even
+        # compact its way out. It re-threw the same 400 ten seconds after being reopened, twice.
+        if occupied is not None:
+            bound = occupied + compaction.SUMMARY_MAX_TOKENS
+            # **Never larger than a sendable prompt.** `occupied` can already exceed the window —
+            # on the reactive rung it is the provider's count of the request it just *refused*,
+            # prompt and requested output together — and carrying that forward unclamped makes
+            # `completion_cap` raise `NoRoomToAnswerError` and fail the very turn the fold just
+            # rescued. The fold ran precisely to bring the request under the window, so the bound
+            # must not assert the opposite; only the next response can say by how much it worked,
+            # and the provider's refusal is still the backstop if it did not.
+            if window.known:
+                bound = min(
+                    bound,
+                    window.context - compaction.MIN_USEFUL_COMPLETION - compaction.FRAMING_TOKENS,
+                )
+            self._prompt_tokens = bound
+            self.player.last_prompt_tokens = bound
+        self._folded_at_seq = self.player.transcript_seq
 
         after = await compaction.live_messages(self.session, self.player.id)
         after_characters = compaction.sent_characters(after)
@@ -570,6 +614,24 @@ class TurnRunner:
         summary = (completion.content or "").strip()
         if not summary:
             log.warning("compaction of %s produced no summary", self.player.id)
+            return ""
+
+        # **A summary cut off by the cap is not a summary.** It stops mid-sentence, and unlike every
+        # other truncation this one is not retried — it is written into the transcript as the game's
+        # own memory of itself and replayed for the rest of the game. Fifteen summarising calls
+        # across one pool came back `finish_reason: "length"`, eight from a single model.
+        #
+        # Refused rather than stored, and the caller falls back to the trim-only rung, which needs
+        # no provider at all and still shrinks the request. Losing the older turns entirely is worse
+        # than losing them to a half-written paragraph only if that paragraph is trustworthy, and a
+        # briefing that ends mid-word is not: the model would act on it as though it were complete.
+        if completion.finish_reason == "length":
+            log.warning(
+                "compaction of %s was cut off at %d tokens; discarding the partial summary",
+                self.player.id,
+                completion.usage.completion,
+            )
+            return ""
         return summary
 
     def _allow(self, window: compaction.Window, occupied: int | None) -> int:
@@ -632,21 +694,32 @@ class TurnRunner:
             occupied = self._prompt_tokens
             window = await self._endpoint_window()
 
-            # **Once per turn.** A turn is a few round-trips against one transcript, so a second
-            # compaction inside it would be folding what the first just wrote — and on a window
-            # smaller than the reserve the trigger is true even straight after a fold, which would
-            # spend a call per round-trip discovering there is nothing left to fold.
+            # **Once per transcript, not once per turn.**
+            #
+            # It was once per turn, to stop a second pass folding what the first had just written:
+            # on a window smaller than the reserve the trigger stays true straight after a fold, so
+            # an unguarded loop spends a call per round-trip rediscovering there is nothing left.
+            # That reasoning holds only while the transcript is *unchanged* between the two passes,
+            # and inside a long turn it is not — a turn may legitimately make twenty round-trips,
+            # each appending an assistant message and its tool results, so a game that folded at
+            # round-trip two carried the next eighteen with no recourse.
+            #
+            # `_folded_at_seq` records the transcript's high-water mark at the last fold, so the
+            # question asked here is "has anything been added since?" rather than "have we folded?".
+            # A pass that frees nothing therefore still fires only once: nothing was appended, the
+            # mark does not move, and the guard holds.
             if (
-                self._compactions == 0
+                self._grew_since_fold()
                 and occupied is not None
                 and window.should_compact(occupied)
                 and await self._compact(turn, result, occupied, window)
             ):
                 # The prefix was rewritten, so the old measurement describes a transcript that no
-                # longer exists. The next response measures the new one; until then this is a first
-                # call again, and it is bounded rather than guessed at.
+                # longer exists — but `_compact` left a bound behind rather than nothing, and a
+                # bound anchored to a measurement beats the unmeasured fallback of half a window.
+                # The next response replaces it with a real number.
                 messages = await transcript.build_messages(self.session, self.player.id)
-                occupied = None
+                occupied = self._prompt_tokens
 
             try:
                 completion = await self.gateway.complete(
@@ -737,6 +810,13 @@ class TurnRunner:
                     # function call whose `thought_signature` is missing and DeepSeek rejects a
                     # thinking-mode history without its `reasoning_content`; both travel in here.
                     reasoning_details=completion.reasoning_details,
+                    # **Cut off before it acted.** Stored verbatim and replayed as a placeholder,
+                    # because a fragment with no tool call has nothing to be load-bearing for and
+                    # re-sending it makes the retry that follows harder than the attempt that
+                    # failed (`TranscriptMessage.truncated_at`). A response truncated *after* it
+                    # managed a tool call is kept whole: that one has a call to justify, and its
+                    # reasoning may be what the provider requires alongside it.
+                    truncated=(completion.finish_reason == "length" and not completion.tool_calls),
                 )
 
             if not completion.tool_calls:

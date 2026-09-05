@@ -59,7 +59,6 @@ def test_every_chess_result_counts(termination: Termination) -> None:
     [
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
-        Termination.CONTEXT_EXCEEDED,
     ],
 )
 def test_a_forfeit_counts(termination: Termination) -> None:
@@ -67,6 +66,17 @@ def test_a_forfeit_counts(termination: Termination) -> None:
     called a tool, failed at the task — excluding that would leave a leaderboard measuring only
     chess, which is the less interesting half."""
     assert judge(facts(termination=termination))
+
+
+def test_filling_the_window_does_not_count() -> None:
+    """`CONTEXT_EXCEEDED` counted, on the reading that a model which fills its own window has
+    failed at the task. Compaction changed what the ending means (ADR-0031): the agent folds its
+    own history when the window fills, so hitting the wall says our fold did not keep up.
+
+    It is the same judgement that moved `TIMEOUT` and `TRUNCATED` — our ceilings fail a turn, they
+    do not forfeit a model (ADR-0019).
+    """
+    assert not judge(facts(termination=Termination.CONTEXT_EXCEEDED))
 
 
 # ====================================================================== what does not

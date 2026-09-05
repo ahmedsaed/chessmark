@@ -41,6 +41,12 @@ from chessmark.game import Termination
 #: **`TRUNCATED` joined them (ADR-0024)**, for the reason `TIMEOUT` did: it measured the endpoint.
 #: An endpoint's `max_completion_tokens` is a fact about the host, the same model on a host with a
 #: larger one is not cut off, and a routing lottery is not a finding.
+#: **`CONTEXT_EXCEEDED` joined them too (ADR-0031)**, and the reason is compaction. While the
+#: agent had no way to shrink its own history, filling the window was something the model did.
+#: Now that it folds its history when the window fills (ADR-0018), hitting the wall means the fold
+#: did not keep up — a statement about this harness, not about the weights. It is the same
+#: judgement ADR-0019 asks for everywhere else: our ceilings fail a turn, they do not forfeit a
+#: model.
 HARNESS_TERMINATIONS = frozenset(
     {
         Termination.PLY_CAP,
@@ -49,6 +55,7 @@ HARNESS_TERMINATIONS = frozenset(
         Termination.ADJUDICATION,
         Termination.TIMEOUT,
         Termination.TRUNCATED,
+        Termination.CONTEXT_EXCEEDED,
     }
 )
 
@@ -73,7 +80,6 @@ RATED_TERMINATIONS = frozenset(
         Termination.SEVENTY_FIVE_MOVE_RULE,
         Termination.ILLEGAL_MOVE_FORFEIT,
         Termination.ERROR_FORFEIT,
-        Termination.CONTEXT_EXCEEDED,
     }
 )
 

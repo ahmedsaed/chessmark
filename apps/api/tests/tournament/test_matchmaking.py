@@ -227,3 +227,26 @@ class TestAttempts:
         assert matchmake(FIELD, [], SETTLED, count=2) == matchmake(
             FIELD, [], SETTLED, count=2, attempts=[]
         )
+
+
+def test_each_pooled_game_gets_its_own_round_number() -> None:
+    """A pool round is a batch of one (ADR-0031).
+
+    A batch used to carry one `round_number` for every game in it, which is right for a Swiss round
+    — those games *are* one round, paired together off one set of standings. A pool has no such
+    thing: each game is matched independently, against ratings the previous game in the same batch
+    has already moved, and the batch size is only however many concurrency slots happened to be
+    free. `pool-free` showed it exactly once, on the tick after concurrency went to 2: 63 rounds
+    holding one game, and round 115 holding two unrelated fixtures under one heading.
+    """
+    games = matchmake(FIELD, [], SETTLED, count=2, round_number=115)
+
+    assert [game.round_number for game in games] == [115, 116]
+
+
+def test_a_single_game_still_takes_the_round_it_was_given() -> None:
+    """The common case — one free slot — is unchanged, which is what keeps existing schedules
+    readable rather than renumbering them."""
+    games = matchmake(FIELD, [], SETTLED, count=1, round_number=115)
+
+    assert [game.round_number for game in games] == [115]

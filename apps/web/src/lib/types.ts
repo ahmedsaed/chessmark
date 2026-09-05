@@ -239,7 +239,7 @@ export interface TurnView {
 export interface StreamNotice {
   key: string;
   seq: number;
-  kind: "paused" | "resumed" | "compacted";
+  kind: "paused" | "resumed" | "compacted" | "ended";
   text: string;
   /** When a pause will be retried, if it said. */
   resumeAfter: string | null;

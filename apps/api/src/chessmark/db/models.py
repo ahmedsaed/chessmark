@@ -490,6 +490,35 @@ class TranscriptMessage(Base):
     again.
     """
 
+    truncated_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    """Set when this assistant message was cut off mid-thought and never reached a tool call.
+
+    A third mark rather than `trimmed_at`, because it records a different fact: `trimmed_at` says
+    *this was useful once and has gone stale*, while this says **the model never finished saying
+    it**. The two are elided for opposite reasons and a reader of the table should be able to tell
+    them apart.
+
+    Why elide it at all — the model *wrote* those tokens, and replaying its own reasoning is
+    normally load-bearing (see `reasoning_details`). The difference is that a truncated fragment
+    has nothing to be load-bearing *for*: it carries no tool call, so there is no
+    `thought_signature` to pair and no function call to justify, and the model does not resume from
+    it — the retry starts a fresh reasoning pass with the fragment sitting in front of it as prose.
+    Keeping it costs twice. It lands permanently in the cacheable prefix (invariant 2), so every
+    later call in the game pays for it; and it hands the model tens of thousands of tokens of its
+    own unfinished rambling to re-read, which makes each retry harder than the one before.
+
+    That compounding is what this column exists to stop. One turn of a real game went from a
+    731-token prompt to 516,877 in ten round-trips: five responses cut off at the endpoint's 32,768
+    ceiling, each appended in full and re-sent, until the request exceeded the window and the game
+    was abandoned. The model was calling tools correctly in between — it was never given a chance
+    to finish a thought.
+
+    The row is untouched, like every other mark here: `content` and `reasoning_details` still hold
+    exactly what came back, `llm_calls` still holds the raw response, and invariant 3 is satisfied.
+    Only the request shrinks, and what it shrinks to is `compaction.TRUNCATED_PLACEHOLDER` — which
+    tells the model what happened, so the elision is also the explanation.
+    """
+
     is_summary: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     """This row *is* a compaction summary, written by the model about its own earlier turns.
 

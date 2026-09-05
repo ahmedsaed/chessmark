@@ -261,6 +261,37 @@ async def load_events(
     return list(result)
 
 
+async def load_terminal_events(
+    session: AsyncSession,
+    game_id: uuid.UUID,
+    *,
+    after_seq: int = 0,
+) -> list[GameEvent]:
+    """The lifecycle events after a cursor — how the game ended, and any pause or resume.
+
+    Companion to `load_events`' `limit`, which takes rows from the front because that is what
+    replay needs and therefore drops the tail on a long game. These are the rows a reader cannot do
+    without: a log that stops mid-move-list and never says the game was abandoned reads as a bug in
+    the page rather than as the truth about the game.
+
+    Deliberately narrow. It is not a second pagination scheme — it fetches the handful of rows that
+    say what happened, so the front of the log and the ending can both be present without sending
+    the middle of a five-thousand-event game to render a status line.
+    """
+    result = await session.scalars(
+        sa.select(GameEvent)
+        .where(
+            GameEvent.game_id == game_id,
+            GameEvent.seq > after_seq,
+            GameEvent.type.in_(
+                (EventType.GAME_ENDED, EventType.GAME_PAUSED, EventType.GAME_RESUMED)
+            ),
+        )
+        .order_by(GameEvent.seq)
+    )
+    return list(result)
+
+
 # ---------------------------------------------------------------------- listings
 
 

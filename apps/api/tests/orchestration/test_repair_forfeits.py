@@ -43,7 +43,7 @@ def judge(
 
 @pytest.mark.parametrize(
     "termination",
-    [Termination.ILLEGAL_MOVE_FORFEIT, Termination.ERROR_FORFEIT, Termination.CONTEXT_EXCEEDED],
+    [Termination.ILLEGAL_MOVE_FORFEIT, Termination.ERROR_FORFEIT],
 )
 def test_the_seat_a_forfeit_went_against_is_flagged(termination: Termination) -> None:
     """The benchmark's subject. Clearing these would hide what it exists to measure."""
