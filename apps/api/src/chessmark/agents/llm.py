@@ -202,14 +202,11 @@ def context_limit_in(text: str) -> ContextLimit | None:
     """The window and the prompt size out of an error *message*, with no exception to inspect.
 
     The worker sees a failed turn as a recorded string rather than as the exception that caused it,
-    and it needs the same question answered: was this a refusal for size, or something else? The
-    status code is unavailable here, so the wording alone decides — narrower than
-    `context_limit_from`, which is why that one stays the check on the live path.
+    and it needs the same question answered: was this a refusal for size, or something else? No
+    status code is available here, so the wording alone decides. Weaker than `context_limit_from`,
+    which is why that one stays the check on the live path — and why this one is only ever asked
+    about an error the gateway has *already* classified as a rejected request.
     """
-    return _limit_from_text(text)
-
-
-def _limit_from_text(text: str) -> ContextLimit | None:
     match = _CONTEXT_LENGTH.search(text)
     if match is None:
         return None
@@ -228,7 +225,7 @@ def context_limit_from(error: BaseException) -> ContextLimit | None:
     """
     if _status_code(error) != 400:
         return None
-    return _limit_from_text(str(error))
+    return context_limit_in(str(error))
 
 
 def _status_code(error: BaseException) -> int | None:

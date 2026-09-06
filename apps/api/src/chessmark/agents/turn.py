@@ -512,24 +512,24 @@ class TurnRunner:
         # number described a transcript that no longer exists. True, and it discarded the only
         # thing we knew: a fold *removes* messages and adds at most `SUMMARY_MAX_TOKENS`, so the
         # size afterwards cannot exceed the size before plus the summary. That is a bound derived
-        # from a measurement — not the estimate AGENT-19 forbids — and it is far better than the
-        # unmeasured fallback, which is half the window and was sized for a game's genuine first
-        # call, where the prompt is a few thousand tokens.
+        # from a measurement — not the estimate AGENT-19 forbids — and it beats any unmeasured
+        # fallback, however that fallback is computed.
         #
-        # On a resumed game at ply 18 holding 227k tokens, half a window is not conservative, it is
-        # catastrophic: `max_tokens` went out at 64,000 against a prompt with 27,802 tokens of room
-        # and the endpoint refused the request. The reset was persisted too, so the resume began
-        # blind — and `should_compact` is gated on having a measurement, so the game could not even
-        # compact its way out. It re-threw the same 400 ten seconds after being reopened, twice.
+        # It mattered most when the fallback was half the window: on a resumed game at ply 18
+        # holding 227k tokens, `max_tokens` went out at 64,000 against a prompt with 27,802 tokens
+        # of room and the endpoint refused the request. `unmeasured_cap` holds back the reserve now
+        # (ADR-0032) and is far safer, but a measurement still beats a bound, and the reset was
+        # persisted — so a resumed game began blind, and `should_compact` is gated on having a
+        # measurement, so it could not even compact its way out.
         if occupied is not None:
             bound = occupied + compaction.SUMMARY_MAX_TOKENS
-            # **Never larger than a sendable prompt.** `occupied` can already exceed the window —
-            # on the reactive rung it is the provider's count of the request it just *refused*,
-            # prompt and requested output together — and carrying that forward unclamped makes
-            # `completion_cap` raise `NoRoomToAnswerError` and fail the very turn the fold just
-            # rescued. The fold ran precisely to bring the request under the window, so the bound
-            # must not assert the opposite; only the next response can say by how much it worked,
-            # and the provider's refusal is still the backstop if it did not.
+            # **Never larger than a sendable prompt.** `occupied` can exceed the window: on the
+            # reactive rung it is the provider's own count of a prompt it has just refused *for
+            # being too large*. Carrying that forward unclamped makes `completion_cap` raise
+            # `NoRoomToAnswerError` and fail the very turn the fold just rescued. The fold ran
+            # precisely to bring the request under the window, so the bound must not assert the
+            # opposite; only the next response can say by how much it worked, and the provider's
+            # refusal is still the backstop if it did not.
             if window.known:
                 bound = min(
                     bound,
@@ -738,7 +738,7 @@ class TurnRunner:
             ):
                 # The prefix was rewritten, so the old measurement describes a transcript that no
                 # longer exists — but `_compact` left a bound behind rather than nothing, and a
-                # bound anchored to a measurement beats the unmeasured fallback of half a window.
+                # bound anchored to a measurement beats the unmeasured fallback, whatever it is.
                 # The next response replaces it with a real number.
                 messages = await transcript.build_messages(self.session, self.player.id)
                 occupied = self._prompt_tokens

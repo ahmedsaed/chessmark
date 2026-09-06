@@ -3,8 +3,14 @@
 The transcript is replayed whole on every turn (ADR-0003) and grows about **1,818 tokens per ply**,
 measured. A 128k window therefore covers roughly seventy plies of a possible three hundred, and a
 talkative model reaches the wall sooner than that. Raising the floor only moves the wall; it is
-still there, and `context_exceeded` is a *forfeit* — a loss recorded against a model for running out
-of room rather than for playing badly.
+still there, and hitting it ends the game.
+
+When this was written that ending was a *forfeit* — a loss recorded against a model for running out
+of room rather than for playing badly — which is what made compaction urgent. It is no longer:
+`context_exceeded` is a harness stop now (ADR-0031), because with an agent that folds its own
+history, reaching the wall says the fold did not keep up rather than anything about the weights.
+That makes the ending honest; it does not make it acceptable, and everything below is still what
+stops it happening.
 
 So the agent does what an agent does: at a threshold it summarises its own earlier turns and carries
 on from the summary.

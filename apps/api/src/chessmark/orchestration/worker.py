@@ -888,8 +888,9 @@ class TurnWorker:
         placeholder while the messages keep their place and their `tool_call_id`; it is the bulk of
         a long chess transcript and it is worth nothing once the position has moved on.
 
-        Attempted once per game. A second pass would find the rows already trimmed and free
-        nothing, and `attempt` is what stops this becoming a loop.
+        Each pass skips rows it has already elided, so repeated attempts free less and then
+        nothing — and the caller bounds it by `MAX_JOB_ATTEMPTS` regardless, so convergence is not
+        the only thing standing between this and a loop.
         """
         if llm.context_limit_in(result.error or "") is None:
             return False
@@ -971,7 +972,10 @@ class TurnWorker:
             # outlives the failed turn. It only elides stale tool output: that rung needs no
             # provider, cannot fail part-way, and cannot lose anything the model still needs,
             # because the board is authoritative and any tool can be called again (invariant 1).
-            if await self._shrink_transcript(job, result):
+            # Bounded by the same budget as every other retry. The trim converges on its own —
+            # a second pass skips rows already elided — but "it converges" is a property of the
+            # planner, and the thing that stops a rescue loop should be structural.
+            if job.attempt < MAX_JOB_ATTEMPTS and await self._shrink_transcript(job, result):
                 await self.queue.enqueue(job.next_attempt())
                 return HandledJob(TURN_FAILED, job.game_id, job.expected_ply, result=result)
 

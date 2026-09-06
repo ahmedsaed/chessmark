@@ -25,7 +25,7 @@ from chessmark.db.enums import EventType, GameStatus
 from chessmark.db.models import GameEvent, TranscriptMessage
 from chessmark.db.models import Turn as TurnRow
 from chessmark.game import Termination
-from chessmark.orchestration.worker import ABORTED, TURN_FAILED
+from chessmark.orchestration.worker import ABORTED, MAX_JOB_ATTEMPTS, TURN_FAILED
 from tests.support import Fixture
 
 pytestmark = pytest.mark.integration
@@ -210,3 +210,25 @@ async def test_the_placeholder_is_what_gets_sent(
     tools = [m for m in sent if m.get("role") == "tool"]
     assert tools and all(m["tool_call_id"] for m in tools)
     assert any(m["content"] == compaction.TRIMMED_PLACEHOLDER for m in tools)
+
+
+async def test_the_rescue_is_bounded_by_the_job_budget(
+    db: AsyncSession, game: Fixture, make_worker: Any
+) -> None:
+    """A rescue that requeues must spend the same budget as every other retry.
+
+    The trim converges on its own — each pass skips rows it has already elided — but that is a
+    property of the planner, and the thing standing between a rescue and an endless loop should be
+    structural. A job that has spent its attempts is abandoned like any other.
+    """
+    from dataclasses import replace
+
+    await _fat_transcript(db, game.game, game.white, turns=6)
+    worker = make_worker(refuses_for_size)
+    spent = replace(game.first_job, attempt=MAX_JOB_ATTEMPTS)
+
+    handled = await worker.handle(spent)
+
+    assert handled.outcome == ABORTED
+    db.expunge_all()
+    assert await _trimmed(db, game.white.id) == 0, "a spent job still trimmed and requeued"
