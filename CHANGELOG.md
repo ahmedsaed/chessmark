@@ -15,6 +15,36 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+Three games survived the ADR-0031 fixes and were traced to three separate pieces of arithmetic.
+
+### Fixed
+
+- **The reactive compaction rung compacts against the prompt, not the whole request**
+  ([ADR-0032]). An endpoint's refusal reports a total that includes the `max_tokens` *we* asked it
+  to reserve, and passing that on charged our own output request against the transcript a second
+  time — leaving `_summarise` with negative room, so it never called anything. `29e7f004` and
+  `e601f9af` were reopened three times each and died **one second** after every attempt, never
+  having tried to rescue themselves. The endpoint's own breakdown is parsed where it gives one.
+- **A truncation is failed on sight only when the request was unanswerable** ([ADR-0032]). The
+  rule was "the response reached the number we sent", which made the verdict depend on the
+  registry being *wrong*: while the catalogue was stale we asked `laguna-s-2.1` for 64,000, got
+  its real 32,768, and read that as the endpoint's limit — worth a nudge and three retries. After
+  the catalogue was refreshed the identical response read as ours and failed instantly, abandoning
+  `a016a326` at ply 72. What decides now is the size of what we allowed.
+- **A rescue that outlives the turn that needed it** ([ADR-0032]). A turn is one transaction, so a
+  compaction inside a failing turn is rolled back with it and the next attempt sends the same
+  bytes. On a context-length rejection the worker now elides stale tool output in a session of its
+  own and requeues once — trim-only, because folding needs the provider that just refused us.
+
+### Changed
+
+- **`FRAMING_TOKENS` is 4,096, not 256** ([ADR-0032]). One thousandth of a 256,000-token window is
+  a rounding error against a count taken on the provider's side; comparable agents hold back 4,096.
+- **An unmeasured call holds back the reserve rather than half the window** ([ADR-0032]). 25,600
+  against 256,000 where the old bound asked for 128,000. Half a window "always fits" for a game's
+  genuine first call and not for a resumed one carrying 227,440 tokens, which is how a request for
+  64,000 output reached an endpoint with 27,802 tokens of room.
+
 Two audits of the live `pool-free` event. The first found three rating problems; the second
 followed 17 abandoned pairings of 65 back to a turn loop that was refilling its own context faster
 than compaction could empty it.
@@ -220,4 +250,5 @@ flags the old code wrote.
 [ADR-0029]: docs/adr/0029-a-deviation-has-a-ceiling.md
 [ADR-0030]: docs/adr/0030-a-halt-pauses-the-board.md
 [ADR-0031]: docs/adr/0031-a-turn-may-not-inflate-its-own-context.md
+[ADR-0032]: docs/adr/0032-the-arithmetic-that-decides-a-request.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

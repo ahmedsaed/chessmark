@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents import compaction, transcript
 from chessmark.agents.compaction import (
     DEFAULT_RESERVE_TOKENS,
+    FRAMING_TOKENS,
     MIN_USEFUL_COMPLETION,
     NoRoomToAnswerError,
     Window,
@@ -120,21 +121,28 @@ class TestTheCompletionCap:
             Window(context=1_000).completion_cap(5_000, 64_000)
 
     def test_it_refuses_just_below_the_useful_floor(self) -> None:
+        """Exactly at the boundary, and one token past it. Written against `FRAMING_TOKENS` rather
+        than a literal so the margin can be widened without silently moving the floor."""
         window = Window(context=64_000)
-        prompt = 64_000 - 256 - MIN_USEFUL_COMPLETION
+        prompt = 64_000 - FRAMING_TOKENS - MIN_USEFUL_COMPLETION
 
         assert window.completion_cap(prompt, 64_000) == MIN_USEFUL_COMPLETION
         with pytest.raises(NoRoomToAnswerError):
             window.completion_cap(prompt + 1, 64_000)
 
     def test_an_unmeasured_prompt_is_bounded_rather_than_guessed_at(self) -> None:
-        """A game's first call, and the only place no measurement exists.
+        """No measurement, so no guess — the reserve is held back instead (ADR-0032).
 
-        Half the window is a *bound*: the system prompt plus one turn prompt is a few thousand
-        tokens against a window of at least 64k, so the sum always fits. The character estimate it
-        replaces reported 477,155 tokens of a six-ply transcript.
+        It was half the window, defended as a bound that "always fits" because a system prompt plus
+        one turn prompt is a few thousand tokens. True of a genuine first call and false of every
+        other way a measurement goes missing: on a resumed game holding 227,440 tokens, half a
+        256,000-token window asked for 64,000 output and the refusal abandoned the game.
+
+        The character estimate both of them replaced reported 477,155 tokens for a six-ply
+        transcript, so the direction of travel is the point.
         """
-        assert Window(context=65_536).completion_cap(None, 64_000) == 32_768
+        assert Window(context=65_536).completion_cap(None, 64_000) == 20_000
+        assert Window(context=256_000).completion_cap(None, 64_000) == 25_600
         assert Window(context=1_000_000).completion_cap(None, 64_000) == 64_000, (
             "still a ceiling, not a target"
         )
@@ -166,16 +174,22 @@ class TestTheEndpointsOwnAnswerCeiling:
         assert Window(context=0, max_completion=32_768).completion_cap(None, 64_000) == 32_768
 
     def test_it_binds_on_a_games_first_call(self) -> None:
-        """The one call with nothing measured yet. Half a 256k window is 128,000, which is four
-        times what the endpoint would ever return."""
-        assert Window(context=256_000, max_completion=32_768).completion_cap(None, 64_000) == 32_768
+        """With nothing measured, the reserve bounds the ask at 25,600 — already under the
+        endpoint's 32,768, so the reserve is what governs here. The endpoint's ceiling still binds
+        whenever it is the tighter of the two, which `test_it_clamps_to_what_the_endpoint_will_emit`
+        covers."""
+        window = Window(context=256_000, max_completion=32_768)
+
+        assert window.completion_cap(None, 64_000) == 25_600
+        assert window.completion_cap(None, 64_000) <= 32_768
 
     def test_the_tighter_of_the_two_wins(self) -> None:
         """Whichever binds first. A nearly-full window still governs when it leaves less room than
         the endpoint's answer ceiling."""
         window = Window(context=64_000, max_completion=32_768)
+        prompt = 50_000
 
-        assert window.completion_cap(60_000, 64_000) == 64_000 - 60_000 - 256
+        assert window.completion_cap(prompt, 64_000) == 64_000 - prompt - FRAMING_TOKENS
 
     def test_an_undeclared_ceiling_changes_nothing(self) -> None:
         """0 means the endpoint declares none, and unknown is not a number to clamp with."""
@@ -501,8 +515,11 @@ class TestATurnThatCompacts:
         from tests.agents.conftest import play_turn
 
         slug = "scripted/roomy"
-        await self._register(db, slug=slug, context=60_000)
-        await self._big_transcript(db, table, rows=10, measured=55_000)
+        # Scaled so the trigger fires (10,000 free against a 50,000 reserve) while the request
+        # still has room to answer in once `FRAMING_TOKENS` is held back. At 60,000/55,000 the
+        # margin was 904 tokens and the turn failed before it could compact at all.
+        await self._register(db, slug=slug, context=120_000)
+        await self._big_transcript(db, table, rows=10, measured=110_000)
 
         before = len(await transcript.full_history(db, table.white.id))
 
@@ -537,7 +554,7 @@ class TestATurnThatCompacts:
         )
         assert len(events) == 1, "exactly one event per state change (invariant 7)"
         assert events[0].payload["folded"] > 0
-        assert events[0].payload["context_tokens"] == 60_000
+        assert events[0].payload["context_tokens"] == 120_000
 
     async def test_a_roomy_window_never_compacts(self, db: AsyncSession, table: Any) -> None:
         """The common case, and the one that must stay cheap: no extra call, no event, no fold."""

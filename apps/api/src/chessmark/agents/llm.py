@@ -172,12 +172,49 @@ _CONTEXT_LENGTH = re.compile(
 )
 
 
+#: `"(227440 of text input, 502 of tool input, 64000 in the output)"` — the breakdown some
+#: endpoints append to the refusal above.
+#:
+#: Worth a second pattern because the total alone is ambiguous in the direction that matters.
+#: `requested` is prompt *plus* the `max_tokens` we asked to reserve, and compaction needs the
+#: prompt: charging our own output request against the transcript is what left `_summarise` with
+#: negative room and stopped two games recovering (ADR-0032). Subtracting what we asked for is a
+#: reasonable fallback and can under-count, which is the dangerous direction — so where the
+#: endpoint spells the split out, that is what gets used.
+_CONTEXT_BREAKDOWN = re.compile(
+    r"\(\s*(\d+)\s+of\s+text\s+input(?:\s*,\s*(\d+)\s+of\s+tool\s+input)?",
+    re.I,
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ContextLimit:
     """What the endpoint said about the window, when it refused us for exceeding it."""
 
     context: int
     requested: int
+    #: Input alone — text plus tool schema — when the endpoint broke its total down. `None` when it
+    #: reported only a total, and then the caller has to make do with `requested`.
+    prompt: int | None = None
+
+
+def context_limit_in(text: str) -> ContextLimit | None:
+    """The window and the prompt size out of an error *message*, with no exception to inspect.
+
+    The worker sees a failed turn as a recorded string rather than as the exception that caused it,
+    and it needs the same question answered: was this a refusal for size, or something else? No
+    status code is available here, so the wording alone decides. Weaker than `context_limit_from`,
+    which is why that one stays the check on the live path — and why this one is only ever asked
+    about an error the gateway has *already* classified as a rejected request.
+    """
+    match = _CONTEXT_LENGTH.search(text)
+    if match is None:
+        return None
+    parts = _CONTEXT_BREAKDOWN.search(text)
+    prompt = None
+    if parts is not None:
+        prompt = int(parts.group(1)) + int(parts.group(2) or 0)
+    return ContextLimit(context=int(match.group(1)), requested=int(match.group(2)), prompt=prompt)
 
 
 def context_limit_from(error: BaseException) -> ContextLimit | None:
@@ -188,10 +225,7 @@ def context_limit_from(error: BaseException) -> ContextLimit | None:
     """
     if _status_code(error) != 400:
         return None
-    match = _CONTEXT_LENGTH.search(str(error))
-    if match is None:
-        return None
-    return ContextLimit(context=int(match.group(1)), requested=int(match.group(2)))
+    return context_limit_in(str(error))
 
 
 def _status_code(error: BaseException) -> int | None:

@@ -23,6 +23,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.compaction import MIN_USEFUL_COMPLETION
 from chessmark.agents.registry import sync_model_registry
 from chessmark.agents.scripted import scripted, step, tool_call
 from chessmark.agents.turn import MAX_TRUNCATIONS, TurnLimits
@@ -62,13 +63,14 @@ async def _register(db: AsyncSession, *, slug: str, context: int) -> None:
 async def test_our_own_ceiling_fails_the_turn_and_forfeits_nobody(
     db: AsyncSession, table: Table
 ) -> None:
-    """The exact shape of the real forfeit: every response stops at the number we asked for."""
-    limits = TurnLimits(max_completion_tokens=4_000)
+    """The exact shape of the real forfeit: every response stops at the number we asked for, and
+    that number is too small for any answer to fit."""
+    limits = TurnLimits(max_completion_tokens=MIN_USEFUL_COMPLETION)
 
     result = await play_turn(
         db,
         table,
-        scripted(truncated(completion_tokens=4_000), repeat_last=True),
+        scripted(truncated(completion_tokens=MIN_USEFUL_COMPLETION), repeat_last=True),
         limits=limits,
     )
 
@@ -78,17 +80,27 @@ async def test_our_own_ceiling_fails_the_turn_and_forfeits_nobody(
 
 
 async def test_it_does_not_spend_the_strike_budget(db: AsyncSession, table: Table) -> None:
-    """It fails on the first one. Counting four of them is how the forfeit was reached."""
+    """It fails on the first one **when the ask was unanswerable**. Counting four of them is how
+    the forfeit was reached.
+
+    The condition narrowed in ADR-0032: what decides is the *size* of what we allowed, not merely
+    that the response reached it. A model handed 4,000 tokens and told to be brief has every chance
+    of acting, and failing it on sight abandoned a game at ply 72 the day the registry became
+    accurate about an endpoint's ceiling. At or below `MIN_USEFUL_COMPLETION` no answer fits at
+    all, and that is the case this protects.
+    """
     calls = 0
 
     async def counting(**kwargs: object) -> dict[str, object]:
         nonlocal calls
         calls += 1
-        return truncated(completion_tokens=4_000)
+        return truncated(completion_tokens=MIN_USEFUL_COMPLETION)
 
-    await play_turn(db, table, counting, limits=TurnLimits(max_completion_tokens=4_000))
+    await play_turn(
+        db, table, counting, limits=TurnLimits(max_completion_tokens=MIN_USEFUL_COMPLETION)
+    )
 
-    assert calls == 1, f"our own ceiling is not retried into a forfeit, got {calls} calls"
+    assert calls == 1, f"an unanswerable ask is not retried into a forfeit, got {calls} calls"
 
 
 async def test_a_providers_own_ceiling_fails_the_turn_too(db: AsyncSession, table: Table) -> None:

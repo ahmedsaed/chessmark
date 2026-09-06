@@ -3,8 +3,14 @@
 The transcript is replayed whole on every turn (ADR-0003) and grows about **1,818 tokens per ply**,
 measured. A 128k window therefore covers roughly seventy plies of a possible three hundred, and a
 talkative model reaches the wall sooner than that. Raising the floor only moves the wall; it is
-still there, and `context_exceeded` is a *forfeit* — a loss recorded against a model for running out
-of room rather than for playing badly.
+still there, and hitting it ends the game.
+
+When this was written that ending was a *forfeit* — a loss recorded against a model for running out
+of room rather than for playing badly — which is what made compaction urgent. It is no longer:
+`context_exceeded` is a harness stop now (ADR-0031), because with an agent that folds its own
+history, reaching the wall says the fold did not keep up rather than anything about the weights.
+That makes the ending honest; it does not make it acceptable, and everything below is still what
+stops it happening.
 
 So the agent does what an agent does: at a threshold it summarises its own earlier turns and carries
 on from the summary.
@@ -109,10 +115,20 @@ TRUNCATED_PLACEHOLDER = (
 #: `TurnRunner._summarise`.
 SUMMARY_MAX_TOKENS = 2_000
 
-#: What the provider adds around our messages that we cannot see and cannot count: role markers,
-#: the tool schema's envelope, whatever a given endpoint counts as overhead. Small, and subtracted
-#: rather than ignored so a request sized to the exact byte is not refused by a rounding error.
-FRAMING_TOKENS = 256
+#: Headroom held back from every request for what we cannot count.
+#:
+#: Two things live in here. The first is framing the provider adds around our messages — role
+#: markers, the tool schema's envelope, whatever a given endpoint counts as overhead. The second is
+#: the gap between *its* tokeniser and any notion we have of size: the count that binds is taken on
+#: the provider's side, after our request has been serialised into a shape we never see.
+#:
+#: **It was 256, and 256 is a rounding error against a 256,000-token window** — one thousandth of
+#: it. A request sized to the exact byte is one tokeniser disagreement away from a 400, and a 400
+#: here is not a slow turn, it is an abandoned game. Comparable agents hold back 4,096 for the same
+#: purpose against windows of a similar size, and that is the number adopted here rather than one
+#: chosen by us: the cost is a marginally shorter answer in the rare case the prompt is within 4k
+#: of the wall, and the benefit is that arithmetic which is *nearly* right stops being fatal.
+FRAMING_TOKENS = 4_096
 
 #: The smallest answer worth asking for. Below this, `completion_cap` raises rather than clamping.
 #:
@@ -123,14 +139,6 @@ FRAMING_TOKENS = 256
 #: forfeited for truncation at ply 5 — a harness miscalculation published as a finding about a
 #: player, which is precisely what ADR-0019 exists to prevent.
 MIN_USEFUL_COMPLETION = 1_024
-
-#: What a game's first call may ask for, as a fraction of the window, before anything is measured.
-#:
-#: **A bound, not an estimate.** Half a window cannot be wrong in the dangerous direction: the
-#: system prompt plus one turn prompt is a few thousand tokens against a window of at least 64k
-#: (AGENT-14), so the sum always fits. It costs at most a shorter first answer, where the old
-#: character estimate cost a game.
-FIRST_CALL_FRACTION = 2
 
 
 SUMMARY_INSTRUCTION = """\
@@ -214,6 +222,20 @@ class Window:
             return False
         return self.context - prompt_tokens < self.headroom_needed()
 
+    def unmeasured_cap(self, requested: int) -> int:
+        """What to ask for when the prompt has not been measured.
+
+        The reserve — the space compaction holds back precisely so there is room to answer in —
+        rather than a fraction of the window. On the windows where the old bound was dangerous the
+        difference is large and in the right direction: against 256,000 tokens this asks for 25,600
+        where half a window asked for 128,000. On a 1M window the reserve is 100,000 and
+        `max_completion_tokens` binds first, so nothing changes for the models that were fine.
+
+        Never below `MIN_USEFUL_COMPLETION`: a request too small to answer in is not a smaller
+        request, it is one that cannot succeed (ADR-0021).
+        """
+        return max(MIN_USEFUL_COMPLETION, min(requested, self.headroom_needed()))
+
     def completion_cap(self, prompt_tokens: int | None, requested: int) -> int:
         """How many output tokens may be asked for, given what the prompt already occupies.
 
@@ -221,13 +243,17 @@ class Window:
         against nothing, so a 65,536-token endpoint was asked for 65,810 tokens and refused — a 400
         that abandoned a game at ply 10.
 
-        `prompt_tokens` is `None` when nothing has been measured yet, which happens on a game's
-        first call and nowhere else. We do **not** guess there: a bound of half the window is used
-        instead, and a bound cannot be wrong in the direction that forfeits a model. What used to
-        happen was a character estimate, and it is worth being exact about how badly that went — it
-        reported 477,155 tokens for a six-ply transcript against a 256,000-token window, the clamp
-        went negative, its `max(1, ...)` floor asked for one output token, and the model was
-        forfeited for the truncations that followed (ADR-0021).
+        `prompt_tokens` is `None` when nothing has been measured. We do **not** guess there — a
+        character estimate once reported 477,155 tokens for a six-ply transcript against a
+        256,000-token window, the clamp went negative, its `max(1, ...)` floor asked for one output
+        token, and the model was forfeited for the truncations that followed (ADR-0021). What is
+        used instead is `unmeasured_cap`: the reserve, held back rather than guessed at.
+
+        Note what an unmeasured call cannot do. Nothing here knows the prompt's size, so no bound
+        can *guarantee* the request fits — a transcript already larger than the window will be
+        refused whatever we ask for. What the reserve buys is that the refusal becomes rare and,
+        when it happens, recoverable: the reactive rung compacts against the provider's own count
+        and retries (ADR-0031).
 
         Raises `NoRoomToAnswerError` rather than returning a number too small to answer in. That is a
         state for the caller to act on — compact, or stop — not a value to pass to a provider.
@@ -240,7 +266,7 @@ class Window:
         if not self.known:
             return requested
         if prompt_tokens is None:
-            return max(1, min(requested, self.context // FIRST_CALL_FRACTION))
+            return self.unmeasured_cap(requested)
 
         available = self.context - prompt_tokens - FRAMING_TOKENS
         if available < MIN_USEFUL_COMPLETION:

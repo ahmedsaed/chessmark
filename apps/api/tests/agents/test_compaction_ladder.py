@@ -253,8 +253,11 @@ async def test_the_kept_turns_cannot_be_larger_than_the_window_they_fit_in(
 ) -> None:
     """The shape that would not converge: `keep_turns=4` retaining 41 and then 50 messages."""
     slug = "scripted/converges"
-    await _register(db, slug=slug, context=60_000)
-    await _history(db, table, turns=10, measured=55_000)
+    # Sized so the summarising call has room to answer in once `FRAMING_TOKENS` is held back:
+    # 10,000 free against a 50,000 reserve still trips the trigger, where 60,000/55,000 left 904
+    # tokens and the pass silently fell back to trimming alone.
+    await _register(db, slug=slug, context=120_000)
+    await _history(db, table, turns=10, measured=110_000)
 
     await play_turn(
         db,
@@ -304,8 +307,10 @@ async def test_a_context_length_refusal_compacts_and_retries(
 
     events = await _compacted(db, table)
     assert len(events) == 1
-    assert events[0].payload["occupied_tokens"] == 261751 + 502 + 1, (
-        "the provider's own count of the request that failed, not ours"
+    assert events[0].payload["occupied_tokens"] == 261751 + 502, (
+        "the endpoint's own count of the *prompt* — text plus tool schema, and not the output we "
+        "asked it to reserve. Counting our own `max_tokens` as though it were transcript is what "
+        "left `_summarise` with negative room and stopped two games recovering (ADR-0032)"
     )
     assert events[0].payload["context_tokens"] == 256_000
 

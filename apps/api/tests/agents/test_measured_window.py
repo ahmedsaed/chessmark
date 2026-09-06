@@ -20,6 +20,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents import compaction
+from chessmark.agents.compaction import FRAMING_TOKENS
 from chessmark.agents.registry import sync_model_registry
 from chessmark.agents.scripted import scripted, step, tool_call
 from chessmark.agents.turn import TurnLimits
@@ -107,8 +108,12 @@ async def test_the_next_turn_asks_against_the_measured_size(db: AsyncSession, ta
     )
 
     asked = await _max_tokens_asked(db)
-    assert asked[0] == 50_000, "a game's first call is bounded at half the window, not estimated"
-    assert asked[-1] == 100_000 - 40_000 - 256, "and every later one is measured"
+    assert asked[0] == 20_000, (
+        "a game's first call holds back the reserve, not half the window — the bound is not a "
+        "guess at the prompt either way, but the reserve is the one that is still safe when the "
+        "measurement is missing for some reason other than a first call (ADR-0032)"
+    )
+    assert asked[-1] == 100_000 - 40_000 - FRAMING_TOKENS, "and every later one is measured"
 
 
 async def test_a_full_window_fails_the_turn_instead_of_forfeiting_the_model(
@@ -164,8 +169,9 @@ async def test_we_never_ask_for_more_output_than_the_endpoint_will_give(
         colour=Colour.WHITE,
     )
 
-    assert await _max_tokens_asked(db) == [32_768], (
-        "half of a 256,000-token window is 128,000, and the endpoint would never have emitted it"
+    assert await _max_tokens_asked(db) == [25_600], (
+        "the reserve binds first here at 25,600; the endpoint's 32,768 is the looser of the two, "
+        "and `test_compaction.py` covers the case where it is the tighter"
     )
 
 
@@ -184,8 +190,8 @@ async def test_an_endpoint_that_declares_no_output_ceiling_is_unaffected(
         colour=Colour.WHITE,
     )
 
-    assert await _max_tokens_asked(db) == [64_000], (
-        "the full request, bounded only by half the window — which is larger here"
+    assert await _max_tokens_asked(db) == [25_600], (
+        "no endpoint ceiling to clamp with, so the reserve is what bounds an unmeasured call"
     )
 
 
@@ -210,4 +216,4 @@ def test_the_estimate_is_gone() -> None:
 def test_an_unmeasured_first_call_is_bounded(_: Any = None) -> None:
     window = compaction.Window(context=65_536)
 
-    assert window.completion_cap(None, 64_000) == 32_768
+    assert window.completion_cap(None, 64_000) == 20_000

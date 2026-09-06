@@ -277,8 +277,8 @@ Cost is computed from actual returned token counts against `model_registry` pric
 | Failure | Behaviour |
 | --- | --- |
 | Provider 5xx / timeout | Exponential backoff, up to N attempts. Does **not** count as an illegal-move attempt. Logged on the turn. |
-| Provider returns no tool call | One explicit nudge message; a second occurrence forfeits with `error_forfeit`. |
-| Model exceeds its context window | Detected before the call from the model's registered window; game ends `context_exceeded` rather than silently truncating. |
+| Provider returns no tool call | Up to three nudge messages; the fourth toolless reply in one turn forfeits with `error_forfeit`. A reply cut off by the output limit is **not** this — it never reached the point of acting, so it is retried and never forfeited (ADR-0024). |
+| Model exceeds its context window | The agent folds its own earlier turns and carries on (ADR-0018); a refusal for size compacts against the provider's own numbers and retries, and the worker elides stale tool output outside the turn before giving up (ADR-0032). `context_exceeded` remains as a termination for games recorded before compaction existed — no live path produces it, and it counts as a harness stop rather than a forfeit (ADR-0031). |
 | Worker crash mid-turn | Ply uncommitted; job redelivered; turn reruns. One LLM call may be paid for twice — an accepted trade for never corrupting a game. |
 | Redis down | Games stall but nothing is lost; on recovery a reconciler re-enqueues games whose last event is stale. |
 | Postgres down | Hard stop. Readiness probe fails, no new games accepted. |
