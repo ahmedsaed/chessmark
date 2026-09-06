@@ -52,6 +52,14 @@ interface Props {
   targetsFor?: (square: string) => LegalTarget[];
 }
 
+/* Hoisted, because they never change. Rebuilt inline they were five fresh objects on every
+   render of every board, and the library compares what it is handed. */
+const DARK_SQUARE = { backgroundColor: "var(--color-sq-dark)" };
+const LIGHT_SQUARE = { backgroundColor: "var(--color-sq-light)" };
+const DARK_NOTATION = { color: "var(--color-sq-light)" };
+const LIGHT_NOTATION = { color: "var(--color-sq-dark)" };
+const BOARD_STYLE = { borderRadius: "2px", overflow: "hidden" } as const;
+
 export function Board({
   fen,
   lastMove,
@@ -137,40 +145,65 @@ export function Board({
     };
   }, [lastMove, markedSquares, selected, targets]);
 
+  /* The whole options bag is memoised. A new object every render makes the board re-run its own
+     work on renders that changed nothing about it — which on the replay page is every step of the
+     scrubber, since the rail and the event stream beside it re-render on each one. */
+  const options = useMemo(
+    () => ({
+      id,
+      position: fen,
+      boardOrientation: orientation,
+      allowDragging: Boolean(onDrop),
+      onPieceDrop: onDrop
+        ? ({
+            sourceSquare,
+            targetSquare,
+            piece,
+          }: {
+            sourceSquare: string;
+            targetSquare: string | null;
+            piece: { pieceType?: string } | null;
+          }) =>
+            targetSquare
+              ? attempt(sourceSquare, targetSquare, String(piece?.pieceType ?? ""))
+              : false
+        : undefined,
+      /* Picking a piece up shows the same dots a click does — the two gestures should teach
+         the same thing about the position, and a player mid-drag is exactly who wants them. */
+      onPieceDrag: interactive
+        ? ({ square }: { square: string | null }) => setSelected(square ?? null)
+        : undefined,
+      onPieceDragCancel: interactive ? () => setSelected(null) : undefined,
+      onSquareClick: interactive ? handleSquareClick : undefined,
+      showNotation,
+      animationDurationInMs: animationMs,
+      squareStyles,
+      darkSquareStyle: DARK_SQUARE,
+      lightSquareStyle: LIGHT_SQUARE,
+      darkSquareNotationStyle: DARK_NOTATION,
+      lightSquareNotationStyle: LIGHT_NOTATION,
+      boardStyle: BOARD_STYLE,
+    }),
+    [
+      id,
+      fen,
+      orientation,
+      onDrop,
+      attempt,
+      interactive,
+      handleSquareClick,
+      showNotation,
+      animationMs,
+      squareStyles,
+    ],
+  );
+
   return (
     /* `data-fen` is the only thing the browser suite can assert an exact position against: the
        board renders pieces as SVG with no notion of the position they came from, so without it a
        test can count pieces but never tell one position from another with the same material. */
     <div className="w-full [&_*]:!font-sans" data-fen={fen}>
-      <Chessboard
-        options={{
-          id,
-          position: fen,
-          boardOrientation: orientation,
-          allowDragging: Boolean(onDrop),
-          onPieceDrop: onDrop
-            ? ({ sourceSquare, targetSquare, piece }) =>
-                targetSquare
-                  ? attempt(sourceSquare, targetSquare, String(piece?.pieceType ?? ""))
-                  : false
-            : undefined,
-          /* Picking a piece up shows the same dots a click does — the two gestures should teach
-             the same thing about the position, and a player mid-drag is exactly who wants them. */
-          onPieceDrag: interactive
-            ? ({ square }) => setSelected(square ?? null)
-            : undefined,
-          onPieceDragCancel: interactive ? () => setSelected(null) : undefined,
-          onSquareClick: interactive ? handleSquareClick : undefined,
-          showNotation,
-          animationDurationInMs: animationMs,
-          squareStyles,
-          darkSquareStyle: { backgroundColor: "var(--color-sq-dark)" },
-          lightSquareStyle: { backgroundColor: "var(--color-sq-light)" },
-          darkSquareNotationStyle: { color: "var(--color-sq-light)" },
-          lightSquareNotationStyle: { color: "var(--color-sq-dark)" },
-          boardStyle: { borderRadius: "2px", overflow: "hidden" },
-        }}
-      />
+      <Chessboard options={options} />
     </div>
   );
 }

@@ -1,82 +1,200 @@
+import { Suspense } from "react";
 import Link from "next/link";
 
 import { GameCard } from "@/components/GameCard";
 import { HeroGame } from "@/components/HeroGame";
 import { MyGames } from "@/components/MyGames";
 import { ReplayBoard } from "@/components/ReplayBoard";
-import { apiUrl, getGame, getLeaderboard, listEvents, listGames } from "@/lib/api";
+import { apiUrl, getGame, getLeaderboard, listGames } from "@/lib/api";
 import { pickReplays } from "@/lib/replays";
 import type { GameDetail, GameSummary, LeaderboardRow } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export default async function Home() {
-  const [live, recent, board] = await Promise.all([
-    listGames("running", 6),
-    /* A wide window on purpose: the replay row draws from this pool, and a pool of twelve is
-       mostly the same three games every load. */
-    listGames(undefined, 60),
-    getLeaderboard(),
-  ]);
-
-  /* `paused` is excluded alongside `running`: it is a live game waiting on a provider, and a
-     paused game listed among the finished ones would show a `*` where a result belongs. */
-  const finished = recent.filter(
-    (game) => game.status !== "running" && game.status !== "paused",
-  );
-
-  /* **A paused game appears nowhere on this page**, deliberately. It is excluded from `finished`
-     above so it cannot print a `*` where a result belongs, and `listGames("running")` never
-     returns one because the status filter is exact — so the two exclusions together are the whole
-     policy, and this comment exists so neither is later "fixed" as an oversight.
-     The front page is the first thing a visitor sees and a board that has stopped is a poor
-     introduction; a game waiting on somebody else's rate limit is honest on its own page and on
-     the lobby card, which is where a reader who wants it will look. */
-
-  /* The hero wants a running game; the most recent finished one keeps it from being empty between
-     games, which is most of the time on a small deployment. */
-  const featured = live[0] ?? finished[0] ?? null;
-  const [game, events] = featured
-    ? await Promise.all([getGame(featured.id), listEvents(featured.id)])
-    : [null, []];
-
-  /* Three clean finishes, reshuffled per request. The featured game is held out so the hero and
-     the replay row cannot show the same game twice. */
-  const picks = pickReplays(
-    recent.filter((entry) => entry.id !== featured?.id),
-    3,
-  );
-  const replays = (await Promise.all(picks.map((pick) => getGame(pick.id)))).filter(
-    (detail): detail is GameDetail => detail !== null,
-  );
-
+/**
+ * The lobby.
+ *
+ * Every section fetches for itself behind its own `<Suspense>`, and that is the whole point.
+ * The page used to `await` the lobby lists, then the featured game, then three replay details in
+ * three sequential rounds, and render nothing until the slowest of them — the leaderboard —
+ * came back. A visitor got a blank page for the length of the worst query on the page.
+ *
+ * Next.js memoises `fetch` for the duration of one request, so the sections asking for the same
+ * list are not asking twice; they are reading the same in-flight promise. What that buys is
+ * independence: the hero paints as soon as *it* is ready, and a slow ranking delays only the
+ * ranking.
+ */
+export default function Home() {
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
-      {game ? (
-        <HeroGame game={game} apiUrl={apiUrl} initialEvents={events} />
-      ) : (
-        <EmptyHero />
-      )}
+      <Suspense fallback={<HeroSkeleton />}>
+        <Hero />
+      </Suspense>
 
       {/* A game you are playing is not a game you are watching, and the lobby could not tell them
           apart. Renders nothing at all for a visitor with no games of their own. */}
       <MyGames heading="Your games" />
 
-      {live.length > 1 && (
-        <Strip title="Also live" count={live.length - 1}>
-          {live.slice(1).map((entry) => (
-            <GameCard key={entry.id} game={entry} />
-          ))}
-        </Strip>
-      )}
+      <Suspense fallback={null}>
+        <AlsoLive />
+      </Suspense>
 
-      {replays.length > 0 && <Replays games={replays} />}
+      <Suspense fallback={null}>
+        <ReplayRow />
+      </Suspense>
 
       <div className="mt-16 grid grid-cols-1 gap-10 lg:grid-cols-2">
-        <TopContestants rows={board.rows} counted={board.games_counted} />
-        <RecentGames games={finished.slice(0, 6)} />
+        <Suspense fallback={<SectionSkeleton title="Top contestants" rows={5} />}>
+          <TopContestants />
+        </Suspense>
+        <Suspense fallback={<SectionSkeleton title="Recent games" rows={4} />}>
+          <RecentGames />
+        </Suspense>
       </div>
     </main>
+  );
+}
+
+/**
+ * The pool the hero and the replay row both draw from.
+ *
+ * A wide window on purpose: a pool of twelve is mostly the same three games every load.
+ */
+function lobbyGames(): Promise<GameSummary[]> {
+  return listGames(undefined, 60);
+}
+
+/**
+ * Games that have stopped for good.
+ *
+ * `paused` is excluded alongside `running`: it is a live game waiting on a provider, and a paused
+ * game listed among the finished ones would show a `*` where a result belongs.
+ *
+ * **A paused game appears nowhere on this page**, deliberately. It is excluded here so it cannot
+ * print a `*` where a result belongs, and `listGames("running")` never returns one because the
+ * status filter is exact — so the two exclusions together are the whole policy, and this comment
+ * exists so neither is later "fixed" as an oversight. The front page is the first thing a visitor
+ * sees and a board that has stopped is a poor introduction; a game waiting on somebody else's rate
+ * limit is honest on its own page and on the lobby card, which is where a reader who wants it will
+ * look.
+ */
+function settled(games: GameSummary[]): GameSummary[] {
+  return games.filter((game) => game.status !== "running" && game.status !== "paused");
+}
+
+/**
+ * The game the hero shows.
+ *
+ * Prefers a running game; falls back to the most recent finished one, which keeps the hero from
+ * being empty between games — most of the time, on a small deployment.
+ */
+async function featuredGame(): Promise<GameSummary | null> {
+  const [live, recent] = await Promise.all([listGames("running", 6), lobbyGames()]);
+  return live[0] ?? settled(recent)[0] ?? null;
+}
+
+async function Hero() {
+  const featured = await featuredGame();
+  const game = featured ? await getGame(featured.id) : null;
+
+  /* No event log. The hero shows a board and a move list, and `GameDetail.moves` is already the
+     authoritative move list at the render's cursor — fetching the whole log to fold it back down
+     to the same array cost 300KB of payload for a game of any length, on the one page every
+     visitor loads first. A live game's *subsequent* moves still arrive on the stream. */
+  return game ? <HeroGame game={game} apiUrl={apiUrl} /> : <EmptyHero />;
+}
+
+async function AlsoLive() {
+  const live = await listGames("running", 6);
+  if (live.length <= 1) return null;
+
+  return (
+    <Strip title="Also live" count={live.length - 1}>
+      {live.slice(1).map((entry) => (
+        <GameCard key={entry.id} game={entry} />
+      ))}
+    </Strip>
+  );
+}
+
+async function ReplayRow() {
+  const [recent, featured] = await Promise.all([lobbyGames(), featuredGame()]);
+
+  /* The featured game is held out so the hero and the replay row cannot show the same game. */
+  const picks = pickReplays(
+    recent.filter((entry) => entry.id !== featured?.id),
+    3,
+  );
+  const games = (await Promise.all(picks.map((pick) => getGame(pick.id)))).filter(
+    (detail): detail is GameDetail => detail !== null,
+  );
+  if (games.length === 0) return null;
+
+  return <Replays games={games} />;
+}
+
+async function TopContestants() {
+  const board = await getLeaderboard();
+  return <Contestants rows={board.rows} counted={board.games_counted} />;
+}
+
+async function RecentGames() {
+  const games = settled(await lobbyGames()).slice(0, 6);
+
+  return (
+    <section>
+      <h2 className="mb-4 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+        Recent games
+      </h2>
+      {games.length === 0 ? (
+        <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
+          Nothing finished yet.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-3">
+          {games.map((game) => (
+            <GameCard key={game.id} game={game} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Placeholders that hold the shape they will be replaced by.
+ *
+ * Sized to the real thing on purpose: a fallback that is a different height moves the page under
+ * the reader's cursor when it resolves, which reads worse than the wait it was hiding.
+ */
+function HeroSkeleton() {
+  return (
+    <section className="grid grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,440px)_minmax(0,1fr)] lg:gap-12">
+      <div className="mx-auto aspect-square w-full max-w-[440px] animate-pulse bg-surface-2" />
+      <div className="flex min-w-0 flex-col gap-5">
+        <h1 className="font-serif text-4xl leading-[1.1] text-ink sm:text-5xl">
+          Language models play chess.
+          <br />
+          <span className="text-accent">Everything is recorded.</span>
+        </h1>
+        <div className="h-24 animate-pulse bg-surface-2" />
+      </div>
+    </section>
+  );
+}
+
+function SectionSkeleton({ title, rows }: { title: string; rows: number }) {
+  return (
+    <section>
+      <h2 className="mb-4 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+        {title}
+      </h2>
+      <div className="flex flex-col gap-3">
+        {Array.from({ length: rows }, (_, index) => (
+          <div key={index} className="h-14 animate-pulse bg-surface-2" />
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -194,7 +312,7 @@ function Replays({ games }: { games: GameDetail[] }) {
  * contestant with one game against one with four needs to see that difference in the same glance,
  * or the ordering reads as more settled than it is.
  */
-function TopContestants({ rows, counted }: { rows: LeaderboardRow[]; counted: number }) {
+function Contestants({ rows, counted }: { rows: LeaderboardRow[]; counted: number }) {
   return (
     <section>
       <div className="mb-4 flex items-baseline justify-between gap-3">
@@ -244,27 +362,6 @@ function TopContestants({ rows, counted }: { rows: LeaderboardRow[]; counted: nu
             Glicko-2 over {counted} ranked game{counted === 1 ? "" : "s"}
           </p>
         </>
-      )}
-    </section>
-  );
-}
-
-function RecentGames({ games }: { games: GameSummary[] }) {
-  return (
-    <section>
-      <h2 className="mb-4 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
-        Recent games
-      </h2>
-      {games.length === 0 ? (
-        <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
-          Nothing finished yet.
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-3">
-          {games.map((game) => (
-            <GameCard key={game.id} game={game} />
-          ))}
-        </ul>
       )}
     </section>
   );

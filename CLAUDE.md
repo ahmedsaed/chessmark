@@ -150,6 +150,28 @@ it.
 - **Report what happened.** If a test fails, say so with the output. If a step was skipped, say
   that. "Deferring a test defers the phase" applies to progress reports too.
 
+## Performance
+
+The read path is measured, and these are the budgets — a change that moves one the wrong way is a
+regression, not a trade-off.
+
+| | budget |
+| --- | --- |
+| `GET /leaderboard` | **7 queries, flat.** Not per game — `bench.service.scan` reads the whole archive in one pass, and `test_the_leaderboard_costs_a_fixed_number_of_queries` fails if it starts growing again |
+| `GET /games/{id}/turns` | summary only. The verbatim payloads are `?include_calls=true`, and neither the replay nor the live view asks for them — the inspector opens one turn through `/turns/{id}/raw` (LOG-07) |
+| the replay scrubber | O(1) per step. Positions come from one `buildFrames` table and `EventStream`'s rows are memoised on content — both pinned by tests in `replay.test.ts` |
+
+Three traps worth knowing before touching this:
+
+* **The leaderboard sits on the critical path of four pages** — `/`, `/about`, `/methodology` and
+  `/leaderboard` all await it. A slow query there is not one slow page.
+* **The landing hero needs `GameDetail.moves`, not the event log.** Folding the log back down to a
+  move list fetched every reasoning trace and tool call to derive an array of SAN strings, on the
+  one page every visitor loads first.
+* **A `loading.tsx` above a route that can 404 turns its 404 into a 200.** The boundary makes the
+  segment stream, and a streamed response commits its status line before `notFound()` runs. Only
+  routes that cannot 404 have one; the browser suite asserts the status for the three that can.
+
 ## Definition of done
 
 A phase is done when its **exit criteria in [ROADMAP.md](docs/ROADMAP.md) verifiably pass** and its

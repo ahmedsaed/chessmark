@@ -16,14 +16,14 @@ from fastapi import APIRouter
 
 from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.api.deps import SessionDep
-from chessmark.api.routes.games import _served_by as served_by
+from chessmark.api.routes.games import _served_by_many as served_by_many
 from chessmark.api.schemas import (
     ExcludedGame,
     GameSummary,
     Leaderboard,
     LeaderboardRow,
 )
-from chessmark.bench.service import compute_aggregates, compute_ratings, ratable_games
+from chessmark.bench.service import compute_aggregates, compute_ratings, ratable_games, scan
 from chessmark.db.models import ModelRegistry
 
 router = APIRouter(prefix="/leaderboard", tags=["leaderboard"])
@@ -31,8 +31,11 @@ router = APIRouter(prefix="/leaderboard", tags=["leaderboard"])
 
 @router.get("", response_model=Leaderboard)
 async def get_leaderboard(session: SessionDep) -> Leaderboard:
-    run = await compute_ratings(session, prompt_version=PROMPT_VERSION)
-    aggregates = await compute_aggregates(session, prompt_version=PROMPT_VERSION)
+    # One scan feeds both. The ratings and the aggregates have to cover the same games or the
+    # row is incoherent, and reading twice was both slower and a chance for them to disagree.
+    scanned = await scan(session, prompt_version=PROMPT_VERSION)
+    run = await compute_ratings(session, prompt_version=PROMPT_VERSION, scanned=scanned)
+    aggregates = await compute_aggregates(session, prompt_version=PROMPT_VERSION, scanned=scanned)
 
     names = {row.id: row.display_name for row in await session.scalars(sa.select(ModelRegistry))}
 
@@ -71,9 +74,11 @@ async def get_contestant_games(
     asking to be taken on faith. Filtered to the *ratable* games only, so this is exactly what moved
     the rating — not every game the model has ever played.
     """
-    summaries: list[GameSummary] = []
+    counted = await ratable_games(session, prompt_version=PROMPT_VERSION)
+    served = await served_by_many(session, [game.id for game, _, _ in counted])
 
-    for game, players, quantizations in await ratable_games(session, prompt_version=PROMPT_VERSION):
+    summaries: list[GameSummary] = []
+    for game, players, quantizations in counted:
         for player in players:
             slug = str((player.sampling or {}).get("model") or "")
             if slug != model_slug:
@@ -81,7 +86,7 @@ async def get_contestant_games(
             if quantization and quantizations.get(player.id, "unknown") != quantization:
                 continue
             summaries.append(
-                GameSummary.from_model(game, players, served_by=await served_by(session, game.id))
+                GameSummary.from_model(game, players, served_by=served.get(game.id, {}))
             )
             break
 

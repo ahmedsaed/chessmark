@@ -15,7 +15,13 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.bench.service import compute_aggregates, compute_ratings, period_of, store_ratings
+from chessmark.bench.service import (
+    compute_aggregates,
+    compute_ratings,
+    period_of,
+    scan,
+    store_ratings,
+)
 from chessmark.db.models import ModelEndpoint, ModelRegistry, Rating
 from chessmark.game import GameResult, Termination
 from chessmark.orchestration.match import Seat, create_match
@@ -281,3 +287,64 @@ def test_a_period_is_a_day() -> None:
 
     assert period_of(monday) == period_of(later_that_day)
     assert period_of(tuesday) == period_of(monday) + 1
+
+
+# ====================================================================== cost
+
+
+async def test_the_leaderboard_costs_a_fixed_number_of_queries(db: AsyncSession) -> None:
+    """The read must not scale with the archive.
+
+    This began as one query per game for the seats, another for the providers, one per seat for the
+    pinned precision and one more for the served precision — and the callers then ran that whole
+    loop again: `compute_ratings` scanned twice, the route a third time for the aggregates, and
+    `ratings_by_key` a fourth. Thirty-seven games cost 295 queries, the leaderboard took a fifth of
+    a second, and it sits on the critical path of four pages including the landing page.
+
+    Counting statements rather than timing them is the point: a timing test passes on a fast
+    machine with the bug still in place. The bound is deliberately generous — what it forbids is
+    *growth*, and the second half asserts exactly that.
+    """
+    statements: list[str] = []
+
+    def record(conn: Any, cursor: Any, statement: str, *args: Any) -> None:
+        statements.append(statement)
+
+    sa.event.listen(db.bind.sync_engine, "before_cursor_execute", record)
+    try:
+        for index in range(2):
+            await _model(db, f"cost/model-{index}")
+        await _played(db, "cost/model-0", "cost/model-1", result=GameResult.WHITE_WINS)
+        await db.flush()
+
+        statements.clear()
+        await _leaderboard(db)
+        one_game = len(statements)
+
+        for index in range(6):
+            await _played(
+                db,
+                "cost/model-0" if index % 2 == 0 else "cost/model-1",
+                "cost/model-1" if index % 2 == 0 else "cost/model-0",
+                result=GameResult.WHITE_WINS,
+            )
+        await db.flush()
+
+        statements.clear()
+        await _leaderboard(db)
+        seven_games = len(statements)
+    finally:
+        sa.event.remove(db.bind.sync_engine, "before_cursor_execute", record)
+
+    assert one_game <= 12, f"a one-game leaderboard took {one_game} queries"
+    assert seven_games == one_game, (
+        f"the leaderboard grew from {one_game} queries at one game to {seven_games} at seven — "
+        "it is reading per game again"
+    )
+
+
+async def _leaderboard(db: AsyncSession) -> None:
+    """Exactly what the route does: one scan, feeding both halves."""
+    scanned = await scan(db, prompt_version=None)
+    await compute_ratings(db, prompt_version=None, scanned=scanned)
+    await compute_aggregates(db, prompt_version=None, scanned=scanned)

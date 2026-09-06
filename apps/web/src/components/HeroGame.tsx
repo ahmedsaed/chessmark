@@ -8,9 +8,14 @@
  * second, before reading anything.
  *
  * Prefers a running game; falls back to the most recent finished one so the hero is never empty
- * between games. The position is replayed locally through chess.js from `move_made` events, the
- * same way `LiveGame` does it — the server is the authority on legality, and replaying SAN means
- * a duplicated or out-of-order event cannot desync the board.
+ * between games. The position is replayed locally through chess.js, the same way `LiveGame` does
+ * it — the server is the authority on legality, and replaying SAN means a duplicated or
+ * out-of-order event cannot desync the board.
+ *
+ * The starting move list comes from `GameDetail.moves`, not from the event log. Both say the same
+ * thing at the same cursor — `moves` and `event_seq` are read in one transaction — but the log is
+ * every reasoning trace and tool call as well, and the hero shows neither. Folding 300KB back down
+ * to an array of SAN strings was the largest single item on the page every visitor lands on.
  */
 
 import Link from "next/link";
@@ -21,19 +26,11 @@ import { Board } from "@/components/Board";
 import { useGameStream } from "@/hooks/useGameStream";
 import { tailMoves } from "@/lib/moves";
 import { foldEvents } from "@/lib/turns";
-import type { GameDetail, GameEvent } from "@/lib/types";
+import type { GameDetail } from "@/lib/types";
 
 const TERMINAL = new Set(["finished", "aborted"]);
 
-export function HeroGame({
-  game,
-  apiUrl,
-  initialEvents,
-}: {
-  game: GameDetail;
-  apiUrl: string;
-  initialEvents: GameEvent[];
-}) {
+export function HeroGame({ game, apiUrl }: { game: GameDetail; apiUrl: string }) {
   const isLive = !TERMINAL.has(game.status);
 
   const { events } = useGameStream({
@@ -43,9 +40,13 @@ export function HeroGame({
     enabled: isLive,
   });
 
+  /* Seeded with the moves already rendered on the server; the fold only has to carry what the
+     stream has delivered since `event_seq`. `paused` is null here for a game that was already
+     paused when the page rendered — `game.status` is what covers that case, which is why
+     `stopped` below reads both. */
   const { moves, ended, paused } = useMemo(
-    () => foldEvents([...initialEvents, ...events], []),
-    [initialEvents, events],
+    () => foldEvents(events, game.moves),
+    [events, game.moves],
   );
 
   const { fen, lastMove, toMove } = useMemo(() => {

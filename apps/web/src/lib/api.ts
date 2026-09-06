@@ -92,13 +92,27 @@ async function getOrNull<T>(path: string): Promise<T | null> {
 }
 
 /**
+ * A failed read, reported once to the server log.
+ *
+ * The soft-failure paths below are right to keep rendering, and were wrong to do it in complete
+ * silence: an unreachable API and an API that genuinely has no games produced the same page, so
+ * "the lobby says there are no games" carried no information about which had happened. The page
+ * still degrades; it just no longer does so invisibly.
+ */
+function reportFailure(path: string, cause: unknown): void {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  console.warn(`[api] GET ${path} failed, rendering without it: ${reason}`);
+}
+
+/**
  * Never throws. The lobby should still render if the API is briefly unreachable — an empty
  * section is a better failure than a blank page.
  */
 async function getOrEmpty<T>(path: string): Promise<T[]> {
   try {
     return await get<T[]>(path);
-  } catch {
+  } catch (error) {
+    reportFailure(path, error);
     return [];
   }
 }
@@ -158,7 +172,8 @@ export function listTurns(id: string): Promise<TurnSummary[]> {
 export async function getLeaderboard(): Promise<Leaderboard> {
   try {
     return await get<Leaderboard>("/leaderboard");
-  } catch {
+  } catch (error) {
+    reportFailure("/leaderboard", error);
     return {
       rows: [],
       games_counted: 0,
