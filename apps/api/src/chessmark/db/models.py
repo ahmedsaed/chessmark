@@ -632,37 +632,37 @@ class ModelEndpoint(Base):
     )
 
 
-class Rating(Base):
-    """Glicko-2 rating for one **contestant** at the end of one rating period (BENCH-01).
+class LeaderboardSnapshot(Base):
+    """The computed leaderboard, stored when a game ends (ADR-0032).
 
-    A contestant is `(model, quantization)`, not a model (ADR-0015). `model@fp4` and `model@fp8`
-    are different entrants and are rated apart — averaging them would produce a number describing
-    neither, which is the failure this project keeps finding in its own results.
+    A **cache, not a source of truth.** Derived entirely from `games` and disposable: delete every
+    row and the next request rebuilds it. Nothing may read this to decide anything a game record
+    could answer.
+
+    It replaced a normalised `ratings` table that was migrated and then never written to. The shape
+    was wrong as well as unused — a row per contestant per period cannot hold the exclusions with
+    their reasons, the aggregate metrics, or the counted set behind each row, all of which the
+    response carries and all of which come from the same run. One snapshot holds that run, which is
+    also what makes a single fingerprint meaningful.
     """
 
-    __tablename__ = "ratings"
+    __tablename__ = "leaderboard_snapshots"
 
     id: Mapped[int] = bigint_pk()
-    model_id: Mapped[uuid.UUID] = mapped_column(
-        _fk("model_registry.id", ondelete="CASCADE"), index=True
-    )
-    quantization: Mapped[str] = mapped_column(
-        sa.Text, default="unknown", server_default="unknown", index=True
-    )
-    """The precision this contestant played at. Half of its identity, not a detail."""
 
-    period: Mapped[int] = mapped_column(sa.Integer, index=True)
-    rating: Mapped[float] = mapped_column(sa.Float, default=1500.0)
-    rating_deviation: Mapped[float] = mapped_column(sa.Float, default=350.0)
-    volatility: Mapped[float] = mapped_column(sa.Float, default=0.06)
-    games_played: Mapped[int] = mapped_column(default=0, server_default="0")
+    prompt_version: Mapped[str] = mapped_column(sa.Text, unique=True)
+    """One snapshot per prompt version. A game played under an older prompt measured a different
+    task (BENCH-04), so the runs are separate and switching back does not force a rebuild."""
+
+    fingerprint: Mapped[str] = mapped_column(sa.Text)
+    """What the run was computed from. A read that disagrees recomputes rather than serving this
+    row — the failure mode is a slow page, never a wrong number."""
+
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
+    """The computed run. Display names are **not** in here; they are resolved at read, so renaming
+    a model cannot leave a stale label behind."""
+
     computed_at: Mapped[dt.datetime] = created_at()
-
-    __table_args__ = (
-        sa.UniqueConstraint(
-            "model_id", "quantization", "period", name="uq_ratings_contestant_period"
-        ),
-    )
 
 
 class AnalysisJob(Base):

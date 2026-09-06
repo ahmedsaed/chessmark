@@ -8,10 +8,15 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { Chess } from "chess.js";
 
+import { buildFrames } from "@/lib/animation";
 import { eventsThroughPly, plyCount, turnIdsByPly } from "@/lib/replay";
 import { foldEvents } from "@/lib/turns";
 import type { GameEvent, EventType } from "@/lib/types";
+
+/** The standard opening position — what every game here starts from. */
+const START_FEN = new Chess().fen();
 
 let seq = 0;
 function event(type: EventType, payload: Record<string, unknown> = {}): GameEvent {
@@ -170,5 +175,80 @@ describe("turnIdsByPly", () => {
     ]);
 
     expect(map.get(1)).toBe(12);
+  });
+});
+
+
+// ====================================================================== seeding the fold
+
+/**
+ * The landing hero seeds `foldEvents` with `GameDetail.moves` and folds only what the stream has
+ * delivered since `event_seq`, rather than fetching the whole event log to fold from nothing.
+ *
+ * That is only sound if the two produce the same move list. `moves` and `event_seq` are read in
+ * one transaction server-side, so the seed and the cursor describe the same instant — this pins
+ * the arithmetic that relies on it. Getting it wrong would duplicate or drop moves on a live
+ * board, which is exactly the desync the local replay exists to prevent.
+ */
+describe("seeding foldEvents with an already-known move list", () => {
+  const split = 3; // events already reflected in the server-rendered page
+
+  it("matches folding the whole log from nothing", () => {
+    const rendered = GAME.slice(0, split);
+    const streamed = GAME.slice(split);
+    const seed = foldEvents(rendered, []).moves;
+
+    expect(foldEvents(streamed, seed).moves).toEqual(foldEvents(GAME, []).moves);
+  });
+
+  it("holds when the stream has delivered nothing yet", () => {
+    const seed = foldEvents(GAME, []).moves;
+
+    expect(foldEvents([], seed).moves).toEqual(seed);
+  });
+
+  it("still reports the ending when it arrives on the stream", () => {
+    const upToLastMove = GAME.slice(0, -1);
+    const seed = foldEvents(upToLastMove, []).moves;
+
+    expect(foldEvents([GAME[GAME.length - 1]], seed).ended).toEqual({
+      result: "1/2-1/2",
+      termination: "ply_cap",
+      detail: "capped",
+    });
+  });
+});
+
+// ====================================================================== positions per ply
+
+/**
+ * Replay derives its board by indexing a frame table built once, rather than replaying SAN from
+ * the starting position on every step of the scrubber. The two must agree at every ply, or the
+ * optimisation has quietly changed what the page shows.
+ *
+ * Built from the *event log*, not from `GameDetail.moves`, which is what keeps replay reading the
+ * same rows a spectator saw (ADR-0008).
+ */
+describe("frames indexed by ply", () => {
+  const frames = buildFrames(START_FEN, foldEvents(GAME, []).moves);
+
+  it("has one frame per ply, plus the starting position", () => {
+    expect(frames).toHaveLength(plyCount(GAME) + 1);
+  });
+
+  it("matches replaying the truncated log at every ply", () => {
+    for (let ply = 0; ply <= plyCount(GAME); ply += 1) {
+      const { moves } = foldEvents(eventsThroughPly(GAME, ply), []);
+      const board = new Chess(START_FEN);
+      for (const san of moves) board.move(san);
+
+      expect(frames[ply].fen).toBe(board.fen());
+    }
+  });
+
+  it("agrees with the scrubber about whose move it is", () => {
+    expect(frames[0].fen.split(" ")[1]).toBe("w");
+    expect(frames[1].fen.split(" ")[1]).toBe("b");
+    expect(frames[2].fen.split(" ")[1]).toBe("w");
   });
 });

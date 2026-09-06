@@ -8,6 +8,7 @@ and is gated in Phase 9.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Annotated, Any
 
@@ -77,15 +78,28 @@ async def _players(session: SessionDep, game_id: uuid.UUID) -> list[Player]:
 async def _served_by(
     session: SessionDep, game_id: uuid.UUID
 ) -> dict[uuid.UUID, tuple[list[str], str | None]]:
-    """Which endpoints actually served each seat, and at what precision.
+    """Which endpoints actually served each seat of one game, and at what precision."""
+    return (await _served_by_many(session, [game_id])).get(game_id, {})
+
+
+async def _served_by_many(
+    session: SessionDep, game_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, dict[uuid.UUID, tuple[list[str], str | None]]]:
+    """The same, for a batch of games.
 
     The chat response names the provider; `model_endpoints` supplies the quantization. Together
     they answer the question a leaderboard row is meaningless without — not "which model" but
     "which model, served how".
+
+    Batched because the callers are lists: the leaderboard drill-down asked per game inside a loop
+    over every ratable game, which is one query per row of a page that is already a list.
     """
+    if not game_ids:
+        return {}
+
     rows = (
         await session.execute(
-            sa.select(Turn.player_id, LlmCall.provider, ModelEndpoint.quantization)
+            sa.select(Turn.game_id, Turn.player_id, LlmCall.provider, ModelEndpoint.quantization)
             .join(LlmCall, LlmCall.turn_id == Turn.id)
             .join(ModelRegistry, ModelRegistry.openrouter_id == LlmCall.model_slug, isouter=True)
             .join(
@@ -96,17 +110,18 @@ async def _served_by(
                 ),
                 isouter=True,
             )
-            .where(Turn.game_id == game_id, LlmCall.provider.is_not(None))
+            .where(Turn.game_id.in_(game_ids), LlmCall.provider.is_not(None))
             .distinct()
         )
     ).all()
 
-    served: dict[uuid.UUID, tuple[list[str], str | None]] = {}
-    for player_id, provider, quantization in rows:
-        providers, quant = served.get(player_id, ([], None))
+    served: dict[uuid.UUID, dict[uuid.UUID, tuple[list[str], str | None]]] = {}
+    for game_id, player_id, provider, quantization in rows:
+        by_player = served.setdefault(game_id, {})
+        providers, quant = by_player.get(player_id, ([], None))
         if provider and provider not in providers:
             providers.append(provider)
-        served[player_id] = (providers, quant or quantization)
+        by_player[player_id] = (providers, quant or quantization)
     return served
 
 
@@ -274,8 +289,17 @@ async def get_messages(session: SessionDep, game: GameDep) -> list[MessageOut]:
 
 
 @router.get("/{game_id}/turns", response_model=list[TurnDetail])
-async def get_turns(session: SessionDep, game: GameDep) -> list[TurnDetail]:
-    """Every turn with its LLM and tool calls.
+async def get_turns(
+    session: SessionDep,
+    game: GameDep,
+    include_calls: Annotated[bool, Query()] = False,
+) -> list[TurnDetail]:
+    """Every turn, with its per-turn token and cost totals.
+
+    The LLM and tool calls are **opt-in**. They are the verbatim provider payloads, and for a
+    63-ply game they are 274KB against 28KB of turn rows — an order of magnitude of the replay
+    page's weight, spent on something behind a click. The replay reads the summary; the inspector
+    opens one turn at a time through `/turns/{turn_id}/raw`, which is the path LOG-07 is about.
 
     Reasoning traces are omitted while the game is live; `reasoning_available` says which it is,
     so a client can show "revealed after the game" rather than an unexplained blank.
@@ -288,24 +312,27 @@ async def get_turns(session: SessionDep, game: GameDep) -> list[TurnDetail]:
     if not turns:
         return []
 
-    turn_ids = [turn.id for turn in turns]
-    llm_rows = list(
-        await session.scalars(
-            sa.select(LlmCall).where(LlmCall.turn_id.in_(turn_ids)).order_by(LlmCall.sequence)
-        )
-    )
-    tool_rows = list(
-        await session.scalars(
-            sa.select(ToolCall).where(ToolCall.turn_id.in_(turn_ids)).order_by(ToolCall.sequence)
-        )
-    )
-
     llm_by_turn: dict[int, list[LlmCall]] = {}
-    for llm_row in llm_rows:
-        llm_by_turn.setdefault(llm_row.turn_id, []).append(llm_row)
     tool_by_turn: dict[int, list[ToolCall]] = {}
-    for tool_row in tool_rows:
-        tool_by_turn.setdefault(tool_row.turn_id, []).append(tool_row)
+
+    if include_calls:
+        turn_ids = [turn.id for turn in turns]
+        llm_rows = list(
+            await session.scalars(
+                sa.select(LlmCall).where(LlmCall.turn_id.in_(turn_ids)).order_by(LlmCall.sequence)
+            )
+        )
+        tool_rows = list(
+            await session.scalars(
+                sa.select(ToolCall)
+                .where(ToolCall.turn_id.in_(turn_ids))
+                .order_by(ToolCall.sequence)
+            )
+        )
+        for llm_row in llm_rows:
+            llm_by_turn.setdefault(llm_row.turn_id, []).append(llm_row)
+        for tool_row in tool_rows:
+            tool_by_turn.setdefault(tool_row.turn_id, []).append(tool_row)
 
     return [
         TurnDetail.from_model(

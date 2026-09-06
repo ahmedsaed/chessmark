@@ -7,6 +7,7 @@
 
 import { originFromEnv } from "@/lib/env";
 import type {
+  BenchSummary,
   GameDetail,
   GameEvent,
   GameResult,
@@ -92,13 +93,27 @@ async function getOrNull<T>(path: string): Promise<T | null> {
 }
 
 /**
+ * A failed read, reported once to the server log.
+ *
+ * The soft-failure paths below are right to keep rendering, and were wrong to do it in complete
+ * silence: an unreachable API and an API that genuinely has no games produced the same page, so
+ * "the lobby says there are no games" carried no information about which had happened. The page
+ * still degrades; it just no longer does so invisibly.
+ */
+function reportFailure(path: string, cause: unknown): void {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  console.warn(`[api] GET ${path} failed, rendering without it: ${reason}`);
+}
+
+/**
  * Never throws. The lobby should still render if the API is briefly unreachable — an empty
  * section is a better failure than a blank page.
  */
 async function getOrEmpty<T>(path: string): Promise<T[]> {
   try {
     return await get<T[]>(path);
-  } catch {
+  } catch (error) {
+    reportFailure(path, error);
     return [];
   }
 }
@@ -155,10 +170,26 @@ export function listTurns(id: string): Promise<TurnSummary[]> {
  * Never throws: an empty ranking is the honest state before any ranked game has been played, and
  * a blank page would be a worse way to say so.
  */
+/**
+ * How many games count and how many did not — without the ranking.
+ *
+ * The pages that quote these numbers show no rating, so they ask for the numbers rather than the
+ * board (ADR-0032). Never throws, for the same reason `getLeaderboard` does not.
+ */
+export async function getBenchSummary(): Promise<BenchSummary> {
+  try {
+    return await get<BenchSummary>("/leaderboard/summary");
+  } catch (error) {
+    reportFailure("/leaderboard/summary", error);
+    return { games_counted: 0, games_excluded: 0, games_finished: 0, prompt_version: null };
+  }
+}
+
 export async function getLeaderboard(): Promise<Leaderboard> {
   try {
     return await get<Leaderboard>("/leaderboard");
-  } catch {
+  } catch (error) {
+    reportFailure("/leaderboard", error);
     return {
       rows: [],
       games_counted: 0,

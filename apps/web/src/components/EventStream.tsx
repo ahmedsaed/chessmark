@@ -31,7 +31,7 @@
  * to a contestant.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Player, StreamNotice, ToolCallView, TurnView } from "@/lib/types";
 
@@ -39,6 +39,8 @@ type Filter = "all" | "moves-talk" | "talk" | "moves";
 
 /** The three registers a turn can be unrolled into, each with its own disclosure. */
 type Section = "reasoning" | "output" | "tools";
+
+const SECTIONS: readonly Section[] = ["reasoning", "output", "tools"];
 
 /**
  * Ply number to chess notation. Ply 1 is "1.", ply 2 is "1…", ply 3 is "2." — a full move is two
@@ -172,6 +174,20 @@ export function EventStream({
     return turn.live || turn.key === focusKey;
   }
 
+  /* Which sections of a turn are open, as one string.
+     `Turn` is memoised, and a row cannot compare an `isOpen` closure rebuilt every render. A
+     primitive can be compared by value, and the set is at most three short words. */
+  function openSections(turn: TurnView): string {
+    return SECTIONS.filter((section) => isOpen(turn, section)).join("|");
+  }
+
+  /* Stable across renders, and it has to be: a handler rebuilt every render would defeat the
+     comparison the memoised rows depend on. Both take what they need as arguments rather than
+     closing over it, so neither can go stale. */
+  const toggle = useCallback((key: string, section: Section, currentlyOpen: boolean) => {
+    setToggled((previous) => ({ ...previous, [`${key}:${section}`]: !currentlyOpen }));
+  }, []);
+
   return (
     <section
       aria-label="Event stream"
@@ -227,14 +243,9 @@ export function EventStream({
                 turn={entry.turn}
                 name={turnName(entry.turn, players)}
                 filter={filter}
-                isOpen={(section) => isOpen(entry.turn, section)}
-                onToggle={(section) =>
-                  setToggled((previous) => ({
-                    ...previous,
-                    [`${entry.turn.key}:${section}`]: !isOpen(entry.turn, section),
-                  }))
-                }
-                onInspect={onInspect && (() => onInspect(entry.turn))}
+                open={openSections(entry.turn)}
+                onToggle={toggle}
+                onInspect={onInspect}
               />
             ),
           )
@@ -438,24 +449,54 @@ function MoveList({ turns }: { turns: TurnView[] }) {
   );
 }
 
-function Turn({
-  turn,
-  name,
-  filter,
-  isOpen,
-  onToggle,
-  onInspect,
-}: {
+interface TurnProps {
   turn: TurnView;
   /** The model slug, or the person's name for a human turn. */
   name: string;
   filter: Filter;
-  isOpen: (section: Section) => boolean;
-  onToggle: (section: Section) => void;
-  onInspect?: () => void;
-}) {
+  /** The open sections, `|`-joined — a primitive so the row below can compare it. */
+  open: string;
+  onToggle: (key: string, section: Section, currentlyOpen: boolean) => void;
+  onInspect?: (turn: TurnView) => void;
+}
+
+/**
+ * Whether a row can keep the DOM it already has.
+ *
+ * Scrubbing re-folds the event log, which is cheap — 0.04ms for a 63-ply game — and hands back a
+ * completely new set of `TurnView` objects, which is not: React then re-rendered every turn in the
+ * panel on every step of the scrubber, and that re-render was most of what each step cost.
+ *
+ * A turn is append-only within itself, so for a given `key` the array *lengths* pin the content
+ * exactly. Comparing them is O(1) and cannot report equal for two different renderings.
+ */
+function sameTurn(before: TurnProps, after: TurnProps): boolean {
+  const a = before.turn;
+  const b = after.turn;
+  return (
+    before.filter === after.filter &&
+    before.open === after.open &&
+    before.name === after.name &&
+    before.onToggle === after.onToggle &&
+    before.onInspect === after.onInspect &&
+    a.key === b.key &&
+    a.san === b.san &&
+    a.live === b.live &&
+    a.ply === b.ply &&
+    a.colour === b.colour &&
+    a.reasoning.length === b.reasoning.length &&
+    a.output.length === b.output.length &&
+    a.tools.length === b.tools.length &&
+    a.illegal.length === b.illegal.length &&
+    a.said.length === b.said.length
+  );
+}
+
+const Turn = memo(function Turn({ turn, name, filter, open, onToggle, onInspect }: TurnProps) {
   const isWhite = turn.colour === "white";
   const detail = filter === "all";
+  const openSet = open ? open.split("|") : [];
+  const isOpen = (section: Section) => openSet.includes(section);
   const show = (section: Section) => detail && isOpen(section);
 
   /* White reads from the left, Black from the right — the side is what identifies the player, so
@@ -500,7 +541,7 @@ function Turn({
                 label="reasoning"
                 hint={sizeOf(turn.reasoning)}
                 open={isOpen("reasoning")}
-                onToggle={() => onToggle("reasoning")}
+                onToggle={() => onToggle(turn.key, "reasoning", isOpen("reasoning"))}
               />
             )}
 
@@ -525,7 +566,7 @@ function Turn({
                 label="output"
                 hint={sizeOf(turn.output)}
                 open={isOpen("output")}
-                onToggle={() => onToggle("output")}
+                onToggle={() => onToggle(turn.key, "output", isOpen("output"))}
               />
             )}
 
@@ -535,7 +576,7 @@ function Turn({
                 hint={turn.illegal.length > 0 ? `${turn.illegal.length} illegal` : undefined}
                 tone={turn.illegal.length > 0 ? "bad" : undefined}
                 open={isOpen("tools")}
-                onToggle={() => onToggle("tools")}
+                onToggle={() => onToggle(turn.key, "tools", isOpen("tools"))}
               />
             )}
 
@@ -545,7 +586,7 @@ function Turn({
             {onInspect && (
               <button
                 type="button"
-                onClick={onInspect}
+                onClick={() => onInspect(turn)}
                 className="inline-flex items-center border border-machine-deep bg-surface px-2 py-1 font-mono text-[9px] uppercase tracking-[0.1em] text-machine transition-colors hover:border-machine hover:text-ink-dim"
               >
                 raw
@@ -605,7 +646,7 @@ function Turn({
       </div>
     </div>
   );
-}
+}, sameTurn);
 
 /**
  * One tool call: the name, its arguments, and its result behind a disclosure.

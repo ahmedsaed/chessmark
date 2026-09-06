@@ -99,6 +99,24 @@ pnpm exec playwright test --project=public
 `http://localhost:3010`), so serving the front end anywhere else makes every browser-side fetch fail
 and the suite reports it as missing UI. That is the suite working.
 
+**Headless Chromium is a second download, and its absence looks like sixteen failures.** Since
+Playwright 1.49 headless mode launches `chromium_headless_shell`, a separate binary from the full
+`chromium` build — so a machine that has one may not have the other, and every test fails at
+`browserType.launch` with *"Executable doesn't exist"*. The `playwright` MCP server ships its own
+browser and does **not** satisfy the test runner. Install it:
+
+```
+cd apps/web && pnpm exec playwright install chromium
+```
+
+The full build works too if you would rather not download a second one — `use: { channel: "chromium" }`
+selects it, and it is what this repo was verified against. Do not commit that override: CI installs
+the shell, and the shell is what CI runs.
+
+**Migrations are part of the running stack.** `global-setup.ts` seeds through the real queue, so a
+database behind `head` fails there — `relation "tournaments" does not exist`, reported as a setup
+error rather than a test failure. `make migrate` first if you have just changed branches.
+
 ### Four traps
 
 1. **A message's content is not always a string.** By the time it reaches the provider, the
@@ -125,6 +143,50 @@ Components are covered by Playwright rather than a jsdom stack.
 
 `game/` is held at high coverage and is **pure by enforcement** — a test asserts it imports nothing
 from `db/`, `agents/` or `api/`.
+
+## A read endpoint is measured when it is written
+
+**How the leaderboard reached 295 queries for 37 games: nothing was ever wrong.** Each addition read
+one more thing per game, every one was correct, and no test could tell 8 queries from 295. It was
+found by a person saying the site felt slow, months later, by which point four separate call sites
+were looping over the same archive.
+
+So a new endpoint that returns a **list** — or anything derived from every game — is measured on the
+way in, not after somebody complains:
+
+```python
+statements: list[str] = []
+
+def record(conn, cursor, statement, *args):
+    statements.append(statement)
+
+sa.event.listen(db.bind.sync_engine, "before_cursor_execute", record)
+```
+
+**Assert against growth, not a magic number.** Build the endpoint's answer at one row, then at
+several, and assert the count did not move. A fixed bound rots the moment a legitimate join is
+added; `seven == one` stays true for any correct implementation and fails for every per-row read.
+`test_the_leaderboard_costs_a_fixed_number_of_queries` is the worked example, and it was confirmed
+to fail — 8 queries at one game, 14 at seven — when the loop was put back.
+
+Two things make this cheap to get right the first time:
+
+- **Read set-wise, then group in Python.** One query per table, keyed by `(game, player)`, beats a
+  loop that is easier to write. `bench.service.scan` is the shape.
+- **Ship a summary; make the payload opt-in.** `/games/{id}/turns` shipped every verbatim provider
+  payload to every caller because the endpoint that had them was the one that already existed.
+  Nothing read them. If a field is only wanted behind a click, it belongs behind a query parameter
+  or its own route.
+
+**Timing tests do not do this job.** They pass on a fast machine with the bug still in place, and
+they fail on a loaded one with nothing wrong. Count statements.
+
+**And ask whether the work belongs on the read at all.** The leaderboard was not merely reading
+per game — it was recomputing the entire ranking on every request, for four pages, two of which
+display no rating. Making the computation cheap was the smaller half; moving it off the read path
+and behind a fingerprint was the fix ([ADR-0032](adr/0032-the-leaderboard-is-stored-not-recomputed-per-request.md)).
+A cached result needs a test that it **cannot be served stale** — `test_snapshot.py` asserts that a
+new game, a tampered fingerprint and an empty table all rebuild rather than publish an old number.
 
 ## Writing a test that would have caught the bug
 

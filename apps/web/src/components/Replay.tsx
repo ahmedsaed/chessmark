@@ -13,8 +13,7 @@
  * and a locally-derived position cannot be desynced by a malformed payload.
  */
 
-import { useMemo, useState } from "react";
-import { Chess } from "chess.js";
+import { useCallback, useMemo, useState } from "react";
 
 import { Board } from "@/components/Board";
 import { EventStream } from "@/components/EventStream";
@@ -23,6 +22,7 @@ import { RawTranscript } from "@/components/RawTranscript";
 import { Scrubber } from "@/components/Scrubber";
 import { PlayerBar } from "@/components/PlayerBar";
 import { StatsRail } from "@/components/StatsRail";
+import { buildFrames } from "@/lib/animation";
 import { eventsThroughPly, plyCount, turnIdsByPly } from "@/lib/replay";
 import { foldEvents } from "@/lib/turns";
 import type { GameDetail, GameEvent, TurnSummary, TurnView } from "@/lib/types";
@@ -50,30 +50,30 @@ export function Replay({
   const [speed, setSpeed] = useState(1);
   const [inspecting, setInspecting] = useState<TurnView | null>(null);
 
-  const { turns, moves, ended, notices } = useMemo(
+  const { turns, ended, notices } = useMemo(
     () => foldEvents(eventsThroughPly(events, ply), []),
     [events, ply],
   );
 
-  const { fen, lastMove, toMove } = useMemo(() => {
-    const board = new Chess(game.start_fen);
-    let last: { from: string; to: string } | null = null;
+  /* Every position, derived once. Scrubbing used to rebuild the board from the starting position
+     on every step — a `new Chess()` and the whole game replayed through it, which is ~3.4ms for a
+     63-ply game and grows with its length. The moves still come from the event log rather than
+     from `game.moves`, so replay is reading the same rows a spectator saw (ADR-0008); only the
+     *number of times* it reads them has changed.
 
-    for (const san of moves) {
-      try {
-        const move = board.move(san);
-        last = { from: move.from, to: move.to };
-      } catch {
-        break;
-      }
-    }
+     `buildFrames` is the same function the landing page's self-playing thumbnails use, so the two
+     cannot disagree about what a position is. */
+  const frames = useMemo(
+    () => buildFrames(game.start_fen, foldEvents(events, []).moves),
+    [game.start_fen, events],
+  );
 
-    return {
-      fen: board.fen(),
-      lastMove: last,
-      toMove: board.isGameOver() ? null : board.turn() === "w" ? "white" : "black",
-    } as const;
-  }, [moves, game.start_fen]);
+  const frame = frames[Math.min(ply, frames.length - 1)] ?? frames[0];
+  const fen = frame.fen;
+  const lastMove = frame.lastMove;
+  /* Field two of a FEN is the side to move. Cheaper than a `Chess` instance, and the position
+     mid-scrub is never terminal — the final ply is handled by `atEnd` below. */
+  const toMove = fen.split(" ")[1] === "w" ? "white" : "black";
 
   /* Captures at the ply being shown, not at the end — scrubbing back should show the material as
      it stood then, which is half of what makes a replay worth scrubbing. */
@@ -83,6 +83,12 @@ export function Replay({
   }, [fen]);
 
   const turnIds = useMemo(() => turnIdsByPly(turnRows), [turnRows]);
+
+  /* Stable, so `EventStream`'s memoised rows can skip a render they do not need. */
+  const inspect = useCallback(
+    (turn: TurnView) => setInspecting((current) => (turnIds.has(turn.ply) ? turn : current)),
+    [turnIds],
+  );
   const focus = turns.at(-1) ?? null;
 
   // At the end of a finished game nobody is to move, whatever chess.js thinks. Most of our games
@@ -142,7 +148,7 @@ export function Replay({
             players={game.players}
             emptyMessage="The starting position — step forward to begin."
             focusKey={focus?.key ?? null}
-            onInspect={(turn) => turnIds.has(turn.ply) && setInspecting(turn)}
+            onInspect={inspect}
             header={
               /* The transport sits with the conversation rather than under the board: it is what
                  scrubs both, and taking it out of the centre column gives the board back the

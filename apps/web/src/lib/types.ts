@@ -446,3 +446,16 @@ export interface TournamentDetail extends TournamentSummary {
   pairings: TournamentPairing[];
   games: GameSummary[];
 }
+
+/**
+ * The counts behind the ranking, without the ranking (ADR-0032).
+ *
+ * `/about` and `/methodology` display these and no rating. They used to fetch the whole leaderboard
+ * to print them — a page of prose paying for a Glicko-2 run.
+ */
+export interface BenchSummary {
+  games_counted: number;
+  games_excluded: number;
+  games_finished: number;
+  prompt_version: string | null;
+}

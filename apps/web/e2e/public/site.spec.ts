@@ -129,3 +129,30 @@ test("an unknown tournament is a 404, not a crash", async ({ page }) => {
 
   expect(response?.status()).toBe(404);
 });
+
+
+// ====================================================================== streaming vs. status
+
+/**
+ * A missing page must answer `404`, and a `loading.tsx` above it silently prevents that.
+ *
+ * The boundary makes its whole segment stream, and a streamed response commits its status line
+ * before the page body runs — so `notFound()` renders the right page under a `200`. Search engines
+ * and link checkers read the status, not the page.
+ *
+ * It is an easy regression to reintroduce, because the fix for a slow-feeling click is exactly a
+ * `loading.tsx` and the damage is invisible in a browser. The three routes that can 404 are
+ * asserted together so that adding one boundary "for consistency" fails here rather than in
+ * production.
+ */
+for (const [what, path] of [
+  ["a game", "/games/00000000-0000-0000-0000-000000000000"],
+  ["a model", "/models/nobody/nothing"],
+  ["a tournament", "/tournaments/never-happened"],
+] as const) {
+  test(`${what} that does not exist answers 404, not a streamed 200`, async ({ page }) => {
+    const response = await page.goto(path);
+
+    expect(response?.status()).toBe(404);
+  });
+}

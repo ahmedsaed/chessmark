@@ -899,6 +899,21 @@ class Leaderboard(Schema):
     periods: int = 0
 
 
+class BenchSummary(Schema):
+    """How many games count, and how many did not — without the ranking.
+
+    `/about` and `/methodology` display these three numbers and **no rating at all**. They were
+    fetching the whole leaderboard to print them, and `/about` additionally read 200 game summaries
+    to arrive at a single integer. A page should fetch what it displays.
+    """
+
+    games_counted: int = 0
+    games_excluded: int = 0
+    #: Every game that has ended, counted or not — the denominator those pages quote.
+    games_finished: int = 0
+    prompt_version: str | None = None
+
+
 # ---------------------------------------------------------------------- tournaments
 
 

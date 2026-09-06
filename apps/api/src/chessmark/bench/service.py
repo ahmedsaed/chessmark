@@ -27,9 +27,9 @@ from chessmark.db.enums import GameStatus
 from chessmark.db.models import (
     Game,
     LlmCall,
+    ModelEndpoint,
     ModelRegistry,
     Player,
-    Rating,
     TournamentGame,
     Turn,
 )
@@ -107,27 +107,194 @@ class Aggregate:
         return self.total_cost_usd / self.games if self.games else Decimal(0)
 
 
-async def _facts_for(session: AsyncSession, game: Game, players: list[Player]) -> GameFacts:
-    """Everything `judge` needs, read once per game."""
-    used: dict[uuid.UUID, tuple[str, ...]] = {}
-    rows = await session.execute(
-        sa.select(Turn.player_id, LlmCall.provider)
-        .join(LlmCall, LlmCall.turn_id == Turn.id)
-        .where(Turn.game_id == game.id, LlmCall.provider.is_not(None))
-        .distinct()
-    )
-    for player_id, provider in rows:
-        used[player_id] = (*used.get(player_id, ()), str(provider))
+#: The statuses a game must have reached before it can be judged at all.
+TERMINAL = (GameStatus.FINISHED, GameStatus.ABORTED)
 
-    return GameFacts(
-        is_ranked=game.is_ranked,
-        termination=game.termination,
-        prompt_version=game.prompt_version,
-        pinned_providers=tuple(_pinned(p) for p in players),
-        used_providers=tuple(used.get(p.id, ()) for p in players),
-        model_slugs=tuple(str((p.sampling or {}).get("model") or "") for p in players),
-        trash_talk_enabled=game.trash_talk_enabled,
+
+@dataclass(slots=True)
+class Scan:
+    """One batched read of every eligible game, its seats, and their precisions.
+
+    Every eligibility decision the leaderboard makes comes from here, and it is deliberately a
+    handful of set-based queries rather than a loop. The first version read per game — seats, then
+    providers, then a precision lookup per seat — which is four round trips a game before any
+    arithmetic happens, and the callers then ran the whole loop again: `compute_ratings` scanned
+    twice (`ratable_games` and `excluded_games`), the route scanned a third time for the
+    aggregates, and `ratings_by_key` a fourth. Thirty-seven games cost 295 queries and a fifth of
+    a second, on the critical path of four pages.
+
+    Scanning once and grouping in Python is the same answer in seven queries, and it stays seven.
+    """
+
+    counted: list[tuple[Game, list[Player], dict[uuid.UUID, str]]] = field(default_factory=list)
+    excluded: list[Excluded] = field(default_factory=list)
+
+
+def _finished_ids(tournament_id: uuid.UUID | None) -> sa.Select[tuple[uuid.UUID]]:
+    """The ids `_finished` selects, as a subquery the batched reads can filter on.
+
+    Same `where` clause, same scope rule (ADR-0027) — expressed as ids so every query below can
+    narrow itself without repeating the join.
+    """
+    query = sa.select(Game.id).where(Game.status.in_(TERMINAL))
+    if tournament_id is not None:
+        query = query.join(TournamentGame, TournamentGame.game_id == Game.id).where(
+            TournamentGame.tournament_id == tournament_id
+        )
+    return query
+
+
+async def _seats(
+    session: AsyncSession, tournament_id: uuid.UUID | None
+) -> dict[uuid.UUID, list[Player]]:
+    """Every seat of every eligible game, grouped by game.
+
+    Ordered by colour so a rebuild is byte-identical: the seat order feeds the `pinned`/`used`
+    tuples `judge` zips, and an unordered read made "recomputing reproduces the same ratings"
+    true only by luck.
+    """
+    seats: dict[uuid.UUID, list[Player]] = {}
+    rows = await session.scalars(
+        sa.select(Player)
+        .where(Player.game_id.in_(_finished_ids(tournament_id)))
+        .order_by(Player.game_id, Player.colour)
     )
+    for player in rows:
+        seats.setdefault(player.game_id, []).append(player)
+    return seats
+
+
+async def _providers_used(
+    session: AsyncSession, tournament_id: uuid.UUID | None
+) -> dict[tuple[uuid.UUID, uuid.UUID], tuple[str, ...]]:
+    """Which endpoints actually served each seat, keyed by `(game, player)`.
+
+    A seat served by more than one is what excludes a game (ADR-0015), so this is the fact the
+    whole eligibility rule turns on.
+    """
+    used: dict[tuple[uuid.UUID, uuid.UUID], tuple[str, ...]] = {}
+    rows = await session.execute(
+        sa.select(Turn.game_id, Turn.player_id, LlmCall.provider)
+        .join(LlmCall, LlmCall.turn_id == Turn.id)
+        .where(Turn.game_id.in_(_finished_ids(tournament_id)), LlmCall.provider.is_not(None))
+        .distinct()
+        .order_by(Turn.game_id, Turn.player_id, LlmCall.provider)
+    )
+    for game_id, player_id, provider in rows:
+        key = (game_id, player_id)
+        used[key] = (*used.get(key, ()), str(provider))
+    return used
+
+
+async def _served_quantization(
+    session: AsyncSession, tournament_id: uuid.UUID | None
+) -> dict[tuple[uuid.UUID, uuid.UUID], str]:
+    """The precision that actually served each seat, for games played before pinning existed."""
+    rows = await session.execute(
+        sa.select(Turn.game_id, Turn.player_id, ModelEndpoint.quantization)
+        .join(LlmCall, LlmCall.turn_id == Turn.id)
+        .join(ModelRegistry, ModelRegistry.openrouter_id == LlmCall.model_slug)
+        .join(
+            ModelEndpoint,
+            sa.and_(
+                ModelEndpoint.model_id == ModelRegistry.id,
+                ModelEndpoint.provider_name == LlmCall.provider,
+            ),
+        )
+        .where(Turn.game_id.in_(_finished_ids(tournament_id)))
+        .distinct()
+        .order_by(Turn.game_id, Turn.player_id, ModelEndpoint.quantization)
+    )
+    return {
+        (game_id, player_id): (quantization or "unknown")
+        for game_id, player_id, quantization in rows
+    }
+
+
+async def _endpoint_quantization(session: AsyncSession) -> dict[tuple[uuid.UUID, str], str]:
+    """`(model, provider) -> precision` for the whole endpoint table.
+
+    Small enough to read whole — a few hundred rows — and reading it whole replaces one query per
+    seat per game.
+    """
+    rows = await session.execute(
+        sa.select(ModelEndpoint.model_id, ModelEndpoint.provider_name, ModelEndpoint.quantization)
+    )
+    return {
+        (model_id, provider_name): quantization
+        for model_id, provider_name, quantization in rows
+        if quantization is not None
+    }
+
+
+async def scan(
+    session: AsyncSession,
+    *,
+    prompt_version: str | None = PROMPT_VERSION,
+    tournament_id: uuid.UUID | None = None,
+) -> Scan:
+    """Judge every eligible game in one pass, batching every read.
+
+    Returns the games that count *and* the ones that did not with their reasons, because both come
+    from the same verdict and computing them separately is how they drift apart.
+    """
+    games = list(await session.scalars(_finished(tournament_id)))
+    if not games:
+        return Scan()
+
+    seats = await _seats(session, tournament_id)
+    used = await _providers_used(session, tournament_id)
+    served = await _served_quantization(session, tournament_id)
+    endpoints = await _endpoint_quantization(session)
+
+    result = Scan()
+    for game in games:
+        players = seats.get(game.id, [])
+        facts = GameFacts(
+            is_ranked=game.is_ranked,
+            termination=game.termination,
+            prompt_version=game.prompt_version,
+            pinned_providers=tuple(_pinned(p) for p in players),
+            used_providers=tuple(used.get((game.id, p.id), ()) for p in players),
+            model_slugs=tuple(str((p.sampling or {}).get("model") or "") for p in players),
+            trash_talk_enabled=game.trash_talk_enabled,
+        )
+
+        verdict = judge(facts, prompt_version=prompt_version)
+        if not verdict:
+            result.excluded.append(Excluded(game_id=game.id, reason=verdict.reason))
+            continue
+
+        result.counted.append((game, players, _quantizations(game.id, players, served, endpoints)))
+
+    return result
+
+
+def _quantizations(
+    game_id: uuid.UUID,
+    players: list[Player],
+    served: dict[tuple[uuid.UUID, uuid.UUID], str],
+    endpoints: dict[tuple[uuid.UUID, str], str],
+) -> dict[uuid.UUID, str]:
+    """The precision each seat played at.
+
+    From the **pinned** endpoint first, because that is where the contestant's identity is decided —
+    at match creation, before a single call is made (ADR-0015). Inferring it afterwards from
+    `llm_calls` is strictly worse: a game that made no calls, or whose provider row has since been
+    renamed, silently becomes `unknown` and lands in the wrong leaderboard row.
+
+    Falls back to what actually served, for games played before pinning existed.
+    """
+    quantizations: dict[uuid.UUID, str] = {}
+    for player in players:
+        provider = _pinned(player)
+        pinned = (
+            endpoints.get((player.model_id, provider))
+            if provider is not None and player.model_id is not None
+            else None
+        )
+        quantizations[player.id] = pinned or served.get((game_id, player.id)) or "unknown"
+    return quantizations
 
 
 def _pinned(player: Player) -> str | None:
@@ -143,9 +310,7 @@ def _score(result: GameResult, colour: Colour) -> float:
     return 1.0 if colour is Colour.BLACK else 0.0
 
 
-async def _contestant(
-    session: AsyncSession, player: Player, quantizations: dict[uuid.UUID, str]
-) -> Contestant | None:
+def _contestant(player: Player, quantizations: dict[uuid.UUID, str]) -> Contestant | None:
     if player.model_id is None:
         return None
     slug = str((player.sampling or {}).get("model") or "")
@@ -156,56 +321,6 @@ async def _contestant(
         model_slug=slug,
         quantization=quantizations.get(player.id, "unknown"),
     )
-
-
-async def _quantization_by_player(
-    session: AsyncSession, game_id: uuid.UUID, players: list[Player]
-) -> dict[uuid.UUID, str]:
-    """The precision each seat played at.
-
-    From the **pinned** endpoint first, because that is where the contestant's identity is decided —
-    at match creation, before a single call is made (ADR-0015). Inferring it afterwards from
-    `llm_calls` was the first version and it is strictly worse: a game that made no calls, or whose
-    provider row has since been renamed, silently becomes `unknown` and lands in the wrong
-    leaderboard row.
-
-    Falls back to what actually served, for games played before pinning existed.
-    """
-    from chessmark.db.models import ModelEndpoint
-
-    pinned: dict[uuid.UUID, str] = {}
-    for player in players:
-        provider = _pinned(player)
-        if provider is None or player.model_id is None:
-            continue
-        quantization = await session.scalar(
-            sa.select(ModelEndpoint.quantization).where(
-                ModelEndpoint.model_id == player.model_id,
-                ModelEndpoint.provider_name == provider,
-            )
-        )
-        if quantization is not None:
-            pinned[player.id] = quantization
-
-    rows = await session.execute(
-        sa.select(Turn.player_id, ModelEndpoint.quantization)
-        .join(LlmCall, LlmCall.turn_id == Turn.id)
-        .join(ModelRegistry, ModelRegistry.openrouter_id == LlmCall.model_slug)
-        .join(
-            ModelEndpoint,
-            sa.and_(
-                ModelEndpoint.model_id == ModelRegistry.id,
-                ModelEndpoint.provider_name == LlmCall.provider,
-            ),
-        )
-        .where(Turn.game_id == game_id)
-        .distinct()
-    )
-    served = {player_id: (quantization or "unknown") for player_id, quantization in rows}
-
-    return {
-        player.id: pinned.get(player.id) or served.get(player.id, "unknown") for player in players
-    }
 
 
 def _finished(tournament_id: uuid.UUID | None) -> sa.Select[tuple[Game]]:
@@ -232,21 +347,12 @@ async def ratable_games(
 ) -> list[tuple[Game, list[Player], dict[uuid.UUID, str]]]:
     """Every game that may move a rating, with its seats and their precisions.
 
-    One query shared by the ratings, the aggregates, and the drill-down. Three call sites deciding
-    eligibility separately is three chances for a leaderboard whose rating, whose illegal-move rate
-    and whose "games behind this row" cover different sets of games.
+    One eligibility decision shared by the ratings, the aggregates, and the drill-down. Three call
+    sites deciding it separately is three chances for a leaderboard whose rating, whose
+    illegal-move rate and whose "games behind this row" cover different sets of games.
     """
-    counted: list[tuple[Game, list[Player], dict[uuid.UUID, str]]] = []
-
-    games = list(await session.scalars(_finished(tournament_id)))
-
-    for game in games:
-        players = list(await session.scalars(sa.select(Player).where(Player.game_id == game.id)))
-        if not judge(await _facts_for(session, game, players), prompt_version=prompt_version):
-            continue
-        counted.append((game, players, await _quantization_by_player(session, game.id, players)))
-
-    return counted
+    scanned = await scan(session, prompt_version=prompt_version, tournament_id=tournament_id)
+    return scanned.counted
 
 
 async def compute_ratings(
@@ -255,6 +361,7 @@ async def compute_ratings(
     prompt_version: str | None = PROMPT_VERSION,
     tau: float = 0.5,
     tournament_id: uuid.UUID | None = None,
+    scanned: Scan | None = None,
 ) -> RatingRun:
     """Rebuild every rating from every eligible game.
 
@@ -265,19 +372,22 @@ async def compute_ratings(
     Everything else is identical — the same eligibility, the same engine, the same daily periods —
     so the two numbers differ only in what they were computed over, which is the whole point of
     having a local one (ADR-0027).
+
+    `scanned` lets a caller that also wants the aggregates pay for the read once. Omitting it reads
+    afresh, which is what every test and script does.
     """
     system = Glicko2(tau=tau)
     run = RatingRun()
 
-    counted = await ratable_games(
-        session, prompt_version=prompt_version, tournament_id=tournament_id
-    )
-    run.excluded = await excluded_games(
-        session, prompt_version=prompt_version, tournament_id=tournament_id
-    )
+    if scanned is None:
+        scanned = await scan(session, prompt_version=prompt_version, tournament_id=tournament_id)
+
+    # The exclusions come from the pass that produced the inclusions. Computing them separately was
+    # a second identical sweep of every game, and two sweeps are two chances to disagree.
+    run.excluded = list(scanned.excluded)
 
     by_period: dict[int, list[tuple[Game, list[Player], dict[uuid.UUID, str]]]] = {}
-    for game, players, quantizations in counted:
+    for game, players, quantizations in scanned.counted:
         by_period.setdefault(period_of(game.ended_at or game.created_at), []).append(
             (game, players, quantizations)
         )
@@ -293,7 +403,7 @@ async def compute_ratings(
         for game, players, quantizations in by_period[period]:
             seats: list[tuple[Contestant, Player]] = []
             for player in players:
-                contestant = await _contestant(session, player, quantizations)
+                contestant = _contestant(player, quantizations)
                 if contestant is not None:
                     seats.append((contestant, player))
 
@@ -340,14 +450,16 @@ async def ratings_by_key(
     reader is looking at — and the alternative, averaging them, would invent a number no game
     produced.
     """
-    run = await compute_ratings(session, prompt_version=prompt_version, tournament_id=tournament_id)
+    # One scan for both halves: the rating, and the game counts that break a slug's ties.
+    scanned = await scan(session, prompt_version=prompt_version, tournament_id=tournament_id)
+    run = await compute_ratings(
+        session, prompt_version=prompt_version, tournament_id=tournament_id, scanned=scanned
+    )
 
     played: dict[Contestant, int] = {}
-    for _game, players, quantizations in await ratable_games(
-        session, prompt_version=prompt_version, tournament_id=tournament_id
-    ):
+    for _game, players, quantizations in scanned.counted:
         for player in players:
-            contestant = await _contestant(session, player, quantizations)
+            contestant = _contestant(player, quantizations)
             if contestant is not None:
                 played[contestant] = played.get(contestant, 0) + 1
 
@@ -373,57 +485,37 @@ async def excluded_games(
     Reported rather than discarded. "Some games are excluded" invites disbelief; a list of ids and
     reasons is checkable (BENCH-10).
     """
-    excluded: list[Excluded] = []
-
-    games = list(await session.scalars(_finished(tournament_id)))
-
-    for game in games:
-        players = list(await session.scalars(sa.select(Player).where(Player.game_id == game.id)))
-        verdict = judge(await _facts_for(session, game, players), prompt_version=prompt_version)
-        if not verdict:
-            excluded.append(Excluded(game_id=game.id, reason=verdict.reason))
-
-    return excluded
-
-
-async def store_ratings(session: AsyncSession, run: RatingRun) -> int:
-    """Replace the stored ratings with a freshly computed set.
-
-    A wholesale replace, not an upsert: the run *is* the answer, and leaving a row behind for a
-    contestant that no longer qualifies would be a rating nothing supports.
-    """
-    await session.execute(sa.delete(Rating))
-
-    period = run.periods[-1] if run.periods else 0
-    for contestant, rating in run.ratings.items():
-        session.add(
-            Rating(
-                model_id=contestant.model_id,
-                quantization=contestant.quantization,
-                period=period,
-                rating=rating.rating,
-                rating_deviation=rating.rd,
-                volatility=rating.volatility,
-                games_played=0,
-            )
-        )
-    await session.flush()
-    return len(run.ratings)
+    scanned = await scan(session, prompt_version=prompt_version, tournament_id=tournament_id)
+    return scanned.excluded
 
 
 async def compute_aggregates(
-    session: AsyncSession, *, prompt_version: str | None = PROMPT_VERSION
+    session: AsyncSession,
+    *,
+    prompt_version: str | None = PROMPT_VERSION,
+    scanned: Scan | None = None,
 ) -> dict[Contestant, Aggregate]:
     """Per-contestant metrics over the same games the ratings used.
 
-    The *same* eligibility query, deliberately: a leaderboard whose rating and whose illegal-move
+    The *same* eligibility scan, deliberately: a leaderboard whose rating and whose illegal-move
     rate covered different sets of games would be quietly incoherent.
+
+    The two counts a seat needs — moves played, and total latency across its calls — are read for
+    every seat at once. Reading them per seat is two round trips per player per game, and it was
+    most of what made this function's cost grow with the archive.
     """
+    if scanned is None:
+        scanned = await scan(session, prompt_version=prompt_version)
+
+    seat_ids = [player.id for _, players, _ in scanned.counted for player in players]
+    moves_by_player = await _moves_played(session, seat_ids)
+    calls_by_player = await _call_totals(session, seat_ids)
+
     aggregates: dict[Contestant, Aggregate] = {}
 
-    for game, players, quantizations in await ratable_games(session, prompt_version=prompt_version):
+    for game, players, quantizations in scanned.counted:
         for player in players:
-            contestant = await _contestant(session, player, quantizations)
+            contestant = _contestant(player, quantizations)
             if contestant is None:
                 continue
 
@@ -442,24 +534,44 @@ async def compute_aggregates(
             else:
                 entry.losses += 1
 
-            moves = await session.scalar(
-                sa.select(sa.func.count())
-                .select_from(Turn)
-                .where(Turn.player_id == player.id, Turn.ply_number.is_not(None))
-            )
-            entry.moves_played += int(moves or 0)
-
-            latency = await session.execute(
-                sa.select(sa.func.coalesce(sa.func.sum(LlmCall.latency_ms), 0), sa.func.count())
-                .select_from(LlmCall)
-                .join(Turn, Turn.id == LlmCall.turn_id)
-                .where(Turn.player_id == player.id)
-            )
-            total_latency, calls = latency.one()
-            entry.latency_ms_total += int(total_latency or 0)
-            entry.llm_calls += int(calls or 0)
+            entry.moves_played += moves_by_player.get(player.id, 0)
+            total_latency, calls = calls_by_player.get(player.id, (0, 0))
+            entry.latency_ms_total += total_latency
+            entry.llm_calls += calls
 
     return aggregates
+
+
+async def _moves_played(session: AsyncSession, player_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+    """Turns that produced a ply, per seat — the denominator of the illegal-move rate."""
+    if not player_ids:
+        return {}
+    rows = await session.execute(
+        sa.select(Turn.player_id, sa.func.count())
+        .where(Turn.player_id.in_(player_ids), Turn.ply_number.is_not(None))
+        .group_by(Turn.player_id)
+    )
+    return {player_id: int(count) for player_id, count in rows}
+
+
+async def _call_totals(
+    session: AsyncSession, player_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple[int, int]]:
+    """`(total latency, call count)` per seat, for the mean latency."""
+    if not player_ids:
+        return {}
+    rows = await session.execute(
+        sa.select(
+            Turn.player_id,
+            sa.func.coalesce(sa.func.sum(LlmCall.latency_ms), 0),
+            sa.func.count(),
+        )
+        .select_from(LlmCall)
+        .join(Turn, Turn.id == LlmCall.turn_id)
+        .where(Turn.player_id.in_(player_ids))
+        .group_by(Turn.player_id)
+    )
+    return {player_id: (int(total or 0), int(calls or 0)) for player_id, total, calls in rows}
 
 
 def is_forfeit(termination: Termination | None) -> bool:

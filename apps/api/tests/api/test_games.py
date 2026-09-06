@@ -130,12 +130,30 @@ async def test_turns_expose_tool_calls(
 ) -> None:
     await run_next(make_worker(plays(["e4"])), game.queue)
 
-    body = (await client.get(f"/games/{game.game.id}/turns")).json()
+    body = (await client.get(f"/games/{game.game.id}/turns?include_calls=true")).json()
 
     assert len(body) == 1
     assert body[0]["status"] == "completed"
     assert body[0]["tool_calls"][0]["name"] == "make_move"
     assert body[0]["tool_calls"][0]["arguments"] == {"move": "e4"}
+
+
+async def test_turns_omit_the_raw_calls_unless_asked(
+    client: AsyncClient, db: AsyncSession, game: Fixture, make_worker
+) -> None:
+    """The verbatim payloads are the heaviest thing the API serves and the replay never reads
+    them — it opens one turn at a time through `/turns/{id}/raw` (LOG-07). Shipping every one of
+    them with the turn list made the replay page an order of magnitude heavier than it needed to
+    be, so they are opt-in."""
+    await run_next(make_worker(plays(["e4"])), game.queue)
+
+    body = (await client.get(f"/games/{game.game.id}/turns")).json()
+
+    assert body[0]["tool_calls"] == []
+    assert body[0]["llm_calls"] == []
+    # The counts survive, so a client still knows there is something to open.
+    assert body[0]["tool_call_count"] == 1
+    assert body[0]["llm_call_count"] >= 1
 
 
 # ====================================================================== reasoning privacy
@@ -156,11 +174,14 @@ async def test_reasoning_is_withheld_while_a_person_is_playing(
     )
     await run_next(worker, human.queue)
 
-    body = (await client.get(f"/games/{human.game.id}/turns")).json()
+    full = f"/games/{human.game.id}/turns?include_calls=true"
+    body = (await client.get(full)).json()
 
     assert body[0]["reasoning_available"] is False
     assert body[0]["llm_calls"][0]["reasoning"] is None
-    assert "Qh5" not in (await client.get(f"/games/{human.game.id}/turns")).text
+    # Asserted against the form that *does* carry reasoning, or the check passes for the wrong
+    # reason: the summary form has no `llm_calls` to leak from.
+    assert "Qh5" not in (await client.get(full)).text
 
 
 async def test_reasoning_is_published_live_for_a_model_game(
@@ -179,10 +200,11 @@ async def test_reasoning_is_published_live_for_a_model_game(
     )
     await run_next(worker, game.queue)
 
-    body = (await client.get(f"/games/{game.game.id}/turns")).json()
+    full = f"/games/{game.game.id}/turns?include_calls=true"
+    body = (await client.get(full)).json()
 
     assert body[0]["reasoning_available"] is True
-    assert "Qh5" in (await client.get(f"/games/{game.game.id}/turns")).text
+    assert "Qh5" in (await client.get(full)).text
 
 
 async def test_reasoning_is_revealed_once_the_game_ends(
@@ -193,7 +215,7 @@ async def test_reasoning_is_revealed_once_the_game_ends(
     worker = make_worker(scripted(step(tool_call("resign"), reasoning="This position is lost.")))
     await run_next(worker, game.queue)
 
-    body = (await client.get(f"/games/{game.game.id}/turns")).json()
+    body = (await client.get(f"/games/{game.game.id}/turns?include_calls=true")).json()
 
     assert body[0]["reasoning_available"] is True
     assert body[0]["llm_calls"][0]["reasoning"] == "This position is lost."
