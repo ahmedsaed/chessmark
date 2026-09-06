@@ -165,7 +165,8 @@ regression, not a trade-off.
 
 | | budget |
 | --- | --- |
-| `GET /leaderboard` | **7 queries, flat.** Not per game — `bench.service.scan` reads the whole archive in one pass, and `test_the_leaderboard_costs_a_fixed_number_of_queries` fails if it starts growing again |
+| `GET /leaderboard` | **3 queries: the stored run, and two aggregates that check it is current.** Not computed per request at all ([ADR-0032](docs/adr/0032-the-leaderboard-is-stored-not-recomputed-per-request.md)). When it *is* rebuilt, `bench.service.scan` reads the whole archive in one pass — 7 queries flat, and `test_the_leaderboard_costs_a_fixed_number_of_queries` fails if that starts growing again |
+| `GET /leaderboard/summary` | the counts without the ranking. `/about` and `/methodology` show no rating, so they ask for three integers rather than the board |
 | `GET /games/{id}/turns` | summary only. The verbatim payloads are `?include_calls=true`, and neither the replay nor the live view asks for them — the inspector opens one turn through `/turns/{id}/raw` (LOG-07) |
 | the replay scrubber | O(1) per step. Positions come from one `buildFrames` table and `EventStream`'s rows are memoised on content — both pinned by tests in `replay.test.ts` |
 
@@ -174,7 +175,11 @@ New endpoints are held to this on the way in, not audited into it later — see 
 Three traps worth knowing before touching this:
 
 * **The leaderboard sits on the critical path of four pages** — `/`, `/about`, `/methodology` and
-  `/leaderboard` all await it. A slow query there is not one slow page.
+  `/leaderboard` all await it. A slow query there is not one slow page. Two of those show no rating
+  at all, which is what `/leaderboard/summary` is for: **a page fetches what it displays.**
+* **The stored ranking is a cache and must stay one.** It is rebuilt by the first read whose
+  fingerprint disagrees with the games — never inside the transaction that ends a game, because a
+  derived value must not be able to roll back a real result (invariant 1).
 * **The landing hero needs `GameDetail.moves`, not the event log.** Folding the log back down to a
   move list fetched every reasoning trace and tool call to derive an array of SAN strings, on the
   one page every visitor loads first.

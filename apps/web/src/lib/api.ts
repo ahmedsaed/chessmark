@@ -7,6 +7,7 @@
 
 import { originFromEnv } from "@/lib/env";
 import type {
+  BenchSummary,
   GameDetail,
   GameEvent,
   GameResult,
@@ -169,6 +170,21 @@ export function listTurns(id: string): Promise<TurnSummary[]> {
  * Never throws: an empty ranking is the honest state before any ranked game has been played, and
  * a blank page would be a worse way to say so.
  */
+/**
+ * How many games count and how many did not — without the ranking.
+ *
+ * The pages that quote these numbers show no rating, so they ask for the numbers rather than the
+ * board (ADR-0032). Never throws, for the same reason `getLeaderboard` does not.
+ */
+export async function getBenchSummary(): Promise<BenchSummary> {
+  try {
+    return await get<BenchSummary>("/leaderboard/summary");
+  } catch (error) {
+    reportFailure("/leaderboard/summary", error);
+    return { games_counted: 0, games_excluded: 0, games_finished: 0, prompt_version: null };
+  }
+}
+
 export async function getLeaderboard(): Promise<Leaderboard> {
   try {
     return await get<Leaderboard>("/leaderboard");

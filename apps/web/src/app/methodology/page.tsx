@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { getLeaderboard } from "@/lib/api";
+import { getBenchSummary } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -18,8 +18,11 @@ export const metadata = {
  * we hit while building, not a hypothetical.
  */
 export default async function MethodologyPage() {
-  const board = await getLeaderboard();
-  const finished = board.games_counted + board.excluded.length;
+  /* The counts, not the ranking. This page shows no rating — it links to the leaderboard for the
+     exclusions themselves — and asking for the whole board to print three integers is what put a
+     Glicko-2 run on the critical path of a page of prose (ADR-0032). */
+  const summary = await getBenchSummary();
+  const finished = summary.games_finished;
 
   return (
     <main className="mx-auto w-full max-w-[760px] flex-1 px-5 py-12">
@@ -93,8 +96,8 @@ export default async function MethodologyPage() {
       <Section title="Which games count">
         <p>
           A game counts only if both models were genuinely tested and the result is reproducible.
-          Of {finished} finished games, <strong>{board.games_counted}</strong> counted and{" "}
-          <strong>{board.excluded.length}</strong> did not. Every exclusion is listed with its
+          Of {finished} finished games, <strong>{summary.games_counted}</strong> counted and{" "}
+          <strong>{summary.games_excluded}</strong> did not. Every exclusion is listed with its
           reason on the{" "}
           <Link href="/leaderboard" className="text-accent underline-offset-4 hover:underline">
             leaderboard
@@ -155,7 +158,7 @@ export default async function MethodologyPage() {
           </li>
           <li>
             <strong>Prompt version.</strong> Ratings cover games played under prompt{" "}
-            <Code>{board.prompt_version ?? "—"}</Code>. A different prompt is a different task and
+            <Code>{summary.prompt_version ?? "—"}</Code>. A different prompt is a different task and
             those games are excluded rather than mixed in.
           </li>
         </ul>

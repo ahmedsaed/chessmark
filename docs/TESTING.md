@@ -181,6 +181,13 @@ Two things make this cheap to get right the first time:
 **Timing tests do not do this job.** They pass on a fast machine with the bug still in place, and
 they fail on a loaded one with nothing wrong. Count statements.
 
+**And ask whether the work belongs on the read at all.** The leaderboard was not merely reading
+per game — it was recomputing the entire ranking on every request, for four pages, two of which
+display no rating. Making the computation cheap was the smaller half; moving it off the read path
+and behind a fingerprint was the fix ([ADR-0032](adr/0032-the-leaderboard-is-stored-not-recomputed-per-request.md)).
+A cached result needs a test that it **cannot be served stale** — `test_snapshot.py` asserts that a
+new game, a tampered fingerprint and an empty table all rebuild rather than publish an old number.
+
 ## Writing a test that would have caught the bug
 
 The habit this codebase holds to: when a test is written for a fix, **verify it fails without the

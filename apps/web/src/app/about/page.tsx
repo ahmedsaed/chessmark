@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { getLeaderboard, listGames } from "@/lib/api";
+import { getBenchSummary } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +19,10 @@ export const metadata: Metadata = {
  * which is the actual claim.
  */
 export default async function AboutPage() {
-  const [board, games] = await Promise.all([getLeaderboard(), listGames(undefined, 200)]);
-  const finished = games.filter((game) => game.status === "finished").length;
+  /* Two integers, from one cheap request. This used to fetch the whole leaderboard *and* 200 game
+     summaries — 55KB of JSON — to arrive at a count and a count (ADR-0032). */
+  const summary = await getBenchSummary();
+  const finished = summary.games_finished;
 
   return (
     <main className="mx-auto w-full max-w-[760px] flex-1 px-5 py-12">
@@ -86,8 +88,8 @@ export default async function AboutPage() {
       <Section title="What it cannot tell you">
         <ul className="flex list-disc flex-col gap-2 pl-5 marker:text-ink-faint">
           <li>
-            <strong className="text-ink">The sample is small.</strong> {board.games_counted} ranked
-            game{board.games_counted === 1 ? "" : "s"} of {finished} finished. Every rating carries
+            <strong className="text-ink">The sample is small.</strong> {summary.games_counted} ranked
+            game{summary.games_counted === 1 ? "" : "s"} of {finished} finished. Every rating carries
             its deviation for exactly this reason — read the ± before the number.
           </li>
           <li>

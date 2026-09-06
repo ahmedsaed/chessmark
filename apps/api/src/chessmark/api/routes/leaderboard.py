@@ -11,6 +11,8 @@ indistinguishable from one that is wrong.
 
 from __future__ import annotations
 
+import uuid
+
 import sqlalchemy as sa
 from fastapi import APIRouter
 
@@ -18,35 +20,39 @@ from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.api.deps import SessionDep
 from chessmark.api.routes.games import _served_by_many as served_by_many
 from chessmark.api.schemas import (
+    BenchSummary,
     ExcludedGame,
     GameSummary,
     Leaderboard,
     LeaderboardRow,
 )
-from chessmark.bench.service import compute_aggregates, compute_ratings, ratable_games, scan
-from chessmark.db.models import ModelRegistry
+from chessmark.bench import snapshot
+from chessmark.bench.service import TERMINAL
+from chessmark.db.models import Game, ModelRegistry, Player
 
 router = APIRouter(prefix="/leaderboard", tags=["leaderboard"])
 
 
 @router.get("", response_model=Leaderboard)
 async def get_leaderboard(session: SessionDep) -> Leaderboard:
-    # One scan feeds both. The ratings and the aggregates have to cover the same games or the
-    # row is incoherent, and reading twice was both slower and a chance for them to disagree.
-    scanned = await scan(session, prompt_version=PROMPT_VERSION)
-    run = await compute_ratings(session, prompt_version=PROMPT_VERSION, scanned=scanned)
-    aggregates = await compute_aggregates(session, prompt_version=PROMPT_VERSION, scanned=scanned)
+    """The ranking, read from the run stored when the last game ended (ADR-0032).
 
+    No scan, no Glicko-2, no aggregates on a request. `snapshot.current` rebuilds first if the
+    stored run does not match the games behind it, so this is never the stale answer — it is either
+    the current one cheaply or the current one slowly.
+    """
+    stored = await snapshot.current(session, prompt_version=PROMPT_VERSION)
+
+    # Names are resolved here rather than stored, so renaming a model does not need a rebuild and
+    # cannot leave a snapshot showing a label the registry no longer uses.
     names = {row.id: row.display_name for row in await session.scalars(sa.select(ModelRegistry))}
 
     rows = [
-        LeaderboardRow.from_rating(
-            contestant,
-            rating,
-            aggregates.get(contestant),
-            display_name=names.get(contestant.model_id),
+        LeaderboardRow(
+            **row,
+            display_name=names.get(uuid.UUID(str(row["model_id"])), row["model_slug"]),
         )
-        for contestant, rating in run.ratings.items()
+        for row in stored["rows"]
     ]
 
     # Rating first, but a wide deviation is not a high rank — ties on rating go to whoever we are
@@ -55,10 +61,35 @@ async def get_leaderboard(session: SessionDep) -> Leaderboard:
 
     return Leaderboard(
         rows=rows,
-        games_counted=run.games_counted,
-        excluded=[ExcludedGame(game_id=e.game_id, reason=e.reason) for e in run.excluded],
+        games_counted=stored["games_counted"],
+        excluded=[
+            ExcludedGame(game_id=uuid.UUID(entry["game_id"]), reason=entry["reason"])
+            for entry in stored["excluded"]
+        ],
         prompt_version=PROMPT_VERSION,
-        periods=len(run.periods),
+        periods=stored["periods"],
+    )
+
+
+@router.get("/summary", response_model=BenchSummary)
+async def get_summary(session: SessionDep) -> BenchSummary:
+    """The counts, without the ranking.
+
+    `/about` and `/methodology` show these and no rating. Fetching the whole leaderboard to print
+    three integers is what put a Glicko-2 run on the critical path of a page of prose.
+
+    Registered **before** `/{model_slug:path}/games` so the path converter cannot swallow it.
+    """
+    stored = await snapshot.current(session, prompt_version=PROMPT_VERSION)
+    finished = await session.scalar(
+        sa.select(sa.func.count()).select_from(Game).where(Game.status.in_(TERMINAL))
+    )
+
+    return BenchSummary(
+        games_counted=stored["games_counted"],
+        games_excluded=len(stored["excluded"]),
+        games_finished=int(finished or 0),
+        prompt_version=PROMPT_VERSION,
     )
 
 
@@ -74,20 +105,33 @@ async def get_contestant_games(
     asking to be taken on faith. Filtered to the *ratable* games only, so this is exactly what moved
     the rating — not every game the model has ever played.
     """
-    counted = await ratable_games(session, prompt_version=PROMPT_VERSION)
-    served = await served_by_many(session, [game.id for game, _, _ in counted])
+    stored = await snapshot.current(session, prompt_version=PROMPT_VERSION)
 
-    summaries: list[GameSummary] = []
-    for game, players, quantizations in counted:
-        for player in players:
-            slug = str((player.sampling or {}).get("model") or "")
-            if slug != model_slug:
-                continue
-            if quantization and quantizations.get(player.id, "unknown") != quantization:
-                continue
-            summaries.append(
-                GameSummary.from_model(game, players, served_by=served.get(game.id, {}))
-            )
-            break
+    # The counted set travels with the run that counted it, so the drill-down does not scan either.
+    # Every published number has to be reachable from the games that produced it, and reaching them
+    # through a *different* eligibility pass is how "the games behind this row" drifts from the row.
+    wanted = [
+        game_id
+        for label, game_ids in stored["games_by_contestant"].items()
+        for game_id in game_ids
+        if label.split("@")[0] == model_slug
+        and (quantization is None or label.split("@", 1)[1] == quantization)
+    ]
+    if not wanted:
+        return []
 
-    return summaries
+    ids = [uuid.UUID(game_id) for game_id in wanted]
+    games = list(
+        await session.scalars(sa.select(Game).where(Game.id.in_(ids)).order_by(Game.created_at))
+    )
+    players = list(await session.scalars(sa.select(Player).where(Player.game_id.in_(ids))))
+    by_game: dict[uuid.UUID, list[Player]] = {}
+    for player in players:
+        by_game.setdefault(player.game_id, []).append(player)
+
+    served = await served_by_many(session, ids)
+
+    return [
+        GameSummary.from_model(game, by_game.get(game.id, []), served_by=served.get(game.id, {}))
+        for game in games
+    ]

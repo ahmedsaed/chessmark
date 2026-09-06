@@ -30,7 +30,6 @@ from chessmark.db.models import (
     ModelEndpoint,
     ModelRegistry,
     Player,
-    Rating,
     TournamentGame,
     Turn,
 )
@@ -488,31 +487,6 @@ async def excluded_games(
     """
     scanned = await scan(session, prompt_version=prompt_version, tournament_id=tournament_id)
     return scanned.excluded
-
-
-async def store_ratings(session: AsyncSession, run: RatingRun) -> int:
-    """Replace the stored ratings with a freshly computed set.
-
-    A wholesale replace, not an upsert: the run *is* the answer, and leaving a row behind for a
-    contestant that no longer qualifies would be a rating nothing supports.
-    """
-    await session.execute(sa.delete(Rating))
-
-    period = run.periods[-1] if run.periods else 0
-    for contestant, rating in run.ratings.items():
-        session.add(
-            Rating(
-                model_id=contestant.model_id,
-                quantization=contestant.quantization,
-                period=period,
-                rating=rating.rating,
-                rating_deviation=rating.rd,
-                volatility=rating.volatility,
-                games_played=0,
-            )
-        )
-    await session.flush()
-    return len(run.ratings)
 
 
 async def compute_aggregates(

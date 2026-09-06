@@ -36,6 +36,8 @@ supersedes the old one, rather than an edit.
 | [0028](0028-a-wider-prior-and-a-provisional-mark.md) | A wider prior, and a rating that says when it is not settled | Amended by [0029](0029-a-deviation-has-a-ceiling.md) |
 | [0029](0029-a-deviation-has-a-ceiling.md) | A rating deviation is capped at the prior | Accepted |
 | [0030](0030-a-halt-pauses-the-board.md) | A halt pauses every game it covers, and says so on the page | Accepted |
+| [0031](0031-a-turn-may-not-inflate-its-own-context.md) | A turn may not inflate its own context | Accepted |
+| [0032](0032-the-leaderboard-is-stored-not-recomputed-per-request.md) | The leaderboard is stored, not recomputed on every request | Accepted |
 
 ## Template
 

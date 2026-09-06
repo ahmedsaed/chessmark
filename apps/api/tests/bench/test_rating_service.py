@@ -20,9 +20,8 @@ from chessmark.bench.service import (
     compute_ratings,
     period_of,
     scan,
-    store_ratings,
 )
-from chessmark.db.models import ModelEndpoint, ModelRegistry, Rating
+from chessmark.db.models import ModelEndpoint, ModelRegistry
 from chessmark.game import GameResult, Termination
 from chessmark.orchestration.match import Seat, create_match
 
@@ -200,33 +199,6 @@ async def test_recomputing_reproduces_the_same_ratings_exactly(db: AsyncSession)
     assert {c.label: (r.rating, r.rd, r.volatility) for c, r in first.ratings.items()} == {
         c.label: (r.rating, r.rd, r.volatility) for c, r in second.ratings.items()
     }
-
-
-async def test_stored_ratings_match_the_computed_run(db: AsyncSession) -> None:
-    await _model(db, "test/alpha")
-    await _model(db, "test/beta")
-    await _played(db, "test/alpha", "test/beta", result=GameResult.WHITE_WINS)
-
-    run = await compute_ratings(db, prompt_version=None)
-    stored_count = await store_ratings(db, run)
-
-    assert stored_count == len(run.ratings)
-    rows = (await db.scalars(sa.select(Rating))).all()
-    assert {round(r.rating, 9) for r in rows} == {round(r.rating, 9) for r in run.ratings.values()}
-
-
-async def test_storing_replaces_rather_than_accumulates(db: AsyncSession) -> None:
-    """A row left behind for a contestant that no longer qualifies is a rating nothing supports."""
-    await _model(db, "test/alpha")
-    await _model(db, "test/beta")
-    await _played(db, "test/alpha", "test/beta", result=GameResult.WHITE_WINS)
-
-    run = await compute_ratings(db, prompt_version=None)
-    await store_ratings(db, run)
-    await store_ratings(db, run)
-
-    rows = (await db.scalars(sa.select(Rating))).all()
-    assert len(rows) == len(run.ratings)
 
 
 # ====================================================================== aggregates
