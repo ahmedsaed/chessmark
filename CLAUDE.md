@@ -45,7 +45,9 @@ Everything runs from the repo root via `make`:
 Backend commands run under `uv` from `apps/api`; frontend under `pnpm` from `apps/web`.
 `uv` lives at `~/.local/bin/uv` — export `PATH="$HOME/.local/bin:$PATH"` if it isn't found.
 
-Database tests need `make up`. Also useful: `make test-unit` (no database), `make test-llm` (live
+Database tests need `make up`; `make test-e2e` drives a real browser and needs a running stack —
+[TESTING.md](docs/TESTING.md#the-browser-suite) for what it starts and what it needs installed.
+Also useful: `make test-unit` (no database), `make test-llm` (live
 provider, opt-in), `make migration m="..."`, `make drift`, `make seed-models`, `make smoke-llm`,
 `make play ARGS="--scripted"`, `make prune-registry`, `make backfill-identities`.
 
@@ -147,6 +149,12 @@ it.
   code or in the guide that owns it, a gap goes in ROADMAP's *Known gaps*. Not here.
 - **Prefer the narrow fix.** A ceiling on paused games was reverted in favour of asking the precise
   question; a broad `403 → disable` would empty the catalogue an endpoint at a time.
+- **A new read endpoint is measured when it is written.** Anything returning a list, or derived
+  from every game, gets a query-count test that asserts it does not grow with the rows — see
+  [TESTING.md](docs/TESTING.md#a-read-endpoint-is-measured-when-it-is-written). The leaderboard
+  reached 295 queries for 37 games without a single wrong commit: each addition read one more thing
+  per game, every one was correct, and nothing could tell 8 from 295 until a person said the site
+  felt slow. That is the state this rule exists to make unreachable.
 - **Report what happened.** If a test fails, say so with the output. If a step was skipped, say
   that. "Deferring a test defers the phase" applies to progress reports too.
 
@@ -161,6 +169,8 @@ regression, not a trade-off.
 | `GET /games/{id}/turns` | summary only. The verbatim payloads are `?include_calls=true`, and neither the replay nor the live view asks for them — the inspector opens one turn through `/turns/{id}/raw` (LOG-07) |
 | the replay scrubber | O(1) per step. Positions come from one `buildFrames` table and `EventStream`'s rows are memoised on content — both pinned by tests in `replay.test.ts` |
 
+New endpoints are held to this on the way in, not audited into it later — see *How to work here*.
+
 Three traps worth knowing before touching this:
 
 * **The leaderboard sits on the critical path of four pages** — `/`, `/about`, `/methodology` and
@@ -168,9 +178,9 @@ Three traps worth knowing before touching this:
 * **The landing hero needs `GameDetail.moves`, not the event log.** Folding the log back down to a
   move list fetched every reasoning trace and tool call to derive an array of SAN strings, on the
   one page every visitor loads first.
-* **A `loading.tsx` above a route that can 404 turns its 404 into a 200.** The boundary makes the
-  segment stream, and a streamed response commits its status line before `notFound()` runs. Only
-  routes that cannot 404 have one; the browser suite asserts the status for the three that can.
+* **A `loading.tsx` above a route that can 404 turns its 404 into a 200** — the boundary makes the
+  segment stream, and the status line is committed before `notFound()` runs.
+  ([FRONTEND.md](docs/FRONTEND.md#streaming-and-the-price-of-it))
 
 ## Definition of done
 

@@ -55,6 +55,29 @@ A human drag to the last rank opens a picker. It used to be a queen either way, 
 every time and wrong in exactly the position that matters: the one where a rook or a knight wins and
 the player cannot say so.
 
+## Streaming, and the price of it
+
+Every route is `force-dynamic` — a live game and a leaderboard are both wrong the moment they are
+cached — so without a Suspense boundary a click produced no feedback at all until the whole server
+render finished. No spinner, no route change. Several hundred milliseconds of that reads as a broken
+link rather than a slow one.
+
+Two ways to yield, and they are not interchangeable:
+
+- **`loading.tsx`** wraps the segment **and every segment under it**. Cheapest for a leaf route.
+- **`<Suspense>` inside a synchronous page** yields per section, so a slow ranking delays only the
+  ranking. `app/page.tsx` is the worked example: the page component is not `async`, and each section
+  is its own async component. Next.js memoises `fetch` for the request, so sections asking for the
+  same list read one in-flight promise rather than two.
+
+**A `loading.tsx` above a route that can `notFound()` turns its 404 into a 200.** The boundary makes
+the segment stream, and a streamed response commits its status line before the page body runs — so
+the not-found page renders under a `200` and every link checker and crawler believes it. A blanket
+`app/loading.tsx` silently did this to every missing game, model and tournament; nothing in a
+browser looks wrong. Only routes that **cannot** 404 have one, and `site.spec.ts` asserts the status
+for the three that can. A route that 404s should resolve that check first and stream what comes
+after it.
+
 ## Traps
 
 **The site must load without Clerk keys.** `src/proxy.ts` called `clerkMiddleware()`
