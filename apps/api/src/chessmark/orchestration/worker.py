@@ -31,6 +31,7 @@ import sqlalchemy as sa
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from chessmark.agents import compaction, llm
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.turn import TurnLimits, TurnResult, TurnRunner
@@ -874,6 +875,80 @@ class TurnWorker:
             },
         )
 
+    async def _shrink_transcript(self, job: AdvanceTurn, result: TurnResult) -> bool:
+        """Elide stale tool output for the seat to move, in a transaction of its own.
+
+        The counterpart to the turn loop's own compaction, and it exists because that one cannot
+        outlive a failed turn. True when something was actually elided and the job is worth
+        retrying; False when there was nothing to free, which is the honest signal to give up.
+
+        **Trim only, never a fold.** Folding needs the model to summarise what is being dropped,
+        which is a provider call — and this path runs precisely because the provider just refused
+        us. Trimming replaces the content of stale `get_legal_moves` and `get_board` results with a
+        placeholder while the messages keep their place and their `tool_call_id`; it is the bulk of
+        a long chess transcript and it is worth nothing once the position has moved on.
+
+        Attempted once per game. A second pass would find the rows already trimmed and free
+        nothing, and `attempt` is what stops this becoming a loop.
+        """
+        if llm.context_limit_in(result.error or "") is None:
+            return False
+
+        async with self.sessionmaker() as session, session.begin():
+            game = await get_game(session, job.game_id)
+            # The seat to move, derived from the position rather than stored — the same way every
+            # other path in this worker resolves it.
+            referee = await rebuild_referee(session, game)
+            colour = referee.side_to_move
+            player = await self._player(session, game.id, colour)
+            rows = await compaction.live_messages(session, player.id)
+            limits = self.limits or TurnLimits()
+            plan = compaction.plan_compaction(
+                rows,
+                keep_turns=limits.keep_turns,
+                max_kept_messages=limits.max_kept_messages,
+            )
+            if not plan.trim:
+                log.warning(
+                    "%s has nothing left to trim; the transcript cannot be shrunk without the "
+                    "provider that just refused us",
+                    job.game_id,
+                )
+                return False
+
+            freed = compaction.sent_characters(plan.trim)
+            await compaction.apply(
+                session,
+                player_id=player.id,
+                game_id=game.id,
+                # `fold` is dropped deliberately: without a summary those messages would be lost
+                # rather than compressed, and losing history is not a trade this path may make.
+                plan=compaction.Plan(fold=[], keep=plan.keep, trim=plan.trim),
+                summary="",
+            )
+            await append_event(
+                session,
+                game_id=game.id,
+                type=EventType.COMPACTED,
+                payload={
+                    "player_id": str(player.id),
+                    "colour": colour.value,
+                    "folded": 0,
+                    "trimmed": len(plan.trim),
+                    "kept": len(plan.keep),
+                    "characters_freed": freed,
+                    "recovered_outside_turn": True,
+                },
+            )
+            log.warning(
+                "trimmed %d stale tool results for %s after a rejected request, freeing %d "
+                "characters; retrying",
+                len(plan.trim),
+                job.game_id,
+                freed,
+            )
+        return True
+
     async def _retry_or_abandon(self, job: AdvanceTurn, result: TurnResult) -> HandledJob:
         """Re-enqueue the same ply, or give up on the game.
 
@@ -885,6 +960,21 @@ class TurnWorker:
         # next attempt sends the same bytes and is refused the same way. One game spent five
         # attempts being told its 64,000-token completion did not fit a 65,536-token window.
         if result.request_rejected:
+            # **One rescue before giving up, and it has to happen out here.**
+            #
+            # A turn is one transaction (ADR-0007), so a compaction that runs *inside* a turn is
+            # rolled back with it when the turn fails — the transcript is byte-identical next time
+            # and the same refusal repeats forever. Two games were reopened three times each and
+            # died within a second of each attempt, having compacted nothing that survived.
+            #
+            # `_shrink_transcript` runs in its own session and commits on its own, so its work
+            # outlives the failed turn. It only elides stale tool output: that rung needs no
+            # provider, cannot fail part-way, and cannot lose anything the model still needs,
+            # because the board is authoritative and any tool can be called again (invariant 1).
+            if await self._shrink_transcript(job, result):
+                await self.queue.enqueue(job.next_attempt())
+                return HandledJob(TURN_FAILED, job.game_id, job.expected_ply, result=result)
+
             log.error(
                 "abandoning %s at ply %s: the provider rejected the request itself: %s",
                 job.game_id,

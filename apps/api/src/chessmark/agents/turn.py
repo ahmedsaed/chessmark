@@ -674,9 +674,31 @@ class TurnRunner:
             # ceiling, and that one is still whatever the registry knows.
             max_completion=(await self._endpoint_window()).max_completion,
         )
-        # Deliberately *not* cached onto `self._cached_window`: this is what one endpoint said about
-        # one request, and the registry's figure is what the rest of the game is planned against.
-        return await self._compact(turn, result, limit.requested, window)
+        # **The prompt, not the whole request.** `limit.requested` is what the endpoint counted in
+        # the call it refused, and that total includes the `max_tokens` *we* asked it to reserve for
+        # the answer. Handing it on as `occupied` charges our own output request against the
+        # transcript a second time, and everything downstream is computed from a number tens of
+        # thousands of tokens too large.
+        #
+        # It is not a rounding error, it is the whole failure. `_summarise` asks
+        # `completion_cap(occupied, SUMMARY_MAX_TOKENS)` for room to write the summary:
+        #
+        #     256,000 - 291,942 - framing  ->  negative  ->  NoRoomToAnswerError, no summary
+        #     256,000 - 227,942 - framing  ->   27,802   ->  thirteen times what a summary needs
+        #
+        # Without the summary the pass falls back to the trim-only rung, and on a transcript already
+        # folded down to one retained turn there is nothing left to trim — so `worthwhile` is false,
+        # `_compact` returns having done nothing, and the refusal is re-raised. Two games sat
+        # abandoned through three resumes each, dying **one second** after being reopened, never
+        # having made a single call to rescue themselves.
+        #
+        # Preferring the endpoint's own breakdown over `requested - our ask` is deliberate. The
+        # subtraction assumes the total reserved exactly what we requested, and where that is not
+        # true it *under*-counts the prompt — which is the direction that asks for too much output
+        # and earns a second refusal. The split, when the endpoint spells it out, needs no
+        # assumption at all.
+        occupied = limit.prompt or limit.requested
+        return await self._compact(turn, result, occupied, window)
 
     # ------------------------------------------------------------------ the loop
 
@@ -1314,21 +1336,40 @@ class TurnRunner:
         return False
 
     def _our_ceiling_bound(self, completion: Completion) -> bool:
-        """Whether the response stopped at the number *we* asked for.
+        """Whether our own request was too small to answer in at all.
 
-        A count, not an inference. The provider reports what it generated and we know what we
-        allowed; a response that reached our ceiling was ended by us, and one that stopped short of
-        it was ended by the endpoint's own limit.
+        The question a truncation has to answer is *"is there anything a retry could fix?"*, and
+        for a long time this asked something else: `generated >= requested`, meaning simply that the
+        response reached the number we sent. That is not the same question, and reading it as though
+        it were cost a game the moment the registry became **accurate**.
+
+        Poolside stops `laguna-s-2.1` at 32,768 output tokens. While the catalogue was stale we
+        asked for 64,000, the model produced 32,768, and `32,768 < 64,000` read as the endpoint's
+        own limit — which earns "you were cut off, be brief and act" and up to `MAX_TRUNCATIONS`
+        retries. It usually recovered. Then the catalogue was refreshed, we began asking for exactly
+        32,768, and the identical response read as *ours*: failed on sight, no nudge, five job
+        attempts, a game abandoned at ply 72. Same model, same behaviour, opposite verdict, purely
+        because we got the number right.
+
+        So the test is the *size* of what we allowed, not whether it was reached. A model handed
+        25,600 tokens and told to be brief has every chance of acting; one handed 1,024 has none,
+        and that is the case this exists for — a miscalculated window once asked an endpoint for a
+        single token, and four truncations later a model that had done nothing wrong lost a game
+        (ADR-0021). Below the floor there is nothing to nudge; at or above it, retrying with
+        guidance is both cheap and what the wider practice does with a truncated answer.
+
+        Neither branch is ever a finding about a player: a truncation fails the turn and the worker
+        decides (ADR-0024, invariant 11). What changes here is only how quickly we give up.
 
         `False` when either number is missing — an endpoint that reports no usage, or an unknown
-        window that let the request through unclamped. Unattributable, and the existing behaviour
-        (a strike) is the one that does not change silently.
+        window that let the request through unclamped. Unattributable, and a strike is the
+        behaviour that does not change silently.
         """
         requested = self._requested_max_tokens
         generated = completion.usage.completion
         if not requested or not generated:
             return False
-        return generated >= requested
+        return generated >= requested and requested <= compaction.MIN_USEFUL_COMPLETION
 
     def _forfeit(self, termination: Termination, detail: str) -> Outcome | None:
         """End the game against this player, unless it is already over."""
