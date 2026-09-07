@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime as dt
 import sys
+import uuid
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -27,11 +29,12 @@ sys.path.insert(0, str(API_ROOT / "src"))
 
 import sqlalchemy as sa  # noqa: E402
 from redis.asyncio import Redis  # noqa: E402
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from chessmark.agents.prompts import PROMPT_VERSION  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.enums import EventType, GameStatus  # noqa: E402
-from chessmark.db.models import GameEvent, Player, TournamentGame  # noqa: E402
+from chessmark.db.models import Game, GameEvent, Player, TournamentGame  # noqa: E402
 from chessmark.db.repositories import append_event, get_game, rebuild_referee  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.game import (  # noqa: E402
@@ -131,9 +134,91 @@ def _unclaimed_draw_is_reopenable(game: Any) -> tuple[bool, str]:
     )
 
 
+#: The shortest prefix `resolve_game_id` will accept.
+#:
+#: Eight is what the site shows — the games list, the replay header and every log line print
+#: `game.id[:8]` — so it is the length an operator already has in front of them, and it is the
+#: length these commands get typed with. Shorter is refused rather than resolved: a two-character
+#: prefix is *usually* unique across a few hundred games and stops being so exactly when the event
+#: grows, and a resume command that silently starts matching a different game as the pool fills is
+#: not a convenience.
+MIN_PREFIX = 8
+
+
+async def resolve_game_id(session: AsyncSession, given: str) -> uuid.UUID:
+    """A full UUID, or an unambiguous prefix of one.
+
+    Every id a person reads off this project is already abbreviated — `game 9b372624` in the replay
+    header, `abandoning 9b372624-…` in the worker log — and then the command to act on it demanded
+    all thirty-six characters, which meant copying them out of a URL or a database.
+
+    **Ambiguity is refused, never guessed.** A prefix matching two games prints both and exits: the
+    one thing worse than typing a full id is reopening the wrong game, and a resume is a state
+    change on a record the leaderboard reads.
+    """
+    try:
+        return uuid.UUID(given)
+    except ValueError:
+        pass
+
+    prefix = given.strip().lower()
+    if len(prefix) < MIN_PREFIX:
+        msg = f"{given!r} is too short — give at least {MIN_PREFIX} characters, or the full id"
+        raise SystemExit(msg)
+
+    # Cast to text and match on the front. `id::text` renders the canonical hyphenated form, which
+    # is what a person copies, so a prefix spanning a hyphen works without special-casing it.
+    matches: list[uuid.UUID] = list(
+        await session.scalars(
+            sa.select(Game.id).where(sa.cast(Game.id, sa.Text).like(f"{prefix}%")).limit(10)
+        )
+    )
+    if not matches:
+        msg = f"no game whose id starts with {prefix!r}"
+        raise SystemExit(msg)
+    if len(matches) > 1:
+        listed = "\n  ".join(str(m) for m in matches)
+        msg = f"{prefix!r} matches {len(matches)} games — say which:\n  {listed}"
+        raise SystemExit(msg)
+    return matches[0]
+
+
+def _paused_refusal(game: Any) -> str | None:
+    """Why a paused game cannot be reopened, or `None` when it is not paused.
+
+    **A paused game has not ended, so there is nothing to reopen.** Without this it fell through to
+    the resumable check and was refused for having *"ended by None"* — true, and unhelpful: it
+    reads as a broken record rather than as a game still alive and waiting on a provider. An
+    operator seeing that goes debugging instead of waiting.
+
+    Says what it is waiting on and when it comes back, because those are the two things that decide
+    whether to do anything at all.
+    """
+    if game.status is not GameStatus.PAUSED:
+        return None
+
+    waiting = "its wait is over and the reconciler will pick it up on the next tick"
+    resume_after = game.resume_after
+    if resume_after is not None:
+        if resume_after.tzinfo is None:
+            resume_after = resume_after.replace(tzinfo=dt.UTC)
+        left = (resume_after - dt.datetime.now(dt.UTC)).total_seconds() / 60
+        if left > 0:
+            waiting = f"it resumes on its own in about {left:.0f} minutes"
+
+    reason = game.pause_reason or "waiting on its provider"
+    return f"game is paused, not ended — {reason}. Nothing to reopen: {waiting}."
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("game_id")
+    parser.add_argument(
+        "game_id",
+        help=(
+            "the game's id, or an unambiguous prefix of at least "
+            f"{MIN_PREFIX} characters — the form the site and the logs print"
+        ),
+    )
     parser.add_argument(
         "--max-usd",
         type=Decimal,
@@ -167,10 +252,15 @@ async def main() -> int:
 
     try:
         async with sessionmaker() as session:
-            game = await get_game(session, args.game_id)
+            game = await get_game(session, await resolve_game_id(session, args.game_id))
 
             if game.status is GameStatus.RUNNING:
                 print("game is already running", file=sys.stderr)
+                return 1
+
+            paused = _paused_refusal(game)
+            if paused is not None:
+                print(paused, file=sys.stderr)
                 return 1
 
             resumable = game.termination in RESUMABLE_TERMINATIONS
