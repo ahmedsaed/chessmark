@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents.compaction import (
     TRIMMED_PLACEHOLDER,
     TRUNCATED_PLACEHOLDER,
+    clamped_content,
     live_messages,
 )
 from chessmark.db.models import Player, TranscriptMessage
@@ -143,8 +144,11 @@ def to_provider_message(row: TranscriptMessage) -> dict[str, Any]:
         message["content"] = TRUNCATED_PLACEHOLDER
         return message
 
+    # Too large to keep whole, so it keeps its head and its tail and loses its middle
+    # (`TranscriptMessage.clamped_at`). Derived from `content` on every render rather than stored
+    # pre-cut, so the row serialises identically each time and the cacheable prefix holds still.
     if row.content is not None:
-        message["content"] = row.content
+        message["content"] = clamped_content(row.content) if row.clamped_at else row.content
     if row.tool_calls:
         message["tool_calls"] = row.tool_calls
         message.setdefault("content", None)

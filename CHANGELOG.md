@@ -15,6 +15,36 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Fixed
+
+- **What compaction keeps is bounded by size, not message count** ([ADR-0033]). Measured on two
+  real games under the same twelve-message cap: `10fc99f0` kept 12 messages totalling 606,376
+  characters — about 210,000 tokens of a 256,000-token window — while `545dc41a` kept 11 totalling
+  66,755. The larger filled 82% of its window with the one region compaction may not touch, which
+  is the deadlock that left two games unrecoverable: to shrink the conversation the model must
+  write a summary, and there is no room to write one *because the conversation is too big*. The
+  budget is `KEEP_TAIL_TOKENS = 20,000`, matching what oh-my-pi, Pydantic AI and Hermes protect.
+- **A turn that alone exceeds the budget is clamped rather than kept whole** ([ADR-0033]). There is
+  no legal cut left at that point — dropping to zero turns leaves nothing to act on, and cutting
+  inside a turn orphans a `tool` result — so the largest messages keep their head and their tail
+  and lose their middle, marked with how much went. Rendered from `content` on every replay rather
+  than stored pre-cut, so the cacheable prefix does not move (invariant 2).
+- **An endpoint that misreports its own prompt size ends the game** ([ADR-0033]). A call that
+  *succeeded* necessarily fit, so `prompt + the output we asked for` cannot exceed the window —
+  and `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` broke that on 24 of 339 calls, worst
+  case claiming 516,877 tokens in a 256,000-token window, while eleven other models broke it on
+  none of ~7,800. The figure was carried to the next turn and stopped the seat before it made a
+  call. There is no honest recovery — no client-side count is trustworthy — so the game is
+  abandoned and the endpoint is named. Nobody is forfeited (ADR-0019).
+
+### Changed
+
+- **`players.last_prompt_characters` is recorded beside `last_prompt_tokens`** ([ADR-0033]), both
+  counted at the same instant on the same transcript. Their quotient converts our exact character
+  counts into that endpoint's tokens, which is what lets a tail budget be expressed in the unit the
+  window is in. It sizes a retention policy, never a safety bound: whether a request can be sent is
+  still decided by the provider's own count alone (AGENT-19).
+
 Three games survived the ADR-0031 fixes and were traced to three separate pieces of arithmetic.
 
 ### Fixed
@@ -251,4 +281,5 @@ flags the old code wrote.
 [ADR-0030]: docs/adr/0030-a-halt-pauses-the-board.md
 [ADR-0031]: docs/adr/0031-a-turn-may-not-inflate-its-own-context.md
 [ADR-0032]: docs/adr/0032-the-arithmetic-that-decides-a-request.md
+[ADR-0033]: docs/adr/0033-a-tail-budget-in-tokens-and-a-provider-that-cannot-count.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

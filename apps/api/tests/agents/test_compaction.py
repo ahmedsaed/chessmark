@@ -48,6 +48,7 @@ class Row:
         self.name = None
         self.trimmed_at = None
         self.truncated_at = None
+        self.clamped_at = None
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"Row({self.seq}, {self.role}, turn={self.turn_id})"

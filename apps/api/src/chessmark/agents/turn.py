@@ -91,6 +91,35 @@ def _is_forfeit(result: TurnResult) -> bool:
     )
 
 
+class ProviderAccountingError(Exception):
+    """The endpoint reported a prompt size that cannot be true (ADR-0033).
+
+    A call that **succeeded** necessarily fit inside the window, and we know what output we asked
+    it to reserve — so `prompt + our ask` cannot exceed the context length. When it does, the
+    report is wrong, and it is wrong in the direction that wedges a game: the figure is carried to
+    the next turn, every calculation from it concludes there is no room, and the seat gives up
+    before making a call. `nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free` did this on 24 of
+    339 calls, worst case claiming a 516,877-token prompt in a 256,000-token window.
+
+    There is no honest recovery. No client-side count is trustworthy — every model tokenises
+    differently and a local estimate is exactly what AGENT-19 forbids on this path — so the only
+    numbers available are the provider's, and this one is demonstrably not counting. The game is
+    abandoned and the endpoint is named. An abandoned game scores against nobody (ADR-0019); a
+    game played on a number nobody can trust would be worse than no game.
+    """
+
+    def __init__(self, model: str, *, reported: int, asked: int, context: int) -> None:
+        super().__init__(
+            f"{model} reported a {reported:,}-token prompt for a call that succeeded while we "
+            f"asked for {asked:,} output tokens, which cannot fit a {context:,}-token window — "
+            "the endpoint's token accounting is wrong, so no figure it reports can be trusted"
+        )
+        self.model = model
+        self.reported = reported
+        self.asked = asked
+        self.context = context
+
+
 class HarnessCeilingError(Exception):
     """A model was cut off by a limit *we* set, so the turn failed rather than the player.
 
@@ -193,6 +222,15 @@ class TurnLimits:
 
     **Turns, not messages.** A turn is three to five messages and every provider rejects a `tool`
     result whose `tool_calls` parent is missing, so a count of messages would cut mid-turn and 400.
+    """
+
+    keep_tail_tokens: int = compaction.KEEP_TAIL_TOKENS
+    """How much recent conversation survives a compaction verbatim, in tokens (ADR-0033).
+
+    The bound `max_kept_messages` was reaching for. A message count is a fact about the
+    transcript's shape and says nothing about its weight: twelve messages measured 606,376
+    characters in one game and 66,755 in another, and the larger filled 82% of its window with the
+    one region compaction may not touch.
     """
 
     max_kept_messages: int = compaction.DEFAULT_MAX_KEPT_MESSAGES
@@ -319,6 +357,9 @@ class TurnRunner:
         #: whether anything has been appended since rather than merely whether a fold has happened.
         #: `None` means no fold yet.
         self._folded_at_seq: int | None = None
+        #: Characters in the request last sent, counted the way the planner counts them. Paired
+        #: with the provider's token count for that same request to give the tail budget a ratio.
+        self._sent_characters = 0
         #: What the last call was allowed to generate. Kept so a truncation can be attributed:
         #: a response that stopped at *our* number was ended by the harness, not by the model.
         self._requested_max_tokens: int | None = None
@@ -392,6 +433,16 @@ class TurnRunner:
             result.status = TurnStatus.FAILED
             result.error = str(error)
             result.outcome = None
+        except ProviderAccountingError as error:
+            # The endpoint's token accounting is broken, so nothing it reports can be trusted and
+            # there is nothing to retry into. `request_rejected` is the honest classification: the
+            # next attempt sends the same bytes to the same endpoint and gets the same nonsense
+            # back, so the worker abandons at once rather than spending five attempts on it. Not a
+            # forfeit — the model did nothing (invariant 11).
+            result.status = TurnStatus.FAILED
+            result.error = str(error)
+            result.outcome = None
+            result.request_rejected = True
         except HarnessCeilingError as error:
             # Our ceiling, not the model's failure. Same treatment as a provider outage: the turn
             # is marked FAILED with no outcome, so nothing is recorded against either player and
@@ -465,6 +516,8 @@ class TurnRunner:
             rows,
             keep_turns=self.limits.keep_turns,
             max_kept_messages=self.limits.max_kept_messages,
+            keep_tail_tokens=self.limits.keep_tail_tokens,
+            tokens_per_character=self._tokens_per_character(),
         )
         if not plan.worthwhile:
             # Nothing to fold and nothing left to trim. Compacting again cannot help, so say so
@@ -708,7 +761,11 @@ class TurnRunner:
             if self._over_budget(result):
                 return
 
-            messages = await transcript.build_messages(self.session, self.player.id)
+            rows = await compaction.live_messages(self.session, self.player.id)
+            messages = [transcript.to_provider_message(row) for row in rows]
+            # Measured through the same function the planner sizes the tail with, so the ratio the
+            # two of them share describes one thing counted one way.
+            self._sent_characters = compaction.sent_characters(rows)
 
             # How full the window is: the provider's own count, or `None` before a game's first
             # response. **Never an estimate** — invariant 4's rule about money applies just as
@@ -740,7 +797,9 @@ class TurnRunner:
                 # longer exists — but `_compact` left a bound behind rather than nothing, and a
                 # bound anchored to a measurement beats the unmeasured fallback, whatever it is.
                 # The next response replaces it with a real number.
-                messages = await transcript.build_messages(self.session, self.player.id)
+                rows = await compaction.live_messages(self.session, self.player.id)
+                messages = [transcript.to_provider_message(row) for row in rows]
+                self._sent_characters = compaction.sent_characters(rows)
                 occupied = self._prompt_tokens
 
             try:
@@ -1293,6 +1352,25 @@ class TurnRunner:
 
     # ------------------------------------------------------------------ helpers
 
+    def _tokens_per_character(self) -> float:
+        """How this conversation's characters convert to this endpoint's tokens.
+
+        Both halves are measured, at the same instant, on this very transcript — the provider's
+        token count for the last prompt and our own character count of the rows that made it. A
+        provider reports one total per request and never a figure per message, so apportioning it
+        is the only way to answer "how much is the last 20,000 tokens", and every comparable
+        harness estimates that with a tokeniser. This is a better estimate for our purpose: it is
+        calibrated on this endpoint and this conversation rather than on English prose in general.
+
+        Zero when the seat has never been measured, which tells the planner to fall back to the
+        message ceiling rather than invent a ratio.
+        """
+        tokens = self.player.last_prompt_tokens or 0
+        characters = self.player.last_prompt_characters or 0
+        if tokens <= 0 or characters <= 0:
+            return 0.0
+        return tokens / characters
+
     def _remember_prompt_size(self, completion: Completion) -> None:
         """Carry the measured prompt size forward, on the seat rather than on this runner.
 
@@ -1306,8 +1384,31 @@ class TurnRunner:
         """
         if not completion.usage.prompt:
             return
+
+        # **A succeeded call proves its own prompt fitted.** Believing a report that says otherwise
+        # is what carried a 549,680-token figure into the next turn and stopped the seat before it
+        # made a call (`ProviderAccountingError`).
+        window = self._cached_window
+        asked = self._requested_max_tokens or 0
+        if (
+            window is not None
+            and window.known
+            and asked
+            and completion.usage.prompt + asked > window.context
+        ):
+            raise ProviderAccountingError(
+                self.model,
+                reported=completion.usage.prompt,
+                asked=asked,
+                context=window.context,
+            )
+
         self._prompt_tokens = completion.usage.prompt
         self.player.last_prompt_tokens = completion.usage.prompt
+        # Counted now, from the rows that made *this* prompt, so the pair describes one transcript
+        # at one instant. A token count from one moment over a character count from another is a
+        # ratio of two different conversations (`Player.last_prompt_characters`).
+        self.player.last_prompt_characters = self._sent_characters
 
     def _accumulate(self, result: TurnResult, completion: Completion) -> None:
         result.prompt_tokens += completion.usage.prompt

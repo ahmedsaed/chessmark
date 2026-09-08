@@ -38,7 +38,7 @@ from __future__ import annotations
 import datetime as dt
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import sqlalchemy as sa
@@ -62,6 +62,20 @@ DEFAULT_RESERVE_TOKENS = 20_000
 
 #: A fraction of the window below which compaction is not worth its cache miss.
 MIN_FRACTION = 0.10
+
+#: How much of the recent conversation is kept verbatim, in **tokens**.
+#:
+#: Twenty thousand is what comparable harnesses protect — oh-my-pi's `keepRecentTokens`, Pydantic
+#: AI's `keep_tokens`, Hermes' "token-budget tail protection" — and they converged on a budget
+#: rather than a message count for exactly the reason we did: a session with large tool results
+#: protects fewer messages, a session of short exchanges protects more, and a fixed count of
+#: messages says nothing about how big they are.
+#:
+#: Measured here: **twelve messages came to 606,376 characters** in `10fc99f0`, roughly 210,000
+#: tokens of a 256,000-token window, while eleven messages in `545dc41a` came to 66,755. Same cap,
+#: nine times the size. The larger one filled 82% of its window with the one region compaction is
+#: forbidden to touch, which is the deadlock that left two games unrecoverable.
+KEEP_TAIL_TOKENS = 20_000
 
 #: A ceiling on how many *messages* the retained turns may amount to.
 #:
@@ -103,6 +117,45 @@ TRUNCATED_PLACEHOLDER = (
     "so it has been dropped to save context. Be brief and call a tool — the board is "
     "authoritative and you can always read it again.]"
 )
+
+#: What replaces the middle of a message too large to keep whole.
+#:
+#: Says that something was cut and roughly how much, because a model reading its own reasoning with
+#: a silent hole in it has no way to tell a gap from a thought it never had. The same reasoning as
+#: `TRIMMED_PLACEHOLDER`: the elision is also the explanation.
+CLAMPED_PLACEHOLDER = (
+    "\n\n[… {dropped:,} characters of this reply were dropped to save context …]\n\n"
+)
+
+#: How much of a clamped message survives, at each end.
+#:
+#: Head and tail rather than either alone: a reasoning block opens with what it is considering and
+#: closes with what it decided, and the enumeration in between is the part the board can answer for
+#: (invariant 1). Sized so a clamped message costs roughly a fifth of the tail budget — big enough
+#: to carry an argument, small enough that several of them still fit.
+CLAMP_HEAD_CHARACTERS = 8_000
+CLAMP_TAIL_CHARACTERS = 4_000
+
+#: A message is only clamped once it is worth clamping. Below this the middle is not the problem
+#: and cutting it would rewrite the cacheable prefix for nothing (invariant 2).
+CLAMP_THRESHOLD_CHARACTERS = CLAMP_HEAD_CHARACTERS + CLAMP_TAIL_CHARACTERS + 4_000
+
+
+def clamped_content(content: str) -> str:
+    """A too-large message as it is replayed: head, a marker saying what went, then tail.
+
+    Derived from `content` every time rather than stored pre-cut, so the row serialises identically
+    on every replay and the cacheable prefix does not move under us (invariant 2, ADR-0003).
+    """
+    dropped = len(content) - CLAMP_HEAD_CHARACTERS - CLAMP_TAIL_CHARACTERS
+    if dropped <= 0:
+        return content
+    return (
+        content[:CLAMP_HEAD_CHARACTERS]
+        + CLAMPED_PLACEHOLDER.format(dropped=dropped)
+        + content[-CLAMP_TAIL_CHARACTERS:]
+    )
+
 
 #: The summary is a paragraph or two, not an essay. It is also the cap that keeps the compacting
 #: call inside the window it is trying to make room in.
@@ -299,6 +352,14 @@ class Plan:
     The most recent turn is never trimmed. Its tool results are what the model is looking at.
     """
 
+    clamp: list[TranscriptMessage] = field(default_factory=list)
+    """Messages kept, but too large to keep whole (ADR-0033).
+
+    Only ever populated when the floor turn alone exceeds the tail budget: there is no legal cut
+    left — a `tool` result cannot be separated from the `tool_calls` that asked for it — so the
+    choice is to clamp or to deadlock, and deadlocking is what left two games unrecoverable.
+    """
+
     @property
     def worthwhile(self) -> bool:
         """Whether this pass would change the request at all.
@@ -312,7 +373,7 @@ class Plan:
         estimate, and there is not one any more (AGENT-19). It is verified by the next call's
         measurement, and the provider's own refusal is the backstop (ADR-0021).
         """
-        return bool(self.fold or self.trim)
+        return bool(self.fold or self.trim or self.clamp)
 
 
 async def live_messages(session: AsyncSession, player_id: uuid.UUID) -> list[TranscriptMessage]:
@@ -411,6 +472,8 @@ def plan_compaction(
     *,
     keep_turns: int = DEFAULT_KEEP_TURNS,
     max_kept_messages: int = DEFAULT_MAX_KEPT_MESSAGES,
+    keep_tail_tokens: int = KEEP_TAIL_TOKENS,
+    tokens_per_character: float = 0.0,
 ) -> Plan:
     """Fold everything except the system prompt and the last few turns, and trim what stays.
 
@@ -422,16 +485,33 @@ def plan_compaction(
     they fall after the cut and folded if before, on the same rule as everything else.
 
     **`keep_turns` is a ceiling, not a promise.** Turns are dropped from the front until the kept
-    region is at most `max_kept_messages`, because four turns of a reasoning model came to fifty
-    messages and were larger than the window they were supposed to fit inside. One turn is the
-    floor: a turn stripped of its own context has nothing to act on.
+    region fits, because four turns of a reasoning model came to fifty messages and were larger
+    than the window they were supposed to fit inside. One turn is the floor: a turn stripped of its
+    own context has nothing to act on.
+
+    "Fits" is measured in **tokens** when the caller can supply a ratio, and in messages when it
+    cannot (ADR-0033). The message count was never the right question — twelve messages were
+    606,376 characters in one game and 66,755 in another — but it was the only one answerable
+    without an estimate. `tokens_per_character`, measured on this very conversation, makes the
+    right question answerable; a caller with no measurement yet falls back to the old bound.
+
+    When the floor turn is *itself* over the budget there is nowhere legal left to cut, so its
+    largest messages are clamped rather than kept whole. That is the case that deadlocked two
+    games (`Plan.clamp`).
     """
     turn_ids: list[int] = []
     for row in rows:
         if row.turn_id is not None and row.turn_id not in turn_ids:
             turn_ids.append(row.turn_id)
 
-    keep_ids = _turns_that_fit(rows, turn_ids, keep_turns, max_kept_messages)
+    keep_ids = _turns_that_fit(
+        rows,
+        turn_ids,
+        keep_turns,
+        max_kept_messages,
+        keep_tail_tokens=keep_tail_tokens,
+        tokens_per_character=tokens_per_character,
+    )
     cut = min((r.seq for r in rows if r.turn_id in keep_ids), default=None)
     newest = turn_ids[-1] if turn_ids else None
 
@@ -452,7 +532,24 @@ def plan_compaction(
         if row.role == "tool" and row.turn_id != newest and row.trimmed_at is None:
             trim.append(row)
 
-    return Plan(fold=fold, keep=keep, trim=trim)
+    # **The floor turn alone can still exceed the budget**, and then there is no legal cut left:
+    # dropping to zero turns leaves the model nothing to act on, and cutting inside a turn orphans a
+    # tool result. Clamping the messages that made it oversized is the only route that honours the
+    # budget, and the alternative is the deadlock that left two games unrecoverable — a retained
+    # region filling the window, with no room to write the summary that would have shrunk it.
+    clamp: list[TranscriptMessage] = []
+    if tokens_per_character > 0 and len(keep_ids) <= 1:
+        kept_tokens = sent_characters(keep) * tokens_per_character
+        if kept_tokens > keep_tail_tokens:
+            clamp = [
+                row
+                for row in keep
+                if row.clamped_at is None
+                and row.trimmed_at is None
+                and len(row.content or "") > CLAMP_THRESHOLD_CHARACTERS
+            ]
+
+    return Plan(fold=fold, keep=keep, trim=trim, clamp=clamp)
 
 
 def _turns_that_fit(
@@ -460,21 +557,46 @@ def _turns_that_fit(
     turn_ids: list[int],
     keep_turns: int,
     max_kept_messages: int,
+    *,
+    keep_tail_tokens: int = KEEP_TAIL_TOKENS,
+    tokens_per_character: float = 0.0,
 ) -> set[int]:
-    """The most recent turns that fit inside both ceilings.
+    """The most recent turns that fit inside the ceilings, newest first.
 
-    Counted in messages rather than tokens on purpose: a message count is a fact about the
-    transcript, where a token count of a *part* would be an estimate, and there are no estimates on
-    this path any more (AGENT-19). It is a structural bound on the shape that went wrong — four
-    turns, fifty messages — not a prediction about size.
+    **By size when size is knowable, by message count when it is not.** Counting messages was never
+    the right question — it is a fact about the transcript's shape and says nothing about its
+    weight, and twelve messages measured 606,376 characters in one game against 66,755 in another.
+    It was asked because a provider reports one token total for a whole request and never a figure
+    per message, so apportioning that total across messages needs an estimate, and this path had
+    sworn off estimates (AGENT-19).
+
+    The distinction that unlocks it: AGENT-19 governs whether a request **can be sent**, where
+    being wrong abandons a game. This decides how much history to **keep**, where being wrong keeps
+    a slightly longer or shorter tail. Every comparable harness estimates for the second, and
+    `tokens_per_character` — the seat's own last measured prompt in both units — is a better
+    estimate than a tokeniser, because it is calibrated on this conversation and this endpoint.
+
+    The message ceiling stays as the fallback for a seat that has never been measured, and as a
+    backstop: it is a structural bound on the shape that went wrong.
     """
     if keep_turns <= 0 or not turn_ids:
         return set()
 
-    per_turn = {turn_id: sum(1 for r in rows if r.turn_id == turn_id) for turn_id in turn_ids}
-
+    per_turn_messages = {t: sum(1 for r in rows if r.turn_id == t) for t in turn_ids}
     candidates = turn_ids[-keep_turns:]
-    while len(candidates) > 1 and sum(per_turn[t] for t in candidates) > max_kept_messages:
+
+    if tokens_per_character > 0:
+        per_turn_tokens = {
+            t: sent_characters([r for r in rows if r.turn_id == t]) * tokens_per_character
+            for t in turn_ids
+        }
+        while (
+            len(candidates) > 1 and sum(per_turn_tokens[t] for t in candidates) > keep_tail_tokens
+        ):
+            candidates = candidates[1:]
+        return set(candidates)
+
+    while len(candidates) > 1 and sum(per_turn_messages[t] for t in candidates) > max_kept_messages:
         candidates = candidates[1:]
     return set(candidates)
 
@@ -514,6 +636,8 @@ async def apply(
         row.superseded_at = stamp
     for row in plan.trim:
         row.trimmed_at = stamp
+    for row in plan.clamp:
+        row.clamped_at = stamp
 
     # Through the same allocator as every other append: `players.transcript_seq` under a row lock,
     # not `max(seq) + 1`. Two sources of truth for one sequence is a unique-violation waiting for
@@ -546,6 +670,9 @@ def sent_characters(rows: list[TranscriptMessage]) -> int:
         if row.truncated_at:
             total += len(TRUNCATED_PLACEHOLDER)
             continue
+        if row.clamped_at:
+            total += len(clamped_content(row.content or ""))
+            continue
         total += len(TRIMMED_PLACEHOLDER if row.trimmed_at else (row.content or ""))
         for value in (row.tool_calls, row.reasoning_details):
             if value:
@@ -554,10 +681,12 @@ def sent_characters(rows: list[TranscriptMessage]) -> int:
 
 
 __all__ = [
+    "CLAMPED_PLACEHOLDER",
     "DEFAULT_KEEP_TURNS",
     "DEFAULT_MAX_KEPT_MESSAGES",
     "DEFAULT_RESERVE_TOKENS",
     "FRAMING_TOKENS",
+    "KEEP_TAIL_TOKENS",
     "MIN_USEFUL_COMPLETION",
     "SUMMARY_MAX_TOKENS",
     "TRIMMED_PLACEHOLDER",
@@ -566,6 +695,7 @@ __all__ = [
     "Plan",
     "Window",
     "apply",
+    "clamped_content",
     "live_messages",
     "plan_compaction",
     "sent_characters",
