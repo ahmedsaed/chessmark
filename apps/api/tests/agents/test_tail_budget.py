@@ -196,3 +196,18 @@ def test_a_nonsense_ratio_is_ignored(characters: int) -> None:
     plan = plan_compaction(rows, keep_turns=6, tokens_per_character=float(characters))
 
     assert len(plan.keep) <= 13
+
+
+class TestWhatTheRecordSays:
+    """A clamp is the one pass that shortens something the *model* wrote. It has to be legible in
+    the log, because a reader comparing the replayed prompt against the raw payload will otherwise
+    find the middle of a reply missing with nothing to say why (LOG-07, invariant 7)."""
+
+    def test_the_plan_reports_clamped_separately_from_trimmed(self) -> None:
+        """Two different acts on two different things: a stale tool result loses content nobody
+        needs, a clamped reply loses the middle of something a model produced."""
+        rows = transcript(turns=1, characters=400_000)
+
+        plan = plan_compaction(rows, keep_turns=1, tokens_per_character=RATIO)
+
+        assert plan.clamp and plan.trim == []

@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { foldEvents } from "@/lib/turns";
+import { compactionText, foldEvents } from "@/lib/turns";
 import type { EventType, GameEvent } from "@/lib/types";
 
 let seq = 0;
@@ -453,5 +453,34 @@ describe("withheld reasoning", () => {
     const { turns } = foldEvents(events, []);
 
     expect(turns[0].withheldReasoning).toBe(0);
+  });
+});
+
+describe("compactionText", () => {
+  it("names a clamp rather than falling back to 'history compacted'", () => {
+    /* Clamping is the one pass that shortens something the *model* wrote rather than dropping
+       something a tool returned. A clamp-only pass has folded 0 and trimmed 0, so it used to hit
+       the bare fallback — exactly the reading a person should not be left with when a reply has
+       had its middle removed. */
+    const text = compactionText({ folded: 0, trimmed: 0, clamped: 2 });
+
+    expect(text).toContain("2 long replies shortened");
+    expect(text).not.toContain("history compacted");
+  });
+
+  it("says reply, not replies, for one", () => {
+    expect(compactionText({ folded: 0, trimmed: 0, clamped: 1 })).toContain("1 long reply shortened");
+  });
+
+  it("still describes a fold and a trim alongside it", () => {
+    const text = compactionText({ folded: 40, trimmed: 3, clamped: 1 });
+
+    expect(text).toContain("40 messages summarised");
+    expect(text).toContain("3 stale tool results dropped");
+    expect(text).toContain("1 long reply shortened");
+  });
+
+  it("falls back only when nothing at all was recorded", () => {
+    expect(compactionText({})).toContain("history compacted");
   });
 });

@@ -270,6 +270,12 @@ class TurnResult:
     #: The provider rejected the request itself. Requeueing it cannot help.
     request_rejected: bool = False
 
+    #: How the game should describe giving up, when "the provider rejected the request" would be
+    #: untrue. An endpoint that miscounts its own prompt answered us perfectly well and then filed a
+    #: nonsense receipt (ADR-0033) — calling that a rejection sends a reader looking for a refusal
+    #: that never happened. `None` leaves the worker's own wording in place.
+    abandon_reason: str | None = None
+
     @property
     def moved(self) -> bool:
         return self.move is not None
@@ -443,6 +449,7 @@ class TurnRunner:
             result.error = str(error)
             result.outcome = None
             result.request_rejected = True
+            result.abandon_reason = f"Abandoned — {error}"
         except HarnessCeilingError as error:
             # Our ceiling, not the model's failure. Same treatment as a provider outage: the turn
             # is marked FAILED with no outcome, so nothing is recorded against either player and
@@ -605,6 +612,12 @@ class TurnRunner:
                 "model": self.model,
                 "folded": len(plan.fold),
                 "trimmed": len(plan.trim),
+                #: Replies shortened from within because the turn we had to keep was larger than
+                #: the whole budget (ADR-0033). Recorded separately from `trimmed` because it is a
+                #: different act on a different thing: a stale tool result loses content nobody
+                #: needs, a clamped reply loses the middle of something the *model* wrote.
+                "clamped": len(plan.clamp),
+                "characters_clamped": compaction.sent_characters(plan.clamp),
                 "kept": len(plan.keep),
                 #: What the provider counted before the pass, and `None` when nothing had been
                 #: measured yet. Reported as-is rather than filled in, because a number nobody
