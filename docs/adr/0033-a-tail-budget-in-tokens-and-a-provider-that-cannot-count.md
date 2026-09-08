@@ -87,6 +87,17 @@ There is no honest recovery: every model tokenises differently, OpenRouter expos
 endpoint, and a local estimate is what AGENT-19 forbids — so the provider's numbers are the only
 ones available and this provider's are not numbers.
 
+**A stored impossible figure is discarded on the way in**, by the same test that refuses to store
+one. A count is not made true by having been written down, and `29e7f004` carried 549,680 against a
+256,000-token window through three resumes — large enough that every calculation concluded there
+was no room, including the one deciding whether there was room to write the summary that would have
+made room. Discarded, the seat is merely *unmeasured*, a state the harness already handles.
+
+**Every rung that needs no provider survives a failed summarisation.** The trim already did; the
+clamp was being dropped with the fold, which is precisely backwards — the clamp is the *only* rung
+that helps when the single turn we must keep is itself over budget, and that is exactly the state a
+game is in when its summary has no room to be written.
+
 ## Consequences
 
 The deadlock is closed at both ends. The retained region can no longer grow to fill the window,

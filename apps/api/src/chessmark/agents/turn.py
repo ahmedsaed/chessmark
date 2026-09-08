@@ -354,6 +354,12 @@ class TurnRunner:
         #: character estimate — for the whole game, while the design believed the estimate ran once
         #: at ply 1. There is no estimate any more, and this is why there does not need to be one
         #: (AGENT-19, ADR-0021).
+        #: Read back through the same test that refuses to store an impossible one. A count
+        #: larger than the window cannot describe a prompt that was accepted, and one already on
+        #: the row is not made true by having been written down: `29e7f004` carried 549,680 against
+        #: a 256,000-token window and every calculation from it concluded there was no room, so the
+        #: seat gave up before making a call — through three resumes (ADR-0033). Discarding it
+        #: leaves the seat *unmeasured*, which is a state the harness already handles honestly.
         self._prompt_tokens: int | None = player.last_prompt_tokens or None
         self._cached_window: compaction.Window | None = None
         self._compactions = 0
@@ -473,6 +479,30 @@ class TurnRunner:
 
     # ------------------------------------------------------------------ context
 
+    async def _discard_impossible_measurement(self) -> None:
+        """Drop a stored prompt size the window says cannot be true.
+
+        The same rule as `ProviderAccountingError`, applied to what is already on the row rather
+        than to what is arriving. A figure larger than the whole window never described a prompt
+        that fitted, and carrying it forward is what wedged a game through three resumes: it is
+        large enough that every calculation concludes there is no room, including the one deciding
+        whether there is room to write the summary that would have made room.
+        """
+        if self._prompt_tokens is None:
+            return
+        window = await self._endpoint_window()
+        if window.known and self._prompt_tokens > window.context:
+            log.warning(
+                "discarding a stored prompt size of %d for %s: larger than the %d-token window it "
+                "would have had to fit in, so it never measured anything",
+                self._prompt_tokens,
+                self.model,
+                window.context,
+            )
+            self._prompt_tokens = None
+            self.player.last_prompt_tokens = 0
+            self.player.last_prompt_characters = 0
+
     async def _endpoint_window(self) -> compaction.Window:
         """What the endpoint serving this seat accepts. Resolved once per turn and remembered.
 
@@ -551,10 +581,14 @@ class TurnRunner:
         if plan.fold:
             summary = await self._summarise(turn, result, plan, occupied, window)
             if not summary:
-                # The summarising call failed or said nothing. Rung one still stands on its own —
-                # it needs no provider at all — so the pass proceeds with the trim rather than
-                # abandoning both and leaving the request exactly as large as it was.
-                plan = compaction.Plan(fold=[], keep=plan.keep, trim=plan.trim)
+                # The summarising call failed or said nothing. **Every rung that needs no provider
+                # still stands** — the trim and the clamp both — so the pass proceeds with those
+                # rather than abandoning all three and leaving the request exactly as large as it
+                # was. Dropping the clamp here was the difference between a transcript that could
+                # shrink and one that could not: the clamp is the *only* rung that helps when the
+                # single turn we must keep is itself over budget, which is precisely the state a
+                # game is in when its summary has no room to be written.
+                plan = compaction.Plan(fold=[], keep=plan.keep, trim=plan.trim, clamp=plan.clamp)
                 if not plan.worthwhile:
                     return False
 
@@ -769,6 +803,8 @@ class TurnRunner:
     # ------------------------------------------------------------------ the loop
 
     async def _loop(self, turn: Turn, result: TurnResult) -> None:
+        await self._discard_impossible_measurement()
+
         for iteration in range(self.limits.max_tool_iterations):
             self._iteration = iteration
             if self._over_budget(result):
@@ -1380,9 +1416,24 @@ class TurnRunner:
         """
         tokens = self.player.last_prompt_tokens or 0
         characters = self.player.last_prompt_characters or 0
-        if tokens <= 0 or characters <= 0:
-            return 0.0
-        return tokens / characters
+        if tokens > 0 and characters > 0:
+            return tokens / characters
+
+        # **A seat with no stored pair is not a seat with no measurement.** Every game that existed
+        # before `last_prompt_characters` did has a token count and no character count beside it,
+        # and so would get no ratio, no size budget, and the message ceiling that could not shrink
+        # it — which is the state two games were already stuck in. `occupied` is a real measurement
+        # of this transcript and `_sent_characters` a real count of it, taken a round-trip apart
+        # rather than at the same instant. Close enough to size a retention policy, and the only
+        # thing standing between an old transcript and the budget that would rescue it.
+        # **Only before a fold has moved the ground.** The two numbers are a round-trip apart, and
+        # that is fine while they describe the same transcript — but after a compaction `occupied`
+        # is a bound on the *pre-fold* size while the characters are post-fold, and their quotient
+        # is then a ratio between two different conversations. Wrong in the direction that keeps far
+        # too little history.
+        if tokens > 0 and self._sent_characters > 0 and self._compactions == 0:
+            return tokens / self._sent_characters
+        return 0.0
 
     def _remember_prompt_size(self, completion: Completion) -> None:
         """Carry the measured prompt size forward, on the seat rather than on this runner.

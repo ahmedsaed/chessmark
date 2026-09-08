@@ -121,3 +121,50 @@ async def test_an_unknown_window_cannot_convict(db: AsyncSession, table: Table) 
     )
 
     assert result.status is TurnStatus.COMPLETED
+
+
+async def test_a_stored_impossible_measurement_is_discarded(db: AsyncSession, table: Table) -> None:
+    """**What unsticks `29e7f004`.** The figure was already on the row before this rule existed,
+    and a count is not made true by having been written down.
+
+    Carried forward it is large enough that every calculation concludes there is no room —
+    including the one deciding whether there is room to write the summary that would have made
+    room — so the seat gave up before making a call, through three resumes. Discarded, the seat is
+    merely *unmeasured*, which the harness has always handled honestly.
+    """
+    await _register(db)
+    table.white.last_prompt_tokens = 549_680
+    table.white.last_prompt_characters = 0
+    await db.commit()
+
+    result = await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("make_move", move="e4"), prompt_tokens=180_000)),
+        model=MODEL,
+        limits=TurnLimits(max_completion_tokens=64_000),
+    )
+
+    assert result.status is TurnStatus.COMPLETED, (
+        "a stored figure larger than the window stopped the seat before it could call anything"
+    )
+
+
+async def test_a_credible_stored_measurement_is_kept(db: AsyncSession, table: Table) -> None:
+    """The rule is impossibility, not size. A seat legitimately near its window must keep its
+    measurement — throwing it away would send the next request down the unmeasured path."""
+    await _register(db)
+    table.white.last_prompt_tokens = 200_000
+    table.white.last_prompt_characters = 600_000
+    await db.commit()
+
+    await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("make_move", move="e4"), prompt_tokens=200_100)),
+        model=MODEL,
+        limits=TurnLimits(max_completion_tokens=20_000),
+    )
+    await db.refresh(table.white)
+
+    assert table.white.last_prompt_tokens == 200_100
