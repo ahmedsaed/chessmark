@@ -143,7 +143,9 @@ cmd_latency() { # where a game's time goes: the model, the harness, or the queue
 }
 
 cmd_resume() { # reopen a game the harness stopped:  ./chessmark resume <game-id>
-  [ $# -gt 0 ] || die "which game? e.g. ./chessmark resume 5f8ee937-2e53-49df-877f-6879bcfc56b7"
+  # The id may be the first eight characters — what the site and the logs print — rather than all
+  # thirty-six. An ambiguous prefix lists what it matched and refuses; it never picks one.
+  [ $# -gt 0 ] || die "which game? e.g. ./chessmark resume 5f8ee937"
   # Only endings *we* imposed can be reopened — a budget, a ply cap, a provider we could not
   # reach. A checkmate is final and so is a forfeit; the script refuses those, which is the point
   # of it existing rather than a hand-written UPDATE.
