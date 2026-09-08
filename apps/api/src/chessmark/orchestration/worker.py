@@ -988,7 +988,10 @@ class TurnWorker:
             async with self.sessionmaker() as session, session.begin():
                 game = await get_game(session, job.game_id)
                 await self._abandon(
-                    session, game, f"Abandoned — the provider rejected the request: {result.error}"
+                    session,
+                    game,
+                    result.abandon_reason
+                    or f"Abandoned — the provider rejected the request: {result.error}",
                 )
             return HandledJob(ABORTED, job.game_id, job.expected_ply, result=result)
 

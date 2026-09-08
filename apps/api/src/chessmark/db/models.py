@@ -255,6 +255,25 @@ class Player(Base):
     #: to the arithmetic deciding whether a request can be sent at all (AGENT-19).
     last_prompt_tokens: Mapped[int] = mapped_column(default=0, server_default="0")
 
+    last_prompt_characters: Mapped[int] = mapped_column(default=0, server_default="0")
+    """What that same prompt measured in *characters*, counted by us at the same instant.
+
+    The pair is the point. A provider reports one token total for a whole request and never a
+    figure per message, so bounding "keep the last 20,000 tokens" needs a way to apportion that
+    total across messages — and every harness that does this estimates. What the pair buys is an
+    estimate calibrated on **this** conversation with **this** model's tokeniser, rather than a
+    constant that is wrong differently for every endpoint:
+
+        tokens per character = last_prompt_tokens / last_prompt_characters
+
+    Both measured at the same moment, which is why they are stored together: a token count from
+    one instant divided by a character count from another is a ratio of two different transcripts.
+
+    It sizes a *retention policy*, never a safety bound. Whether a request can be sent is still
+    decided by the provider's own count and nothing else (AGENT-19) — being wrong here keeps a
+    slightly longer or shorter tail, where being wrong there abandons a game.
+    """
+
     # --- per-player benchmark metrics ---
     illegal_attempts: Mapped[int] = mapped_column(default=0, server_default="0")
     compactions: Mapped[int] = mapped_column(default=0, server_default="0")
@@ -488,6 +507,25 @@ class TranscriptMessage(Base):
     returns 38 or 39 move objects and a turn calls it most plies — and it is worth nothing once the
     position has moved on, because the board is authoritative (invariant 1) and the model can ask
     again.
+    """
+
+    clamped_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    """Set when this message alone was larger than the whole retained region (ADR-0033).
+
+    The fourth mark, and the only one that shortens a message *within* itself rather than eliding
+    it whole. The retained region is bounded by size now, and a cut may only land on a turn
+    boundary — a `tool` result separated from the `tool_calls` that asked for it is refused by every
+    provider — so when a single turn is larger than the budget there is nowhere legal left to cut.
+    Keeping it anyway is what deadlocked two games: the region compaction is forbidden to touch
+    filled the window on its own, leaving no room to write the summary that would have shrunk it.
+
+    So the runaway message keeps its head and its tail and loses its middle. Head and tail because
+    a reasoning block opens with what it is considering and closes with what it concluded, and the
+    enumeration in between is the part the board can answer for (invariant 1).
+
+    Rendered deterministically from `content`, never stored pre-cut: the same row must serialise
+    identically on every replay or the cacheable prefix moves under us (invariant 2, ADR-0003).
+    `content` itself is untouched, like every other mark here.
     """
 
     truncated_at: Mapped[dt.datetime | None] = mapped_column(sa.DateTime(timezone=True))

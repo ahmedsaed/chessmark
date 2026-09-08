@@ -49,12 +49,21 @@ export function endedText(ended: {
 export function compactionText(payload: Record<string, unknown>): string {
   const folded = asNumber(payload.folded);
   const trimmed = asNumber(payload.trimmed);
+  const clamped = asNumber(payload.clamped);
   const before = asNumber(payload.characters_before);
   const after = asNumber(payload.characters_after);
 
   const did: string[] = [];
   if (folded > 0) did.push(`${folded} messages summarised`);
   if (trimmed > 0) did.push(`${trimmed} stale tool results dropped`);
+  /* **Named, and named separately.** Clamping is the one pass that shortens something the *model*
+     wrote rather than dropping something a tool returned, and a pass that only clamped used to
+     render as the bare fallback below — "history compacted" — which is exactly the reading a
+     person should not be left with when a reply has had its middle removed. The raw payload still
+     holds every character (LOG-07); this is the pointer that says to go and look. */
+  if (clamped > 0) {
+    did.push(`${clamped} long ${clamped === 1 ? "reply" : "replies"} shortened`);
+  }
   if (did.length === 0) did.push("history compacted");
 
   const parts = [did.join(", ")];

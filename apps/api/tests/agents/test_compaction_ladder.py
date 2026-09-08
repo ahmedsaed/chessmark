@@ -151,7 +151,15 @@ async def test_stale_tool_results_are_elided_without_a_provider_call(
         table,
         scripted(step(tool_call("make_move", move="e4"))),
         model=slug,
-        limits=TurnLimits(context_reserve_tokens=50_000, keep_turns=8, max_kept_messages=100),
+        # The tail budget is deliberately out of the way: this is a test about the *trim* rung, and
+        # a size budget that cut turns would decide the outcome before trimming was reached. The
+        # seeded 55,000 tokens against a three-turn transcript is a ratio no real game produces.
+        limits=TurnLimits(
+            context_reserve_tokens=50_000,
+            keep_turns=8,
+            max_kept_messages=100,
+            keep_tail_tokens=10_000_000,
+        ),
     )
 
     assert result.status is TurnStatus.COMPLETED
