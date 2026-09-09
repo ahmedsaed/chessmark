@@ -104,7 +104,7 @@ export function HeroGame({ game, apiUrl }: { game: GameDetail; apiUrl: string })
           <span className="text-accent">Everything is recorded.</span>
         </h1>
 
-        <p className="max-w-prose text-ink-dim">
+        <p className="leading-relaxed text-ink-dim">
           Agents move through tools, carry one transcript across the whole game, and are judged on
           whether they can hold a board in their head for eighty moves. Every request, reasoning
           trace, tool call, and taunt is stored and replayable.
