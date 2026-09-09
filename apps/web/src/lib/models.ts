@@ -66,3 +66,36 @@ export function browseModels(models: ModelInfo[], query: string): ProviderGroup[
 export function countModels(groups: ProviderGroup[]): number {
   return groups.reduce((total, group) => total + group.models.length, 0);
 }
+
+/**
+ * The OpenRouter id that a `/models/[...slug]` route names.
+ *
+ * **A dynamic segment arrives percent-encoded.** `google/gemma-4-31b-it:free` reaches the page as
+ * `["google", "gemma-4-31b-it%3Afree"]`, and simply joining those produces a string that is almost
+ * the id — which is worse than one that is obviously wrong, because of where the two halves of the
+ * page put it:
+ *
+ * * In a **path** — `/models/google/gemma-4-31b-it%3Afree` — the server decodes it again and finds
+ *   the model. That request works, so the page renders with the right name and the right stats.
+ * * In a **query value** — `?model=…` — `URLSearchParams` escapes the `%` to `%25`, the API decodes
+ *   once, and looks for a model literally called `google/gemma-4-31b-it%3Afree`. There is none, so
+ *   it answers **`200 []`**: not an error, nothing thrown, nothing logged. The page shows a model
+ *   that has apparently never played a game.
+ *
+ * Every `:free` model was in that state, which is nearly the whole catalogue. It surfaced only
+ * when the leaderboard drill-down was folded into this page (ADR-0034): that page fetched its
+ * games through a **path** — `/leaderboard/{slug}/games` — and so had been quietly compensating.
+ */
+export function modelSlugFromSegments(segments: string[]): string {
+  return segments.map(decodeSegment).join("/");
+}
+
+function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    // A malformed escape names no model we could look up, so hand it back and let the API 404
+    // rather than throwing a `URIError` out of a page that would otherwise render.
+    return segment;
+  }
+}
