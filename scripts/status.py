@@ -94,6 +94,21 @@ RECLAIM_AFTER = dt.timedelta(minutes=15)
 #: means at least one holder is gone.
 CONSUMER_DEAD_AFTER = dt.timedelta(seconds=60)
 
+#: How long a worker *holding a delivery* may be quiet before it is worth remarking on.
+#:
+#: **A worker mid-turn is silent by construction.** Redis measures a consumer's idle time from its
+#: last interaction with the group, and a worker running a turn neither reads nor acks — so its
+#: idle time is simply how long the turn has been going. Measured across 3,157 real turns: the
+#: median is 33 seconds, but the 90th percentile is 224 and **34% run longer than a minute**. Judged
+#: against `CONSUMER_DEAD_AFTER`, a third of all turns would report their worker as gone and their
+#: job as orphaned, while both were working perfectly well.
+#:
+#: The queue's own rule is the honest one, and `reap_dead_consumers` already follows it: a consumer
+#: holding a delivery is never treated as absent. It becomes *stuck* only once `XAUTOCLAIM` would
+#: take the job back, which is the same fifteen minutes the queue uses — and 1.1% of turns reach
+#: that, where the reclaim is correct and the turn simply reruns (ADR-0007).
+WORKER_STUCK_AFTER = RECLAIM_AFTER
+
 
 class Report:
     """Lines to print, and the ones that were not green."""
@@ -311,7 +326,11 @@ async def show_workers(report: Report, redis: Any) -> None:
         held = int(consumer.get("pending", 0))
         idle = int(int(consumer.get("idle", 0)) / 1000)
 
-        alive = idle <= CONSUMER_DEAD_AFTER.total_seconds()
+        # A worker holding a job is *working*, and stays that way until the queue would reclaim it.
+        # One holding nothing has no reason to be quiet, so the shorter threshold still finds names
+        # left behind by earlier processes.
+        limit = WORKER_STUCK_AFTER if held else CONSUMER_DEAD_AFTER
+        alive = idle <= limit.total_seconds()
         if not alive and held == 0:
             dead += 1
             continue
@@ -325,7 +344,7 @@ async def show_workers(report: Report, redis: Any) -> None:
             # Gone, but still named on a delivery nobody has acked. The queue takes it back at
             # `RECLAIM_AFTER` and the turn simply reruns — it was rolled back whole (ADR-0007).
             left = RECLAIM_AFTER.total_seconds() - idle
-            doing = f"{games or held} — orphaned, reclaimed in {_span(int(max(left, 0)))}"
+            doing = f"{games or held} — stuck, reclaimed in {_span(int(max(left, 0)))}"
             orphaned += held
 
         rows.append([_cut(name, 24, report.wide), doing, _span(idle)])
@@ -337,8 +356,9 @@ async def show_workers(report: Report, redis: Any) -> None:
         report.table(["worker", "playing", "last seen"], rows, marks)
     if orphaned:
         report.warn(
-            f"{orphaned} delivery(ies) held by workers that are gone",
-            "a deploy or a crash mid-turn; the queue reclaims them and the turn reruns",
+            f"{orphaned} delivery(ies) held longer than the queue will wait",
+            "a crash mid-turn, or a turn that outran the reclaim window; either way the queue "
+            "takes the job back and the turn reruns, having rolled back whole",
         )
     if dead:
         # Not a fault: a name outlives its process and only `XGROUP DELCONSUMER` clears it.
