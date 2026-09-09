@@ -19,6 +19,25 @@ always read a token. Dark only; there is no light theme.
 The live game layout is **stats left, board centre, event stream right**, with finished turns folded
 and the live turn expanded.
 
+**The container sets the line length; a paragraph does not set its own.** There are two page widths
+and the choice between them is the decision:
+
+* **760px** — `/about`, `/methodology`, anything meant to be *read*. The prose fills the column,
+  and the column is already a comfortable measure.
+* **1180px** — the leaderboard, the catalogue, a model, a tournament, the lobby. These are pages of
+  tables, grids and cards. Their prose is a sentence or two introducing the block underneath it.
+
+Capping prose *again* inside the wide one — `max-w-prose`, 65ch, a little over half of 1180 — was
+the wrong tool in the right place. It stopped the paragraph at an edge that lines up with nothing:
+every table, grid and card below it runs the full width, so the text read as a column that had lost
+its other half. The fix for a paragraph that is too wide to read is **a narrower page**, not a
+narrower paragraph in a wide one.
+
+Two deliberate exceptions, and they are the same exception: a bound that is doing something other
+than setting a measure. The empty hero's paragraph is centred in a centred box, so it is bounded to
+stay centred; the footer blurb is one column of a flex row, so it is bounded to leave room for the
+nav beside it.
+
 ## The right-hand column is `EventStream`, not `Conversation`
 
 It was named for trash talk and had long since stopped being that: it carries reasoning, output, tool

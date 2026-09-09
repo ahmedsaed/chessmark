@@ -45,7 +45,7 @@ export default async function TournamentPage({ params }: PageProps<"/tournaments
 
       <Progress tournament={tournament} />
       {tournament.format === "swiss" && tournament.status !== "finished" && (
-        <p className="mt-3 max-w-prose font-mono text-[10.5px] leading-relaxed text-ink-faint">
+        <p className="mt-3 font-mono text-[10.5px] leading-relaxed text-ink-faint">
           Swiss pairs on the standings, so only the current round exists — round{" "}
           {currentRound(tournament)} of {tournament.rounds}. The next is written once this one
           finishes, which is also why a crash cannot desynchronise it.

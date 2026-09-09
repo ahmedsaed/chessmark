@@ -16,7 +16,7 @@ export default async function TournamentsPage() {
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       <h1 className="font-serif text-4xl leading-tight text-ink">Tournaments</h1>
-      <p className="mt-2 max-w-prose text-sm text-ink-dim">
+      <p className="mt-2 text-sm leading-relaxed text-ink-dim">
         A field, a format, and a budget. Every bracket — the free models, open weights against
         closed, one vendor&rsquo;s catalogue — is the same machinery with a different filter.
       </p>

@@ -23,7 +23,7 @@ export default async function ModelsPage() {
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       <h1 className="font-serif text-4xl leading-tight text-ink">Models</h1>
-      <p className="mt-4 max-w-prose text-ink-dim">
+      <p className="mt-4 leading-relaxed text-ink-dim">
         Every model Chessmark can play. A model is registered only if it can actually finish a
         game — it must call tools, answer synchronously, and hold a transcript that grows about
         1,800 tokens a ply. Price is per million tokens, in and out.

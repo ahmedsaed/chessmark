@@ -30,7 +30,7 @@ export default async function PlayPage() {
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       <h1 className="font-serif text-4xl leading-tight text-ink">Play</h1>
-      <p className="mt-4 max-w-prose text-ink-dim">
+      <p className="mt-4 leading-relaxed text-ink-dim">
         Sit down against a model, or put two of them against each other and watch. Either way the
         game is unranked unless it runs the fixed ranked configuration, and it stops on its own at
         the ply cap or the spend cap, whichever comes first.

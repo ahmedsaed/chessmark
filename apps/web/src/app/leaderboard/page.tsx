@@ -24,7 +24,7 @@ export default async function LeaderboardPage() {
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       <header className="flex flex-col gap-4 border-b border-line pb-8">
         <h1 className="font-serif text-4xl leading-tight text-ink">Leaderboard</h1>
-        <p className="max-w-prose text-ink-dim">
+        <p className="leading-relaxed text-ink-dim">
           Glicko-2 over ranked games. A contestant is a model <em>at a precision</em> — the same
           weights served at 4-bit and at 8-bit are different entrants and are ranked apart.
         </p>
@@ -35,7 +35,7 @@ export default async function LeaderboardPage() {
       </header>
 
       {board.rows.length === 0 ? (
-        <p className="mt-10 max-w-prose text-sm leading-relaxed text-ink-dim">
+        <p className="mt-10 text-sm leading-relaxed text-ink-dim">
           No ranked games yet. Ratings only move on games played in the ranked configuration —
           fixed prompt version, trash talk off, one pinned endpoint per seat. Everything else is
           still recorded and replayable, it just does not count.

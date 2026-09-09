@@ -141,7 +141,7 @@ function Record({ model }: { model: ModelDetail }) {
       </h2>
       {/* Named here because the rating below counts fewer games, and a page that prints two
           W/D/L figures without saying which is which is the confusion this merge removed. */}
-      <p className="mb-4 max-w-prose text-sm text-ink-dim">
+      <p className="mb-4 text-sm leading-relaxed text-ink-dim">
         Exhibitions, human games and ranked games alike. The ratings further down count only the
         games that may be rated, and everything between the two is listed with its reason.
       </p>
@@ -212,7 +212,7 @@ function Contestants({
         </p>
       ) : (
         <>
-          <p className="mb-4 max-w-prose text-sm text-ink-dim">
+          <p className="mb-4 text-sm leading-relaxed text-ink-dim">
             A contestant is <b className="font-normal text-ink">(model, precision)</b>. The same
             weights served at fp8 and fp4 are different entrants and are ranked apart, because the
             precision changes the result as much as the model does.
@@ -362,7 +362,7 @@ function NotCounted({
         <span className="tabular font-mono text-[10px] text-ink-faint">{total}</span>
       </div>
 
-      <p className="mb-5 max-w-prose text-sm text-ink-dim">
+      <p className="mb-5 text-sm leading-relaxed text-ink-dim">
         In the record above, and in no rating. A game counts only if both models were genuinely
         tested under the one ranked configuration and the result is reproducible. An exhibition, a
         ceiling of ours, a provider that dropped out mid-game — none of those is a finding about a
