@@ -118,6 +118,25 @@ TRUNCATED_PLACEHOLDER = (
     "authoritative and you can always read it again.]"
 )
 
+#: What stands in for a summary the model had no room to write.
+#:
+#: **A fold without a summary used to be no fold at all.** The pass fell back to the rungs needing
+#: no provider and discarded the fold entirely, on the reasoning that dropping history silently is
+#: worse than not dropping it. Correct, and it left one case with no way out: a transcript so large
+#: that the summarising call itself cannot fit is exactly the transcript most in need of folding,
+#: and `e601f9af` sat at 254,103 tokens of a 256,000-token window through four resumes because the
+#: only rung that could have saved it required the room it did not have.
+#:
+#: So the fold proceeds and says so. This is not silent — it is the same bargain `TRIMMED_PLACEHOLDER`
+#: strikes, and the model is told what happened and pointed back at the board, which is
+#: authoritative (invariant 1). What is lost is the model's own account of its plan; what is kept is
+#: the game.
+SUMMARY_UNAVAILABLE = (
+    "Your earlier turns in this game were dropped to save context. There was not enough room left "
+    "to write a summary of them first, so no account of them survives — read the board and the "
+    "move history, which are authoritative, and carry on from the position in front of you."
+)
+
 #: What replaces the middle of a message too large to keep whole.
 #:
 #: Says that something was cut and roughly how much, because a model reading its own reasoning with
@@ -689,6 +708,7 @@ __all__ = [
     "KEEP_TAIL_TOKENS",
     "MIN_USEFUL_COMPLETION",
     "SUMMARY_MAX_TOKENS",
+    "SUMMARY_UNAVAILABLE",
     "TRIMMED_PLACEHOLDER",
     "TRUNCATED_PLACEHOLDER",
     "NoRoomToAnswerError",

@@ -250,7 +250,14 @@ async def test_a_pass_that_would_change_nothing_is_not_called_a_success(
         table,
         scripted(step(tool_call("make_move", move="e4"))),
         model=slug,
-        limits=TurnLimits(context_reserve_tokens=50_000, keep_turns=8, max_kept_messages=100),
+        # Out of the way for the same reason as above: this asserts that a pass with nothing to do
+        # writes no event, and a size budget that cut turns would give it something to do.
+        limits=TurnLimits(
+            context_reserve_tokens=50_000,
+            keep_turns=8,
+            max_kept_messages=100,
+            keep_tail_tokens=10_000_000,
+        ),
     )
 
     assert await _compacted(db, table) == [], "no event, because nothing changed"
