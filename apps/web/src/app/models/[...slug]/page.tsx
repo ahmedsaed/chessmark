@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { GameCard } from "@/components/GameCard";
 import { CreditBadge } from "@/components/ModelPicker";
 import { getModel, listGamesByModel } from "@/lib/api";
+import { modelSlugFromSegments } from "@/lib/models";
 import type { Contestant, GameSummary, LeaderboardRow, ModelDetail } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -23,13 +24,11 @@ export const dynamic = "force-dynamic";
  * * **Contestants** — the rating per precision, and the games it was computed from (BENCH-02).
  * * **Played, did not count** — the difference, with a reason each (BENCH-10).
  */
-function slugOf(parts: string[]): string {
-  return parts.join("/");
-}
+
 
 export async function generateMetadata({ params }: PageProps<"/models/[...slug]">) {
   const { slug } = await params;
-  const model = await getModel(slugOf(slug));
+  const model = await getModel(modelSlugFromSegments(slug));
   if (!model) return { title: "Model not found" };
 
   return {
@@ -42,14 +41,19 @@ export async function generateMetadata({ params }: PageProps<"/models/[...slug]"
 
 export default async function ModelPage({ params }: PageProps<"/models/[...slug]">) {
   const { slug } = await params;
-  const id = slugOf(slug);
+  const id = modelSlugFromSegments(slug);
 
   const model = await getModel(id);
   if (!model) notFound();
 
-  /* The ceiling rather than the default fifty: the sections below partition this list, and a game
+  /* Asked for by the id the **registry** holds, not the one rebuilt from the URL. A dynamic
+     segment arrives percent-encoded, and a slug that is one `%3A` away from right still finds the
+     model in a path while matching nothing in a query — see `modelSlugFromSegments`. Using the
+     answer's own spelling removes the class of fault rather than this instance of it.
+
+     The ceiling rather than the default fifty: the sections below partition this list, and a game
      the page fetched no summary for would silently vanish from whichever section it belongs to. */
-  const games = await listGamesByModel(id, 200);
+  const games = await listGamesByModel(model.openrouter_id, 200);
   const gamesById = new Map(games.map((game) => [game.id, game]));
 
   const rated = new Set(Object.values(model.rated_games).flat());
@@ -80,6 +84,17 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
         </p>
       ) : (
         <Record model={model} />
+      )}
+
+      {games.length === 0 && model.stats.games > 0 && (
+        /* The record says it has played and we have no games to show, which is a failed read, not
+           an empty history. Said out loud because the three sections below are conditional:
+           without this, an unreachable API and a model that has never played render the same page
+           — the silence `reportFailure` was written to end, reappearing in the UI. */
+        <p className="mt-10 border border-bad-deep bg-surface px-4 py-3 text-sm text-bad">
+          This model&rsquo;s {model.stats.games} games could not be loaded. The numbers above are
+          right; the lists below are missing, not empty.
+        </p>
       )}
 
       <Contestants model={model} gamesById={gamesById} />

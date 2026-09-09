@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { browseModels, countModels } from "@/lib/models";
+import { browseModels, countModels, modelSlugFromSegments } from "@/lib/models";
 import type { ModelInfo } from "@/lib/types";
 
 function model(openrouter_id: string, overrides: Partial<ModelInfo> = {}): ModelInfo {
@@ -116,5 +116,42 @@ describe("browseModels", () => {
 
     expect(groups).toHaveLength(1);
     expect(groups[0].provider).toBe("unknown");
+  });
+});
+
+describe("modelSlugFromSegments", () => {
+  it("decodes a segment, because a dynamic route param arrives encoded", () => {
+    /**
+     * The bug this exists for. `["google", "gemma-4-31b-it%3Afree"]` joined raw is *almost* the
+     * id: right enough for `/models/{slug}` — the server decodes the path again — and wrong for
+     * `?model=`, where `URLSearchParams` escapes the `%` and the API matches nothing, answering
+     * `200 []`. Nothing errors; the page just shows a model that has never played.
+     */
+    expect(modelSlugFromSegments(["google", "gemma-4-31b-it%3Afree"])).toBe(
+      "google/gemma-4-31b-it:free",
+    );
+  });
+
+  it("leaves a segment with nothing to decode alone", () => {
+    /** Why it went unnoticed: a slug with no `:` or `/` is identical either way. */
+    expect(modelSlugFromSegments(["google", "gemini-2.5-flash"])).toBe("google/gemini-2.5-flash");
+  });
+
+  it("rejoins the vendor and the model with the slash the route split on", () => {
+    expect(modelSlugFromSegments(["inclusionai", "ling-3.0-flash-fin%3Afree"])).toBe(
+      "inclusionai/ling-3.0-flash-fin:free",
+    );
+  });
+
+  it("handles an id that arrived as one encoded segment", () => {
+    /** What `/leaderboard/{slug}?q=` redirects to: the whole id percent-encoded in one segment. */
+    expect(modelSlugFromSegments(["inclusionai%2Fling-3.0-flash-fin%3Afree"])).toBe(
+      "inclusionai/ling-3.0-flash-fin:free",
+    );
+  });
+
+  it("hands back a malformed escape rather than throwing", () => {
+    /** `decodeURIComponent` throws on a lone `%`. A page that renders a 404 beats one that 500s. */
+    expect(modelSlugFromSegments(["vendor", "100%"])).toBe("vendor/100%");
   });
 });
