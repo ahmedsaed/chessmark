@@ -15,11 +15,13 @@ import sqlalchemy as sa
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.agents.registry import sync_model_registry
 from chessmark.db.enums import GameStatus, PlayerKind
-from chessmark.db.models import Game, LlmCall, ModelRegistry, Player, Turn
+from chessmark.db.models import Game, LlmCall, ModelEndpoint, ModelRegistry, Player, Turn
 from chessmark.db.stats import model_stats
 from chessmark.game import GameResult, Termination
+from chessmark.orchestration.match import Seat, create_match
 
 pytestmark = pytest.mark.integration
 
@@ -327,3 +329,187 @@ async def test_filtering_by_an_unknown_model_is_empty_not_an_error(client: Async
 
     assert response.status_code == 200
     assert response.json() == []
+
+
+# ====================================================================== the merged page
+
+
+async def _ranked_model(db: AsyncSession, slug: str, quantization: str = "fp8") -> ModelRegistry:
+    """A registry row with an endpoint, which is what makes it a *contestant* (ADR-0015)."""
+    model = ModelRegistry(
+        openrouter_id=slug,
+        display_name=slug,
+        provider=slug.split("/")[0],
+        prompt_usd_per_token=Decimal("0.0000001"),
+        completion_usd_per_token=Decimal("0.0000004"),
+    )
+    db.add(model)
+    await db.flush()
+    db.add(
+        ModelEndpoint(
+            model_id=model.id,
+            provider_name=f"host-{quantization}",
+            quantization=quantization,
+            uptime_1d=99.0,
+        )
+    )
+    await db.flush()
+    return model
+
+
+async def _ranked_game(
+    db: AsyncSession,
+    white: str,
+    black: str,
+    *,
+    result: GameResult = GameResult.WHITE_WINS,
+    termination: Termination = Termination.CHECKMATE,
+) -> Game:
+    match = await create_match(
+        db,
+        white=Seat(display_name=white, model=white),
+        black=Seat(display_name=black, model=black),
+        is_ranked=True,
+    )
+    game = match.game
+    game.status = GameStatus.FINISHED
+    game.result = result
+    game.termination = termination
+    game.prompt_version = PROMPT_VERSION
+    game.ply_count = 40
+    await db.commit()
+    return game
+
+
+async def test_a_rating_reaches_the_games_behind_it(client: AsyncClient, db: AsyncSession) -> None:
+    """BENCH-02, asked of the page that now answers it.
+
+    The per-contestant drill-down used to be a separate page under `/leaderboard`, which meant a
+    model had two pages printing two W/D/L figures over two different sets of games and neither
+    saying so. The rating and its games live together here.
+    """
+    await _ranked_model(db, "merge/alpha")
+    await _ranked_model(db, "merge/beta")
+    first = await _ranked_game(db, "merge/alpha", "merge/beta")
+    second = await _ranked_game(db, "merge/beta", "merge/alpha")
+
+    body = (await client.get("/models/merge/alpha")).json()
+
+    assert [row["quantization"] for row in body["ratings"]] == ["fp8"]
+    assert set(body["rated_games"]["merge/alpha@fp8"]) == {str(first.id), str(second.id)}
+
+
+async def test_a_game_that_did_not_count_says_why(client: AsyncClient, db: AsyncSession) -> None:
+    """BENCH-10, and the question the merge exists to answer.
+
+    A record over every game and a rating over the ratable ones legitimately print different
+    numbers. The difference is only defensible if a reader can see which games it is made of —
+    "some games are excluded" invites disbelief; an id and a reason does not.
+    """
+    await _ranked_model(db, "merge/gamma")
+    await _ranked_model(db, "merge/delta")
+    counted = await _ranked_game(db, "merge/gamma", "merge/delta")
+    stopped = await _ranked_game(
+        db,
+        "merge/gamma",
+        "merge/delta",
+        result=GameResult.DRAW,
+        termination=Termination.BUDGET_EXCEEDED,
+    )
+
+    body = (await client.get("/models/merge/gamma")).json()
+    excluded = {entry["game_id"]: entry["reason"] for entry in body["excluded"]}
+
+    assert body["stats"]["games"] == 2, "the record covers every game it played"
+    assert body["rated_games"]["merge/gamma@fp8"] == [str(counted.id)]
+    assert str(stopped.id) in excluded
+    assert "harness" in excluded[str(stopped.id)]
+    assert str(counted.id) not in excluded
+
+
+async def test_the_record_and_the_ratings_differ_by_exactly_the_exclusions(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The reconciliation the merged page rests on.
+
+    Two W/D/L figures on one page is only honest if their difference is fully accounted for. Every
+    finished game this model played is either behind a rating or in the exclusion list — never in
+    neither, which would be a game the page silently lost.
+    """
+    await _ranked_model(db, "merge/eps")
+    await _ranked_model(db, "merge/zeta")
+    played = [
+        await _ranked_game(db, "merge/eps", "merge/zeta"),
+        await _ranked_game(db, "merge/zeta", "merge/eps", result=GameResult.BLACK_WINS),
+        await _ranked_game(
+            db,
+            "merge/eps",
+            "merge/zeta",
+            result=GameResult.DRAW,
+            termination=Termination.PLY_CAP,
+        ),
+    ]
+
+    body = (await client.get("/models/merge/eps")).json()
+    rated = {game_id for ids in body["rated_games"].values() for game_id in ids}
+    excluded = {entry["game_id"] for entry in body["excluded"]}
+
+    assert rated | excluded == {str(game.id) for game in played}
+    assert not rated & excluded, "a game cannot both count and be excluded"
+
+
+async def test_a_model_page_costs_a_fixed_number_of_queries(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """**The regression this route already had.**
+
+    It called `compute_ratings` and `compute_aggregates` without sharing a scan, so opening one
+    model was two full sweeps of the archive — the exact cost ADR-0032 removed from the
+    leaderboard, reintroduced on another route because nothing measured this one. That is the
+    failure mode `CLAUDE.md` describes: every addition was individually correct and nothing could
+    tell eight queries from three hundred until a person said the site felt slow.
+
+    Counting statements rather than timing them, for the same reason as the leaderboard's test: a
+    timing test passes on a fast machine with the bug still in place. What this forbids is
+    *growth*.
+    """
+    await _ranked_model(db, "cost/one")
+    await _ranked_model(db, "cost/two")
+    await _ranked_game(db, "cost/one", "cost/two")
+
+    statements: list[str] = []
+
+    def record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    sa.event.listen(db.bind.sync_engine, "before_cursor_execute", record)
+    try:
+        # Warm the snapshot first: the read that finds it stale rebuilds inline and stores the
+        # result, and that one slow request is the documented cost of self-healing — not the
+        # steady state this measures.
+        await client.get("/models/cost/one")
+        statements.clear()
+        await client.get("/models/cost/one")
+        one_game = len(statements)
+
+        for index in range(6):
+            await _ranked_game(
+                db,
+                "cost/one" if index % 2 == 0 else "cost/two",
+                "cost/two" if index % 2 == 0 else "cost/one",
+            )
+        await client.get("/models/cost/one")
+        statements.clear()
+        await client.get("/models/cost/one")
+        seven_games = len(statements)
+    finally:
+        sa.event.remove(db.bind.sync_engine, "before_cursor_execute", record)
+
+    # Both halves matter, and they catch different faults. The bound catches a *second* pass over
+    # the archive — the two unshared scans cost 32 statements where the snapshot costs 20, and
+    # neither grows, so growth alone would never have found it. Growth catches the classic N+1.
+    assert one_game <= 24, f"a one-game model page took {one_game} queries"
+    assert seven_games == one_game, (
+        f"the model page grew from {one_game} queries at one game to {seven_games} at seven — "
+        "it is reading per game again"
+    )

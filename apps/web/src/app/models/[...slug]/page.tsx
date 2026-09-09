@@ -4,14 +4,24 @@ import { notFound } from "next/navigation";
 import { GameCard } from "@/components/GameCard";
 import { CreditBadge } from "@/components/ModelPicker";
 import { getModel, listGamesByModel } from "@/lib/api";
-import type { LeaderboardRow, ModelDetail } from "@/lib/types";
+import type { Contestant, GameSummary, LeaderboardRow, ModelDetail } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 /**
- * A catch-all segment, because an OpenRouter id contains a slash: `google/gemini-3.7-flash` is one
- * identifier, not a nested route. `params.slug` arrives as `["google", "gemini-3.7-flash"]` and is
- * rejoined.
+ * Everything known about one model — the only page about it.
+ *
+ * `/leaderboard/{slug}?q=fp8` used to be a second one. It showed the contestant's rating and the
+ * ratable games behind it; this one showed the registry facts and the record over *every* game.
+ * Both printed a "W / D / L" heading, over different sets of games, and neither said so — so which
+ * numbers a reader saw depended on whether they arrived from the leaderboard or the tournament
+ * table. That page now redirects here and its contents are the contestant blocks below.
+ *
+ * The three scopes stay visibly apart rather than being averaged into one figure:
+ *
+ * * **Record** — every game, ranked or not.
+ * * **Contestants** — the rating per precision, and the games it was computed from (BENCH-02).
+ * * **Played, did not count** — the difference, with a reason each (BENCH-10).
  */
 function slugOf(parts: string[]): string {
   return parts.join("/");
@@ -37,7 +47,14 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
   const model = await getModel(id);
   if (!model) notFound();
 
-  const games = await listGamesByModel(id);
+  /* The ceiling rather than the default fifty: the sections below partition this list, and a game
+     the page fetched no summary for would silently vanish from whichever section it belongs to. */
+  const games = await listGamesByModel(id, 200);
+  const gamesById = new Map(games.map((game) => [game.id, game]));
+
+  const rated = new Set(Object.values(model.rated_games).flat());
+  const excluded = new Set(model.excluded.map((entry) => entry.game_id));
+  const unfinished = games.filter((game) => !rated.has(game.id) && !excluded.has(game.id));
 
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
@@ -65,26 +82,9 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
         <Record model={model} />
       )}
 
-      <Contestants model={model} />
-      {model.ratings.length > 0 && <Ratings rows={model.ratings} />}
-
-      {games.length > 0 && (
-        <section className="mt-12">
-          <div className="mb-4 flex items-baseline gap-3">
-            <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
-              Games
-            </h2>
-            <span className="h-px flex-1 bg-line-soft" aria-hidden />
-            <span className="tabular font-mono text-[10px] text-ink-faint">{games.length}</span>
-          </div>
-          {/* Every aggregate above is reachable from here — the games behind the numbers. */}
-          <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {games.map((game) => (
-              <GameCard key={game.id} game={game} />
-            ))}
-          </ul>
-        </section>
-      )}
+      <Contestants model={model} gamesById={gamesById} />
+      <NotCounted model={model} gamesById={gamesById} />
+      <Unfinished games={unfinished} />
     </main>
   );
 }
@@ -121,9 +121,15 @@ function Record({ model }: { model: ModelDetail }) {
 
   return (
     <section className="mt-10">
-      <h2 className="mb-4 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+      <h2 className="mb-1 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
         Record · every game, ranked or not
       </h2>
+      {/* Named here because the rating below counts fewer games, and a page that prints two
+          W/D/L figures without saying which is which is the confusion this merge removed. */}
+      <p className="mb-4 max-w-prose text-sm text-ink-dim">
+        Exhibitions, human games and ranked games alike. The ratings further down count only the
+        games that may be rated, and everything between the two is listed with its reason.
+      </p>
 
       <dl className="grid grid-cols-2 gap-px border border-line-soft bg-line-soft sm:grid-cols-4">
         <Fact
@@ -161,8 +167,20 @@ function Record({ model }: { model: ModelDetail }) {
   );
 }
 
-/** Every precision it is served at, and which endpoint a game would pin (ADR-0015). */
-function Contestants({ model }: { model: ModelDetail }) {
+/**
+ * Every precision this model is served at, with its rating and the games behind it.
+ *
+ * Was two sections here and a whole second page elsewhere. A contestant is one thing — the
+ * endpoint that serves it, the rating it holds, and the games that produced that rating — so it
+ * is one block.
+ */
+function Contestants({
+  model,
+  gamesById,
+}: {
+  model: ModelDetail;
+  gamesById: Map<string, GameSummary>;
+}) {
   return (
     <section className="mt-12">
       <div className="mb-4 flex items-baseline gap-3">
@@ -174,44 +192,37 @@ function Contestants({ model }: { model: ModelDetail }) {
 
       {model.contestants.length === 0 ? (
         <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
-          No active endpoint serves this model with tool calling, so it cannot be played. Nothing
-          is wrong with it — the providers that carried it have stopped.
+          No active endpoint serves this model with tool calling, so it cannot be played. Nothing is
+          wrong with it — the providers that carried it have stopped.
         </p>
       ) : (
         <>
-          <p className="mb-3 max-w-prose text-sm text-ink-dim">
+          <p className="mb-4 max-w-prose text-sm text-ink-dim">
             A contestant is <b className="font-normal text-ink">(model, precision)</b>. The same
             weights served at fp8 and fp4 are different entrants and are ranked apart, because the
             precision changes the result as much as the model does.
           </p>
-          <ul className="flex flex-col gap-px border border-line-soft bg-line-soft">
+          <div className="flex flex-col gap-6">
             {model.contestants.map((contestant) => (
-              <li
+              <ContestantBlock
                 key={contestant.quantization}
-                className="flex flex-wrap items-center gap-3 bg-surface px-3 py-2 font-mono text-xs"
-              >
-                <span className="border border-good/40 px-1.5 py-px text-[9px] uppercase tracking-wider text-good">
-                  {contestant.quantization}
-                </span>
-                <span className="text-ink">{contestant.provider}</span>
-                {contestant.uptime_1d !== null && (
-                  <span className="tabular text-[10px] text-ink-faint">
-                    {contestant.uptime_1d.toFixed(1)}% uptime
-                  </span>
+                contestant={contestant}
+                rating={model.ratings.find(
+                  (row) => row.quantization === contestant.quantization,
                 )}
-                <span className="ml-auto text-[10px] text-ink-faint">
-                  {contestant.endpoint_count} endpoint
-                  {contestant.endpoint_count === 1 ? "" : "s"}
-                  {contestant.endpoint_count === 1 && " — an outage takes it with them"}
-                </span>
-              </li>
+                games={(
+                  model.rated_games[`${model.openrouter_id}@${contestant.quantization}`] ?? []
+                )
+                  .map((gameId) => gamesById.get(gameId))
+                  .filter((game): game is GameSummary => game !== undefined)}
+              />
             ))}
-          </ul>
+          </div>
         </>
       )}
 
       {model.is_floating_alias && (
-        <p className="mt-3 border border-bad-deep bg-surface px-3 py-2 text-xs leading-relaxed text-bad">
+        <p className="mt-4 border border-bad-deep bg-surface px-3 py-2 text-xs leading-relaxed text-bad">
           This is a floating alias: it points at different weights over time, so a rating computed
           across it would rate no particular model. It can be played, never ranked.
         </p>
@@ -220,39 +231,163 @@ function Contestants({ model }: { model: ModelDetail }) {
   );
 }
 
-function Ratings({ rows }: { rows: LeaderboardRow[] }) {
+/**
+ * One precision: what serves it, what it is rated, and the games that produced that rating.
+ *
+ * The anchor is what `/leaderboard/{slug}?q=fp8` redirects to, so a link published before the
+ * merge still lands on the thing it named.
+ */
+function ContestantBlock({
+  contestant,
+  rating,
+  games,
+}: {
+  contestant: Contestant;
+  rating?: LeaderboardRow;
+  games: GameSummary[];
+}) {
+  return (
+    <div id={`c-${contestant.quantization}`} className="scroll-mt-6 border border-line-soft">
+      <div className="flex flex-wrap items-center gap-3 border-b border-line-soft bg-surface-2 px-3 py-2.5 font-mono text-xs">
+        <span className="border border-good/40 px-1.5 py-px text-[9px] uppercase tracking-wider text-good">
+          {contestant.quantization}
+        </span>
+        <span className="text-ink">{contestant.provider}</span>
+        {contestant.uptime_1d !== null && (
+          <span className="tabular text-[10px] text-ink-faint">
+            {contestant.uptime_1d.toFixed(1)}% uptime
+          </span>
+        )}
+        <span className="ml-auto text-[10px] text-ink-faint">
+          {contestant.endpoint_count} endpoint
+          {contestant.endpoint_count === 1 ? "" : "s"}
+          {contestant.endpoint_count === 1 && " — an outage takes it with them"}
+        </span>
+      </div>
+
+      {rating === undefined ? (
+        <p className="px-3 py-4 text-sm text-ink-dim">
+          Not rated at this precision. Nothing it has played here is ratable yet — anything it did
+          play is listed below with the reason it did not count.
+        </p>
+      ) : (
+        <dl className="grid grid-cols-2 gap-px border-b border-line-soft bg-line-soft sm:grid-cols-4">
+          {/* The deviation travels with the rating everywhere it is shown: three games and three
+              hundred must not read as the same claim. */}
+          <Fact
+            label="Rating"
+            value={`${Math.round(rating.rating)} ± ${Math.round(rating.rating_deviation)}`}
+            note={rating.provisional ? "provisional" : `over ${rating.games} rated games`}
+          />
+          <Fact label="W / D / L" value={`${rating.wins} / ${rating.draws} / ${rating.losses}`} />
+          <Fact
+            label="Illegal per move"
+            value={`${(rating.illegal_per_move * 100).toFixed(2)}%`}
+            note={`${rating.illegal_attempts} in ${rating.moves_played} moves`}
+            tone={rating.illegal_attempts > 0 ? "bad" : "good"}
+          />
+          <Fact
+            label="Forfeits"
+            value={String(rating.forfeits)}
+            tone={rating.forfeits > 0 ? "bad" : undefined}
+          />
+        </dl>
+      )}
+
+      {games.length > 0 && (
+        <div className="p-3">
+          {/* Every published number reaches the games that produced it, or the ranking is asking
+              to be taken on faith (BENCH-02). */}
+          <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+            {games.length} rated game{games.length === 1 ? "" : "s"}
+          </h3>
+          <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            {games.map((game) => (
+              <GameCard key={game.id} game={game} />
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The finished games that did not count, grouped by the reason (BENCH-10).
+ *
+ * This section *is* the difference between the record and the ratings. Without it the page prints
+ * two W/D/L figures and leaves the reader to guess why they disagree — which is what having two
+ * pages did, except the reader could not even see both at once.
+ */
+function NotCounted({
+  model,
+  gamesById,
+}: {
+  model: ModelDetail;
+  gamesById: Map<string, GameSummary>;
+}) {
+  const byReason = new Map<string, GameSummary[]>();
+  for (const entry of model.excluded) {
+    const game = gamesById.get(entry.game_id);
+    if (game === undefined) continue;
+    byReason.set(entry.reason, [...(byReason.get(entry.reason) ?? []), game]);
+  }
+
+  if (byReason.size === 0) return null;
+
+  const total = [...byReason.values()].reduce((sum, group) => sum + group.length, 0);
+
   return (
     <section className="mt-12">
       <div className="mb-4 flex items-baseline gap-3">
         <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
-          Ratings
+          Played, did not count
         </h2>
         <span className="h-px flex-1 bg-line-soft" aria-hidden />
+        <span className="tabular font-mono text-[10px] text-ink-faint">{total}</span>
       </div>
 
-      <ul className="flex flex-col gap-px border border-line-soft bg-line-soft">
-        {rows.map((row) => (
-          <li key={`${row.model_slug}@${row.quantization}`}>
-            <Link
-              href={`/leaderboard/${encodeURIComponent(row.model_slug)}?q=${encodeURIComponent(row.quantization)}`}
-              className="flex items-center gap-3 bg-surface px-3 py-2.5 font-mono text-xs transition-colors hover:bg-surface-2"
-            >
-              <span className="border border-good/40 px-1.5 py-px text-[9px] uppercase tracking-wider text-good">
-                {row.quantization}
-              </span>
-              <span className="tabular text-accent">
-                {Math.round(row.rating)}
-                {/* The deviation travels with the rating everywhere it is shown: three games and
-                    three hundred must not read as the same claim. */}
-                <span className="ml-1 text-[10px] text-ink-faint">
-                  ±{Math.round(row.rating_deviation)}
-                </span>
-              </span>
-              <span className="tabular ml-auto text-[10px] text-ink-faint">
-                {row.games} ranked game{row.games === 1 ? "" : "s"}
-              </span>
-            </Link>
-          </li>
+      <p className="mb-5 max-w-prose text-sm text-ink-dim">
+        In the record above, and in no rating. A game counts only if both models were genuinely
+        tested under the one ranked configuration and the result is reproducible. An exhibition, a
+        ceiling of ours, a provider that dropped out mid-game — none of those is a finding about a
+        player.
+      </p>
+
+      <div className="flex flex-col gap-6">
+        {[...byReason].map(([reason, group]) => (
+          <div key={reason}>
+            <h3 className="mb-3 font-mono text-[11px] leading-relaxed text-ink-dim">
+              {reason} <span className="text-ink-faint">· {group.length}</span>
+            </h3>
+            <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
+              {group.map((game) => (
+                <GameCard key={game.id} game={game} />
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** Games not yet judged — running, paused, or waiting. No rating can see them yet. */
+function Unfinished({ games }: { games: GameSummary[] }) {
+  if (games.length === 0) return null;
+
+  return (
+    <section className="mt-12">
+      <div className="mb-4 flex items-baseline gap-3">
+        <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+          In progress
+        </h2>
+        <span className="h-px flex-1 bg-line-soft" aria-hidden />
+        <span className="tabular font-mono text-[10px] text-ink-faint">{games.length}</span>
+      </div>
+      <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {games.map((game) => (
+          <GameCard key={game.id} game={game} />
         ))}
       </ul>
     </section>

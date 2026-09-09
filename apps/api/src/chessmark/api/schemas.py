@@ -208,6 +208,18 @@ class ModelDetail(ModelOut):
     #: showing — a floating alias can never be ranked, and a new model has simply not played yet.
     ratings: list[LeaderboardRow] = Field(default_factory=list)
 
+    #: The ratable games behind each rating, keyed `model@quantization` (BENCH-02). Ids, not
+    #: summaries: the page already holds this model's games and partitions them, rather than
+    #: fetching the same rows twice under two names and giving them two chances to disagree.
+    rated_games: dict[str, list[uuid.UUID]] = Field(default_factory=dict)
+
+    #: This model's finished games that did not count toward any rating, and why (BENCH-10).
+    #:
+    #: The reason the record and the rating print different W/D/L, said in the one place a reader
+    #: can check it. "Some games are excluded" invites disbelief; a list of ids and reasons does
+    #: not.
+    excluded: list[ExcludedGame] = Field(default_factory=list)
+
 
 # ---------------------------------------------------------------------- players
 

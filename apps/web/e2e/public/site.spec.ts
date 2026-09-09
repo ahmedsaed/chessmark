@@ -81,6 +81,28 @@ test("a model page reaches the games behind its numbers", async ({ page }) => {
   }
 });
 
+test("the old contestant URL still lands on the model, with a real 308", async ({ page }) => {
+  /**
+   * `/leaderboard/{slug}?q=fp8` was a page of its own until ADR-0034 folded the contestant into
+   * the model page as a block per precision.
+   *
+   * The redirect is in `next.config.ts`, not a `permanentRedirect()` from the route, because
+   * `app/leaderboard/loading.tsx` covers that segment and everything under it — and a streamed
+   * response commits its status line before the page body runs. From the page it would have
+   * answered `200` and moved the browser client-side: invisible in a browser, wrong to every
+   * crawler and link checker. Exactly the trap the 404 assertions below exist for, in the other
+   * direction, which is why the status is asserted rather than the destination alone.
+   */
+  const response = await page.request.get("/leaderboard/vendor%2Fmodel?q=fp8", {
+    maxRedirects: 0,
+  });
+
+  expect(response.status()).toBe(308);
+  const location = response.headers()["location"];
+  expect(location).toContain("/models/vendor%2Fmodel");
+  expect(location).toContain("#c-fp8");
+});
+
 test("an unknown model is a 404, not a crash", async ({ page }) => {
   const response = await page.goto("/models/nobody/nothing");
 

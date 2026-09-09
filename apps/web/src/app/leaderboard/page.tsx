@@ -91,7 +91,7 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
               <td className="px-3 py-2.5">
                 {/* Drills through to the games that produced the row (BENCH-02). */}
                 <Link
-                  href={`/leaderboard/${encodeURIComponent(row.model_slug)}?q=${row.quantization}`}
+                  href={`/models/${row.model_slug}#c-${encodeURIComponent(row.quantization)}`}
                   className="font-mono text-xs text-ink transition-colors hover:text-accent"
                 >
                   {row.model_slug}

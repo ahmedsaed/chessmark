@@ -38,6 +38,8 @@ supersedes the old one, rather than an edit.
 | [0030](0030-a-halt-pauses-the-board.md) | A halt pauses every game it covers, and says so on the page | Accepted |
 | [0031](0031-a-turn-may-not-inflate-its-own-context.md) | A turn may not inflate its own context | Accepted |
 | [0032](0032-the-leaderboard-is-stored-not-recomputed-per-request.md) | The leaderboard is stored, not recomputed on every request | Accepted |
+| [0033](0033-a-tail-budget-in-tokens-and-a-provider-that-cannot-count.md) | A tail budget in tokens, and a provider that cannot count | Accepted |
+| [0034](0034-one-page-per-model.md) | One page per model, and the contestant is a section on it | Accepted |
 
 ## Template
 

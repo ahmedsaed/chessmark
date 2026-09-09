@@ -200,19 +200,6 @@ export async function getLeaderboard(): Promise<Leaderboard> {
   }
 }
 
-/**
- * The games behind one leaderboard row (BENCH-02).
- *
- * Only the *ratable* ones — exactly what moved the rating, not everything the model has played.
- */
-export function getContestantGames(
-  modelSlug: string,
-  quantization?: string,
-): Promise<GameSummary[]> {
-  const query = quantization ? `?quantization=${encodeURIComponent(quantization)}` : "";
-  return getOrEmpty<GameSummary>(`/leaderboard/${modelSlug}/games${query}`);
-}
-
 /** Recent tournaments, newest first. Never throws: an empty list is the honest state. */
 export function listTournaments(limit = 20): Promise<TournamentSummary[]> {
   return getOrEmpty<TournamentSummary>(`/tournaments?limit=${limit}`);
