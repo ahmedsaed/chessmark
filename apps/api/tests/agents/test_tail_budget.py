@@ -211,3 +211,22 @@ class TestWhatTheRecordSays:
         plan = plan_compaction(rows, keep_turns=1, tokens_per_character=RATIO)
 
         assert plan.clamp and plan.trim == []
+
+
+class TestFoldingWithNoRoomToSummarise:
+    """The last hole, and the one that took four resumes to close.
+
+    A transcript too large for the summarising call to fit is *precisely* the transcript most in
+    need of folding. Discarding the fold when the summary could not be written meant the only rung
+    that could rescue such a game required the room it did not have — `e601f9af` sat at 254,103
+    tokens of a 256,000-token window and died one second after each resume.
+    """
+
+    def test_the_placeholder_says_what_happened(self) -> None:
+        """Not silent. The model is told its history went and pointed back at the board, which is
+        authoritative — the same bargain the trim placeholder strikes (invariant 1)."""
+        from chessmark.agents.compaction import SUMMARY_UNAVAILABLE
+
+        assert "dropped to save context" in SUMMARY_UNAVAILABLE
+        assert "not enough room" in SUMMARY_UNAVAILABLE
+        assert "authoritative" in SUMMARY_UNAVAILABLE

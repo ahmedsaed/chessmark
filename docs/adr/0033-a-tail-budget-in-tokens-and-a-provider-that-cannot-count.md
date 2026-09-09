@@ -98,6 +98,14 @@ clamp was being dropped with the fold, which is precisely backwards — the clam
 that helps when the single turn we must keep is itself over budget, and that is exactly the state a
 game is in when its summary has no room to be written.
 
+**A fold with no room to summarise proceeds without prose.** Discarding it was the right call for a
+summarising call that *failed* — transient, worth leaving for a later pass — and the wrong one for a
+call that could not be *made*. A transcript too large for the summary to fit is precisely the
+transcript most in need of folding, and `e601f9af` sat at 254,103 tokens of a 256,000-token window
+through four resumes because the one rung that could have rescued it needed the room it did not
+have. The two cases are now distinguished, and the second folds with `SUMMARY_UNAVAILABLE` in place
+of the model's own account — the loss stated rather than silent.
+
 ## Consequences
 
 The deadlock is closed at both ends. The retained region can no longer grow to fill the window,

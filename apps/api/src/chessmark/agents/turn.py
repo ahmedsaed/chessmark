@@ -579,18 +579,25 @@ class TurnRunner:
 
         summary = ""
         if plan.fold:
-            summary = await self._summarise(turn, result, plan, occupied, window)
-            if not summary:
-                # The summarising call failed or said nothing. **Every rung that needs no provider
-                # still stands** — the trim and the clamp both — so the pass proceeds with those
-                # rather than abandoning all three and leaving the request exactly as large as it
-                # was. Dropping the clamp here was the difference between a transcript that could
-                # shrink and one that could not: the clamp is the *only* rung that helps when the
-                # single turn we must keep is itself over budget, which is precisely the state a
-                # game is in when its summary has no room to be written.
+            written = await self._summarise(turn, result, plan, occupied, window)
+            if written is None:
+                # **No room to write one, so fold without it.** Discarding the fold here is what
+                # left `e601f9af` at 254,103 tokens of a 256,000-token window through four
+                # resumes: a transcript too large for the summarising call to fit is precisely the
+                # transcript most in need of folding, and the one rung that could have rescued it
+                # needed the room it did not have. The model is told what happened and pointed back
+                # at the board, so the loss is stated rather than silent.
+                summary = compaction.SUMMARY_UNAVAILABLE
+            elif not written:
+                # The call was made and produced nothing usable — transient, so the fold is left
+                # for a later pass and the rungs needing no provider proceed alone. The clamp
+                # belongs here as much as the trim: it is the only one that helps when the single
+                # turn we must keep is itself over budget.
                 plan = compaction.Plan(fold=[], keep=plan.keep, trim=plan.trim, clamp=plan.clamp)
                 if not plan.worthwhile:
                     return False
+            else:
+                summary = written
 
         await compaction.apply(
             self.session,
@@ -677,8 +684,14 @@ class TurnRunner:
         plan: compaction.Plan,
         occupied: int | None,
         window: compaction.Window,
-    ) -> str:
-        """Rung two: ask the model to summarise the turns being folded. "" when it could not.
+    ) -> str | None:
+        """Rung two: ask the model to summarise the turns being folded.
+
+        Three outcomes, and the caller acts differently on each. Prose is the good one. `""` means
+        the call was made and produced nothing usable — a transient failure, worth leaving the fold
+        for a later pass. `None` means there was **no room to even ask**, which is structural: the
+        transcript is too large to summarise precisely because it is too large, and waiting cannot
+        improve it.
 
         The model summarises **itself**, on its own pinned endpoint, with tools withheld (ADR-0018)
         — a cheaper third model would be cheaper and would put another model's prose into a
@@ -687,16 +700,16 @@ class TurnRunner:
         try:
             cap = window.completion_cap(occupied, compaction.SUMMARY_MAX_TOKENS)
         except compaction.NoRoomToAnswerError:
-            # No room even to *write* the summary. Normally impossible, because the trigger fires
-            # while the reserve is still free and the reserve is exactly this space — but a game
-            # resumed onto a smaller endpoint arrives here. Rung one can still run.
+            # No room even to *write* the summary — the transcript is too large to summarise
+            # because it is too large. Structural, so the caller folds without prose rather than
+            # deferring to a pass that will find the same wall.
             log.warning(
                 "cannot summarise %s: %s of %d tokens leaves no room to answer in",
                 self.player.id,
                 occupied,
                 window.context,
             )
-            return ""
+            return None
 
         completion = await self.gateway.complete(
             model=self.model,
