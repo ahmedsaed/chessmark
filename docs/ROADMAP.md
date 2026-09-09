@@ -68,6 +68,8 @@ launch.
 | **A closed event cannot be resumed cleanly.** Abandoning its last pairing completes it, `advance` returns *already over*, and no later tick settles anything. A pool never finishes, so this has not bitten. | Phase 13 |
 | **Standings and ratings are one decision, and human tournaments make two.** FIDE records a forfeit as a loss in the crosstable and excludes it from the rating: the table must be complete, the rating should only reflect games actually played. `db/tournaments.settle` and `bench/ratable.judge` make the same call in both places. Splitting them would give a third answer for endings like `truncated` — score it, do not rate it. | Phase 13 |
 
+| **NFR-01 and NFR-02 have no automated check.** The two wall-clock p95 tests were deleted: they measured the runner, not the code. A run with a 5.7 ms median and a 329 ms p95 failed a pull request that changed no Python, and a timing assertion that fails on a busy machine and passes on a quiet one only teaches people to rerun CI — which the next real regression is then rerun away too. What they stood in for, an N+1 or a sync call on the hot path, is caught deterministically by the read path's query-count tests. The budgets are still requirements, to be measured under real load in Phase 17. | Phase 6 |
+
 | **A 402 may not always mean the account is empty.** OpenRouter is reported — by users, not by their docs — to check a key's remaining budget against `max_tokens`, the maximum *possible* output, so a large request can be refused against a balance that would serve a smaller one. `worker._halt_on_credits` handles it by consulting the balance first and pausing only that game when the account visibly has money, but the better answer would be to retry with a smaller ceiling. Never yet observed here. | Phase 5 |
 | **Two endpoints advertise an output ceiling they do not honour.** OpenRouter reports `max_completion_tokens: 65536` for Nvidia's `nemotron-3-nano-omni` and the endpoint stops at 32,768 — 47 times out of 47 — and Poolside's `laguna-s-2.1` does the same. We ask for what the catalogue says and are truncated below it. Deliberately not corrected by discovery: clamping to the true ceiling would not stop the truncation (the model emits what it emits) and attribution is already correct on both branches (ADR-0024). The residual risk is an endpoint that *rejects* an over-large `max_tokens` rather than truncating, which the reactive rung catches. | Phase 5 |
 | **Nothing reports how much of the free allowance is left**, and nothing can (ADR-0023). We deleted our own count because it was an over-count that stopped play while OpenRouter was still serving us; the cost is that `status` can say the harness is halted but never how close it is to being. A header would fix it if one ever appears. | Phase 5 |
@@ -473,8 +475,9 @@ of our transcript construction. Recorded here rather than quietly averaged away 
 - [x] `curl -N .../events` streams events live as a worker plays a game
 - [x] Disconnecting mid-game and reconnecting with `Last-Event-ID` delivers exactly the missed events, in order, with no gaps or duplicates
 - [x] Two API processes both stream events produced by one worker (proves the Redis fanout)
-- [x] p95 latency on non-LLM endpoints < 200 ms under a 50-RPS load test (NFR-01)
-- [x] SSE delivery p95 < 500 ms after ply commit (NFR-02)
+- [ ] p95 latency on non-LLM endpoints < 200 ms under a 50-RPS load test (NFR-01) — *unticked
+  again: the test that ticked it was deleted for measuring the runner, see the note below*
+- [ ] SSE delivery p95 < 500 ms after ply commit (NFR-02) — *same*
 - [x] Every endpoint has a contract test; OpenAPI validates
 
 **Covers:** UI-10, NFR-01, NFR-02, OPS-06
@@ -498,6 +501,12 @@ of our transcript construction. Recorded here rather than quietly averaged away 
   single-request warm-up left the pool holding one connection. The suite now warms the pool before
   measuring. Worth recording that the first green run was luck — the criterion was ticked on an
   unstable measurement before anyone had checked it twice.
+  **Both timing tests are now gone** (2026-09-09). Warming the pool did not end it: a run with a
+  5.7 ms *median* and a 329 ms p95 failed a pull request containing no Python at all. Three
+  attempts at one assertion is the point at which the assertion is the problem — an in-process
+  wall-clock p95 measures the machine it runs on, and a check that a rerun clears is not a check.
+  The fanout test, which asserts a fact rather than a duration, stays; the file is now
+  `test_fanout.py`.
 - The load figures are in-process against a real database and Redis, so they are optimistic
   relative to production — no network hop, no TLS. They exist to catch an order-of-magnitude
   regression (an N+1, a sync call on the hot path), not a ten-millisecond drift. Phase 17 does the

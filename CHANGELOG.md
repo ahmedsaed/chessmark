@@ -31,6 +31,15 @@ One model was described by two pages, and the numbers on them disagreed.
 
 ### Fixed
 
+- **The two wall-clock latency tests are deleted** (NFR-01, NFR-02). They held an in-process p95
+  against a fixed budget, so what they measured was the machine running them: a run with a **5.7 ms
+  median** and a **329 ms p95** failed a pull request that changed no Python. It was the third time
+  that one assertion had been wrong, and a check a rerun clears is not a check — it teaches people
+  to rerun CI, which the next real regression is then rerun away too. What they stood in for, an
+  N+1 or a sync call on the hot path, is caught deterministically by the read path's query-count
+  tests. The requirements stand and are for a real load test; ROADMAP's *Known gaps* records that
+  they have no automated check. The fanout test, which asserts a fact rather than a duration,
+  stays — `test_performance.py` is now `test_fanout.py`.
 - **A model page asked for its games under a name no model has** (UI-07). A dynamic route segment
   arrives percent-encoded, so `google/gemma-4-31b-it:free` reached the page as
   `gemma-4-31b-it%3Afree`. In a *path* that still works — the server decodes it again — so the
