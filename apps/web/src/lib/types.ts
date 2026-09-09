@@ -160,6 +160,20 @@ export interface ModelDetail extends ModelInfo {
   stats: ModelStats;
   /** Empty when no contestant of this model is ranked — which is a fact worth showing. */
   ratings: LeaderboardRow[];
+  /**
+   * The ratable games behind each rating, keyed `model@quantization` (BENCH-02).
+   *
+   * Ids, not summaries: the page already holds this model's games and partitions them, rather
+   * than fetching the same rows twice under two names.
+   */
+  rated_games: Record<string, string[]>;
+  /**
+   * The finished games that did not count, and why (BENCH-10).
+   *
+   * This is the difference between the record and the ratings, itemised. Two W/D/L figures on one
+   * page is only honest if a reader can see what separates them.
+   */
+  excluded: ExcludedGame[];
 }
 
 export type EventType =

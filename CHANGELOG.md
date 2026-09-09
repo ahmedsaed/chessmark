@@ -15,6 +15,37 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+One model was described by two pages, and the numbers on them disagreed.
+
+### Changed
+
+- **A model has one page** ([ADR-0034]). `/models/{slug}` and `/leaderboard/{slug}?q=` both headed
+  a panel `W / D / L` — one over every game, one over the ratable ones — and neither said so, so
+  which pair a reader saw depended on whether they arrived from the leaderboard or from the
+  tournament table. The contestant is a block on the model page now, one per precision, carrying
+  its rating and the ratable games behind it (BENCH-02). The old URL redirects, `?q=fp8` becoming
+  `#c-fp8`.
+- **The games that did not count are listed with the reason** ([ADR-0034], BENCH-10). The
+  difference between the two figures, itemised and grouped, on the page that prints both. Two
+  W/D/L figures are honest only if a reader can see what separates them.
+
+### Fixed
+
+- **A leaderboard row reaches only half its games** (BENCH-02). The drill-down's index recorded
+  each counted game under its *first* seat, and seats are read ordered by colour — so black took
+  every game and white got none. `ling-3.0-flash-fin` showed `6 / 5 / 4` and listed eight games:
+  the W/D/L counts come from a different pass over the same scan and stayed correct, which is what
+  made a row that could not open half of its own results look like a display fault. Every seat is
+  indexed now, and a mirror match still appears once. **This is why the two pages could not be
+  reconciled by reading them** — and it took far longer to find than it should have, because the
+  product could raise the question at all.
+- **A model page cost two full sweeps of the archive**
+  ([the stored leaderboard](docs/adr/0032-the-leaderboard-is-stored-not-recomputed-per-request.md);
+  linked by path because two ADRs carry the number 0032). `get_model` recomputed the ratings and
+  the aggregates per request without sharing a scan — the cost ADR-0032 had just removed from the
+  leaderboard, reintroduced on a route nothing measured. It reads the stored run now, and a
+  query-count test holds it there.
+
 ### Fixed
 
 - **What compaction keeps is bounded by size, not message count** ([ADR-0033]). Measured on two
@@ -61,12 +92,6 @@ Three games survived the ADR-0031 fixes and were traced to three separate pieces
   its real 32,768, and read that as the endpoint's limit — worth a nudge and three retries. After
   the catalogue was refreshed the identical response read as ours and failed instantly, abandoning
   `a016a326` at ply 72. What decides now is the size of what we allowed.
-- **A leaderboard row reaches only half its games** (BENCH-02). The drill-down's index recorded
-  each counted game under its *first* seat, and seats are read ordered by colour — so black took
-  every game and white got none. `ling-3.0-flash-fin` showed `6 / 5 / 4` and listed eight games:
-  the W/D/L counts come from a different pass over the same scan and stayed correct, which is what
-  made a row that could not open half of its own results look like a display fault. Every seat is
-  indexed now, and a mirror match still appears once.
 - **A rescue that outlives the turn that needed it** ([ADR-0032]). A turn is one transaction, so a
   compaction inside a failing turn is rolled back with it and the next attempt sends the same
   bytes. On a context-length rejection the worker now elides stale tool output in a session of its
@@ -288,4 +313,5 @@ flags the old code wrote.
 [ADR-0031]: docs/adr/0031-a-turn-may-not-inflate-its-own-context.md
 [ADR-0032]: docs/adr/0032-the-arithmetic-that-decides-a-request.md
 [ADR-0033]: docs/adr/0033-a-tail-budget-in-tokens-and-a-provider-that-cannot-count.md
+[ADR-0034]: docs/adr/0034-one-page-per-model.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0
