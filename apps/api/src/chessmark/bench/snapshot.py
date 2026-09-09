@@ -92,6 +92,13 @@ async def build(
     aggregates = await compute_aggregates(session, prompt_version=prompt_version, scanned=scanned)
 
     # The games behind each row, so the drill-down does not have to scan either (BENCH-02).
+    #
+    # **Both seats, every game.** A game is indexed under each contestant that played it: it is one
+    # game for white and the same game for black, and a row that cannot reach half its own games is
+    # exactly the "take it on faith" this drill-down exists to refuse. Seats arrive ordered by
+    # colour, so recording only the first gave black every game and white none — the counts come
+    # from a different pass over the same scan and stayed right, which is what let a row say fifteen
+    # while its page listed eight.
     counted: dict[str, list[str]] = {}
     for game, players, quantizations in scanned.counted:
         for player in players:
@@ -99,8 +106,13 @@ async def build(
             if not slug:
                 continue
             key = f"{slug}@{quantizations.get(player.id, 'unknown')}"
-            counted.setdefault(key, []).append(str(game.id))
-            break
+            ids = counted.setdefault(key, [])
+            # A model on both sides of a mirror match is one contestant holding two seats, and
+            # listing the game twice would make the page disagree with the row the other way.
+            # Appends for one game are consecutive within a label, so the last id is the whole
+            # check.
+            if not ids or ids[-1] != str(game.id):
+                ids.append(str(game.id))
 
     payload: dict[str, Any] = {
         "rows": [

@@ -61,6 +61,12 @@ Three games survived the ADR-0031 fixes and were traced to three separate pieces
   its real 32,768, and read that as the endpoint's limit — worth a nudge and three retries. After
   the catalogue was refreshed the identical response read as ours and failed instantly, abandoning
   `a016a326` at ply 72. What decides now is the size of what we allowed.
+- **A leaderboard row reaches only half its games** (BENCH-02). The drill-down's index recorded
+  each counted game under its *first* seat, and seats are read ordered by colour — so black took
+  every game and white got none. `ling-3.0-flash-fin` showed `6 / 5 / 4` and listed eight games:
+  the W/D/L counts come from a different pass over the same scan and stayed correct, which is what
+  made a row that could not open half of its own results look like a display fault. Every seat is
+  indexed now, and a mirror match still appears once.
 - **A rescue that outlives the turn that needed it** ([ADR-0032]). A turn is one transaction, so a
   compaction inside a failing turn is rolled back with it and the next attempt sends the same
   bytes. On a context-length rejection the worker now elides stale tool output in a session of its
