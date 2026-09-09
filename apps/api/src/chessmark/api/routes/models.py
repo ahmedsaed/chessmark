@@ -11,9 +11,15 @@ from fastapi import APIRouter, HTTPException, Query, status
 from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.agents.registry import endpoint_is_playable
 from chessmark.api.deps import SessionDep
-from chessmark.api.schemas import LeaderboardRow, ModelDetail, ModelOut, ModelStatsOut
-from chessmark.bench.service import compute_aggregates, compute_ratings
-from chessmark.db.models import ModelEndpoint, ModelRegistry
+from chessmark.api.schemas import (
+    ExcludedGame,
+    LeaderboardRow,
+    ModelDetail,
+    ModelOut,
+    ModelStatsOut,
+)
+from chessmark.bench import snapshot
+from chessmark.db.models import ModelEndpoint, ModelRegistry, Player
 from chessmark.db.stats import model_stats
 
 router = APIRouter(prefix="/models", tags=["models"])
@@ -75,9 +81,19 @@ async def get_model(session: SessionDep, slug: str) -> ModelDetail:
     `{slug:path}` because an OpenRouter id contains a slash — `google/gemini-3.7-flash` is one
     identifier, not a nested route, and the default converter would refuse it.
 
-    The aggregates cover **every** game, not only the ratable ones the leaderboard counts. A model
-    that has only ever played exhibition games has done things worth reporting, and a page that
-    showed nothing for it would be describing the rating rules rather than the model.
+    **The whole of what is known about one model**, because this is now the only page about it —
+    the leaderboard's per-contestant drill-down redirects here. Three scopes, kept apart on purpose
+    rather than blended into one number:
+
+    * `stats` covers **every** game — exhibition, human, ranked alike. A model that has only ever
+      played exhibitions has done things worth reporting, and a page that showed nothing for it
+      would be describing the rating rules rather than the model.
+    * `ratings` and `rated_games` cover the **ratable** games, per contestant. A contestant is
+      `(model, precision)` (ADR-0015), so a model served at two precisions holds two ratings and
+      each reaches its own games (BENCH-02).
+    * `excluded` is the difference, with the reason per game (BENCH-10). It is the answer to "why
+      does the record say fifteen and the rating say nine", which is the question two pages showing
+      two W/D/L figures used to raise and neither could answer.
     """
     row = await session.scalar(sa.select(ModelRegistry).where(ModelRegistry.openrouter_id == slug))
     if row is None:
@@ -91,16 +107,40 @@ async def get_model(session: SessionDep, slug: str) -> ModelDetail:
     base = ModelOut.from_model(row, endpoints=endpoints)
     stats = await model_stats(session, row)
 
-    # Ratings, where this model's contestants hold any. Recomputed rather than cached for the same
-    # reason the leaderboard is: a rating is a pure function of the games behind it.
-    run = await compute_ratings(session, prompt_version=PROMPT_VERSION)
-    aggregates = await compute_aggregates(session, prompt_version=PROMPT_VERSION)
+    # Read from the stored run, never recomputed here (ADR-0032). This called `compute_ratings` and
+    # `compute_aggregates` without sharing a scan, so one model page was **two** full sweeps of the
+    # archive — the precise cost the snapshot exists to remove, reintroduced on a different route
+    # because nothing measured this one. `test_a_model_page_costs_a_fixed_number_of_queries` does.
+    stored = await snapshot.current(session, prompt_version=PROMPT_VERSION)
     ratings = [
-        LeaderboardRow.from_rating(
-            contestant, rating, aggregates.get(contestant), display_name=row.display_name
-        )
-        for contestant, rating in run.ratings.items()
-        if contestant.model_id == row.id
+        LeaderboardRow(**entry, display_name=row.display_name)
+        for entry in stored["rows"]
+        if str(entry["model_id"]) == str(row.id)
     ]
 
-    return ModelDetail(**base.model_dump(), stats=ModelStatsOut.from_stats(stats), ratings=ratings)
+    # The games behind each rating, keyed the way the run stored them. Carried as ids rather than
+    # summaries because the page already holds this model's games: it partitions the list it has
+    # instead of fetching the same rows a second time under another name.
+    labels = {f"{rating.model_slug}@{rating.quantization}" for rating in ratings}
+    rated_games = {
+        label: [uuid.UUID(game_id) for game_id in game_ids]
+        for label, game_ids in stored["games_by_contestant"].items()
+        if label in labels
+    }
+
+    # ...and the finished games that did not count. The snapshot's exclusions cover every game, so
+    # they are narrowed to this model's seats here — one indexed read, not a scan.
+    seated = set(await session.scalars(sa.select(Player.game_id).where(Player.model_id == row.id)))
+    excluded = [
+        ExcludedGame(game_id=uuid.UUID(entry["game_id"]), reason=entry["reason"])
+        for entry in stored["excluded"]
+        if uuid.UUID(entry["game_id"]) in seated
+    ]
+
+    return ModelDetail(
+        **base.model_dump(),
+        stats=ModelStatsOut.from_stats(stats),
+        ratings=ratings,
+        rated_games=rated_games,
+        excluded=excluded,
+    )

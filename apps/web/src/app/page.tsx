@@ -338,7 +338,7 @@ function Contestants({ rows, counted }: { rows: LeaderboardRow[]; counted: numbe
             {rows.slice(0, 5).map((row, index) => (
               <li key={`${row.model_slug}@${row.quantization}`}>
                 <Link
-                  href={`/leaderboard/${encodeURIComponent(row.model_slug)}?q=${encodeURIComponent(row.quantization)}`}
+                  href={`/models/${row.model_slug}#c-${encodeURIComponent(row.quantization)}`}
                   className="flex items-center gap-3 bg-surface px-4 py-2.5 transition-colors hover:bg-surface-2"
                 >
                   <span className="tabular w-4 flex-none font-mono text-[11px] text-ink-faint">

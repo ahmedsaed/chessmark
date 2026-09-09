@@ -104,6 +104,11 @@ async def get_contestant_games(
     Every published number has to be reachable from the games that produced it, or the ranking is
     asking to be taken on faith. Filtered to the *ratable* games only, so this is exactly what moved
     the rating — not every game the model has ever played.
+
+    **The site no longer calls this** (ADR-0034): a model has one page, and it partitions the games
+    it already holds using the ids `/models/{slug}` carries. This stays as the documented drill-down
+    for anyone reading the API, and reads the same stored index that page does — so the two cannot
+    give different answers.
     """
     stored = await snapshot.current(session, prompt_version=PROMPT_VERSION)
 
