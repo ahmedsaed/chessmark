@@ -182,3 +182,58 @@ async def test_the_prompt_version_is_reported(client: AsyncClient) -> None:
 async def test_the_leaderboard_needs_no_account(client: AsyncClient) -> None:
     """It is the public face of the project (AUTH-02)."""
     assert (await client.get("/leaderboard")).status_code == 200
+
+
+# ====================================================================== the games behind a row
+
+
+async def test_a_row_reaches_the_games_it_played_as_white(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """**W/D/L said 15; the page listed 8, and the missing seven were every game as white.**
+
+    The drill-down's index recorded each counted game under its *first* seat only, and seats are
+    read ordered by colour — so black took every game and white got none. The W/D/L counts come
+    from a different pass over the same scan and stayed correct, which is what made this look like
+    a display fault rather than a row that could not reach half of its own games (BENCH-02).
+    """
+    await _model(db, "test/alpha")
+    await _model(db, "test/beta")
+    await _played(db, "test/alpha", "test/beta", result=GameResult.WHITE_WINS)
+    await _played(db, "test/beta", "test/alpha", result=GameResult.WHITE_WINS)
+
+    row = next(
+        candidate
+        for candidate in (await client.get("/leaderboard")).json()["rows"]
+        if candidate["model_slug"] == "test/alpha"
+    )
+    games = (await client.get("/leaderboard/test/alpha/games")).json()
+
+    assert row["wins"] + row["draws"] + row["losses"] == 2
+    assert len(games) == 2, "every game a row counts has to be reachable from it"
+    assert {
+        player["colour"]
+        for game in games
+        for player in game["players"]
+        if player["model"] == "test/alpha"
+    } == {"white", "black"}
+
+
+async def test_a_mirror_match_is_listed_once(client: AsyncClient, db: AsyncSession) -> None:
+    """One contestant holding both seats is still one game.
+
+    The other half of the same bug: the fix indexes every seat, and a model playing itself has two
+    of them. Listing it twice would make the page disagree with its row in the opposite direction.
+    """
+    await _model(db, "test/alpha")
+    await _played(
+        db,
+        "test/alpha",
+        "test/alpha",
+        result=GameResult.DRAW,
+        termination=Termination.STALEMATE,
+    )
+
+    games = (await client.get("/leaderboard/test/alpha/games")).json()
+
+    assert len(games) == 1
