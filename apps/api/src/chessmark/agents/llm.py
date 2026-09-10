@@ -634,13 +634,24 @@ class LlmGateway:
         self._sleep = sleep_fn or asyncio.sleep
         self._on_attempt = on_attempt
         self.timeout = timeout
-        #: **Off by default, and that is a record decision, not a taste one** (ADR-0035). LiteLLM's
-        #: streaming path drops `reasoning` on several providers, so a call that streams can come
-        #: back with the model's thinking missing — invariant 3 broken silently, in the direction
-        #: nothing would flag, because an absent reasoning field is indistinguishable from a model
-        #: that did not reason. Turned on per endpoint by an operator once `make smoke-llm` shows
-        #: that model's reasoning surviving the round trip.
+        #: **On, because the loss it risks is detectable** (ADR-0036). LiteLLM's streaming path
+        #: drops `reasoning` on some providers, so a streamed call can come back with the model's
+        #: thinking missing — and an absent reasoning field is indistinguishable from a model that
+        #: did not reason, which is what made this the one invariant-3 breach nothing downstream
+        #: could flag. It is distinguishable from a *billed* one: see `dropped_reasoning` below.
         self.stream = stream
+        #: Endpoints observed dropping their reasoning when streamed, as `model@provider`.
+        #:
+        #: **This is what makes streaming safe to run at all.** LiteLLM's streaming path loses the
+        #: thinking on several providers, and the loss is invisible: an absent reasoning field is
+        #: indistinguishable from a model that did not reason. It is *not* invisible when the same
+        #: response reports reasoning **tokens** — the provider billed us for thinking it then did
+        #: not hand over, so the text existed and we failed to collect it. One such response takes
+        #: the endpoint off the streaming path for the life of the process.
+        #:
+        #: Per process, deliberately: a restart costs at most one more such call per endpoint, and
+        #: the alternative is a durable verdict about a provider bug that may be fixed tomorrow.
+        self.dropped_reasoning: set[str] = set()
         # Resolved once, at construction: it is a constant of the process, and reading settings per
         # call would put a cache lookup inside the hot path for two strings that never change.
         # Only attached when we hold a key — see `agents/attribution.py` for why.
@@ -754,6 +765,12 @@ class LlmGateway:
                 **self.attribution,
             }
 
+        # Keyed by endpoint, not by model: the same weights served by two providers are two
+        # implementations, and only one of them may be losing the thinking.
+        endpoint_key = (
+            f"{model}@{self.routing.only[0] if self.routing and self.routing.only else ''}"
+        )
+
         deadline = deadline_seconds if deadline_seconds is not None else self.timeout
         last_error: BaseException | None = None
 
@@ -776,7 +793,7 @@ class LlmGateway:
                 # in the request too, but it was observed not to bind: a single call ran for 1,093
                 # seconds against a 180-second setting, generating the whole time. A deadline that
                 # only the callee honours is not a deadline.
-                if self.stream:
+                if self.stream and endpoint_key not in self.dropped_reasoning:
                     # `include_usage` is not optional: usage arrives only in the final chunk, and
                     # without it every streamed call is costed at zero (invariant 4).
                     streaming = dict(
@@ -842,13 +859,15 @@ class LlmGateway:
                 continue
 
             latency_ms = int((time.perf_counter() - started) * 1000)
-            return self._build_completion(
+            completion = self._build_completion(
                 model=model,
                 raw=raw,
                 request=redacted_request,
                 latency_ms=latency_ms,
                 attempts=attempt,
             )
+            self._check_reasoning_survived(completion, key=endpoint_key)
+            return completion
 
             # Unreachable: the loop either returns or raises.
             raise LlmError(  # pragma: no cover
@@ -856,6 +875,37 @@ class LlmGateway:
                 attempts=allowed,
                 request=redacted_request,
             )
+
+    def _check_reasoning_survived(self, completion: Completion, *, key: str) -> None:
+        """Take an endpoint off the streaming path if a streamed call lost its thinking.
+
+        **The test is exact, not a heuristic.** `usage.reasoning` is the provider's own count of
+        the tokens it spent thinking, and it is billed. A response that reports thousands of them
+        and carries no reasoning text is one where the text existed and we did not collect it —
+        which on the streaming path is LiteLLM reading `reasoning_content` and discarding
+        `reasoning` ([#21386](https://github.com/BerriAI/litellm/issues/21386),
+        [#20246](https://github.com/BerriAI/litellm/issues/20246)).
+
+        A model that *hides* its reasoning reports the same shape, and will be taken off streaming
+        too. That is the right trade: the cost of being wrong is one endpoint delivering its
+        blocks a round at a time instead of a token at a time, and the cost of being right is the
+        benchmark's record.
+
+        Only ever a ratchet, and only while streaming. Nothing here re-enables an endpoint, and a
+        non-streamed call that hides its reasoning is not evidence of anything.
+        """
+        if not self.stream or key in self.dropped_reasoning:
+            return
+        if completion.usage.reasoning <= 0 or completion.reasoning:
+            return
+
+        self.dropped_reasoning.add(key)
+        log.warning(
+            "%s reported %d reasoning tokens through a streamed call and returned no reasoning "
+            "text; falling back to whole responses for this endpoint so the record stays complete",
+            key,
+            completion.usage.reasoning,
+        )
 
     def _build_completion(
         self,

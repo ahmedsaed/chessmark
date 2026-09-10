@@ -79,16 +79,18 @@ class Settings(BaseSettings):
 
     #: Ask the provider to stream, so reasoning reaches the page as it is generated (ADR-0035).
     #:
-    #: **Off, and the reason is the record rather than the risk of a new feature.** LiteLLM's
-    #: streaming path reads `reasoning_content` and drops `reasoning`, so on several providers the
-    #: thinking never arrives — and an absent reasoning field is indistinguishable from a model
-    #: that did not reason, which makes it the one kind of invariant-3 breach nothing downstream
-    #: can flag. Turn it on once `make smoke-llm` shows the models you actually run keeping their
-    #: reasoning through a streamed call.
+    #: **On, because the failure it risks is no longer silent.** LiteLLM's streaming path reads
+    #: `reasoning_content` and drops `reasoning`, so on some providers the thinking would never
+    #: arrive — and an absent reasoning field is indistinguishable from a model that did not
+    #: reason, which is what made this the one kind of invariant-3 breach nothing downstream could
+    #: flag. `LlmGateway._check_reasoning_survived` now catches it exactly: a response reporting
+    #: billed reasoning *tokens* and carrying no reasoning *text* is one where the text existed and
+    #: we failed to collect it, and that endpoint goes back to whole responses immediately.
     #:
-    #: It changes nothing else. Frames at round boundaries stream either way; this decides only
-    #: whether a *single* long round trickles out or lands whole.
-    llm_stream: bool = False
+    #: Set it to `false` to stop asking providers to stream at all. Frames at round boundaries are
+    #: unaffected either way; this decides only whether a *single* long round trickles out or lands
+    #: whole.
+    llm_stream: bool = True
 
     # --- Auth (Clerk) ---
     clerk_publishable_key: str = ""

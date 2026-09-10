@@ -122,6 +122,9 @@ test-e2e: ## Run the browser suite (public pages — no Clerk needed)
 test-e2e-all: ## Run the whole browser suite, signed-in flows included. Needs Clerk keys
 	cd $(WEB) && pnpm exec playwright test $(ARGS)
 
+verify-streaming: ## Check that each model keeps its reasoning through a streamed call (ADR-0036)
+	cd $(API) && uv run python ../../scripts/verify_streaming.py $(ARGS)
+
 seed-e2e: ## Play a scripted game into the database for the browser suite to replay
 	cd $(API) && uv run python ../../scripts/seed_e2e.py
 

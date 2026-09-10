@@ -24,12 +24,14 @@ file is only the record of *what shipped when*.
   never stored, and is superseded by the committed events — so the record is byte-identical whether
   anyone was watching or not. Measured: the first frame lands a full second ahead of the commit on
   a turn with two half-second rounds.
-- **Reasoning can stream token by token**, behind `LLM_STREAM` ([ADR-0035]). **Off**, and the
-  reason is the record rather than the risk: LiteLLM's streaming path reads `reasoning_content` and
-  drops `reasoning`, so on several providers the thinking never arrives — and an absent reasoning
-  field is indistinguishable from a model that did not reason, which makes it the one kind of
-  invariant-3 breach nothing downstream can flag. Turn it on per endpoint once `make smoke-llm`
-  shows that model keeping its reasoning through a streamed call.
+- **Reasoning streams token by token** ([ADR-0035], [ADR-0036]). LiteLLM's streaming path reads
+  `reasoning_content` and drops `reasoning`, so on some providers the thinking would never arrive —
+  and an absent reasoning field is indistinguishable from a model that did not reason, which is
+  what made this the one invariant-3 breach nothing downstream could flag. It *is* distinguishable
+  from a **billed** one: a response reporting `reasoning_tokens > 0` and carrying no reasoning text
+  is one where the text existed, was paid for, and was not collected. That endpoint goes back to
+  whole responses on the spot, so the cost of learning it is one call. On by default;
+  `LLM_STREAM=false` stops asking providers to stream at all.
 
 
 One model was described by two pages, and the numbers on them disagreed.
@@ -351,4 +353,5 @@ flags the old code wrote.
 [ADR-0033]: docs/adr/0033-a-tail-budget-in-tokens-and-a-provider-that-cannot-count.md
 [ADR-0034]: docs/adr/0034-one-page-per-model.md
 [ADR-0035]: docs/adr/0035-live-frames-are-not-events.md
+[ADR-0036]: docs/adr/0036-a-lost-reasoning-trace-announces-itself.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

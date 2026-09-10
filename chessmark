@@ -110,6 +110,10 @@ cmd_restart() { # recreate a service. Use this, not `start`, after a port clash
 
 # ---------------------------------------------------------------------------- the catalogue
 
+cmd_verify_streaming() { # check each model keeps its reasoning when streamed (ADR-0036)
+  api_script verify_streaming.py "$@"
+}
+
 cmd_catalogue() { # refresh models and endpoints from OpenRouter (OPS-09)
   api_script refresh_catalogue.py "$@"
 }
@@ -225,6 +229,7 @@ LINES=500 ./chessmark logs tournament'
 
 # Persist it so `deploy` keeps them: put WORKER_REPLICAS=3 in .env'
   [catalogue]='./chessmark catalogue                   # models + endpoints, honouring the context floor'
+  [verify-streaming]='./chessmark verify-streaming        # does each model keep its reasoning when streamed?'
   [prune]='./chessmark prune                       # report only
 ./chessmark prune --apply               # disable them and remove their games
 ./chessmark prune --apply --keep-finished
@@ -313,6 +318,7 @@ $(row workers)
 
 ${AMBER}the catalogue${OFF}
 $(row catalogue)
+$(row verify-streaming)
 $(row endpoints)
 $(row models)
 $(row prune)
@@ -349,10 +355,13 @@ row() { printf '  %-15s %s\n' "$1" "$(describe "$1")"; }
 main() {
   local name="${1:-help}"
   shift || true
+  # A hyphen reads better on a command line than an underscore and cannot appear in a function
+  # name, so the two are translated here rather than every hyphenated command being spelled twice.
+  name="${name//-/_}"
   if declare -F "cmd_$name" >/dev/null; then
     "cmd_$name" "$@"
   else
-    printf '%sno command %s%s\n\n' "$RED" "'$name'" "$OFF" >&2
+    printf '%sno command %s%s\n\n' "$RED" "'${name//_/-}'" "$OFF" >&2
     cmd_help
     exit 1
   fi

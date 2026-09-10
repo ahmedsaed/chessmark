@@ -295,3 +295,137 @@ async def test_a_streamed_call_is_costed_from_its_reported_usage() -> None:
     assert completion.cost_usd == Decimal("1000") * Decimal("0.000001") + Decimal("100") * Decimal(
         "0.000002"
     )
+
+
+# ====================================================================== the guard
+
+
+def _streamed(reasoning_tokens: int, reasoning: str | None) -> Any:
+    """A streamed response reporting `reasoning_tokens` and carrying (or not) the text."""
+
+    async def fake(**kwargs: Any) -> Any:
+        return _chunks(
+            [
+                *([_delta(reasoning=reasoning)] if reasoning else []),
+                _delta(content="e4"),
+                {
+                    "model": "vendor/m",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                    "usage": {
+                        "prompt_tokens": 10,
+                        "completion_tokens": 5,
+                        "completion_tokens_details": {"reasoning_tokens": reasoning_tokens},
+                    },
+                },
+            ]
+        )
+
+    return fake
+
+
+async def test_an_endpoint_that_loses_its_thinking_stops_streaming() -> None:
+    """**The check that makes streaming safe to run at all, and it is exact rather than a guess.**
+
+    `usage.reasoning` is the provider's own count of the tokens it spent thinking, and it is
+    billed. A response reporting thousands of them and carrying no reasoning text is one where the
+    text existed and we failed to collect it — which on the streaming path is LiteLLM reading
+    `reasoning_content` and discarding `reasoning`. Without this the loss is invisible: an absent
+    reasoning field looks exactly like a model that did not reason.
+    """
+    gateway = LlmGateway(completion_fn=_streamed(2048, None), stream=True)
+
+    await gateway.complete(model="vendor/m", messages=[])
+
+    assert gateway.dropped_reasoning, "a call that lost its thinking went unnoticed"
+
+
+async def test_a_healthy_endpoint_keeps_streaming() -> None:
+    """Reasoning tokens *and* the text is the normal case, and must not trip the guard."""
+    gateway = LlmGateway(completion_fn=_streamed(2048, "I should move."), stream=True)
+
+    completion = await gateway.complete(model="vendor/m", messages=[])
+
+    assert completion.reasoning == "I should move."
+    assert not gateway.dropped_reasoning
+
+
+async def test_a_model_that_never_reasons_keeps_streaming() -> None:
+    """No reasoning tokens and no text is a model that does not reason, not a loss. Tripping here
+    would take every non-reasoning model off the streaming path for nothing."""
+    gateway = LlmGateway(completion_fn=_streamed(0, None), stream=True)
+
+    await gateway.complete(model="vendor/m", messages=[])
+
+    assert not gateway.dropped_reasoning
+
+
+async def test_the_next_call_to_that_endpoint_is_not_streamed() -> None:
+    """A ratchet, and the point of it: the endpoint goes back to whole responses, so the *second*
+    call already has its reasoning again. One call is the whole cost of learning this."""
+    calls: list[dict[str, Any]] = []
+
+    async def fake(**kwargs: Any) -> Any:
+        calls.append(kwargs)
+        if kwargs.get("stream"):
+            return await _streamed(2048, None)(**kwargs)
+        return {
+            "model": "vendor/m",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "reasoning": "recovered", "content": "e4"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "completion_tokens_details": {"reasoning_tokens": 2048},
+            },
+        }
+
+    gateway = LlmGateway(completion_fn=fake, stream=True)
+
+    first = await gateway.complete(model="vendor/m", messages=[])
+    second = await gateway.complete(model="vendor/m", messages=[])
+
+    assert first.reasoning is None
+    assert second.reasoning == "recovered", "the endpoint was not taken off the streaming path"
+    assert [bool(c.get("stream")) for c in calls] == [True, False]
+
+
+async def test_the_verdict_is_per_endpoint_not_per_model() -> None:
+    """The same weights served by two providers are two implementations, and only one of them may
+    be losing the thinking. Keying by model alone would punish the healthy one."""
+    from chessmark.agents.routing import ProviderRouting
+
+    broken = LlmGateway(
+        completion_fn=_streamed(2048, None),
+        stream=True,
+        routing=ProviderRouting(only=["BadHost"]),
+    )
+    await broken.complete(model="vendor/m", messages=[])
+
+    assert broken.dropped_reasoning == {"vendor/m@BadHost"}
+
+
+async def test_a_whole_response_that_hides_its_reasoning_is_not_evidence() -> None:
+    """A non-streamed call is the reference, so it cannot be the thing that condemns an endpoint —
+    a model that hides its thinking reports exactly this shape and is working correctly."""
+    gateway = LlmGateway(completion_fn=_streamed(2048, None), stream=False)
+
+    async def whole(**kwargs: Any) -> Any:
+        return {
+            "model": "vendor/m",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "e4"}}],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "completion_tokens_details": {"reasoning_tokens": 2048},
+            },
+        }
+
+    gateway = LlmGateway(completion_fn=whole, stream=False)
+    await gateway.complete(model="vendor/m", messages=[])
+
+    assert not gateway.dropped_reasoning
