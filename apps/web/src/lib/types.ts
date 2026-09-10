@@ -211,6 +211,23 @@ export interface ToolCallView {
   result: Record<string, unknown> | null;
 }
 
+/**
+ * One thing a model did, in the order it did it.
+ *
+ * **The order is the information.** The event log records a turn as it happened — reason, call a
+ * tool, reason about what came back, call another, say something, move — and `foldEvents` used to
+ * sort that into four arrays by kind, which the panel then drew one after another: every thought,
+ * then every line of prose, then every tool call. A reader could not tell which reasoning
+ * discussed which tool result, because the interleaving was gone before the render began. It was
+ * never missing from the log; `seq` had it all along.
+ */
+export type TurnBlock =
+  | { kind: "reasoning"; seq: number; text: string; tokens: number; durationMs: number | null }
+  | { kind: "output"; seq: number; text: string }
+  | { kind: "tool"; seq: number; call: ToolCallView }
+  | { kind: "illegal"; seq: number; move: string; detail: string; attempt: number }
+  | { kind: "said"; seq: number; text: string };
+
 /** One agent turn, assembled from the event stream. */
 export interface TurnView {
   key: string;
@@ -222,6 +239,12 @@ export interface TurnView {
   model: string;
   /** A person's turn, not a model's. There is no provider call behind it and no name in `model`. */
   human: boolean;
+  /**
+   * Everything the model did, in `seq` order — reasoning, prose, tool calls, illegal attempts and
+   * anything it said. **This is what the panel renders.** The four arrays below are derived from
+   * it for the filter chips and the memo comparison, and are not a second source of truth.
+   */
+  blocks: TurnBlock[];
   /** What the model was thinking. DeepSeek fills this; Gemini never does. */
   reasoning: string[];
   /**

@@ -908,6 +908,15 @@ class TurnRunner:
                         "player_id": str(self.player.id),
                         "tokens": completion.usage.reasoning,
                         "reasoning": completion.reasoning,
+                        # **How long the model spent on this block.** The round's own latency,
+                        # which `llm_calls` has recorded since the first paid game and which had
+                        # never reached the page — so a reader watching a board not move could not
+                        # tell a slow model from a stuck harness. One round of `e601f9af` ply 8
+                        # took 369 seconds. Carried on the event rather than joined at read time
+                        # because the panel is built from the event log alone (ADR-0008), and a
+                        # panel that had to fetch `/turns` to label a block would make the live
+                        # view depend on a read path the stream does not use.
+                        "duration_ms": completion.latency_ms,
                     },
                 )
 

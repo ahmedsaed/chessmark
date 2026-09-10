@@ -484,3 +484,115 @@ describe("compactionText", () => {
     expect(compactionText({})).toContain("history compacted");
   });
 });
+
+describe("a turn keeps the order it happened in", () => {
+  /**
+   * **The shape this exists for**, taken verbatim from `e601f9af` ply 8 on production: the model
+   * reasons, calls a tool, reasons about what came back, calls another, tries an illegal move,
+   * reasons about the refusal, writes prose, reasons once more, then moves.
+   *
+   * The log had all of that in `seq` order the whole time. `foldEvents` sorted it into four arrays
+   * by kind and the panel drew them one after another — every thought, then all the prose, then
+   * every tool call at the end — so a reader could not tell which reasoning discussed which tool
+   * result. The interleaving was not missing; it was discarded on the way to the screen.
+   */
+  it("interleaves reasoning, tools and output as the model produced them", () => {
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 8, colour: "black", player_id: "b", model: "m" }),
+      event("thinking", { reasoning: "let me look at the board", tokens: 21 }),
+      event("tool_called", { tool: "get_board", ok: true }),
+      event("thinking", { reasoning: "now the history", tokens: 489 }),
+      event("tool_called", { tool: "get_move_history", ok: true }),
+      event("thinking", { reasoning: "e4 looks good", tokens: 8148 }),
+      event("illegal_attempt", { move: "e4", detail: "no legal move matches", attempt: 1 }),
+      event("thinking", { reasoning: "e4 is illegal because", tokens: 18687 }),
+      event("output", { content: "The move e4 is illegal — the pawn already moved." }),
+      event("thinking", { reasoning: "pick from the list", tokens: 81 }),
+      event("tool_called", { tool: "make_move", ok: true, args: { move: "Bb4+" } }),
+      event("move_made", { ply: 8, colour: "black", san: "Bb4+" }),
+    ];
+
+    const { turns } = foldEvents(events, []);
+
+    expect(turns[0].blocks.map((b) => b.kind)).toEqual([
+      "reasoning",
+      "tool",
+      "reasoning",
+      "tool",
+      "reasoning",
+      "illegal",
+      "reasoning",
+      "output",
+      "reasoning",
+      "tool",
+    ]);
+  });
+
+  it("orders blocks by seq, so a replayed event cannot shuffle them", () => {
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("thinking", { reasoning: "first", tokens: 1 }),
+      event("tool_called", { tool: "get_board", ok: true }),
+      event("thinking", { reasoning: "second", tokens: 2 }),
+    ];
+
+    const { turns } = foldEvents([...events].reverse(), []);
+    const seqs = turns[0].blocks.map((b) => b.seq);
+
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+  });
+
+  it("carries a reasoning block's duration when the event records one", () => {
+    /** Absent across the whole archive written before `duration_ms` existed, so null is the
+        honest answer for those — "not recorded" must not render as "took no time". */
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("thinking", { reasoning: "timed", tokens: 10, duration_ms: 368707 }),
+      event("thinking", { reasoning: "untimed", tokens: 10 }),
+    ];
+
+    const blocks = foldEvents(events, []).turns[0].blocks;
+
+    expect(blocks[0]).toMatchObject({ kind: "reasoning", durationMs: 368707 });
+    expect(blocks[1]).toMatchObject({ kind: "reasoning", durationMs: null });
+  });
+
+  it("keeps the by-kind arrays agreeing with the blocks", () => {
+    /* The chips filter and the memo comparison read the arrays; the panel reads the blocks. Two
+       views of one turn that can disagree is the bug this whole file exists to prevent. */
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("thinking", { reasoning: "a", tokens: 1 }),
+      event("output", { content: "b" }),
+      event("tool_called", { tool: "get_board", ok: true }),
+      event("illegal_attempt", { move: "e9", detail: "no", attempt: 1 }),
+    ];
+
+    const turn = foldEvents(events, []).turns[0];
+    const count = (kind: string) => turn.blocks.filter((b) => b.kind === kind).length;
+
+    expect(count("reasoning")).toBe(turn.reasoning.length);
+    expect(count("output")).toBe(turn.output.length);
+    expect(count("tool")).toBe(turn.tools.length);
+    expect(count("illegal")).toBe(turn.illegal.length);
+  });
+
+  it("does not build a block for reasoning whose text is withheld", () => {
+    /* Invariant 8: a person playing this game gets the count and no text. A block with an empty
+       body would render as the model having thought nothing, which is the opposite of true. */
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("thinking", { tokens: 4096 }),
+    ];
+
+    const turn = foldEvents(events, []).turns[0];
+
+    expect(turn.blocks).toEqual([]);
+    expect(turn.withheldReasoning).toBe(4096);
+  });
+});

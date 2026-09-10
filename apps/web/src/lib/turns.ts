@@ -163,6 +163,7 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
       playerId: asString(payload.player_id),
       model: asString(payload.model),
       human: payload.human === true,
+      blocks: [],
       reasoning: [],
       withheldReasoning: 0,
       output: [],
@@ -196,6 +197,7 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
           playerId: asString(payload.player_id),
           model: asString(payload.model),
           human: payload.human === true,
+          blocks: [],
           reasoning: [],
           withheldReasoning: 0,
           output: [],
@@ -217,8 +219,19 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
            anything had been held back. */
         const text = asString(payload.reasoning);
         if (!current) break;
-        if (text) current.reasoning.push(text);
-        else current.withheldReasoning += asNumber(payload.tokens);
+        if (text) {
+          current.reasoning.push(text);
+          current.blocks.push({
+            kind: "reasoning",
+            seq: event.seq,
+            text,
+            tokens: asNumber(payload.tokens),
+            /* Absent on every event written before the round's latency was carried on the
+               event, which is most of the archive. Null rather than zero: "not recorded" and
+               "took no time" must not render the same way. */
+            durationMs: typeof payload.duration_ms === "number" ? payload.duration_ms : null,
+          });
+        } else current.withheldReasoning += asNumber(payload.tokens);
         break;
       }
 
@@ -226,29 +239,36 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
         // Prose the model wrote outside a tool call. Kept apart from `reasoning` because
         // providers split the two differently and a reader wants to know which they are seeing.
         const text = asString(payload.content);
-        if (current && text.trim()) current.output.push(text);
+        if (current && text.trim()) {
+          current.output.push(text);
+          current.blocks.push({ kind: "output", seq: event.seq, text });
+        }
         break;
       }
 
       case "tool_called": {
         if (current) {
-          current.tools.push({
+          const call = {
             name: asString(payload.tool),
             ok: payload.ok !== false,
             args: asRecord(payload.args),
             result: payload.result === undefined ? null : asRecord(payload.result),
-          });
+          };
+          current.tools.push(call);
+          current.blocks.push({ kind: "tool", seq: event.seq, call });
         }
         break;
       }
 
       case "illegal_attempt": {
         if (current) {
-          current.illegal.push({
+          const attempt = {
             move: asString(payload.move),
             detail: asString(payload.detail),
             attempt: asNumber(payload.attempt),
-          });
+          };
+          current.illegal.push(attempt);
+          current.blocks.push({ kind: "illegal", seq: event.seq, ...attempt });
         }
         break;
       }
@@ -259,7 +279,11 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
            delivered to the model, invisible on the page. The backend writes `content` now; this
            reads both, because the event log is append-only and the old rows are still there. */
         const text = asString(payload.content) || asString(payload.message);
-        if (text) turnFor(event, payload).said.push(text);
+        if (text) {
+          const turn = turnFor(event, payload);
+          turn.said.push(text);
+          turn.blocks.push({ kind: "said", seq: event.seq, text });
+        }
         break;
       }
 

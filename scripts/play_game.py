@@ -68,6 +68,16 @@ SCRIPTED_BLACK_THOUGHT = [
     "Nf6 develops with tempo. I should be watching f7, but I want the piece out.",
 ]
 
+#: **Black takes two provider rounds per turn**, and that is the point: it looks at the board,
+#: thinks about what came back, and only then moves. One round per turn cannot demonstrate the
+#: thing the panel exists to show — that the reasoning after a tool call is *about* that call — so
+#: a fixture with one round could never have caught the order being lost on the way to the screen.
+SCRIPTED_BLACK_SECOND_THOUGHT = [
+    "The board confirms it: e4 alone, nothing developed. e5 it is.",
+    "Board read. The knight has c6 free, so that is the move.",
+    "Nothing on the board changes my mind. Nf6.",
+]
+
 
 def scripted_players() -> Any:
     """Both sides of a scripted game, with prose, reasoning, and trash talk.
@@ -87,14 +97,21 @@ def scripted_players() -> Any:
             for move, talk in zip(SCRIPTED_WHITE, SCRIPTED_WHITE_TALK, strict=True)
         ]
     )
+    # Two steps per move: look, then decide. `scripted` hands back one completion per call and the
+    # turn loop keeps going until a move lands, so a flat list of two steps *is* a two-round turn.
     black = iter(
         [
-            step(
-                tool_call("get_board"),
-                tool_call("make_move", move=move),
-                reasoning=thought,
+            reply
+            for move, first, second in zip(
+                SCRIPTED_BLACK,
+                SCRIPTED_BLACK_THOUGHT,
+                SCRIPTED_BLACK_SECOND_THOUGHT,
+                strict=True,
             )
-            for move, thought in zip(SCRIPTED_BLACK, SCRIPTED_BLACK_THOUGHT, strict=True)
+            for reply in (
+                step(tool_call("get_board"), reasoning=first),
+                step(tool_call("make_move", move=move), reasoning=second),
+            )
         ]
     )
 

@@ -109,3 +109,76 @@ async def test_an_illegal_attempt_still_carries_the_legal_moves(
     payloads = await _events(db, game.game.id, EventType.ILLEGAL_ATTEMPT)
 
     assert payloads[0]["result"]["legal_moves_san"]
+
+
+# ====================================================================== the shape of a turn
+
+
+async def test_a_reasoning_event_carries_how_long_the_round_took(
+    db: AsyncSession, game: Fixture, make_worker: Any
+) -> None:
+    """**The number a reader is actually asking for.**
+
+    `llm_calls.latency_ms` has recorded it since the first paid game and it had never reached the
+    page, so a person watching a board not move could not tell a slow model from a stuck harness.
+    One round of `e601f9af`'s ply 8 took 369 seconds.
+
+    Carried on the event rather than joined at read time because the panel is built from the event
+    log alone (ADR-0008); a panel that had to fetch `/turns` to label a block would make the live
+    view depend on a read path the stream does not use.
+    """
+    worker = make_worker(
+        scripted(step(tool_call("make_move", move="e4"), reasoning="Center control first."))
+    )
+    await run_next(worker, game.queue)
+
+    payloads = await _events(db, game.game.id, EventType.THINKING)
+
+    assert len(payloads) == 1
+    assert isinstance(payloads[0]["duration_ms"], int)
+    assert payloads[0]["duration_ms"] >= 0
+
+
+async def test_a_turn_records_its_rounds_in_the_order_they_happened(
+    db: AsyncSession, game: Fixture, make_worker: Any
+) -> None:
+    """**The order is the information, and the log has always had it.**
+
+    A model reasons, calls a tool, reasons about what came back, calls another, and moves. Read
+    back by `seq` that is exactly what a reader needs: the block after a tool call is *about* that
+    call. The frontend used to sort this by kind before rendering it, which put every thought
+    first and every tool call last — a turn whose steps could no longer be related to each other.
+
+    Asserted here as well as in the panel's own tests because it is a property of the log, and the
+    log is the compatibility surface the panel reads (ADR-0008).
+    """
+    worker = make_worker(
+        scripted(
+            step(tool_call("get_board"), reasoning="Let me look at the board."),
+            step(tool_call("make_move", move="e4"), reasoning="The board confirms it: e4."),
+        )
+    )
+    await run_next(worker, game.queue)
+
+    db.expunge_all()
+    rows = list(
+        await db.scalars(
+            sa.select(GameEvent)
+            .where(
+                GameEvent.game_id == game.game.id,
+                GameEvent.type.in_([EventType.THINKING, EventType.TOOL_CALLED]),
+            )
+            .order_by(GameEvent.seq)
+        )
+    )
+
+    assert [row.type for row in rows] == [
+        EventType.THINKING,
+        EventType.TOOL_CALLED,
+        EventType.THINKING,
+        EventType.TOOL_CALLED,
+    ]
+    assert [r.payload.get("reasoning") for r in rows if r.type is EventType.THINKING] == [
+        "Let me look at the board.",
+        "The board confirms it: e4.",
+    ]
