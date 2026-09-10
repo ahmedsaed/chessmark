@@ -15,11 +15,19 @@ streamed call is the LiteLLM bug** — the provider billed us for thinking it th
 over ([#21386](https://github.com/BerriAI/litellm/issues/21386)). Tokens and no text on *both* is
 a model that hides its reasoning, which is not a fault and is not ours to fix.
 
-Spends money, so it lives here rather than in the test suite (`scripts/` holds anything that
-does). On free models it spends nothing.
+**Free models only unless you say otherwise, and that default is load-bearing.** Written without
+it, this checked every reasoning-capable model with an active endpoint: 194 models, 388 calls, 179
+of them paid — with `openai/gpt-5.4-pro` at $180 per million output tokens on an 800-token budget,
+that is about $0.29 for one model and tens of dollars for the sweep. A verification tool that can
+cost that much by default is one nobody dares run, which defeats the point of having it.
 
-    ./chessmark verify-streaming
-    make verify-streaming ARGS="vendor/model-a vendor/model-b"
+    ./chessmark verify-streaming                       # the free pool — costs nothing
+    ./chessmark verify-streaming vendor/model-a        # exactly these, whatever they cost
+    ./chessmark verify-streaming --paid                # everything, after printing the bill
+
+Not something to run on a schedule. The worker detects the same fault itself at a cost of one call
+(ADR-0036); this is for looking at a whole pool at once — after a catalogue refresh, or when a
+model's reasoning stops appearing on the site.
 """
 
 from __future__ import annotations
@@ -27,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import time
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +72,7 @@ async def probe(model: str, *, stream: bool, api_key: str) -> dict[str, Any]:
 
     gateway = LlmGateway(api_key=api_key, stream=stream, timeout=180)
     completion = await gateway.complete(
-        model=model, messages=PROMPT, max_tokens=800, on_token=on_token
+        model=model, messages=PROMPT, max_tokens=MAX_TOKENS, on_token=on_token
     )
     return {
         "tokens": completion.usage.reasoning,
@@ -74,13 +83,25 @@ async def probe(model: str, *, stream: bool, api_key: str) -> dict[str, Any]:
     }
 
 
-async def models_to_check(argv: list[str]) -> list[str]:
-    if argv:
-        return argv
+#: What one model costs at worst: two calls, each allowed `MAX_TOKENS` of output, every one of
+#: them billed at the completion rate. Prompt tokens are a rounding error against that.
+MAX_TOKENS = 800
+
+
+async def models_to_check(argv: list[str]) -> tuple[list[str], Decimal]:
+    """The models to probe and what they could cost, at worst.
+
+    Named slugs are taken as given — asking for a model by name is asking for it. With no
+    arguments the free pool is checked and nothing else, because the alternative is a command that
+    quietly spends tens of dollars the first time anyone tries it.
+    """
+    wanted = [arg for arg in argv if not arg.startswith("-")]
+    include_paid = "--paid" in argv
+
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
-        rows = await session.scalars(
-            sa.select(ModelRegistry.openrouter_id)
+        query = (
+            sa.select(ModelRegistry)
             .where(ModelRegistry.enabled.is_(True), ModelRegistry.supports_reasoning.is_(True))
             .where(
                 ModelRegistry.id.in_(
@@ -89,7 +110,16 @@ async def models_to_check(argv: list[str]) -> list[str]:
             )
             .order_by(ModelRegistry.openrouter_id)
         )
-        return list(rows)
+        if wanted:
+            query = query.where(ModelRegistry.openrouter_id.in_(wanted))
+        elif not include_paid:
+            query = query.where(ModelRegistry.is_free.is_(True))
+
+        rows = list(await session.scalars(query))
+
+    # Two calls a model, each able to spend the whole output budget.
+    worst = sum((row.completion_usd_per_token or Decimal(0)) * MAX_TOKENS * 2 for row in rows)
+    return [row.openrouter_id for row in rows], Decimal(worst)
 
 
 async def main(argv: list[str]) -> int:
@@ -98,13 +128,24 @@ async def main(argv: list[str]) -> int:
         print("OPENROUTER_API_KEY is not set; nothing to verify.", file=sys.stderr)
         return 1
 
-    models = await models_to_check(argv)
+    models, worst = await models_to_check(argv)
     if not models:
         print("no reasoning-capable models with an active endpoint", file=sys.stderr)
         return 1
 
-    print(f"{BOLD}Verifying {len(models)} model(s){OFF}\n")
+    # Said before the first call, not after the last one. The number is a ceiling — a model that
+    # answers in forty tokens is not billed for eight hundred — but a ceiling is the only figure
+    # worth showing to someone deciding whether to press enter.
+    bill = "nothing — free models only" if worst == 0 else f"up to ${worst:.2f}"
+    print(
+        f"{BOLD}Verifying {len(models)} model(s){OFF} {DIM}· {len(models) * 2} calls · {bill}{OFF}"
+    )
+    if worst > 0:
+        print(f"{DIM}  ({MAX_TOKENS} output tokens allowed per call, twice per model){OFF}")
+    print()
     broken: list[str] = []
+    checked = 0
+    unreachable: list[str] = []
 
     for model in models:
         print(f"{BOLD}{model}{OFF}")
@@ -115,8 +156,14 @@ async def main(argv: list[str]) -> int:
             except Exception as error:  # one bad model must not stop the sweep
                 print(f"  {mode:6} {RED}failed{OFF} {type(error).__name__}: {str(error)[:100]}")
         if len(results) != 2:
+            # **Not a pass.** The free tier's daily allowance runs out, models are withdrawn, and
+            # providers 404 — a model we could not reach is one we know nothing about, and counting
+            # it as healthy is how a verification tool ends up certifying an empty run.
+            unreachable.append(model)
             print()
             continue
+
+        checked += 1
 
         for mode, r in results.items():
             lead = f"first at {r['first']:.2f}s" if r["first"] is not None else "no fragments"
@@ -146,13 +193,29 @@ async def main(argv: list[str]) -> int:
         print(
             f"\n{DIM}The worker detects this itself and falls back after one call (ADR-0036).{OFF}"
         )
+    elif checked == 0:
+        # The whole run told us nothing, and has to say so: silence must not read as assent.
+        print(f"{AMBER}Nothing was verified: all {len(models)} model(s) were unreachable.{OFF}")
+        print(f"{DIM}Free-tier allowance spent, or the endpoints are down. Try again later.{OFF}")
+        await dispose_engine()
+        return 1
     else:
-        print(f"{GREEN}Every model checked keeps its reasoning through a streamed call.{OFF}")
+        print(
+            f"{GREEN}{checked} of {len(models)} model(s) keep their reasoning when streamed.{OFF}"
+        )
+
+    if unreachable:
+        # Said even on a good run: a sweep that reached two models out of fifteen has not cleared
+        # the other thirteen, and the line above is only about what it actually saw.
+        print(f"\n{AMBER}{len(unreachable)} not reached, so not verified:{OFF}")
+        for model in unreachable:
+            print(f"  {DIM}{model}{OFF}")
+
+    # In *this* loop: a second `asyncio.run` in a `finally` is a second event loop, and asyncpg's
+    # connections belong to the first one — closing them from the other raises at exit.
+    await dispose_engine()
     return 0
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(asyncio.run(main(sys.argv[1:])))
-    finally:
-        asyncio.run(dispose_engine())
+    raise SystemExit(asyncio.run(main(sys.argv[1:])))

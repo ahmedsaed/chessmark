@@ -229,7 +229,9 @@ LINES=500 ./chessmark logs tournament'
 
 # Persist it so `deploy` keeps them: put WORKER_REPLICAS=3 in .env'
   [catalogue]='./chessmark catalogue                   # models + endpoints, honouring the context floor'
-  [verify-streaming]='./chessmark verify-streaming        # does each model keep its reasoning when streamed?'
+  [verify-streaming]='./chessmark verify-streaming        # do the free models keep their reasoning when streamed?
+                                     # named models are checked whatever they cost; --paid does the lot
+                                     # occasional: the worker detects this itself, one call per endpoint'
   [prune]='./chessmark prune                       # report only
 ./chessmark prune --apply               # disable them and remove their games
 ./chessmark prune --apply --keep-finished
