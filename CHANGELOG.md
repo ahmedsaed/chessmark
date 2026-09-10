@@ -24,6 +24,10 @@ file is only the record of *what shipped when*.
   never stored, and is superseded by the committed events — so the record is byte-identical whether
   anyone was watching or not. Measured: the first frame lands a full second ahead of the commit on
   a turn with two half-second rounds.
+- **A spectator arriving mid-turn is caught up** ([ADR-0035]). Frames are fire-and-forget, so
+  somebody opening a game nine minutes into a round got the committed backfill — everything up to
+  the *last* turn — and then a still board until this one committed. They were the one reader the
+  streaming never reached. The in-flight turn's frames are kept and replayed on connect.
 - **Reasoning streams token by token** ([ADR-0035], [ADR-0036]). LiteLLM's streaming path reads
   `reasoning_content` and drops `reasoning`, so on some providers the thinking would never arrive —
   and an absent reasoning field is indistinguishable from a model that did not reason, which is

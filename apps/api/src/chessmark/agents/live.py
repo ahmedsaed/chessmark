@@ -29,11 +29,32 @@ from typing import Any, Protocol
 #: can never be mistaken for a committed event by a client reading either.
 DELTA_CHANNEL = "chessmark:live:{game_id}"
 
+#: The frames of the turn currently in flight, kept so somebody arriving mid-turn can be caught up.
+#:
+#: **Pub/sub is fire-and-forget, and a turn is long.** A spectator who opens a game while a model
+#: is nine minutes into a round would otherwise receive the committed backfill — everything up to
+#: the *last* turn — and then sit in front of a still board until this one commits, which is
+#: exactly the experience ADR-0035 set out to end. They would be the only reader not getting it.
+BUFFER_KEY = "chessmark:live:{game_id}:turn"
+
+#: How long that buffer outlives the turn it belongs to. Generous, because a turn can be: the
+#: longest observed round alone was 369 seconds and a whole turn 632. It is a fallback — a new
+#: turn clears the buffer outright — so the only thing this bounds is how long a rolled-back
+#: turn's frames linger in Redis before they expire on their own.
+BUFFER_TTL_SECONDS = 3600
+
+#: A hard ceiling on the buffer, so a model that emits fifty thousand fragments cannot grow it
+#: without bound. Reached only by a pathological turn; past it a late joiner sees the tail, which
+#: is the part that is still on screen anyway.
+BUFFER_MAX_FRAMES = 400
+
 
 class LiveChannel(Protocol):
     """Somewhere to send a frame. Redis in production; a list in tests."""
 
     async def send(self, game_id: uuid.UUID, frame: dict[str, Any]) -> None: ...
+
+    async def replay(self, game_id: uuid.UUID) -> list[dict[str, Any]]: ...
 
 
 class RedisLive:
@@ -49,7 +70,30 @@ class RedisLive:
 
     async def send(self, game_id: uuid.UUID, frame: dict[str, Any]) -> None:
         with contextlib.suppress(Exception):
-            await self._redis.publish(DELTA_CHANNEL.format(game_id=game_id), json.dumps(frame))
+            body = json.dumps(frame)
+            buffer = BUFFER_KEY.format(game_id=game_id)
+
+            pipe = self._redis.pipeline()
+            # A new turn supersedes the last one's frames wholesale — including a rolled-back
+            # turn's, which is the only thing that ever leaves stale ones behind.
+            if frame.get("frame") == "turn":
+                pipe.delete(buffer)
+            pipe.rpush(buffer, body)
+            pipe.ltrim(buffer, -BUFFER_MAX_FRAMES, -1)
+            pipe.expire(buffer, BUFFER_TTL_SECONDS)
+            pipe.publish(DELTA_CHANNEL.format(game_id=game_id), body)
+            await pipe.execute()
+
+    async def replay(self, game_id: uuid.UUID) -> list[dict[str, Any]]:
+        """The in-flight turn's frames, for a reader who has just arrived.
+
+        Empty when no turn is running, when the last one committed, or when Redis is unreachable —
+        all of which are the same thing to a caller: there is nothing to catch up on.
+        """
+        with contextlib.suppress(Exception):
+            raw = await self._redis.lrange(BUFFER_KEY.format(game_id=game_id), 0, -1)
+            return [json.loads(item) for item in raw]
+        return []
 
 
 class NullLive:
@@ -57,6 +101,9 @@ class NullLive:
 
     async def send(self, game_id: uuid.UUID, frame: dict[str, Any]) -> None:
         return None
+
+    async def replay(self, game_id: uuid.UUID) -> list[dict[str, Any]]:
+        return []
 
 
 def turn_started(player_id: uuid.UUID, *, colour: str, ply: int, model: str) -> dict[str, Any]:
@@ -99,6 +146,9 @@ def token(player_id: uuid.UUID, kind: str, text: str) -> dict[str, Any]:
 
 
 __all__ = [
+    "BUFFER_KEY",
+    "BUFFER_MAX_FRAMES",
+    "BUFFER_TTL_SECONDS",
     "DELTA_CHANNEL",
     "LiveChannel",
     "NullLive",

@@ -99,7 +99,7 @@ tournament: ## Tournaments: field / create / run / standings. make tournament AR
 	cd $(API) && uv run python ../../scripts/tournament.py $(ARGS)
 
 worker: ## Run a standalone turn worker
-	cd $(API) && uv run python ../../scripts/worker.py
+	cd $(API) && uv run python ../../scripts/worker.py $(ARGS)
 
 test: test-api test-web ## Run every test (database tests need `make up`; never calls a provider)
 

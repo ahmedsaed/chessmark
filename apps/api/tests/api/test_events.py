@@ -253,6 +253,41 @@ async def test_a_live_frame_carries_no_event_id(
     assert all(line.split(":", 1)[1].strip().isdigit() for line in ids)
 
 
+async def test_two_spectators_both_receive_the_live_frames(
+    client: AsyncClient, game: Fixture, make_worker: Any
+) -> None:
+    """Fan-out, for the channel that is not the durable one.
+
+    Redis pub/sub delivers to every subscriber, so a game with an audience is the same cost as one
+    with a single reader — but "the same code path serves both" is worth asserting rather than
+    assuming, because the buffer added for latecomers is the kind of change that can quietly turn
+    a broadcast into a first-come-first-served queue.
+    """
+    seen: list[list[str]] = [[], []]
+
+    async def watch(index: int) -> None:
+        async with client.stream("GET", f"/games/{game.game.id}/stream") as response:
+            async for line in response.aiter_lines():
+                if line.startswith("event: delta"):
+                    seen[index].append(line)
+                elif line.strip() == f"event: {EventType.GAME_ENDED}":
+                    return
+
+    readers = [asyncio.create_task(watch(i)) for i in range(2)]
+    await asyncio.sleep(0.5)
+
+    await run_next(make_worker(resigns(), publish=True), game.queue)
+
+    for reader in readers:
+        try:
+            await asyncio.wait_for(reader, timeout=15)
+        except TimeoutError:
+            reader.cancel()
+
+    assert seen[0], "the first spectator received no frames"
+    assert len(seen[0]) == len(seen[1]), "the two spectators disagree about what they were shown"
+
+
 def test_a_frame_is_dropped_from_a_reader_who_may_not_see_it() -> None:
     """**Invariant 8, on the fastest path by which it could break.**
 

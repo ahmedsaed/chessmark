@@ -2,7 +2,8 @@
 """A standalone turn worker.
 
     make worker              # real models, real money
-    make worker ARGS=--scripted   # a scripted opponent, no key, no spend
+    make worker ARGS=--scripted             # a scripted opponent, no key, no spend
+    make worker ARGS="--scripted --delay 3" # ...that takes its time, so streaming is watchable
 
 Consumes `advance_turn` jobs until interrupted. Run as many as you like — jobs are idempotent
 (ADR-0007), so workers never need to coordinate. Also periodically reconciles games that stalled
@@ -31,9 +32,9 @@ from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
 from chessmark.agents.scripted import responsive  # noqa: E402
 from chessmark.core.budget import GlobalBudget  # noqa: E402
-from chessmark.core.halt import Halt  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import ProviderCooldown  # noqa: E402
+from chessmark.core.halt import Halt  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.orchestration import TurnQueue, TurnWorker, reconcile  # noqa: E402
 from chessmark.orchestration.reconciler import SingleFlight  # noqa: E402
@@ -88,7 +89,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "spend, deterministic. This is what the browser suite runs against."
         ),
     )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help=(
+            "Pause this long before each scripted round, so a turn takes as long as a real one. "
+            "A scripted provider answers instantly and the whole turn lands in a single frame, "
+            "which is exactly what live streaming is invisible against (ADR-0035). Try 3."
+        ),
+    )
     return parser.parse_args(argv)
+
+
+def paced(inner: Any, seconds: float) -> Any:
+    """A scripted provider that takes its time.
+
+    Local streaming is unwatchable without it. The reason a turn streams at all is that its rounds
+    are *slow* — ply 8 of `e601f9af` spent 632 seconds across six of them — and a scripted
+    opponent returns in microseconds, so every frame and every committed event arrive together and
+    the page looks exactly as it did before any of this was built.
+    """
+    if seconds <= 0:
+        return inner
+
+    async def _complete(**kwargs: Any) -> Any:
+        await asyncio.sleep(seconds)
+        return await inner(**kwargs)
+
+    return _complete
 
 
 async def main(argv: list[str] | None = None) -> int:
@@ -125,7 +155,6 @@ async def main(argv: list[str] | None = None) -> int:
     # budget it is a way to spend money with no daily ceiling — the same hole `make play` had.
     budget = GlobalBudget(redis, daily_limit_usd=Decimal(str(settings.global_daily_usd_budget)))
 
-
     # What is remembered between games about an endpoint that refused. Shared through Redis rather
     # than held per process, because the point is that the *next* game — and the tournament
     # matchmaker in another container entirely — knows what this one just learned.
@@ -135,7 +164,6 @@ async def main(argv: list[str] | None = None) -> int:
     # the harness once rather than pausing thirty games one at a time.
     halt = Halt(redis)
 
-
     worker = TurnWorker(
         sessionmaker=sessionmaker,
         queue=queue,
@@ -143,7 +171,10 @@ async def main(argv: list[str] | None = None) -> int:
             # The provider is the only thing replaced: normalisation, costing, persistence and the
             # retry loop all run for real, so a game played this way exercises the same code a paid
             # one does. `completion_fn` takes precedence, so the key is never read.
-            LlmGateway(completion_fn=responsive(reasoning=SCRIPTED_REASONING), pricing=pricing)
+            LlmGateway(
+                completion_fn=paced(responsive(reasoning=SCRIPTED_REASONING), args.delay),
+                pricing=pricing,
+            )
             if args.scripted
             else LlmGateway(api_key=api_key, pricing=pricing, stream=settings.llm_stream)
         ),
@@ -158,6 +189,8 @@ async def main(argv: list[str] | None = None) -> int:
         loop.add_signal_handler(sig, worker.stop)
 
     mode = " (scripted — no spend)" if args.scripted else ""
+    if args.scripted and args.delay > 0:
+        mode = f" (scripted — no spend, {args.delay:g}s a round)"
     log.info("worker %s started%s", worker.consumer, mode)
     reconciler = asyncio.create_task(reconcile_loop(sessionmaker, queue, redis=redis))
     try:

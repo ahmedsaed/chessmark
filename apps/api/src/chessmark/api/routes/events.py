@@ -28,7 +28,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Header, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
-from chessmark.agents.live import DELTA_CHANNEL
+from chessmark.agents.live import DELTA_CHANNEL, RedisLive
 from chessmark.api.deps import GameDep, RedisDep, SessionDep
 from chessmark.api.redaction import must_withhold_thinking, redact
 from chessmark.api.schemas import EventOut
@@ -121,6 +121,19 @@ async def stream_events(
             if _already_over(game, backfill):
                 return
 
+            # **The turn already in flight**, for a reader who arrived in the middle of it
+            # (ADR-0035). Pub/sub is fire-and-forget, so without this a spectator opening a game
+            # nine minutes into a round gets the committed backfill — everything up to the *last*
+            # turn — and then a still board until this one commits. They would be the one reader
+            # the streaming never reached.
+            #
+            # After the backfill, because the committed events are the record and these are a
+            # prediction; a client that has both must apply them in that order.
+            for frame in await RedisLive(redis).replay(game.id):
+                allowed = _visible_frame(frame, withhold=withhold)
+                if allowed is not None:
+                    yield {"event": "delta", "data": json.dumps(allowed)}
+
             # Step 4: live. Anything at or below `delivered` was already sent in the backfill.
             last_beat = asyncio.get_event_loop().time()
             while not await request.is_disconnected():
@@ -142,10 +155,10 @@ async def stream_events(
                 # *committed* event, or a reconnect would resume from something that was never
                 # written down.
                 if "frame" in parsed:
-                    frame = _visible_frame(parsed, withhold=withhold)
-                    if frame is not None:
+                    live = _visible_frame(parsed, withhold=withhold)
+                    if live is not None:
                         last_beat = now
-                        yield {"event": "delta", "data": json.dumps(frame)}
+                        yield {"event": "delta", "data": json.dumps(live)}
                     continue
 
                 if parsed["seq"] <= delivered:

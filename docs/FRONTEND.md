@@ -101,6 +101,18 @@ Three things follow, and each has bitten:
 A component that ignores `delta` entirely is correct and complete: replay, the PGN and every test
 that reads the log are unaffected.
 
+**Arriving in the middle of a turn.** Pub/sub is fire-and-forget, so a spectator who opens a game
+nine minutes into a round would get the committed backfill — everything up to the *last* turn —
+and then a still board until this one commits. The in-flight turn's frames are therefore kept in a
+Redis list and replayed after the backfill, so a latecomer is caught up to the same place as
+everyone already watching. A new turn clears that buffer; a TTL collects what a rolled-back turn
+leaves behind.
+
+**Many viewers.** Redis fans a frame out to every subscriber, so an audience costs no more than a
+single reader and all of them see the same thing. What is decided *per connection* is
+`must_withhold_thinking`: two people can watch the same game and one of them — the one playing it —
+is shown no reasoning at all (invariant 8).
+
 ## Streaming, and the price of it
 
 Every route is `force-dynamic` — a live game and a leaderboard are both wrong the moment they are
