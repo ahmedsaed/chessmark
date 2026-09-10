@@ -73,6 +73,22 @@ One model was described by two pages, and the numbers on them disagreed.
   drill-down fetched its games through a path; folding that page in ([ADR-0034]) exposed it. The
   id now comes from the registry's own answer, and a page that has stats but no games says so
   instead of rendering as empty.
+- **The live stream reached the browser and was thrown away** (UI-10). `useGameStream` filtered
+  frames to `block` and `token` and dropped `turn`, which was added later — and `liveTurn` hangs
+  every block off it. So every frame arrived, was discarded, and the panel showed a turn only once
+  it committed, with nothing erroring.
+- **A block being generated stopped updating after its first word** (UI-10). The panel's memo
+  compared `blocks.length`, and a block still streaming grows its *text* while the list does not —
+  so React skipped every render after the first token. A refresh showed the lot, which is the tell
+  that the data was right and the render was skipped.
+- **The turn anchor was trimmed out of the catch-up buffer** ([ADR-0035]). The turn frame is the
+  oldest entry and every block hangs off it, so a long turn — `deepseek-v4-flash` filled the
+  400-frame cap inside one round — trimmed away the only thing that said which turn any of it
+  belonged to. The catch-up failed precisely on the turns it exists for. It is kept clear of the
+  trim now.
+- **An empty block no longer renders** (UI-05). A provisional block exists as soon as its first
+  fragment arrives, so a model opening with a newline drew an empty bordered box that read as "the
+  model wrote: (nothing)".
 - **A model page died on a payload missing a field** (UI-07). `Object.values(model.rated_games)`
   throws when the API has not been redeployed alongside the web tier, and the whole page became
   *"That did not load."* rather than degrading to the record it could still render. A rolling

@@ -95,12 +95,25 @@ def prose(content: str, **kwargs: Any) -> dict[str, Any]:
     return step(content=content, **kwargs)
 
 
+#: What a model that has finished looks like: it answers, and asks for nothing.
+STOPS = {"choices": [{"message": {"role": "assistant", "content": None}, "finish_reason": "stop"}]}
+
+
 def scripted(*steps: dict[str, Any], repeat_last: bool = False) -> CompletionFn:
     """A `completion_fn` returning each scripted response in order.
 
-    Running past the end raises by default, which makes an unexpected extra LLM call a loud test
-    failure rather than a silent hang. `repeat_last=True` keeps returning the final response, for
-    loops whose length is the thing under test.
+    Running past the end raises, which makes an unexpected extra LLM call a loud test failure
+    rather than a silent hang. `repeat_last=True` keeps returning the final response, for loops
+    whose length is the thing under test.
+
+    **One response past the end is not "past the end": it is the model stopping.** A turn no longer
+    ends when `make_move` succeeds — it ends when the model answers with no tool calls, the way
+    every other agent harness defines a finished turn (AGENT-05). So a script that says what the
+    model *does* is complete without also saying that it then does nothing, and every test written
+    before that change would otherwise fail for describing the same model it always described.
+
+    The guard survives, because the exemption is exactly one: a loop that will not stop asks twice,
+    and the second ask still raises.
     """
     queue = list(steps)
     calls: list[dict[str, Any]] = []
@@ -113,6 +126,8 @@ def scripted(*steps: dict[str, Any], repeat_last: bool = False) -> CompletionFn:
             return queue[index]
         if repeat_last and queue:
             return queue[-1]
+        if index == len(queue):
+            return STOPS
 
         msg = (
             f"the script ran out: {len(queue)} responses were provided but the turn made "
@@ -122,6 +137,32 @@ def scripted(*steps: dict[str, Any], repeat_last: bool = False) -> CompletionFn:
 
     _complete.calls = calls  # type: ignore[attr-defined]
     return _complete
+
+
+def has_moved_this_turn(messages: list[dict[str, Any]]) -> bool:
+    """Whether this seat has already played its move in the turn now being answered.
+
+    **A turn ends when the model stops, not when it moves** (AGENT-05), so every scripted opponent
+    is asked at least once more after its move — and one that answers by playing again is refused
+    with `already_moved`, or worse, walks its own script forward and plays the *next* game's move
+    into this position. `plays` did exactly that: one move consumed per call, two calls per turn,
+    and by move three it was offering pieces to squares they could not reach and forfeiting on six
+    illegal attempts.
+
+    The turn prompt is the boundary. Anything this seat did after the last `user` message belongs
+    to the turn in hand, so a `make_move` among those means the move is played and the only honest
+    answer left is to stop.
+    """
+    last_prompt = max(
+        (index for index, m in enumerate(messages) if m.get("role") == "user"),
+        default=-1,
+    )
+    return any(
+        call.get("function", {}).get("name") == "make_move"
+        for message in messages[last_prompt + 1 :]
+        if message.get("role") == "assistant"
+        for call in (message.get("tool_calls") or [])
+    )
 
 
 def plays(moves: Iterable[str], *, per_move_tokens: int = 100, cost: float = 0.0) -> CompletionFn:
@@ -134,6 +175,10 @@ def plays(moves: Iterable[str], *, per_move_tokens: int = 100, cost: float = 0.0
 
     async def _complete(**kwargs: Any) -> dict[str, Any]:
         calls.append(kwargs)
+        # One move per *turn*, not per call: the round after the move is the one where a model
+        # stops, and taking the next move off the script there desynchronises the whole game.
+        if has_moved_this_turn(kwargs.get("messages") or []):
+            return STOPS
         return next(sequence)
 
     _complete.calls = calls  # type: ignore[attr-defined]
@@ -184,7 +229,13 @@ def responsive(
     """
 
     async def _complete(**kwargs: Any) -> Any:
-        moves = _legal_moves_in(kwargs.get("messages") or [])
+        messages = kwargs.get("messages") or []
+        # Its move is played; the legal-move list it read earlier is still in the transcript, so
+        # without this it would keep choosing from it and be refused `already_moved` every round.
+        if has_moved_this_turn(messages):
+            return step(content="Played it.", cost=cost)
+
+        moves = _legal_moves_in(messages)
 
         if moves is None:
             # Nothing has been read yet this turn, so read.
@@ -249,6 +300,7 @@ def _legal_moves_in(messages: list[dict[str, Any]]) -> list[str] | None:
 
 
 __all__ = [
+    "STOPS",
     "alternating",
     "plays",
     "prose",

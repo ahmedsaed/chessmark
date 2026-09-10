@@ -173,6 +173,19 @@ class TurnLimits:
     """
 
     max_tool_iterations: int = 20
+
+    #: How many rounds a model gets *after* its move, to say something about it.
+    #:
+    #: A turn ends when the model stops rather than when it moves (AGENT-05), and "stops" cannot be
+    #: left entirely to the model: one that answers `already_moved` with another `make_move` will
+    #: do it again, and against `max_tool_iterations` that is twenty rounds of a turn that is
+    #: already over — twenty full prompts, on the largest context of the game.
+    #:
+    #: Two is the whole of what this phase is for: one round to write the closing sentence, and one
+    #: spare for a model that answers the move result with a last `get_board` before it does. Past
+    #: that it is not finishing a thought, it is failing to stop, and the ply is already committed
+    #: so there is nothing to lose by ending it.
+    max_closing_rounds: int = 2
     """LLM round-trips within one turn.
 
     A model that reads the board, enumerates legal moves, reconsiders, and retries a rejected move
@@ -356,6 +369,8 @@ class TurnRunner:
         self._llm_sequence = 0
         self._tool_sequence = 0
         self._nudges = 0
+        #: Rounds spent since the move was committed. See `TurnLimits.max_closing_rounds`.
+        self._closing_rounds = 0
         #: The prompt size the provider last reported, or `None` before anything has been measured.
         #:
         #: **Seeded from the seat, not from zero.** The worker builds a new runner for every turn,
@@ -1015,12 +1030,35 @@ class TurnRunner:
                 )
 
             if not completion.tool_calls:
+                # **After the move, silence is the answer.** `_no_action` exists for a model that
+                # would not act; one that has already acted and has nothing further to add has
+                # finished its turn, and nudging it would be asking for a move it has made.
+                if self._move_committed:
+                    result.status = TurnStatus.COMPLETED
+                    return
                 if await self._no_action(turn, result, completion):
                     continue
                 return
 
+            if self._move_committed:
+                self._closing_rounds += 1
+                if self._closing_rounds > self.limits.max_closing_rounds:
+                    # It is still calling tools against a move it has already made. The ply is
+                    # committed and the game is sound, so this ends the turn rather than failing
+                    # it — the model did everything the game asked of it and then some.
+                    result.status = TurnStatus.COMPLETED
+                    return
+
             if await self._run_tool_calls(turn, result, completion.tool_calls):
                 return
+
+        # **A move was played; the model simply never stopped talking.** The ply is committed and
+        # the game is sound, so the turn completed — forfeiting here would take a game away from a
+        # model over a ceiling of ours (invariant 11), and it is a ceiling the model could not
+        # previously reach at all, because the turn used to end at the move.
+        if self._move_committed:
+            result.status = TurnStatus.COMPLETED
+            return
 
         # Ran out of iterations without moving.
         result.status = TurnStatus.FORFEITED
@@ -1125,18 +1163,46 @@ class TurnRunner:
 
             if tool_result.move is not None:
                 self._move_committed = True
+                self._closing_rounds = 0
                 result.move = tool_result.move
                 result.outcome = tool_result.move.outcome
                 await self._record_move(turn, tool_result.move)
+
+                # **A move that ends the game ends the turn.** There is nothing left to say to a
+                # position that no longer exists, and one more round against a concluded board is
+                # a call spent on a game that is over.
+                if self.referee.is_over:
+                    result.status = TurnStatus.COMPLETED
+                    return True
 
             elif tool_result.ends_game:
                 result.status = TurnStatus.COMPLETED
                 result.outcome = self.referee.outcome
                 return True
 
-        if self._move_committed:
-            result.status = TurnStatus.COMPLETED
-            return True
+        # **The move does not end the turn — the model does** (AGENT-05).
+        #
+        # This used to return the moment `make_move` succeeded, so the model never saw the result
+        # of its own move and never got a round in which to say anything about it. Across a
+        # 40-ply game between two models that produced **one** `output` event: not because these
+        # models do not write prose, but because they were never given the turn in which to write
+        # it. The transcript ended every turn on a `tool` message with no assistant reply after
+        # it — complete, and one round short of a thought.
+        #
+        # So the loop continues until the model answers with no tool calls, which is what every
+        # other agent harness means by "the model stopped" — bounded by `max_closing_rounds`,
+        # because a model that answers `already_moved` with another `make_move` will do it again
+        # and "until it stops" would then mean twenty more prompts on the largest context of the
+        # game. A second `make_move` is refused above and `_is_a_repeat` answers a read-only tool
+        # asked twice, but neither of those makes a model give up.
+        #
+        # **And it compounds, which is the larger half.** The transcript is what the model reads
+        # at the top of every later turn, and a history containing nothing but tool calls and
+        # their results is a demonstration that prose is not what happens here. A model that never
+        # sees itself explain a move has no reason to start. Closing each turn with a sentence
+        # puts that sentence in the history, so the next turn is answered by a model that has read
+        # its own reasoning about the last one — which is the difference between playing a move
+        # and having a plan.
         return False
 
     async def _is_a_repeat(self, turn: Turn, call: ToolInvocation) -> bool:

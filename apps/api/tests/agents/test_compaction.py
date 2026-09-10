@@ -537,7 +537,9 @@ class TestATurnThatCompacts:
 
         assert result.status is TurnStatus.COMPLETED, "the turn still played its move"
         assert result.move is not None and result.move.move.san == "e4"
-        assert result.llm_calls == 2, "one summary, one move — and the summary is a recorded call"
+        # One summary, one move, and the round in which the model stops. The summary is a
+        # recorded call like any other.
+        assert result.llm_calls == 3
 
         # The record grew; the request shrank.
         after = await transcript.full_history(db, table.white.id)
@@ -572,7 +574,7 @@ class TestATurnThatCompacts:
         )
 
         assert result.status is TurnStatus.COMPLETED
-        assert result.llm_calls == 1, "no summarising call"
+        assert result.llm_calls == 2, "the move and the stop — no summarising call"
         assert not list(
             await db.scalars(sa.select(GameEvent).where(GameEvent.type == EventType.COMPACTED))
         )

@@ -163,7 +163,7 @@ async def test_stale_tool_results_are_elided_without_a_provider_call(
     )
 
     assert result.status is TurnStatus.COMPLETED
-    assert result.llm_calls == 1, "trimming needs no provider at all"
+    assert result.llm_calls == 2, "the move and the stop — trimming needs no provider at all"
 
     events = await _compacted(db, table)
     assert len(events) == 1
@@ -318,7 +318,10 @@ async def test_a_context_length_refusal_compacts_and_retries(
 
     assert result.status is TurnStatus.COMPLETED, "the game was abandoned on this before"
     assert result.move is not None and result.move.move.san == "e4"
-    assert model.calls == 3, "refused, summarised, then played"
+    # Refused, summarised, then played — and then the closing rounds, which this scripted model
+    # spends re-calling `make_move` because `repeat_last` makes it repeat itself forever. A real
+    # model stops; `max_closing_rounds` is what stops one that will not.
+    assert model.calls == 6
 
     events = await _compacted(db, table)
     assert len(events) == 1

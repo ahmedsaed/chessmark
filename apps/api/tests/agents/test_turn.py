@@ -59,7 +59,8 @@ async def test_reading_tools_do_not_end_the_turn(db: AsyncSession, table: Table)
     )
 
     assert result.status is TurnStatus.COMPLETED
-    assert result.llm_calls == 4
+    # Four rounds of tools, then the one in which the model stops (AGENT-05).
+    assert result.llm_calls == 5
     assert result.tool_calls == 4
     assert result.move is not None
     assert result.move.move.san == "d4"
@@ -87,10 +88,12 @@ async def test_everything_is_persisted(db: AsyncSession, table: Table) -> None:
     ).all()
 
     assert len(turns) == 1
-    assert len(llm_calls) == 2
+    # Two scripted rounds, and the closing one in which the model stops — every round-trip is
+    # recorded, including the one that does nothing but end the turn (LOG-01).
+    assert len(llm_calls) == 3
     assert len(tool_calls) == 2
 
-    assert [c.sequence for c in llm_calls] == [1, 2]
+    assert [c.sequence for c in llm_calls] == [1, 2, 3]
     assert all(c.request for c in llm_calls), "requests are stored verbatim"
     assert llm_calls[0].reasoning_text == "Considering the centre."
     assert turns[0].reasoning_tokens == 9
@@ -877,3 +880,121 @@ async def test_a_human_game_records_its_reasoning_like_any_other(
     assert events
     assert events[0].payload["reasoning"] == "I plan Qh5 next."
     assert events[0].payload["tokens"] > 0
+
+
+# ====================================================================== the turn ends when the model does
+
+
+async def test_the_move_does_not_end_the_turn(db: AsyncSession, table: Table) -> None:
+    """**A turn ends when the model stops, not when it moves** (AGENT-05).
+
+    It used to return the instant `make_move` succeeded, so the model never saw the result of its
+    own move and never got a round in which to say anything about it. Across a 40-ply game between
+    two real models that produced **one** `output` event — not because they do not write prose, but
+    because they were never given the turn in which to write it.
+    """
+    result = await play_turn(
+        db,
+        table,
+        scripted(
+            step(tool_call("make_move", move="e4")),
+            step(content="e4 takes the centre and opens the bishop."),
+        ),
+    )
+
+    assert result.status is TurnStatus.COMPLETED
+    assert result.move is not None and result.move.move.san == "e4"
+    assert result.llm_calls == 2, "the move, and the round in which it explained itself"
+
+
+async def test_the_closing_round_reaches_the_stream(db: AsyncSession, table: Table) -> None:
+    """The point of the change, from a reader's side: prose in the timeline where there was none."""
+    await play_turn(
+        db,
+        table,
+        scripted(
+            step(tool_call("make_move", move="e4")),
+            step(content="e4 takes the centre."),
+        ),
+    )
+
+    db.expunge_all()
+    events = list(
+        await db.scalars(
+            sa.select(GameEvent).where(
+                GameEvent.game_id == table.game.id, GameEvent.type == EventType.OUTPUT
+            )
+        )
+    )
+
+    assert [e.payload["content"] for e in events] == ["e4 takes the centre."]
+
+
+async def test_the_model_sees_its_own_move_before_it_speaks(db: AsyncSession, table: Table) -> None:
+    """The reason the round is worth its cost. The closing call is answered against a transcript
+    that already contains the move's tool result, so the model is describing what happened rather
+    than what it intended — and that sentence is then in the history every later turn reads."""
+    model = scripted(
+        step(tool_call("make_move", move="e4")),
+        step(content="Played."),
+    )
+    await play_turn(db, table, model)
+
+    closing = model.calls[-1]["messages"]  # type: ignore[attr-defined]
+    roles = [m["role"] for m in closing]
+
+    assert roles[-1] == "tool", "the move's own result is the last thing it was shown"
+
+
+async def test_a_second_move_is_refused_rather_than_played(db: AsyncSession, table: Table) -> None:
+    """One ply per turn, whatever the model tries. The refusal is not an illegal move — the model
+    broke no rule of chess, it lost track of the protocol."""
+    result = await play_turn(
+        db,
+        table,
+        scripted(
+            step(tool_call("make_move", move="e4")),
+            step(tool_call("make_move", move="d4")),
+            step(content="Sorry, I had already moved."),
+        ),
+    )
+
+    assert result.status is TurnStatus.COMPLETED
+    assert result.move is not None and result.move.move.san == "e4"
+    assert result.illegal_attempts == 0, "a protocol slip is not an illegal move"
+    assert table.referee.ply == 1
+
+
+async def test_a_model_that_will_not_stop_is_stopped(db: AsyncSession, table: Table) -> None:
+    """**`max_closing_rounds`.** A model that answers `already_moved` with another `make_move` will
+    do it again, and "until the model stops" would then mean twenty more prompts on the largest
+    context of the game. The ply is committed, so this ends the turn rather than failing it — the
+    model did everything the game asked of it and then some (invariant 11).
+    """
+    result = await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("make_move", move="e4")), repeat_last=True),
+        limits=TurnLimits(max_closing_rounds=2),
+    )
+
+    assert result.status is TurnStatus.COMPLETED
+    assert result.move is not None and result.move.move.san == "e4"
+    # The move, the two rounds it was allowed to not stop in, and the one that hits the bound.
+    assert result.llm_calls == 4
+
+
+async def test_a_move_that_ends_the_game_ends_the_turn(db: AsyncSession, table: Table) -> None:
+    """There is nothing to say to a position that no longer exists, and one more round against a
+    concluded board is a call spent on a game that is over."""
+    for san, colour in [("f3", Colour.WHITE), ("e5", Colour.BLACK), ("g4", Colour.WHITE)]:
+        await play_turn(db, table, scripted(step(tool_call("make_move", move=san))), colour=colour)
+
+    model = scripted(step(tool_call("make_move", move="Qh4#")))
+    result = await play_turn(db, table, model, colour=Colour.BLACK)
+
+    assert result.status is TurnStatus.COMPLETED
+    assert result.llm_calls == 1, "no closing round on a finished game"
+    assert len(model.calls) == 1  # type: ignore[attr-defined]
+    assert result.outcome is not None
+    assert result.outcome.termination is Termination.CHECKMATE
