@@ -44,9 +44,18 @@ BUFFER_KEY = "chessmark:live:{game_id}:turn"
 BUFFER_TTL_SECONDS = 3600
 
 #: A hard ceiling on the buffer, so a model that emits fifty thousand fragments cannot grow it
-#: without bound. Reached only by a pathological turn; past it a late joiner sees the tail, which
-#: is the part that is still on screen anyway.
+#: without bound. Past it a late joiner sees the tail, which is the part still on screen anyway —
+#: and it is reached easily, not rarely: `deepseek-v4-flash` filled it inside one round.
 BUFFER_MAX_FRAMES = 400
+
+#: The turn frame, kept out of the trim's way.
+#:
+#: **It is the anchor, not one of the frames.** Every block hangs off it — `liveTurn` returns null
+#: without one and the panel cannot draw a provisional turn at all — so trimming it away silently
+#: undoes the whole catch-up for exactly the turns that need it most, the long ones. Which is what
+#: happened: a two-minute deepseek round pushed past 400 fragments, the oldest entry went, and the
+#: oldest entry was the turn.
+HEAD_KEY = "chessmark:live:{game_id}:head"
 
 
 class LiveChannel(Protocol):
@@ -73,14 +82,20 @@ class RedisLive:
             body = json.dumps(frame)
             buffer = BUFFER_KEY.format(game_id=game_id)
 
+            head = HEAD_KEY.format(game_id=game_id)
             pipe = self._redis.pipeline()
-            # A new turn supersedes the last one's frames wholesale — including a rolled-back
-            # turn's, which is the only thing that ever leaves stale ones behind.
+
             if frame.get("frame") == "turn":
+                # A new turn supersedes the last one's frames wholesale — including a rolled-back
+                # turn's, which is the only thing that ever leaves stale ones behind. The anchor
+                # is stored on its own, where the trim cannot reach it.
                 pipe.delete(buffer)
-            pipe.rpush(buffer, body)
-            pipe.ltrim(buffer, -BUFFER_MAX_FRAMES, -1)
-            pipe.expire(buffer, BUFFER_TTL_SECONDS)
+                pipe.set(head, body, ex=BUFFER_TTL_SECONDS)
+            else:
+                pipe.rpush(buffer, body)
+                pipe.ltrim(buffer, -BUFFER_MAX_FRAMES, -1)
+                pipe.expire(buffer, BUFFER_TTL_SECONDS)
+
             pipe.publish(DELTA_CHANNEL.format(game_id=game_id), body)
             await pipe.execute()
 
@@ -91,8 +106,12 @@ class RedisLive:
         all of which are the same thing to a caller: there is nothing to catch up on.
         """
         with contextlib.suppress(Exception):
+            # The anchor first, always — the blocks after it are meaningless without it.
+            anchor = await self._redis.get(HEAD_KEY.format(game_id=game_id))
+            if anchor is None:
+                return []
             raw = await self._redis.lrange(BUFFER_KEY.format(game_id=game_id), 0, -1)
-            return [json.loads(item) for item in raw]
+            return [json.loads(anchor), *(json.loads(item) for item in raw)]
         return []
 
 
@@ -150,6 +169,7 @@ __all__ = [
     "BUFFER_MAX_FRAMES",
     "BUFFER_TTL_SECONDS",
     "DELTA_CHANNEL",
+    "HEAD_KEY",
     "LiveChannel",
     "NullLive",
     "RedisLive",

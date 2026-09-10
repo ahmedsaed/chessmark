@@ -45,6 +45,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { sameTurnContent } from "@/lib/turns";
 import type { Player, StreamNotice, ToolCallView, TurnBlock, TurnView } from "@/lib/types";
 
 type Filter = "all" | "moves-talk" | "talk" | "moves";
@@ -508,24 +509,25 @@ interface TurnProps {
  * A turn is append-only within itself, so for a given `key` the array *lengths* pin the content
  * exactly. Comparing them is O(1) and cannot report equal for two different renderings.
  */
+/**
+ * Whether a row can keep the DOM it already has.
+ *
+ * Scrubbing re-folds the event log, which is cheap — 0.04ms for a 63-ply game — and hands back a
+ * completely new set of `TurnView` objects, which is not: React then re-rendered every turn in the
+ * panel on every step of the scrubber, and that re-render was most of what each step cost.
+ *
+ * The turn half of the comparison lives in `lib/turns.ts`, where it can be tested: a memo that
+ * reports "unchanged" too eagerly does not fail, it stops updating the screen while the data goes
+ * on changing, and that is not something a component test would have caught either.
+ */
 function sameTurn(before: TurnProps, after: TurnProps): boolean {
-  const a = before.turn;
-  const b = after.turn;
   return (
     before.filter === after.filter &&
     before.open === after.open &&
     before.name === after.name &&
     before.onToggle === after.onToggle &&
     before.onInspect === after.onInspect &&
-    a.key === b.key &&
-    a.san === b.san &&
-    a.live === b.live &&
-    a.ply === b.ply &&
-    a.colour === b.colour &&
-    /* One length, because `blocks` is every kind in one append-only list — the four arrays it is
-       derived from can only agree with it, so comparing them as well pins nothing further. */
-    a.blocks.length === b.blocks.length &&
-    a.said.length === b.said.length
+    sameTurnContent(before.turn, after.turn)
   );
 }
 
@@ -669,6 +671,16 @@ function Block({
   align: "left" | "right";
   edge: string;
 }) {
+  /* **A block with nothing in it is not a block.** A provisional one exists the moment its first
+     fragment arrives, and a model that opens with a newline — or whose block frame lands before
+     any text has — produced an empty bordered box sitting in the timeline saying nothing. Drawn
+     as its own step, it reads as "the model wrote this: (nothing)", which is a claim about the
+     model rather than about a frame that has not filled in yet. */
+  if ((block.kind === "reasoning" || block.kind === "output" || block.kind === "said") &&
+      !block.text.trim()) {
+    return null;
+  }
+
   switch (block.kind) {
     case "reasoning":
       return <ReasoningBlock block={block} edge={edge} />;

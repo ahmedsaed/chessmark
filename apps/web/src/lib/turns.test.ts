@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { compactionText, foldEvents, liveTurn } from "@/lib/turns";
+import { compactionText, foldEvents, liveTurn, sameTurnContent } from "@/lib/turns";
 import type { EventType, GameEvent, LiveFrame } from "@/lib/types";
 
 let seq = 0;
@@ -760,5 +760,83 @@ describe("every live frame kind reaches the fold", () => {
       "said",
       "reasoning",
     ]);
+  });
+});
+
+describe("a live block with nothing in it", () => {
+  /**
+   * A provisional block exists as soon as its first fragment arrives, so a model that opens its
+   * reasoning with a newline produced an empty bordered box in the timeline. Drawn as a step it
+   * reads as "the model wrote this: (nothing)" — a claim about the model rather than about a
+   * frame that has not filled in yet.
+   */
+  const started: LiveFrame = {
+    frame: "turn",
+    player_id: "b",
+    colour: "black",
+    ply: 8,
+    model: "m",
+  };
+
+  it("does not become a partial block on whitespace alone", () => {
+    const turn = liveTurn([
+      started,
+      { frame: "token", player_id: "b", kind: "output", text: "\n" },
+      { frame: "token", player_id: "b", kind: "output", text: "  " },
+    ]);
+
+    expect(turn?.blocks).toEqual([]);
+  });
+
+  it("appears as soon as there is something to read", () => {
+    const turn = liveTurn([
+      started,
+      { frame: "token", player_id: "b", kind: "output", text: "\n" },
+      { frame: "token", player_id: "b", kind: "output", text: "Playing e4." },
+    ]);
+
+    expect(turn?.blocks).toMatchObject([{ kind: "output", text: "\nPlaying e4." }]);
+  });
+});
+
+describe("sameTurnContent", () => {
+  /**
+   * **The bug this exists for, and it is invisible by nature.** A memo that reports "unchanged"
+   * too eagerly does not fail — it stops updating the screen while the data underneath goes on
+   * changing. This compared `blocks.length` alone, and a block still being generated grows a
+   * fragment at a time while the list does not: the first token created the block and every token
+   * after it was dropped. The reasoning appeared with one word in it and froze; a refresh rebuilt
+   * from the buffer and showed the lot, which is the tell that the data was right and the render
+   * was skipped.
+   */
+  const base: LiveFrame = { frame: "turn", player_id: "b", colour: "black", ply: 8, model: "m" };
+
+  const withText = (text: string) =>
+    liveTurn([base, { frame: "token", player_id: "b", kind: "reasoning", text }])!;
+
+  it("sees a block that grew without the list growing", () => {
+    expect(sameTurnContent(withText("Let"), withText("Let me look at"))).toBe(false);
+  });
+
+  it("still calls two identical renderings the same", () => {
+    // The property the memo exists for: scrubbing hands back new objects for unchanged turns, and
+    // re-rendering every one of them was most of what a scrubber step cost.
+    expect(sameTurnContent(withText("Let"), withText("Let"))).toBe(true);
+  });
+
+  it("sees a new block appended", () => {
+    const one = liveTurn([base, { frame: "block", player_id: "b", kind: "reasoning", text: "a", tokens: 1 }])!;
+    const two = liveTurn([
+      base,
+      { frame: "block", player_id: "b", kind: "reasoning", text: "a", tokens: 1 },
+      { frame: "block", player_id: "b", kind: "tool", tool: "get_board", ok: true, args: {} },
+    ])!;
+
+    expect(sameTurnContent(one, two)).toBe(false);
+  });
+
+  it("sees the move that closes a turn", () => {
+    const open = withText("thinking");
+    expect(sameTurnContent(open, { ...open, san: "Bb4+", live: false })).toBe(false);
   });
 });

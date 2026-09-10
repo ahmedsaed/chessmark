@@ -207,6 +207,7 @@ class FakeRedis:
 
     def __init__(self) -> None:
         self.lists: dict[str, list[str]] = {}
+        self.strings: dict[str, str] = {}
         self.published: list[tuple[str, str]] = []
         self.ttl: dict[str, int] = {}
 
@@ -217,6 +218,9 @@ class FakeRedis:
         items = self.lists.get(key, [])
         return items[start:] if stop == -1 else items[start : stop + 1]
 
+    async def get(self, key: str) -> str | None:
+        return self.strings.get(key)
+
 
 class _Pipeline:
     def __init__(self, redis: FakeRedis) -> None:
@@ -225,6 +229,9 @@ class _Pipeline:
 
     def delete(self, key: str) -> None:
         self._queued.append(("delete", (key,)))
+
+    def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self._queued.append(("set", (key, value, ex)))
 
     def rpush(self, key: str, value: str) -> None:
         self._queued.append(("rpush", (key, value)))
@@ -242,6 +249,10 @@ class _Pipeline:
         for name, args in self._queued:
             if name == "delete":
                 self._redis.lists.pop(args[0], None)
+            elif name == "set":
+                self._redis.strings[args[0]] = args[1]
+                if args[2] is not None:
+                    self._redis.ttl[args[0]] = args[2]
             elif name == "rpush":
                 self._redis.lists.setdefault(args[0], []).append(args[1])
             elif name == "ltrim":
@@ -310,8 +321,45 @@ async def test_the_buffer_cannot_grow_without_bound() -> None:
 
     caught_up = await channel.replay(game_id)
 
-    assert len(caught_up) == BUFFER_MAX_FRAMES
+    # The anchor, then the tail of the fragments.
+    assert len(caught_up) == BUFFER_MAX_FRAMES + 1
     assert caught_up[-1]["text"] == f"{BUFFER_MAX_FRAMES + 49} "
+
+
+async def test_the_turn_frame_survives_the_trim() -> None:
+    """**The anchor is not one of the frames, and treating it as one undid the whole catch-up.**
+
+    Every block hangs off the turn frame — `liveTurn` returns null without it and the panel cannot
+    draw a provisional turn at all — and it is the *oldest* entry, so a trim takes it first. Which
+    is exactly what happened: a two-minute `deepseek-v4-flash` round pushed past four hundred
+    fragments, the oldest went, and with it the only thing that said which turn any of this
+    belonged to. The catch-up failed precisely on the long turns it exists for.
+    """
+    redis = FakeRedis()
+    channel = RedisLive(redis)
+    game_id = uuid.uuid4()
+    player = uuid.uuid4()
+
+    await channel.send(game_id, turn_started(player, colour="black", ply=8, model="m"))
+    for index in range(BUFFER_MAX_FRAMES * 3):
+        await channel.send(game_id, token(player, "reasoning", f"{index} "))
+
+    caught_up = await channel.replay(game_id)
+
+    assert caught_up[0]["frame"] == "turn"
+    assert caught_up[0]["ply"] == 8
+
+
+async def test_nothing_replays_without_an_anchor() -> None:
+    """Blocks with no turn to belong to are not a partial answer, they are an unusable one — the
+    panel would have nowhere to draw them and `liveTurn` returns null regardless."""
+    redis = FakeRedis()
+    channel = RedisLive(redis)
+    game_id = uuid.uuid4()
+
+    await channel.send(game_id, block(uuid.uuid4(), "reasoning", text="orphan", tokens=1))
+
+    assert await channel.replay(game_id) == []
 
 
 async def test_the_buffer_expires_on_its_own() -> None:

@@ -251,7 +251,9 @@ export function liveBlocks(frames: LiveFrame[]): TurnBlock[] {
      null because neither is known until the round returns — and a label reading "reasoned for 0s"
      while the model is still reasoning would be worse than no label. */
   for (const kind of ["reasoning", "output"] as const) {
-    if (!partial[kind]) continue;
+    // Whitespace is not yet a block: a model whose first fragment is a newline would otherwise
+    // open an empty bordered box in the timeline before it had written anything.
+    if (!partial[kind].trim()) continue;
     blocks.push(
       kind === "reasoning"
         ? { kind, seq: key--, text: partial[kind], tokens: 0, durationMs: null }
@@ -260,6 +262,43 @@ export function liveBlocks(frames: LiveFrame[]): TurnBlock[] {
   }
 
   return blocks;
+}
+
+/**
+ * Whether two renderings of one turn are the same, for the panel's memo.
+ *
+ * Here rather than beside the component because it is a rule about a turn, and because getting it
+ * wrong is invisible: a comparison that reports "unchanged" too eagerly does not fail, it just
+ * silently stops updating the screen while the data underneath goes on changing.
+ *
+ * **Which is what happened.** It compared `blocks.length` alone, and a block still being generated
+ * grows a fragment at a time while the list does not — so the first token created the block and
+ * every token after it was dropped on the floor. The block appeared with one word in it and froze;
+ * a refresh rebuilt from the buffer and showed the lot, which is the tell that the data was right
+ * and the render was skipped.
+ *
+ * `blocks` is append-only apart from the one still being written, so the newest block's size is
+ * the only thing that can differ at equal length. That keeps this O(1), which matters: scrubbing a
+ * replay re-folds the log and hands back completely new objects on every step.
+ */
+export function sameTurnContent(a: TurnView, b: TurnView): boolean {
+  return (
+    a.key === b.key &&
+    a.san === b.san &&
+    a.live === b.live &&
+    a.ply === b.ply &&
+    a.colour === b.colour &&
+    a.blocks.length === b.blocks.length &&
+    lastBlockSize(a) === lastBlockSize(b) &&
+    a.said.length === b.said.length
+  );
+}
+
+/** How long the newest block's text is; 0 for a block that has none. */
+function lastBlockSize(turn: TurnView): number {
+  const block = turn.blocks.at(-1);
+  if (block === undefined) return 0;
+  return "text" in block ? block.text.length : 0;
 }
 
 export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamState {
