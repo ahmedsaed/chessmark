@@ -729,3 +729,36 @@ describe("live frames (ADR-0035)", () => {
     });
   });
 });
+
+describe("every live frame kind reaches the fold", () => {
+  /**
+   * **The bug this exists for.** `useGameStream` filtered incoming frames to `block` and `token`
+   * and dropped `turn`, which was added later. `liveTurn` hangs everything off that frame and
+   * returns null without it, so every frame arrived, was discarded, and the panel showed the turn
+   * only once it committed — the feature invisible, and nothing erroring.
+   *
+   * Asserted as a property of the union rather than of one kind, so the next frame type added
+   * cannot be forgotten in the same way.
+   */
+  it("accepts each kind the backend can send", () => {
+    const kinds: LiveFrame[] = [
+      { frame: "turn", player_id: "b", colour: "black", ply: 8, model: "m" },
+      { frame: "block", player_id: "b", kind: "reasoning", text: "a", tokens: 1 },
+      { frame: "block", player_id: "b", kind: "output", text: "b" },
+      { frame: "block", player_id: "b", kind: "tool", tool: "get_board", ok: true, args: {} },
+      { frame: "block", player_id: "b", kind: "said", text: "c" },
+      { frame: "token", player_id: "b", kind: "reasoning", text: "d" },
+    ];
+
+    const turn = liveTurn(kinds);
+
+    expect(turn).not.toBeNull();
+    expect(turn?.blocks.map((b) => b.kind)).toEqual([
+      "reasoning",
+      "output",
+      "tool",
+      "said",
+      "reasoning",
+    ]);
+  });
+});

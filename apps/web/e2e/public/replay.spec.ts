@@ -212,3 +212,26 @@ test("the conversation can be filtered down to moves alone", async ({ page }) =>
   // Talk is White's register in the scripted game; filtering to moves must drop it.
   await expect(page.getByText(/Mate on f7\. Good game\./)).toBeHidden();
 });
+
+test("the newest turn is open and its reasoning is not", async ({ page }) => {
+  /**
+   * Two defaults, and they pull in opposite directions on purpose. The turn a reader is following
+   * is the last one, so it opens without being asked — a live game spends most of its time
+   * *between* turns, and `turn.live` alone left the panel a column of folded rows over a board
+   * that had just moved. Inside it, reasoning stays shut: it is the longest and least
+   * load-bearing thing in a turn, and opening the turn into a wall of it buries the tool call and
+   * the move that a reader actually came for.
+   */
+  const last = page.getByTestId("turn").last();
+
+  await expect(last.locator("button[aria-expanded]").first()).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await expect(last.getByTestId("turn-steps")).toBeVisible();
+
+  const reasoning = last.locator('[data-step="reasoning"] button[aria-expanded]');
+  if (await reasoning.count()) {
+    await expect(reasoning.first()).toHaveAttribute("aria-expanded", "false");
+  }
+});

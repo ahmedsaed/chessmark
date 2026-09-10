@@ -268,6 +268,13 @@ export function LiveGame({
           <EventStream
             turns={turns}
             notices={notices}
+            /* **The newest turn stays open.** `turn.live` alone covers a turn in flight, and a
+               live game spends most of its time between turns — a model waiting on the queue, an
+               endpoint on a cooldown — where nothing was expanded and the panel showed a column
+               of folded rows over a board that had just moved. The turn a reader is following is
+               the last one, whether or not it is currently generating. Seeded, not forced: one
+               click still folds it. */
+            focusKey={turns.at(-1)?.key ?? null}
             players={game.players}
             footer={controls}
             emptyMessage={

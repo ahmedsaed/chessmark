@@ -95,7 +95,13 @@ export function useGameStream({ gameId, apiUrl, afterSeq, enabled = true }: Opti
       setStatus("live");
       try {
         const frame = JSON.parse((raw as MessageEvent<string>).data) as LiveFrame;
-        if (frame?.frame === "block" || frame?.frame === "token") {
+        /* **Every kind, `turn` included.** This listed `block` and `token` and dropped `turn`,
+           which was added afterwards so a spectator could be shown a turn whose `turn_started` is
+           still inside an uncommitted transaction. `liveTurn` hangs the blocks off that frame and
+           returns null without it — so every frame arrived, was thrown away, and the panel went on
+           showing the turn only once it committed. The whole feature was invisible and nothing
+           errored. */
+        if (frame?.frame === "turn" || frame?.frame === "block" || frame?.frame === "token") {
           setLive((previous) => [...previous, frame]);
         }
       } catch {
