@@ -69,6 +69,15 @@ One model was described by two pages, and the numbers on them disagreed.
   drill-down fetched its games through a path; folding that page in ([ADR-0034]) exposed it. The
   id now comes from the registry's own answer, and a page that has stats but no games says so
   instead of rendering as empty.
+- **A model page died on a payload missing a field** (UI-07). `Object.values(model.rated_games)`
+  throws when the API has not been redeployed alongside the web tier, and the whole page became
+  *"That did not load."* rather than degrading to the record it could still render. A rolling
+  deploy makes that window real every time. Both new fields are optional now and default to empty.
+- **A model page died on a payload missing a field** (UI-07). `Object.values(model.rated_games)`
+  throws, and the page became *"That did not load."* rather than degrading to the record it could
+  still render — which is what the whole page did whenever the API had not been redeployed
+  alongside the web tier. A rolling deploy makes that window real every time, and the browser suite
+  was failing on exactly it. Both fields are optional now and default to empty.
 - **A leaderboard row reaches only half its games** (BENCH-02). The drill-down's index recorded
   each counted game under its *first* seat, and seats are read ordered by colour — so black took
   every game and white got none. `ling-3.0-flash-fin` showed `6 / 5 / 4` and listed eight games:

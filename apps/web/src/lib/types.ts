@@ -166,14 +166,14 @@ export interface ModelDetail extends ModelInfo {
    * Ids, not summaries: the page already holds this model's games and partitions them, rather
    * than fetching the same rows twice under two names.
    */
-  rated_games: Record<string, string[]>;
+  rated_games?: Record<string, string[]>;
   /**
    * The finished games that did not count, and why (BENCH-10).
    *
    * This is the difference between the record and the ratings, itemised. Two W/D/L figures on one
    * page is only honest if a reader can see what separates them.
    */
-  excluded: ExcludedGame[];
+  excluded?: ExcludedGame[];
 }
 
 export type EventType =
