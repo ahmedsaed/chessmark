@@ -239,6 +239,7 @@ def make_worker(sessionmaker: async_sessionmaker[AsyncSession], queue: Any, redi
         publish: bool = False,
         retry: Any = None,
         cooldown: Any = None,
+        live: Any = None,
     ) -> TurnWorker:
         return TurnWorker(
             sessionmaker=sessionmaker,
@@ -248,6 +249,7 @@ def make_worker(sessionmaker: async_sessionmaker[AsyncSession], queue: Any, redi
             limits=limits,
             consumer=consumer,
             cooldown=cooldown,
+            live=live,
         )
 
     return _make

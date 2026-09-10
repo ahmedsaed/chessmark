@@ -30,7 +30,7 @@ from redis.asyncio import Redis  # noqa: E402
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
 from chessmark.agents.routing import DEFAULT_QUANTIZATIONS, ProviderRouting  # noqa: E402
-from chessmark.agents.scripted import step, tool_call  # noqa: E402
+from chessmark.agents.scripted import has_moved_this_turn, step, tool_call  # noqa: E402
 from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.models import Game, GameEvent, Ply  # noqa: E402
@@ -68,6 +68,16 @@ SCRIPTED_BLACK_THOUGHT = [
     "Nf6 develops with tempo. I should be watching f7, but I want the piece out.",
 ]
 
+#: **Black takes two provider rounds per turn**, and that is the point: it looks at the board,
+#: thinks about what came back, and only then moves. One round per turn cannot demonstrate the
+#: thing the panel exists to show — that the reasoning after a tool call is *about* that call — so
+#: a fixture with one round could never have caught the order being lost on the way to the screen.
+SCRIPTED_BLACK_SECOND_THOUGHT = [
+    "The board confirms it: e4 alone, nothing developed. e5 it is.",
+    "Board read. The knight has c6 free, so that is the move.",
+    "Nothing on the board changes my mind. Nf6.",
+]
+
 
 def scripted_players() -> Any:
     """Both sides of a scripted game, with prose, reasoning, and trash talk.
@@ -87,19 +97,35 @@ def scripted_players() -> Any:
             for move, talk in zip(SCRIPTED_WHITE, SCRIPTED_WHITE_TALK, strict=True)
         ]
     )
+    # Two steps per move: look, then decide. `scripted` hands back one completion per call and the
+    # turn loop keeps going until a move lands, so a flat list of two steps *is* a two-round turn.
     black = iter(
         [
-            step(
-                tool_call("get_board"),
-                tool_call("make_move", move=move),
-                reasoning=thought,
+            reply
+            for move, first, second in zip(
+                SCRIPTED_BLACK,
+                SCRIPTED_BLACK_THOUGHT,
+                SCRIPTED_BLACK_SECOND_THOUGHT,
+                strict=True,
             )
-            for move, thought in zip(SCRIPTED_BLACK, SCRIPTED_BLACK_THOUGHT, strict=True)
+            for reply in (
+                step(tool_call("get_board"), reasoning=first),
+                step(tool_call("make_move", move=move), reasoning=second),
+            )
         ]
     )
 
     async def _complete(**kwargs: Any) -> Any:
         messages = kwargs.get("messages") or [{}]
+
+        # **A turn ends when the model stops, not when it moves** (ADR-0037), so every seat is
+        # asked once more after its move. Answering that with `next(source)` walks the script
+        # forward and plays the following turn's move into this position — and once the script
+        # runs out, `next` raises `StopIteration` inside a coroutine, which surfaces as a provider
+        # failure and abandons the game. The browser suite's whole fixture died that way.
+        if has_moved_this_turn(messages):
+            return step(content="Played.")
+
         system = str(messages[0].get("content", ""))
         source = white if "as white" in system.lower() else black
         return next(source)

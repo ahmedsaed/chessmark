@@ -113,7 +113,11 @@ async def test_the_next_turn_asks_against_the_measured_size(db: AsyncSession, ta
         "guess at the prompt either way, but the reserve is the one that is still safe when the "
         "measurement is missing for some reason other than a first call (ADR-0032)"
     )
-    assert asked[-1] == 100_000 - 40_000 - FRAMING_TOKENS, "and every later one is measured"
+    # The third turn's *move* call, not the closing one after it: a turn ends when the model
+    # stops (AGENT-05), so the last call of a turn is the one where it says it is done, and that
+    # one is bounded by the measurement its own move call just produced. Indexed rather than taken
+    # from the end, because "the last call" stopped meaning "the move".
+    assert asked[4] == 100_000 - 40_000 - FRAMING_TOKENS, "and every later one is measured"
 
 
 async def test_a_full_window_fails_the_turn_instead_of_forfeiting_the_model(
@@ -169,7 +173,9 @@ async def test_we_never_ask_for_more_output_than_the_endpoint_will_give(
         colour=Colour.WHITE,
     )
 
-    assert await _max_tokens_asked(db) == [25_600], (
+    # The move call and then the closing one, in which the model stops. The closing call is
+    # measured — the move's own report bounds it — so it asks for the endpoint's ceiling.
+    assert await _max_tokens_asked(db) == [25_600, 32_768], (
         "the reserve binds first here at 25,600; the endpoint's 32,768 is the looser of the two, "
         "and `test_compaction.py` covers the case where it is the tighter"
     )
@@ -190,8 +196,9 @@ async def test_an_endpoint_that_declares_no_output_ceiling_is_unaffected(
         colour=Colour.WHITE,
     )
 
-    assert await _max_tokens_asked(db) == [25_600], (
-        "no endpoint ceiling to clamp with, so the reserve is what bounds an unmeasured call"
+    assert await _max_tokens_asked(db) == [25_600, 64_000], (
+        "no endpoint ceiling to clamp with, so the reserve is what bounds the first, unmeasured "
+        "call; the closing call after the move is measured and bounded by the window instead"
     )
 
 

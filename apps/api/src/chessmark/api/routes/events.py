@@ -28,6 +28,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Header, Query, Request
 from sse_starlette.sse import EventSourceResponse
 
+from chessmark.agents.live import DELTA_CHANNEL, RedisLive
 from chessmark.api.deps import GameDep, RedisDep, SessionDep
 from chessmark.api.redaction import must_withhold_thinking, redact
 from chessmark.api.schemas import EventOut
@@ -102,7 +103,12 @@ async def stream_events(
     async def publisher() -> AsyncIterator[dict[str, Any]]:
         pubsub = redis.pubsub()
         # Step 1: subscribe first. Anything committed from here on is buffered for us.
-        await pubsub.subscribe(channel)
+        #
+        # Two channels, and only one of them is durable (ADR-0035). The live channel carries what
+        # a turn is *doing*, before its transaction commits: no `seq`, never stored, superseded by
+        # the committed events moments later. It is subscribed here so a spectator sees a
+        # ten-minute turn assemble rather than arrive whole.
+        await pubsub.subscribe(channel, DELTA_CHANNEL.format(game_id=game.id))
         delivered = cursor
 
         try:
@@ -114,6 +120,19 @@ async def stream_events(
 
             if _already_over(game, backfill):
                 return
+
+            # **The turn already in flight**, for a reader who arrived in the middle of it
+            # (ADR-0035). Pub/sub is fire-and-forget, so without this a spectator opening a game
+            # nine minutes into a round gets the committed backfill — everything up to the *last*
+            # turn — and then a still board until this one commits. They would be the one reader
+            # the streaming never reached.
+            #
+            # After the backfill, because the committed events are the record and these are a
+            # prediction; a client that has both must apply them in that order.
+            for frame in await RedisLive(redis).replay(game.id):
+                allowed = _visible_frame(frame, withhold=withhold)
+                if allowed is not None:
+                    yield {"event": "delta", "data": json.dumps(allowed)}
 
             # Step 4: live. Anything at or below `delivered` was already sent in the backfill.
             last_beat = asyncio.get_event_loop().time()
@@ -128,7 +147,21 @@ async def stream_events(
                     continue
 
                 parsed = _parse(message.get("data"))
-                if parsed is None or parsed["seq"] <= delivered:
+                if parsed is None:
+                    continue
+
+                # A live frame, not an event. It carries no `seq`, so it skips the cursor entirely
+                # and is emitted **without an `id:`** — `Last-Event-ID` must go on naming the last
+                # *committed* event, or a reconnect would resume from something that was never
+                # written down.
+                if "frame" in parsed:
+                    live = _visible_frame(parsed, withhold=withhold)
+                    if live is not None:
+                        last_beat = now
+                        yield {"event": "delta", "data": json.dumps(live)}
+                    continue
+
+                if parsed["seq"] <= delivered:
                     continue
 
                 delivered = parsed["seq"]
@@ -152,6 +185,29 @@ async def stream_events(
     return EventSourceResponse(publisher())
 
 
+def _visible_frame(frame: dict[str, Any], *, withhold: bool) -> dict[str, Any] | None:
+    """One live frame as this reader may see it, or `None` if they may not see it at all.
+
+    **Dropped rather than emptied.** Invariant 8 says a person must not read their opponent's
+    reasoning while their own game is live, and this channel is the fastest path by which they
+    could — it exists precisely to deliver that text the moment it is generated. The committed
+    event takes the milder route of keeping the token count and stripping the text, because a turn
+    that shows no thinking at all reads as a model that thought nothing. A *frame* has no such
+    problem: it is unnumbered and unrecorded, so withholding it entirely leaves the reader exactly
+    where they are today, which is with the redacted event that arrives at commit.
+    """
+    if not withhold:
+        return frame
+    if frame.get("kind") in _WITHHELD_KINDS:
+        return None
+    return frame
+
+
+#: The two registers a provider streams that carry the model's own words. `tool` and `said` are
+#: safe: a tool call is a fact about the board, and a message was addressed to the reader.
+_WITHHELD_KINDS = {"reasoning", "output"}
+
+
 def _already_over(game: Game, backfill: list[Any]) -> bool:
     """Close the stream immediately for a finished game.
 
@@ -173,4 +229,10 @@ def _parse(data: Any) -> dict[str, Any] | None:
     except (json.JSONDecodeError, TypeError):
         log.warning("dropping unparseable pub/sub payload")
         return None
-    return parsed if isinstance(parsed, dict) and "seq" in parsed else None
+    if not isinstance(parsed, dict):
+        return None
+    # A committed event is identified by its `seq`; a live frame by its `frame` (ADR-0035). Either
+    # is a message this stream understands, and anything with neither is not ours — requiring
+    # `seq` alone silently dropped every frame, which looked exactly like a worker that was not
+    # publishing them.
+    return parsed if "seq" in parsed or "frame" in parsed else None

@@ -15,6 +15,29 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Added
+
+- **A turn streams as it happens** ([ADR-0035]). A turn is one transaction, so it published
+  everything at the end: ply 8 of `e601f9af` spent **632 seconds** across six provider rounds
+  (1.1s, 10.9s, 29s, 220s, **369s**, 2.8s) and delivered all fifteen of its events stamped the same
+  millisecond. Rounds are now announced as they finish, on a channel that carries no `seq`, is
+  never stored, and is superseded by the committed events — so the record is byte-identical whether
+  anyone was watching or not. Measured: the first frame lands a full second ahead of the commit on
+  a turn with two half-second rounds.
+- **A spectator arriving mid-turn is caught up** ([ADR-0035]). Frames are fire-and-forget, so
+  somebody opening a game nine minutes into a round got the committed backfill — everything up to
+  the *last* turn — and then a still board until this one committed. They were the one reader the
+  streaming never reached. The in-flight turn's frames are kept and replayed on connect.
+- **Reasoning streams token by token** ([ADR-0035], [ADR-0036]). LiteLLM's streaming path reads
+  `reasoning_content` and drops `reasoning`, so on some providers the thinking would never arrive —
+  and an absent reasoning field is indistinguishable from a model that did not reason, which is
+  what made this the one invariant-3 breach nothing downstream could flag. It *is* distinguishable
+  from a **billed** one: a response reporting `reasoning_tokens > 0` and carrying no reasoning text
+  is one where the text existed, was paid for, and was not collected. That endpoint goes back to
+  whole responses on the spot, so the cost of learning it is one call. On by default;
+  `LLM_STREAM=false` stops asking providers to stream at all.
+
+
 One model was described by two pages, and the numbers on them disagreed.
 
 ### Changed
@@ -50,6 +73,31 @@ One model was described by two pages, and the numbers on them disagreed.
   drill-down fetched its games through a path; folding that page in ([ADR-0034]) exposed it. The
   id now comes from the registry's own answer, and a page that has stats but no games says so
   instead of rendering as empty.
+- **The live stream reached the browser and was thrown away** (UI-10). `useGameStream` filtered
+  frames to `block` and `token` and dropped `turn`, which was added later — and `liveTurn` hangs
+  every block off it. So every frame arrived, was discarded, and the panel showed a turn only once
+  it committed, with nothing erroring.
+- **A block being generated stopped updating after its first word** (UI-10). The panel's memo
+  compared `blocks.length`, and a block still streaming grows its *text* while the list does not —
+  so React skipped every render after the first token. A refresh showed the lot, which is the tell
+  that the data was right and the render was skipped.
+- **The turn anchor was trimmed out of the catch-up buffer** ([ADR-0035]). The turn frame is the
+  oldest entry and every block hangs off it, so a long turn — `deepseek-v4-flash` filled the
+  400-frame cap inside one round — trimmed away the only thing that said which turn any of it
+  belonged to. The catch-up failed precisely on the turns it exists for. It is kept clear of the
+  trim now.
+- **An empty block no longer renders** (UI-05). A provisional block exists as soon as its first
+  fragment arrives, so a model opening with a newline drew an empty bordered box that read as "the
+  model wrote: (nothing)".
+- **A model page died on a payload missing a field** (UI-07). `Object.values(model.rated_games)`
+  throws when the API has not been redeployed alongside the web tier, and the whole page became
+  *"That did not load."* rather than degrading to the record it could still render. A rolling
+  deploy makes that window real every time. Both new fields are optional now and default to empty.
+- **A model page died on a payload missing a field** (UI-07). `Object.values(model.rated_games)`
+  throws, and the page became *"That did not load."* rather than degrading to the record it could
+  still render — which is what the whole page did whenever the API had not been redeployed
+  alongside the web tier. A rolling deploy makes that window real every time, and the browser suite
+  was failing on exactly it. Both fields are optional now and default to empty.
 - **A leaderboard row reaches only half its games** (BENCH-02). The drill-down's index recorded
   each counted game under its *first* seat, and seats are read ordered by colour — so black took
   every game and white got none. `ling-3.0-flash-fin` showed `6 / 5 / 4` and listed eight games:
@@ -333,4 +381,6 @@ flags the old code wrote.
 [ADR-0032]: docs/adr/0032-the-arithmetic-that-decides-a-request.md
 [ADR-0033]: docs/adr/0033-a-tail-budget-in-tokens-and-a-provider-that-cannot-count.md
 [ADR-0034]: docs/adr/0034-one-page-per-model.md
+[ADR-0035]: docs/adr/0035-live-frames-are-not-events.md
+[ADR-0036]: docs/adr/0036-a-lost-reasoning-trace-announces-itself.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

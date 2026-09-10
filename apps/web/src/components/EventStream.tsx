@@ -26,6 +26,18 @@
  * `reasoning` and Gemini puts everything in `content`, so a panel that renders only one of them
  * makes an entire model look silent.
  *
+ * **A turn renders in the order it happened** — reason, call a tool, reason about what came back,
+ * call another, write prose, move. It used to render by kind: every thought, then all the prose,
+ * then every tool call at the end. The order was never missing from the log, and losing it cost
+ * the reader the one thing the sequence tells them, which is *which reasoning discusses which tool
+ * result*. `TurnBlock` carries it; this draws it.
+ *
+ * Each reasoning block is its own disclosure, closed, summarised by how long the model spent. That
+ * replaces the three per-kind toggles this panel used to carry: they existed so that opening a
+ * tool call did not unroll several thousand words of reasoning, which per-block collapse solves
+ * better — and filtering a kind out of an interleaved list would put the gaps back exactly where
+ * the confusion was.
+ *
  * Notices are separate from all four because they have no side. A rate limit is not something
  * either model did, and drawing it as one player's message would attribute the harness's failure
  * to a contestant.
@@ -33,14 +45,10 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { Player, StreamNotice, ToolCallView, TurnView } from "@/lib/types";
+import { sameTurnContent } from "@/lib/turns";
+import type { Player, StreamNotice, ToolCallView, TurnBlock, TurnView } from "@/lib/types";
 
 type Filter = "all" | "moves-talk" | "talk" | "moves";
-
-/** The three registers a turn can be unrolled into, each with its own disclosure. */
-type Section = "reasoning" | "output" | "tools";
-
-const SECTIONS: readonly Section[] = ["reasoning", "output", "tools"];
 
 /**
  * Ply number to chess notation. Ply 1 is "1.", ply 2 is "1…", ply 3 is "2." — a full move is two
@@ -167,25 +175,17 @@ export function EventStream({
    * the panel shows the model working. `output` is closed everywhere — it is the model's prose
    * *about* its move, which is worth having and not worth being handed unasked.
    */
-  function isOpen(turn: TurnView, section: Section): boolean {
-    const explicit = toggled[`${turn.key}:${section}`];
+  function isOpen(turn: TurnView): boolean {
+    const explicit = toggled[turn.key];
     if (explicit !== undefined) return explicit;
-    if (section === "output") return false;
     return turn.live || turn.key === focusKey;
-  }
-
-  /* Which sections of a turn are open, as one string.
-     `Turn` is memoised, and a row cannot compare an `isOpen` closure rebuilt every render. A
-     primitive can be compared by value, and the set is at most three short words. */
-  function openSections(turn: TurnView): string {
-    return SECTIONS.filter((section) => isOpen(turn, section)).join("|");
   }
 
   /* Stable across renders, and it has to be: a handler rebuilt every render would defeat the
      comparison the memoised rows depend on. Both take what they need as arguments rather than
      closing over it, so neither can go stale. */
-  const toggle = useCallback((key: string, section: Section, currentlyOpen: boolean) => {
-    setToggled((previous) => ({ ...previous, [`${key}:${section}`]: !currentlyOpen }));
+  const toggle = useCallback((key: string, currentlyOpen: boolean) => {
+    setToggled((previous) => ({ ...previous, [key]: !currentlyOpen }));
   }, []);
 
   return (
@@ -243,7 +243,7 @@ export function EventStream({
                 turn={entry.turn}
                 name={turnName(entry.turn, players)}
                 filter={filter}
-                open={openSections(entry.turn)}
+                open={isOpen(entry.turn)}
                 onToggle={toggle}
                 onInspect={onInspect}
               />
@@ -297,15 +297,54 @@ function Disclosure({
 }
 
 /**
- * How much text is behind a disclosure, in the roundest terms that are still useful.
+ * What is behind a turn's disclosure, in the roundest terms that are still useful.
  *
- * Characters rather than tokens: the panel has no token count for a *section* — the turn's total
- * is on the stats rail — and "2.4k" answers the only question being asked, which is whether this
- * is a glance or a scroll.
+ * A count of tool calls and a count of refusals: those are the two facts that decide whether a
+ * reader opens a finished turn. The size of the prose is *not* here on purpose — it belongs to
+ * each reasoning block, which now carries its own, and a single total told a reader nothing about
+ * which of six blocks was the long one.
  */
-function sizeOf(blocks: string[]): string {
-  const characters = blocks.reduce((total, text) => total + text.length, 0);
-  return characters < 1000 ? `${characters}` : `${(characters / 1000).toFixed(1)}k`;
+function stepSummary(turn: TurnView): string | undefined {
+  const parts: string[] = [];
+  if (turn.tools.length > 0) {
+    parts.push(`${turn.tools.length} tool${turn.tools.length === 1 ? "" : "s"}`);
+  }
+  if (turn.illegal.length > 0) parts.push(`${turn.illegal.length} illegal`);
+  return parts.length > 0 ? parts.join(" · ") : undefined;
+}
+
+/**
+ * How long a model spent on one block of reasoning, said the way a person would say it.
+ *
+ * The number is real and it is often startling: a single round of `e601f9af`'s ply 8 took **369
+ * seconds**. That figure was in `llm_calls.latency_ms` from the first paid game and had never
+ * reached the page, so a reader watching a board not move had no way to tell a slow model from a
+ * stuck harness.
+ */
+export function thoughtFor(durationMs: number | null): string | null {
+  if (durationMs === null || durationMs <= 0) return null;
+  const seconds = Math.round(durationMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+/** 18687 → "18.7k". A reader comparing two reasoning blocks does not want five digits of either. */
+function compactTokens(tokens: number): string {
+  return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
+}
+
+/**
+ * The label on a closed reasoning block.
+ *
+ * Duration first, because it is what a reader is actually asking — *what took so long* — and the
+ * token count second as the size hint. A block with neither still says "reasoning", which is the
+ * honest floor for the whole archive written before either number was carried on the event.
+ */
+export function reasoningLabel(block: { tokens: number; durationMs: number | null }): string {
+  const spent = thoughtFor(block.durationMs);
+  const head = spent ? `reasoned for ${spent}` : "reasoning";
+  return block.tokens > 0 ? `${head} · ${compactTokens(block.tokens)} tokens` : head;
 }
 
 /**
@@ -454,9 +493,9 @@ interface TurnProps {
   /** The model slug, or the person's name for a human turn. */
   name: string;
   filter: Filter;
-  /** The open sections, `|`-joined — a primitive so the row below can compare it. */
-  open: string;
-  onToggle: (key: string, section: Section, currentlyOpen: boolean) => void;
+  /** Whether the turn is unrolled into its steps. Finished turns fold to a line (ADR-0013). */
+  open: boolean;
+  onToggle: (key: string, currentlyOpen: boolean) => void;
   onInspect?: (turn: TurnView) => void;
 }
 
@@ -470,34 +509,32 @@ interface TurnProps {
  * A turn is append-only within itself, so for a given `key` the array *lengths* pin the content
  * exactly. Comparing them is O(1) and cannot report equal for two different renderings.
  */
+/**
+ * Whether a row can keep the DOM it already has.
+ *
+ * Scrubbing re-folds the event log, which is cheap — 0.04ms for a 63-ply game — and hands back a
+ * completely new set of `TurnView` objects, which is not: React then re-rendered every turn in the
+ * panel on every step of the scrubber, and that re-render was most of what each step cost.
+ *
+ * The turn half of the comparison lives in `lib/turns.ts`, where it can be tested: a memo that
+ * reports "unchanged" too eagerly does not fail, it stops updating the screen while the data goes
+ * on changing, and that is not something a component test would have caught either.
+ */
 function sameTurn(before: TurnProps, after: TurnProps): boolean {
-  const a = before.turn;
-  const b = after.turn;
   return (
     before.filter === after.filter &&
     before.open === after.open &&
     before.name === after.name &&
     before.onToggle === after.onToggle &&
     before.onInspect === after.onInspect &&
-    a.key === b.key &&
-    a.san === b.san &&
-    a.live === b.live &&
-    a.ply === b.ply &&
-    a.colour === b.colour &&
-    a.reasoning.length === b.reasoning.length &&
-    a.output.length === b.output.length &&
-    a.tools.length === b.tools.length &&
-    a.illegal.length === b.illegal.length &&
-    a.said.length === b.said.length
+    sameTurnContent(before.turn, after.turn)
   );
 }
 
 const Turn = memo(function Turn({ turn, name, filter, open, onToggle, onInspect }: TurnProps) {
   const isWhite = turn.colour === "white";
   const detail = filter === "all";
-  const openSet = open ? open.split("|") : [];
-  const isOpen = (section: Section) => openSet.includes(section);
-  const show = (section: Section) => detail && isOpen(section);
+  const steps = detail && open;
 
   /* White reads from the left, Black from the right — the side is what identifies the player, so
      no bubble needs a name on it. Only the *block* is mirrored: the text inside stays
@@ -507,7 +544,10 @@ const Turn = memo(function Turn({ turn, name, filter, open, onToggle, onInspect 
   const edge = isWhite ? "border-l-2 pl-2.5" : "border-r-2 pr-2.5";
 
   return (
-    <div className="flex flex-col gap-2">
+    /* `data-testid` so the browser suite can address a turn by position rather than by whichever
+       of them happens to be open — the last turn of a finished game is unrolled by default, so an
+       index over *open* turns names a different row than an index over all of them. */
+    <div className="flex flex-col gap-2" data-testid="turn">
       {turn.san && (
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
           <span className="h-px bg-line" />
@@ -536,12 +576,17 @@ const Turn = memo(function Turn({ turn, name, filter, open, onToggle, onInspect 
 
         {filter !== "talk" && !turn.human && (
           <div className={`flex flex-wrap items-center gap-1.5 ${isWhite ? "" : "justify-end"}`}>
-            {turn.reasoning.length > 0 && (
+            {turn.blocks.length > 0 && (
+              /* One disclosure for the whole turn, because the turn is one sequence. The three it
+                 replaces existed so that opening a tool call did not unroll thousands of words of
+                 reasoning — each reasoning block now closes on its own, which solves that without
+                 taking the order away. */
               <Disclosure
-                label="reasoning"
-                hint={sizeOf(turn.reasoning)}
-                open={isOpen("reasoning")}
-                onToggle={() => onToggle(turn.key, "reasoning", isOpen("reasoning"))}
+                label={`${turn.blocks.length} step${turn.blocks.length === 1 ? "" : "s"}`}
+                hint={stepSummary(turn)}
+                tone={turn.illegal.length > 0 ? "bad" : undefined}
+                open={open}
+                onToggle={() => onToggle(turn.key, open)}
               />
             )}
 
@@ -561,25 +606,6 @@ const Turn = memo(function Turn({ turn, name, filter, open, onToggle, onInspect 
               </span>
             )}
 
-            {turn.output.length > 0 && (
-              <Disclosure
-                label="output"
-                hint={sizeOf(turn.output)}
-                open={isOpen("output")}
-                onToggle={() => onToggle(turn.key, "output", isOpen("output"))}
-              />
-            )}
-
-            {(turn.tools.length > 0 || turn.illegal.length > 0) && (
-              <Disclosure
-                label={`${turn.tools.length} tool${turn.tools.length === 1 ? "" : "s"}`}
-                hint={turn.illegal.length > 0 ? `${turn.illegal.length} illegal` : undefined}
-                tone={turn.illegal.length > 0 ? "bad" : undefined}
-                open={isOpen("tools")}
-                onToggle={() => onToggle(turn.key, "tools", isOpen("tools"))}
-              />
-            )}
-
             {/* Every number on this page traces to a payload; this is the link (LOG-07). Shown
                 whenever it exists rather than only while something is unrolled: it is an action on
                 the turn, and there is no longer one "open" for it to hang off. */}
@@ -595,58 +621,157 @@ const Turn = memo(function Turn({ turn, name, filter, open, onToggle, onInspect 
           </div>
         )}
 
-        {show("reasoning") &&
-          turn.reasoning.map((text, index) => (
-            <Bubble
-              key={`${turn.key}-r${index}`}
-              title="reasoning"
-              text={text}
-              className={`text-xs text-ink-dim border-machine-deep ${edge}`}
-            />
-          ))}
+        {/* **In order.** Reasoning, prose, tool calls and refusals as the model produced them, so
+            the block after a tool result is visibly *about* that result. */}
+        {steps && (
+          /* `data-step` on each child is the browser suite's hook for the ordering: it reads the
+             kinds straight off the DOM, because the order on the screen is the thing that was
+             wrong and a fold assertion would not have seen it. */
+          <div className={`flex w-full flex-col gap-1.5 ${align}`} data-testid="turn-steps">
+            {turn.blocks.map((block) => (
+              <div key={`${turn.key}-${block.seq}`} data-step={block.kind} className="contents">
+                <Block block={block} align={isWhite ? "left" : "right"} edge={edge} />
+              </div>
+            ))}
+          </div>
+        )}
 
-        {show("output") &&
-          turn.output.map((text, index) => (
-            <Bubble
-              key={`${turn.key}-o${index}`}
-              title="model output"
-              text={text}
-              className={`border-accent-deep text-[13px] text-ink ${edge}`}
-            />
-          ))}
-
-        {show("tools") &&
-          turn.tools.map((tool, index) => (
-            <Tool key={`${turn.key}-t${index}`} tool={tool} align={isWhite ? "left" : "right"} />
-          ))}
-
-        {/* Illegal attempts unroll with the tools: an illegal move *is* a failed `make_move`,
-            and the trigger already carries the count in `bad`. */}
-        {show("tools") &&
-          turn.illegal.map((attempt, index) => (
+        {/* Outside the fold: what a model said to its opponent is the one thing here addressed to
+            a person, and it reads as a message whether or not the turn is unrolled. A human turn
+            has no steps at all, and this is the whole of it. */}
+        {!steps &&
+          turn.said.map((message, index) => (
             <p
-              key={`${turn.key}-i${index}`}
-              className="max-w-[94%] border border-bad-deep bg-surface px-2 py-1 font-mono text-[10px] leading-relaxed text-bad"
+              key={`${turn.key}-s${index}`}
+              className={`max-w-[94%] rounded-[13px] px-3 py-2 text-[13px] font-medium leading-snug text-on-accent ${
+                isWhite ? "rounded-bl-[3px] bg-accent" : "rounded-br-[3px] bg-machine"
+              }`}
             >
-              {attempt.move} → illegal · attempt {attempt.attempt}
-              {attempt.detail && <span className="block text-ink-faint">{attempt.detail}</span>}
+              {message}
             </p>
           ))}
-
-        {turn.said.map((message, index) => (
-          <p
-            key={`${turn.key}-s${index}`}
-            className={`max-w-[94%] rounded-[13px] px-3 py-2 text-[13px] font-medium leading-snug text-on-accent ${
-              isWhite ? "rounded-bl-[3px] bg-accent" : "rounded-br-[3px] bg-machine"
-            }`}
-          >
-            {message}
-          </p>
-        ))}
       </div>
     </div>
   );
 }, sameTurn);
+
+/**
+ * One step of a turn, drawn in whichever register it belongs to.
+ *
+ * The switch is the whole component: five kinds of thing, five ways of drawing them, one list. The
+ * alternative — a section per kind — is what this replaced, and it could not put a tool call
+ * between two thoughts because the kinds had already been separated before the render began.
+ */
+function Block({
+  block,
+  align,
+  edge,
+}: {
+  block: TurnBlock;
+  align: "left" | "right";
+  edge: string;
+}) {
+  /* **A block with nothing in it is not a block.** A provisional one exists the moment its first
+     fragment arrives, and a model that opens with a newline — or whose block frame lands before
+     any text has — produced an empty bordered box sitting in the timeline saying nothing. Drawn
+     as its own step, it reads as "the model wrote this: (nothing)", which is a claim about the
+     model rather than about a frame that has not filled in yet. */
+  if ((block.kind === "reasoning" || block.kind === "output" || block.kind === "said") &&
+      !block.text.trim()) {
+    return null;
+  }
+
+  switch (block.kind) {
+    case "reasoning":
+      return <ReasoningBlock block={block} edge={edge} />;
+
+    case "output":
+      /* **Open, always.** This is the model's own account of what it is about to do, in its own
+         voice — the shortest and most readable thing in the turn, and the closest it comes to
+         addressing a reader. It used to be closed by default *everywhere*, on the reasoning that
+         it was "worth having and not worth being handed unasked", which had it exactly backwards:
+         it is 7% as common as reasoning, so a reader who had to ask for it never learned it was
+         there. */
+      return (
+        <Bubble
+          title="model output"
+          text={block.text}
+          className={`border-accent-deep text-[13px] text-ink ${edge}`}
+        />
+      );
+
+    case "tool":
+      return <Tool tool={block.call} align={align} />;
+
+    case "illegal":
+      /* Drawn where it happened rather than gathered at the end: an illegal move *is* a failed
+         `make_move`, and what makes it readable is the reasoning on either side of it — the try
+         before, the correction after. */
+      return (
+        <p className="max-w-[94%] border border-bad-deep bg-surface px-2 py-1 font-mono text-[10px] leading-relaxed text-bad">
+          {block.move} → illegal · attempt {block.attempt}
+          {block.detail && <span className="block text-ink-faint">{block.detail}</span>}
+        </p>
+      );
+
+    case "said":
+      return (
+        <p
+          className={`max-w-[94%] rounded-[13px] px-3 py-2 text-[13px] font-medium leading-snug text-on-accent ${
+            align === "left" ? "rounded-bl-[3px] bg-accent" : "rounded-br-[3px] bg-machine"
+          }`}
+        >
+          {block.text}
+        </p>
+      );
+  }
+}
+
+/**
+ * One block of reasoning, closed.
+ *
+ * **Closed is the default and the summary carries the cost**, because reasoning is the longest and
+ * least load-bearing thing in a turn: 2,294 blocks against 165 of output across fourteen finished
+ * games, and a single one of them ran 18,687 tokens. Open by default meant a turn opened into a
+ * wall, and what a reader came for — the tool call, the move, the model's own sentence about it —
+ * was somewhere below the fold.
+ *
+ * **The body collapses it too.** Reading to the end of eighteen thousand tokens and then having to
+ * scroll back to a header to close them is the specific annoyance this fixes; the whole block is
+ * the control, so a click anywhere puts it away.
+ */
+function ReasoningBlock({
+  block,
+  edge,
+}: {
+  block: Extract<TurnBlock, { kind: "reasoning" }>;
+  edge: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = reasoningLabel(block);
+
+  if (!open) {
+    return (
+      <Disclosure label={label} open={false} onToggle={() => setOpen(true)} />
+    );
+  }
+
+  return (
+    <div className={`flex max-w-[94%] flex-col items-start gap-1 ${edge} border-machine-deep`}>
+      <Disclosure label={label} open onToggle={() => setOpen(false)} />
+      {/* The text is the control. `cursor-zoom-out` says so before the click does, and the
+          `aria-label` gives a screen reader the same affordance the pointer has. */}
+      <button
+        type="button"
+        onClick={() => setOpen(false)}
+        aria-label={`Collapse ${label}`}
+        className="w-full cursor-zoom-out whitespace-pre-wrap text-left text-xs leading-relaxed text-ink-dim"
+      >
+        {block.text.replace(/\n{3,}/g, "\n\n")}
+      </button>
+    </div>
+  );
+}
 
 /**
  * One tool call: the name, its arguments, and its result behind a disclosure.

@@ -5,7 +5,13 @@ import { GameCard } from "@/components/GameCard";
 import { CreditBadge } from "@/components/ModelPicker";
 import { getModel, listGamesByModel } from "@/lib/api";
 import { modelSlugFromSegments } from "@/lib/models";
-import type { Contestant, GameSummary, LeaderboardRow, ModelDetail } from "@/lib/types";
+import type {
+  Contestant,
+  ExcludedGame,
+  GameSummary,
+  LeaderboardRow,
+  ModelDetail,
+} from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -56,8 +62,16 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
   const games = await listGamesByModel(model.openrouter_id, 200);
   const gamesById = new Map(games.map((game) => [game.id, game]));
 
-  const rated = new Set(Object.values(model.rated_games).flat());
-  const excluded = new Set(model.excluded.map((entry) => entry.game_id));
+  /* **Defaulted, because the two tiers deploy separately.** A web container newer than the API
+     container asks for fields the API does not send yet, and `Object.values(undefined)` throws —
+     which took the whole page down with *"That did not load"* rather than degrading to the record
+     it could still render. A rolling deploy makes that window real every time, and the page has
+     nothing to gain from dying in it. */
+  const ratedGames = model.rated_games ?? {};
+  const excludedGames = model.excluded ?? [];
+
+  const rated = new Set(Object.values(ratedGames).flat());
+  const excluded = new Set(excludedGames.map((entry) => entry.game_id));
   const unfinished = games.filter((game) => !rated.has(game.id) && !excluded.has(game.id));
 
   return (
@@ -97,8 +111,8 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
         </p>
       )}
 
-      <Contestants model={model} gamesById={gamesById} />
-      <NotCounted model={model} gamesById={gamesById} />
+      <Contestants model={model} ratedGames={ratedGames} gamesById={gamesById} />
+      <NotCounted excluded={excludedGames} gamesById={gamesById} />
       <Unfinished games={unfinished} />
     </main>
   );
@@ -191,9 +205,11 @@ function Record({ model }: { model: ModelDetail }) {
  */
 function Contestants({
   model,
+  ratedGames,
   gamesById,
 }: {
   model: ModelDetail;
+  ratedGames: Record<string, string[]>;
   gamesById: Map<string, GameSummary>;
 }) {
   return (
@@ -226,7 +242,7 @@ function Contestants({
                   (row) => row.quantization === contestant.quantization,
                 )}
                 games={(
-                  model.rated_games[`${model.openrouter_id}@${contestant.quantization}`] ?? []
+                  ratedGames[`${model.openrouter_id}@${contestant.quantization}`] ?? []
                 )
                   .map((gameId) => gamesById.get(gameId))
                   .filter((game): game is GameSummary => game !== undefined)}
@@ -335,14 +351,14 @@ function ContestantBlock({
  * pages did, except the reader could not even see both at once.
  */
 function NotCounted({
-  model,
+  excluded,
   gamesById,
 }: {
-  model: ModelDetail;
+  excluded: ExcludedGame[];
   gamesById: Map<string, GameSummary>;
 }) {
   const byReason = new Map<string, GameSummary[]>();
-  for (const entry of model.excluded) {
+  for (const entry of excluded) {
     const game = gamesById.get(entry.game_id);
     if (game === undefined) continue;
     byReason.set(entry.reason, [...(byReason.get(entry.reason) ?? []), game]);

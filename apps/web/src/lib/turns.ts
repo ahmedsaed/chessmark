@@ -6,7 +6,14 @@
  * has to be derived here, because the event log is flat.
  */
 
-import type { Colour, GameEvent, StreamNotice, TurnView } from "@/lib/types";
+import type {
+  Colour,
+  GameEvent,
+  LiveFrame,
+  StreamNotice,
+  TurnBlock,
+  TurnView,
+} from "@/lib/types";
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -134,6 +141,166 @@ export interface StreamState {
  * a little work per render and buys a guarantee worth far more — a reconnect that replays events
  * cannot leave the panel in a state that incremental patching would have produced.
  */
+/**
+ * Live frames as blocks the open turn can draw (ADR-0035).
+ *
+ * A turn is one transaction, so `foldEvents` cannot see a round until every round has finished and
+ * the whole turn commits. These arrive as each round lands, and are appended to whichever turn is
+ * still open — they are what a spectator reads during the ten minutes ply 8 of `e601f9af` spent
+ * generating.
+ *
+ * **Never the record.** The committed events supersede them, the client clears them at the next
+ * `turn_started`, and nothing here is stored. Given a frame and the event that later carries the
+ * same content, this must produce the same block, or a step would visibly change as it settled.
+ */
+/**
+ * The turn a run of live frames belongs to, or `null` if it has not announced itself.
+ *
+ * A provisional turn: it has no `seq`, no committed events and no move, and it exists only until
+ * the real one arrives. Drawn exactly like a real open turn, because to a reader it *is* the open
+ * turn — the only difference is that the record has not caught up.
+ */
+export function liveTurn(frames: LiveFrame[]): TurnView | null {
+  const started = [...frames].reverse().find((frame) => frame.frame === "turn");
+  if (started === undefined) return null;
+
+  const blocks = liveBlocks(frames);
+  return {
+    // Negative, so it can never collide with a real turn's key or sort after one.
+    key: `live-${started.ply}`,
+    seq: -1,
+    ply: started.ply,
+    colour: started.colour,
+    playerId: started.player_id,
+    model: started.model,
+    human: false,
+    blocks,
+    reasoning: blocks.filter((b) => b.kind === "reasoning").map((b) => b.text),
+    withheldReasoning: 0,
+    output: blocks.filter((b) => b.kind === "output").map((b) => b.text),
+    tools: blocks.flatMap((b) => (b.kind === "tool" ? [b.call] : [])),
+    illegal: blocks.flatMap((b) => (b.kind === "illegal" ? [b] : [])),
+    said: blocks.filter((b) => b.kind === "said").map((b) => b.text),
+    san: null,
+    live: true,
+  };
+}
+
+export function liveBlocks(frames: LiveFrame[]): TurnBlock[] {
+  const blocks: TurnBlock[] = [];
+  /* Fragments of a block still being generated, held apart from the finished ones. A `block`
+     frame for the same register replaces them: it is the whole thing, and the fragments were only
+     ever a preview of it. */
+  const partial: { reasoning: string; output: string } = { reasoning: "", output: "" };
+
+  /* Negative and descending, so a provisional block can never collide with a committed event's
+     `seq` — which is what React keys on, and what would otherwise reuse a real block's DOM for a
+     provisional one. */
+  let key = -1;
+
+  for (const frame of frames) {
+    if (frame.frame === "turn") continue;
+    if (frame.frame === "token") {
+      partial[frame.kind] += frame.text;
+      continue;
+    }
+
+    if (frame.kind === "reasoning" || frame.kind === "output") partial[frame.kind] = "";
+
+    switch (frame.kind) {
+      case "reasoning":
+        blocks.push({
+          kind: "reasoning",
+          seq: key--,
+          text: frame.text ?? "",
+          tokens: frame.tokens ?? 0,
+          durationMs: typeof frame.duration_ms === "number" ? frame.duration_ms : null,
+        });
+        break;
+      case "output":
+        blocks.push({ kind: "output", seq: key--, text: frame.text ?? "" });
+        break;
+      case "said":
+        blocks.push({ kind: "said", seq: key--, text: frame.text ?? "" });
+        break;
+      case "illegal":
+        blocks.push({
+          kind: "illegal",
+          seq: key--,
+          move: String((frame.args ?? {}).move ?? ""),
+          detail: String((frame.result ?? {}).detail ?? ""),
+          attempt: frame.attempt ?? 0,
+        });
+        break;
+      case "tool":
+        blocks.push({
+          kind: "tool",
+          seq: key--,
+          call: {
+            name: frame.tool ?? "",
+            ok: frame.ok !== false,
+            args: frame.args ?? {},
+            result: frame.result ?? null,
+          },
+        });
+        break;
+    }
+  }
+
+  /* The block being generated right now, last and unfinished. `tokens` is zero and the duration
+     null because neither is known until the round returns — and a label reading "reasoned for 0s"
+     while the model is still reasoning would be worse than no label. */
+  for (const kind of ["reasoning", "output"] as const) {
+    // Whitespace is not yet a block: a model whose first fragment is a newline would otherwise
+    // open an empty bordered box in the timeline before it had written anything.
+    if (!partial[kind].trim()) continue;
+    blocks.push(
+      kind === "reasoning"
+        ? { kind, seq: key--, text: partial[kind], tokens: 0, durationMs: null }
+        : { kind, seq: key--, text: partial[kind] },
+    );
+  }
+
+  return blocks;
+}
+
+/**
+ * Whether two renderings of one turn are the same, for the panel's memo.
+ *
+ * Here rather than beside the component because it is a rule about a turn, and because getting it
+ * wrong is invisible: a comparison that reports "unchanged" too eagerly does not fail, it just
+ * silently stops updating the screen while the data underneath goes on changing.
+ *
+ * **Which is what happened.** It compared `blocks.length` alone, and a block still being generated
+ * grows a fragment at a time while the list does not — so the first token created the block and
+ * every token after it was dropped on the floor. The block appeared with one word in it and froze;
+ * a refresh rebuilt from the buffer and showed the lot, which is the tell that the data was right
+ * and the render was skipped.
+ *
+ * `blocks` is append-only apart from the one still being written, so the newest block's size is
+ * the only thing that can differ at equal length. That keeps this O(1), which matters: scrubbing a
+ * replay re-folds the log and hands back completely new objects on every step.
+ */
+export function sameTurnContent(a: TurnView, b: TurnView): boolean {
+  return (
+    a.key === b.key &&
+    a.san === b.san &&
+    a.live === b.live &&
+    a.ply === b.ply &&
+    a.colour === b.colour &&
+    a.blocks.length === b.blocks.length &&
+    lastBlockSize(a) === lastBlockSize(b) &&
+    a.said.length === b.said.length
+  );
+}
+
+/** How long the newest block's text is; 0 for a block that has none. */
+function lastBlockSize(turn: TurnView): number {
+  const block = turn.blocks.at(-1);
+  if (block === undefined) return 0;
+  return "text" in block ? block.text.length : 0;
+}
+
 export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamState {
   const turns: TurnView[] = [];
   const moves = [...initialMoves];
@@ -163,6 +330,7 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
       playerId: asString(payload.player_id),
       model: asString(payload.model),
       human: payload.human === true,
+      blocks: [],
       reasoning: [],
       withheldReasoning: 0,
       output: [],
@@ -196,6 +364,7 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
           playerId: asString(payload.player_id),
           model: asString(payload.model),
           human: payload.human === true,
+          blocks: [],
           reasoning: [],
           withheldReasoning: 0,
           output: [],
@@ -217,8 +386,19 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
            anything had been held back. */
         const text = asString(payload.reasoning);
         if (!current) break;
-        if (text) current.reasoning.push(text);
-        else current.withheldReasoning += asNumber(payload.tokens);
+        if (text) {
+          current.reasoning.push(text);
+          current.blocks.push({
+            kind: "reasoning",
+            seq: event.seq,
+            text,
+            tokens: asNumber(payload.tokens),
+            /* Absent on every event written before the round's latency was carried on the
+               event, which is most of the archive. Null rather than zero: "not recorded" and
+               "took no time" must not render the same way. */
+            durationMs: typeof payload.duration_ms === "number" ? payload.duration_ms : null,
+          });
+        } else current.withheldReasoning += asNumber(payload.tokens);
         break;
       }
 
@@ -226,29 +406,36 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
         // Prose the model wrote outside a tool call. Kept apart from `reasoning` because
         // providers split the two differently and a reader wants to know which they are seeing.
         const text = asString(payload.content);
-        if (current && text.trim()) current.output.push(text);
+        if (current && text.trim()) {
+          current.output.push(text);
+          current.blocks.push({ kind: "output", seq: event.seq, text });
+        }
         break;
       }
 
       case "tool_called": {
         if (current) {
-          current.tools.push({
+          const call = {
             name: asString(payload.tool),
             ok: payload.ok !== false,
             args: asRecord(payload.args),
             result: payload.result === undefined ? null : asRecord(payload.result),
-          });
+          };
+          current.tools.push(call);
+          current.blocks.push({ kind: "tool", seq: event.seq, call });
         }
         break;
       }
 
       case "illegal_attempt": {
         if (current) {
-          current.illegal.push({
+          const attempt = {
             move: asString(payload.move),
             detail: asString(payload.detail),
             attempt: asNumber(payload.attempt),
-          });
+          };
+          current.illegal.push(attempt);
+          current.blocks.push({ kind: "illegal", seq: event.seq, ...attempt });
         }
         break;
       }
@@ -259,7 +446,11 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
            delivered to the model, invisible on the page. The backend writes `content` now; this
            reads both, because the event log is append-only and the old rows are still there. */
         const text = asString(payload.content) || asString(payload.message);
-        if (text) turnFor(event, payload).said.push(text);
+        if (text) {
+          const turn = turnFor(event, payload);
+          turn.said.push(text);
+          turn.blocks.push({ kind: "said", seq: event.seq, text });
+        }
         break;
       }
 

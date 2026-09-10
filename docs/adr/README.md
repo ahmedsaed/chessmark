@@ -40,6 +40,9 @@ supersedes the old one, rather than an edit.
 | [0032](0032-the-leaderboard-is-stored-not-recomputed-per-request.md) | The leaderboard is stored, not recomputed on every request | Accepted |
 | [0033](0033-a-tail-budget-in-tokens-and-a-provider-that-cannot-count.md) | A tail budget in tokens, and a provider that cannot count | Accepted |
 | [0034](0034-one-page-per-model.md) | One page per model, and the contestant is a section on it | Accepted |
+| [0035](0035-live-frames-are-not-events.md) | A turn streams as it happens, and what streams is not an event | Accepted |
+| [0036](0036-a-lost-reasoning-trace-announces-itself.md) | A lost reasoning trace announces itself, so streaming can be on | Accepted |
+| [0037](0037-a-turn-ends-when-the-model-stops.md) | A turn ends when the model stops, not when it moves | Accepted |
 
 ## Template
 

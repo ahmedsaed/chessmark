@@ -49,7 +49,10 @@ async def test_both_seats_of_one_game_share_one_session(db: AsyncSession, table:
 
     sessions = await _sessions(db, table.game.id)
 
-    assert len(sessions) == 2
+    # Both seats called, and every call carried the same id. Counted as "more than one seat's
+    # worth" rather than exactly two: a turn ends when the model stops, not when it moves, so how
+    # many round-trips it takes is the model's business and not this test's.
+    assert len(sessions) >= 2
     assert set(sessions) == {session_for_game(table.game.id)}
 
 
@@ -68,7 +71,8 @@ async def test_every_call_of_a_turn_carries_it(db: AsyncSession, table: Table) -
 
     sessions = await _sessions(db, table.game.id)
 
-    assert len(sessions) == 3
+    # Three scripted rounds, and the closing one in which the model stops.
+    assert len(sessions) == 4
     assert set(sessions) == {session_for_game(table.game.id)}
 
 
@@ -83,6 +87,6 @@ async def test_two_games_are_two_sessions(db: AsyncSession, table: Table) -> Non
     ours = await _sessions(db, table.game.id)
     theirs = await _sessions(db, other.game.id)
 
-    assert ours == [session_for_game(table.game.id)]
-    assert theirs == [session_for_game(other.game.id)]
-    assert ours != theirs
+    assert set(ours) == {session_for_game(table.game.id)}
+    assert set(theirs) == {session_for_game(other.game.id)}
+    assert set(ours) != set(theirs)

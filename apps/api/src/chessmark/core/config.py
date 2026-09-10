@@ -77,6 +77,21 @@ class Settings(BaseSettings):
     #: at all, which is exactly the case where the default matters least.
     app_title: str = "Chessmark"
 
+    #: Ask the provider to stream, so reasoning reaches the page as it is generated (ADR-0035).
+    #:
+    #: **On, because the failure it risks is no longer silent.** LiteLLM's streaming path reads
+    #: `reasoning_content` and drops `reasoning`, so on some providers the thinking would never
+    #: arrive — and an absent reasoning field is indistinguishable from a model that did not
+    #: reason, which is what made this the one kind of invariant-3 breach nothing downstream could
+    #: flag. `LlmGateway._check_reasoning_survived` now catches it exactly: a response reporting
+    #: billed reasoning *tokens* and carrying no reasoning *text* is one where the text existed and
+    #: we failed to collect it, and that endpoint goes back to whole responses immediately.
+    #:
+    #: Set it to `false` to stop asking providers to stream at all. Frames at round boundaries are
+    #: unaffected either way; this decides only whether a *single* long round trickles out or lands
+    #: whole.
+    llm_stream: bool = True
+
     # --- Auth (Clerk) ---
     clerk_publishable_key: str = ""
     clerk_secret_key: str = ""
