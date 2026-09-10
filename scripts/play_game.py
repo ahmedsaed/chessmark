@@ -30,7 +30,7 @@ from redis.asyncio import Redis  # noqa: E402
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
 from chessmark.agents.routing import DEFAULT_QUANTIZATIONS, ProviderRouting  # noqa: E402
-from chessmark.agents.scripted import step, tool_call  # noqa: E402
+from chessmark.agents.scripted import has_moved_this_turn, step, tool_call  # noqa: E402
 from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.models import Game, GameEvent, Ply  # noqa: E402
@@ -117,6 +117,15 @@ def scripted_players() -> Any:
 
     async def _complete(**kwargs: Any) -> Any:
         messages = kwargs.get("messages") or [{}]
+
+        # **A turn ends when the model stops, not when it moves** (ADR-0037), so every seat is
+        # asked once more after its move. Answering that with `next(source)` walks the script
+        # forward and plays the following turn's move into this position — and once the script
+        # runs out, `next` raises `StopIteration` inside a coroutine, which surfaces as a provider
+        # failure and abandons the game. The browser suite's whole fixture died that way.
+        if has_moved_this_turn(messages):
+            return step(content="Played.")
+
         system = str(messages[0].get("content", ""))
         source = white if "as white" in system.lower() else black
         return next(source)

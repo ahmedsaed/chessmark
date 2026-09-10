@@ -93,8 +93,9 @@ test("finished turns are folded, and each one links to its raw payload", async (
     await expect(dialog.getByText(stat, { exact: true }).first()).toBeVisible();
   }
 
-  // The response is open by default; the request is folded, because it is the enormous one.
-  await dialog.getByRole("button", { name: /^request/ }).click();
+  /* The first call's request; there are several now that a turn ends when the model stops rather
+     than when it moves (ADR-0037), and the one that made the move is the interesting one. */
+  await dialog.getByRole("button", { name: /^request/ }).first().click();
 
   // Verbatim, not summarised (invariant 3): the message list actually sent, not a description
   // of it. The system prompt heading the transcript is the byte-stable prefix of ADR-0003.
@@ -158,6 +159,9 @@ test("a turn renders in the order the model acted", async ({ page }) => {
     "tool",
     "reasoning",
     "tool",
+    // The closing round: a turn ends when the model stops, not when it moves (ADR-0037), so the
+    // last thing in a turn is what the model said about the move it just made.
+    "output",
   ]);
 });
 
@@ -172,6 +176,7 @@ test("a turn that talks draws the talk where it was said", async ({ page }) => {
     "tool",
     "said",
     "tool",
+    "output",
   ]);
 });
 
