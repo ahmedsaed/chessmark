@@ -228,6 +228,36 @@ export type TurnBlock =
   | { kind: "illegal"; seq: number; move: string; detail: string; attempt: number }
   | { kind: "said"; seq: number; text: string };
 
+/**
+ * What a turn is doing, before it is a fact (ADR-0035).
+ *
+ * A turn is one transaction, so nothing it appends can be published until it commits — and ply 8
+ * of `e601f9af` took 632 seconds across six provider rounds and delivered all fifteen of its
+ * events in the same millisecond at the end. These arrive as the rounds finish.
+ *
+ * Deliberately **not** events: no `seq`, never stored, and superseded by the committed events
+ * moments later. A frame is a prediction that the turn will commit — usually right, occasionally
+ * wrong, and never the record.
+ */
+export type LiveFrame =
+  /** A turn has begun. Its `turn_started` event is inside the transaction and arrives at the end. */
+  | { frame: "turn"; player_id: string; colour: Colour; ply: number; model: string }
+  | {
+      frame: "block";
+      player_id: string;
+      kind: "reasoning" | "output" | "tool" | "illegal" | "said";
+      text?: string;
+      tokens?: number;
+      duration_ms?: number;
+      tool?: string;
+      ok?: boolean;
+      args?: Record<string, unknown>;
+      result?: Record<string, unknown> | null;
+      attempt?: number | null;
+    }
+  /** A fragment of a block still being generated. Appended, then replaced by its `block`. */
+  | { frame: "token"; player_id: string; kind: "reasoning" | "output"; text: string };
+
 /** One agent turn, assembled from the event stream. */
 export interface TurnView {
   key: string;

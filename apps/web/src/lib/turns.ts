@@ -6,7 +6,14 @@
  * has to be derived here, because the event log is flat.
  */
 
-import type { Colour, GameEvent, StreamNotice, TurnView } from "@/lib/types";
+import type {
+  Colour,
+  GameEvent,
+  LiveFrame,
+  StreamNotice,
+  TurnBlock,
+  TurnView,
+} from "@/lib/types";
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -134,6 +141,127 @@ export interface StreamState {
  * a little work per render and buys a guarantee worth far more — a reconnect that replays events
  * cannot leave the panel in a state that incremental patching would have produced.
  */
+/**
+ * Live frames as blocks the open turn can draw (ADR-0035).
+ *
+ * A turn is one transaction, so `foldEvents` cannot see a round until every round has finished and
+ * the whole turn commits. These arrive as each round lands, and are appended to whichever turn is
+ * still open — they are what a spectator reads during the ten minutes ply 8 of `e601f9af` spent
+ * generating.
+ *
+ * **Never the record.** The committed events supersede them, the client clears them at the next
+ * `turn_started`, and nothing here is stored. Given a frame and the event that later carries the
+ * same content, this must produce the same block, or a step would visibly change as it settled.
+ */
+/**
+ * The turn a run of live frames belongs to, or `null` if it has not announced itself.
+ *
+ * A provisional turn: it has no `seq`, no committed events and no move, and it exists only until
+ * the real one arrives. Drawn exactly like a real open turn, because to a reader it *is* the open
+ * turn — the only difference is that the record has not caught up.
+ */
+export function liveTurn(frames: LiveFrame[]): TurnView | null {
+  const started = [...frames].reverse().find((frame) => frame.frame === "turn");
+  if (started === undefined) return null;
+
+  const blocks = liveBlocks(frames);
+  return {
+    // Negative, so it can never collide with a real turn's key or sort after one.
+    key: `live-${started.ply}`,
+    seq: -1,
+    ply: started.ply,
+    colour: started.colour,
+    playerId: started.player_id,
+    model: started.model,
+    human: false,
+    blocks,
+    reasoning: blocks.filter((b) => b.kind === "reasoning").map((b) => b.text),
+    withheldReasoning: 0,
+    output: blocks.filter((b) => b.kind === "output").map((b) => b.text),
+    tools: blocks.flatMap((b) => (b.kind === "tool" ? [b.call] : [])),
+    illegal: blocks.flatMap((b) => (b.kind === "illegal" ? [b] : [])),
+    said: blocks.filter((b) => b.kind === "said").map((b) => b.text),
+    san: null,
+    live: true,
+  };
+}
+
+export function liveBlocks(frames: LiveFrame[]): TurnBlock[] {
+  const blocks: TurnBlock[] = [];
+  /* Fragments of a block still being generated, held apart from the finished ones. A `block`
+     frame for the same register replaces them: it is the whole thing, and the fragments were only
+     ever a preview of it. */
+  const partial: { reasoning: string; output: string } = { reasoning: "", output: "" };
+
+  /* Negative and descending, so a provisional block can never collide with a committed event's
+     `seq` — which is what React keys on, and what would otherwise reuse a real block's DOM for a
+     provisional one. */
+  let key = -1;
+
+  for (const frame of frames) {
+    if (frame.frame === "turn") continue;
+    if (frame.frame === "token") {
+      partial[frame.kind] += frame.text;
+      continue;
+    }
+
+    if (frame.kind === "reasoning" || frame.kind === "output") partial[frame.kind] = "";
+
+    switch (frame.kind) {
+      case "reasoning":
+        blocks.push({
+          kind: "reasoning",
+          seq: key--,
+          text: frame.text ?? "",
+          tokens: frame.tokens ?? 0,
+          durationMs: typeof frame.duration_ms === "number" ? frame.duration_ms : null,
+        });
+        break;
+      case "output":
+        blocks.push({ kind: "output", seq: key--, text: frame.text ?? "" });
+        break;
+      case "said":
+        blocks.push({ kind: "said", seq: key--, text: frame.text ?? "" });
+        break;
+      case "illegal":
+        blocks.push({
+          kind: "illegal",
+          seq: key--,
+          move: String((frame.args ?? {}).move ?? ""),
+          detail: String((frame.result ?? {}).detail ?? ""),
+          attempt: frame.attempt ?? 0,
+        });
+        break;
+      case "tool":
+        blocks.push({
+          kind: "tool",
+          seq: key--,
+          call: {
+            name: frame.tool ?? "",
+            ok: frame.ok !== false,
+            args: frame.args ?? {},
+            result: frame.result ?? null,
+          },
+        });
+        break;
+    }
+  }
+
+  /* The block being generated right now, last and unfinished. `tokens` is zero and the duration
+     null because neither is known until the round returns — and a label reading "reasoned for 0s"
+     while the model is still reasoning would be worse than no label. */
+  for (const kind of ["reasoning", "output"] as const) {
+    if (!partial[kind]) continue;
+    blocks.push(
+      kind === "reasoning"
+        ? { kind, seq: key--, text: partial[kind], tokens: 0, durationMs: null }
+        : { kind, seq: key--, text: partial[kind] },
+    );
+  }
+
+  return blocks;
+}
+
 export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamState {
   const turns: TurnView[] = [];
   const moves = [...initialMoves];

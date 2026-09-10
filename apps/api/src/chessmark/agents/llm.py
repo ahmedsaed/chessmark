@@ -90,6 +90,10 @@ log = logging.getLogger(__name__)
 #: that no response header reports — see `core.budget.FreeTierBudget`.
 AttemptFn = Callable[[str], Awaitable[None]]
 
+#: Called with `("reasoning" | "output", text)` for each fragment a streamed call produces. Purely
+#: for display (ADR-0035): nothing stored, costed or replayed comes from here.
+TokenFn = Callable[[str, str], Awaitable[None]]
+
 
 #: Never retried: the same request will fail the same way, and each attempt costs money.
 FATAL_EXCEPTION_NAMES = frozenset(
@@ -448,6 +452,90 @@ async def _default_completion(**kwargs: Any) -> Any:
     return await litellm.acompletion(**kwargs)
 
 
+async def collect_stream(chunks: Any, on_token: TokenFn | None = None) -> dict[str, Any]:
+    """Drain a streaming completion into the response shape the rest of this module expects.
+
+    **`normalise_response` must not be able to tell.** Everything downstream — costing (invariant
+    4), the verbatim `llm_calls` row (invariant 3), the tool loop — reads one dict, and a streamed
+    call that produced a subtly different one would be a silent divergence in the record rather
+    than a visible failure.
+
+    Two fields are the reason this is hand-rolled rather than left to `stream_chunk_builder`:
+
+    * **`reasoning`.** LiteLLM's streaming path populates `reasoning_content` and drops `reasoning`
+      on several providers, so the thinking never arrives — GLM-5 and every vLLM-backed endpoint
+      lose it entirely
+      ([#21386](https://github.com/BerriAI/litellm/issues/21386),
+      [#20246](https://github.com/BerriAI/litellm/issues/20246)). Both spellings are read here, and
+      `stream_reasoning_survives` is what an operator runs before trusting one.
+    * **`usage`.** It arrives only in the final chunk, and only when `stream_options.include_usage`
+      was sent. Without it every streamed call costs zero, which invariant 4 would never notice
+      because zero is a number.
+    """
+    content: list[str] = []
+    reasoning: list[str] = []
+    calls: dict[int, dict[str, Any]] = {}
+    finish_reason: str | None = None
+    usage: dict[str, Any] = {}
+    model: str = ""
+    extras: dict[str, Any] = {}
+
+    async for chunk in chunks:
+        piece = _to_dict(chunk)
+        model = model or str(piece.get("model") or "")
+        if piece.get("usage"):
+            usage = dict(piece["usage"])
+        for key in ("provider", "id", "created", "object"):
+            if piece.get(key) is not None:
+                extras.setdefault(key, piece[key])
+
+        for choice in piece.get("choices") or []:
+            if choice.get("finish_reason"):
+                finish_reason = str(choice["finish_reason"])
+            delta = choice.get("delta") or {}
+
+            # Both spellings, because which one arrives is a property of the provider.
+            thought = delta.get("reasoning") or delta.get("reasoning_content")
+            if thought:
+                reasoning.append(str(thought))
+                if on_token is not None:
+                    await on_token("reasoning", str(thought))
+
+            if delta.get("content"):
+                content.append(str(delta["content"]))
+                if on_token is not None:
+                    await on_token("output", str(delta["content"]))
+
+            # Tool calls arrive in fragments keyed by index: the name in the first, the arguments
+            # a few characters at a time after it. Concatenating by index is the only way back to
+            # a whole call.
+            for fragment in delta.get("tool_calls") or []:
+                slot = calls.setdefault(
+                    int(fragment.get("index") or 0),
+                    {"id": "", "type": "function", "function": {"name": "", "arguments": ""}},
+                )
+                if fragment.get("id"):
+                    slot["id"] = str(fragment["id"])
+                function = fragment.get("function") or {}
+                if function.get("name"):
+                    slot["function"]["name"] = str(function["name"])
+                if function.get("arguments"):
+                    slot["function"]["arguments"] += str(function["arguments"])
+
+    message: dict[str, Any] = {"role": "assistant", "content": "".join(content) or None}
+    if reasoning:
+        message["reasoning"] = "".join(reasoning)
+    if calls:
+        message["tool_calls"] = [calls[index] for index in sorted(calls)]
+
+    return {
+        **extras,
+        "model": model,
+        "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
+        "usage": usage,
+    }
+
+
 def _to_dict(response: Any) -> dict[str, Any]:
     """Coerce whatever the provider layer returned into a plain dict.
 
@@ -535,6 +623,7 @@ class LlmGateway:
         on_attempt: AttemptFn | None = None,
         timeout: float = 600.0,
         attribution: dict[str, str] | None = None,
+        stream: bool = False,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url
@@ -545,6 +634,13 @@ class LlmGateway:
         self._sleep = sleep_fn or asyncio.sleep
         self._on_attempt = on_attempt
         self.timeout = timeout
+        #: **Off by default, and that is a record decision, not a taste one** (ADR-0035). LiteLLM's
+        #: streaming path drops `reasoning` on several providers, so a call that streams can come
+        #: back with the model's thinking missing — invariant 3 broken silently, in the direction
+        #: nothing would flag, because an absent reasoning field is indistinguishable from a model
+        #: that did not reason. Turned on per endpoint by an operator once `make smoke-llm` shows
+        #: that model's reasoning surviving the round trip.
+        self.stream = stream
         # Resolved once, at construction: it is a constant of the process, and reading settings per
         # call would put a cache lookup inside the hot path for two strings that never change.
         # Only attached when we hold a key — see `agents/attribution.py` for why.
@@ -623,6 +719,7 @@ class LlmGateway:
         session_id: str | None = None,
         extra: dict[str, Any] | None = None,
         deadline_seconds: float | None = None,
+        on_token: TokenFn | None = None,
     ) -> Completion:
         """Make one logical call, retrying transient failures.
 
@@ -679,7 +776,20 @@ class LlmGateway:
                 # in the request too, but it was observed not to bind: a single call ran for 1,093
                 # seconds against a 180-second setting, generating the whole time. A deadline that
                 # only the callee honours is not a deadline.
-                raw = await asyncio.wait_for(self._complete(**call_kwargs), timeout=deadline)
+                if self.stream:
+                    # `include_usage` is not optional: usage arrives only in the final chunk, and
+                    # without it every streamed call is costed at zero (invariant 4).
+                    streaming = dict(
+                        call_kwargs,
+                        stream=True,
+                        stream_options={"include_usage": True},
+                    )
+                    raw = await asyncio.wait_for(
+                        collect_stream(await self._complete(**streaming), on_token),
+                        timeout=deadline,
+                    )
+                else:
+                    raw = await asyncio.wait_for(self._complete(**call_kwargs), timeout=deadline)
             except TimeoutError as error:
                 # **Unavailability, and paused rather than retried.** A provider that will not
                 # answer inside ten minutes is not serving us, which is the same thing a 429, a

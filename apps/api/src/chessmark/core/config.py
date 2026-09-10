@@ -77,6 +77,19 @@ class Settings(BaseSettings):
     #: at all, which is exactly the case where the default matters least.
     app_title: str = "Chessmark"
 
+    #: Ask the provider to stream, so reasoning reaches the page as it is generated (ADR-0035).
+    #:
+    #: **Off, and the reason is the record rather than the risk of a new feature.** LiteLLM's
+    #: streaming path reads `reasoning_content` and drops `reasoning`, so on several providers the
+    #: thinking never arrives — and an absent reasoning field is indistinguishable from a model
+    #: that did not reason, which makes it the one kind of invariant-3 breach nothing downstream
+    #: can flag. Turn it on once `make smoke-llm` shows the models you actually run keeping their
+    #: reasoning through a streamed call.
+    #:
+    #: It changes nothing else. Frames at round boundaries stream either way; this decides only
+    #: whether a *single* long round trickles out or lands whole.
+    llm_stream: bool = False
+
     # --- Auth (Clerk) ---
     clerk_publishable_key: str = ""
     clerk_secret_key: str = ""

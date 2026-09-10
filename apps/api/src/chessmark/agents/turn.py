@@ -30,6 +30,10 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents import compaction, llm, prompts, transcript
+from chessmark.agents.live import LiveChannel, NullLive
+from chessmark.agents.live import block as live_block
+from chessmark.agents.live import token as live_token
+from chessmark.agents.live import turn_started as live_turn
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.mangled import ProviderMangledError, mangled_tool_call
 from chessmark.agents.sessions import session_for_game
@@ -324,6 +328,7 @@ class TurnRunner:
         opponent: Player,
         model: str,
         limits: TurnLimits | None = None,
+        live: LiveChannel | None = None,
     ) -> None:
         self.session = session
         self.gateway = gateway
@@ -333,6 +338,10 @@ class TurnRunner:
         self.opponent = opponent
         self.model = model
         self.limits = limits or TurnLimits()
+        #: Where a round's work is announced before the turn commits (ADR-0035). Null by default,
+        #: so every path that does not pass one simply does not stream — a turn's behaviour, its
+        #: record and its cost are identical either way.
+        self.live: LiveChannel = live or NullLive()
 
         self.colour = Colour(player.colour)
         self.state = TurnState()
@@ -408,6 +417,19 @@ class TurnRunner:
                 "ply": self.referee.ply + 1,
                 "model": self.model,
             },
+        )
+
+        # Announced now, because the event above will not reach anyone until this turn's
+        # transaction commits — which is after every round has run, and therefore after the
+        # blocks that hang off it would have been useful (ADR-0035).
+        await self.live.send(
+            self.game.id,
+            live_turn(
+                self.player.id,
+                colour=self.colour.value,
+                ply=self.referee.ply + 1,
+                model=self.model,
+            ),
         )
 
         await transcript.append_message(
@@ -880,6 +902,9 @@ class TurnRunner:
                     # on OpenRouter's own dashboard rather than as a hundred unrelated generations.
                     # See `agents/sessions.py` for why the unit is the game and not the turn.
                     session_id=session_for_game(self.game.id),
+                    # Fragments as they arrive, for the panel only (ADR-0035). Ignored entirely
+                    # when the gateway is not streaming, which is the default.
+                    on_token=self._on_token,
                 )
             except LlmError as error:
                 if not await self._compact_reactively(turn, result, error):
@@ -919,6 +944,20 @@ class TurnRunner:
                         "duration_ms": completion.latency_ms,
                     },
                 )
+                # Sent now rather than at commit, which is the whole of ADR-0035: this round
+                # finished and the next one may take six minutes, so a spectator who has to wait
+                # for the transaction watches a still board with nothing to read. The event above
+                # is the record; this is the same content, unrecorded, arriving early.
+                await self.live.send(
+                    self.game.id,
+                    live_block(
+                        self.player.id,
+                        "reasoning",
+                        text=completion.reasoning,
+                        tokens=completion.usage.reasoning,
+                        duration_ms=completion.latency_ms,
+                    ),
+                )
 
             if completion.content and completion.content.strip():
                 # Gemini says everything here and nothing in `reasoning`; DeepSeek does the exact
@@ -934,6 +973,10 @@ class TurnRunner:
                         "player_id": str(self.player.id),
                         "content": completion.content,
                     },
+                )
+                await self.live.send(
+                    self.game.id,
+                    live_block(self.player.id, "output", text=completion.content),
                 )
 
             # **Only when the model actually said or did something.** A response with neither
@@ -987,6 +1030,16 @@ class TurnRunner:
             "rounds without playing a move.",
         )
 
+    async def _on_token(self, kind: str, text: str) -> None:
+        """One fragment of the block being generated, sent straight out and stored nowhere.
+
+        The provisional half of ADR-0035: the client appends these to a block that has not
+        happened yet, and replaces the whole of it when the round's `block` frame arrives. A
+        dropped fragment therefore costs a flicker, never a wrong transcript — what gets recorded
+        is the completion, which this never touches.
+        """
+        await self.live.send(self.game.id, live_token(self.player.id, kind, text))
+
     async def _run_tool_calls(
         self, turn: Turn, result: TurnResult, calls: list[ToolInvocation]
     ) -> bool:
@@ -1037,8 +1090,28 @@ class TurnRunner:
                 },
             )
 
+            # The same step, sent early (ADR-0035). A tool call is what a reader is waiting for
+            # between two long reasoning blocks — it is the thing that says which result the next
+            # block is about — so it arrives with the round rather than with the transaction.
+            await self.live.send(
+                self.game.id,
+                live_block(
+                    self.player.id,
+                    "illegal" if tool_result.illegal else "tool",
+                    tool=call.name,
+                    ok=tool_result.ok,
+                    args=call.arguments,
+                    result=tool_result.payload,
+                    attempt=self.state.illegal_attempts if tool_result.illegal else None,
+                ),
+            )
+
             if tool_result.message is not None:
                 await self._record_said(turn, tool_result.message)
+                await self.live.send(
+                    self.game.id,
+                    live_block(self.player.id, "said", text=tool_result.message),
+                )
 
             if tool_result.illegal and self.dispatcher.retries_exhausted:
                 result.status = TurnStatus.FORFEITED

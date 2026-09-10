@@ -32,6 +32,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from chessmark.agents import compaction, llm
+from chessmark.agents.live import LiveChannel, NullLive, RedisLive
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.turn import TurnLimits, TurnResult, TurnRunner
@@ -217,6 +218,7 @@ class TurnWorker:
         budget: GlobalBudget | None = None,
         cooldown: ProviderCooldown | None = None,
         halt: Halt | None = None,
+        live: LiveChannel | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
         self.queue = queue
@@ -232,6 +234,10 @@ class TurnWorker:
         #: reason: a scripted provider never rate-limits anything. Without it a game still pauses
         #: — it just pauses on the first rung every time, and the matchmaker learns nothing.
         self.cooldown = cooldown
+        #: Where a turn announces its rounds before it commits (ADR-0035). Defaults to the same
+        #: Redis the committed events go out on, because a worker that can publish one can publish
+        #: the other; a worker with neither simply does not stream, and plays an identical game.
+        self.live: LiveChannel = live or (RedisLive(redis) if redis is not None else NullLive())
         self.consumer = consumer or f"worker-{uuid.uuid4().hex[:8]}"
         self._stopping = asyncio.Event()
 
@@ -397,6 +403,11 @@ class TurnWorker:
                 opponent=opponent,
                 model=model_for(player),
                 limits=self.limits,
+                # A turn is one transaction and publishes at the end of it, so without this a
+                # ten-minute turn is ten minutes of a still board followed by every event at once
+                # (ADR-0035). Frames are not records: they carry no `seq`, are never written down,
+                # and are superseded by the committed events moments later.
+                live=self.live,
             )
             before_seq = game.event_seq
             result = await runner.run()

@@ -145,7 +145,7 @@ async def main(argv: list[str] | None = None) -> int:
             # one does. `completion_fn` takes precedence, so the key is never read.
             LlmGateway(completion_fn=responsive(reasoning=SCRIPTED_REASONING), pricing=pricing)
             if args.scripted
-            else LlmGateway(api_key=api_key, pricing=pricing)
+            else LlmGateway(api_key=api_key, pricing=pricing, stream=settings.llm_stream)
         ),
         redis=redis,
         budget=budget,

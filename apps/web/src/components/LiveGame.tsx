@@ -23,7 +23,7 @@ import { legalTargets } from "@/lib/board";
 import { captures } from "@/lib/captures";
 import { useGameDetail } from "@/hooks/useGameDetail";
 import { useGameStream } from "@/hooks/useGameStream";
-import { foldEvents } from "@/lib/turns";
+import { foldEvents, liveTurn } from "@/lib/turns";
 import type { Colour, GameDetail, GameEvent } from "@/lib/types";
 
 const TERMINAL = new Set(["finished", "aborted"]);
@@ -63,7 +63,7 @@ export function LiveGame({
      right cursor means those events are never sent twice in the first place. */
   const afterSeq = Math.max(initial.event_seq, initialEvents.at(-1)?.seq ?? 0);
 
-  const { events, status } = useGameStream({
+  const { events, live, status } = useGameStream({
     gameId: initial.id,
     apiUrl,
     afterSeq,
@@ -73,10 +73,29 @@ export function LiveGame({
   // History first, then whatever has streamed in since. The move list is rebuilt from
   // `move_made` events rather than from `game.moves`, so there is exactly one source of truth and
   // no chance of counting a move twice.
-  const { turns, moves, ended, notices, paused } = useMemo(
+  const folded = useMemo(
     () => foldEvents([...initialEvents, ...events], []),
     [initialEvents, events],
   );
+
+  /* **What the open turn is doing right now** (ADR-0035). A turn is one transaction, so its
+     events do not exist until every round has finished — ply 8 of `e601f9af` spent 632 seconds
+     generating and then delivered all fifteen at once. Live frames arrive as each round lands and
+     are appended to the turn still in flight; the committed events replace them moments later,
+     and the hook clears them at the next `turn_started`. Nothing here is ever the record. */
+  const { turns, moves, ended, notices, paused } = useMemo(() => {
+    const provisional = liveTurn(live);
+    if (provisional === null) return folded;
+
+    /* The turn's own committed events replace it wholesale. They arrive together at commit and
+       carry the same steps with real sequence numbers, so keeping both would draw every step
+       twice — once as a prediction and once as the record. */
+    if (folded.turns.some((turn) => turn.ply === provisional.ply && turn.san !== null)) {
+      return folded;
+    }
+
+    return { ...folded, turns: [...folded.turns, provisional] };
+  }, [folded, live]);
 
   // Stats are not in the event stream; refetch the record as plies land, or the rail shows the
   // numbers as they were when the page loaded and never moves again.

@@ -10,8 +10,8 @@
 
 import { describe, expect, it } from "vitest";
 
-import { compactionText, foldEvents } from "@/lib/turns";
-import type { EventType, GameEvent } from "@/lib/types";
+import { compactionText, foldEvents, liveTurn } from "@/lib/turns";
+import type { EventType, GameEvent, LiveFrame } from "@/lib/types";
 
 let seq = 0;
 function event(type: EventType, payload: Record<string, unknown> = {}): GameEvent {
@@ -594,5 +594,138 @@ describe("a turn keeps the order it happened in", () => {
 
     expect(turn.blocks).toEqual([]);
     expect(turn.withheldReasoning).toBe(4096);
+  });
+});
+
+describe("live frames (ADR-0035)", () => {
+  /**
+   * A turn is one transaction, so its events do not exist until every round has finished. Ply 8
+   * of `e601f9af` spent 632 seconds generating and then delivered all fifteen of its events in
+   * the same millisecond. These arrive as each round lands.
+   *
+   * They are not the record and must never look like it: no `seq`, nothing stored, and the
+   * committed events replace them.
+   */
+  const started: LiveFrame = {
+    frame: "turn",
+    player_id: "b",
+    colour: "black",
+    ply: 8,
+    model: "m",
+  };
+
+  it("opens a provisional turn, because turn_started is inside the transaction too", () => {
+    /* Without this the frames describe a turn nothing has announced — `turn_started` reaches a
+       spectator only when the turn is over, which is exactly when the frames stop mattering. */
+    const turn = liveTurn([started]);
+
+    expect(turn).toMatchObject({ ply: 8, colour: "black", live: true, san: null });
+  });
+
+  it("has no turn at all until one is announced", () => {
+    expect(liveTurn([{ frame: "token", player_id: "b", kind: "reasoning", text: "hm" }])).toBeNull();
+  });
+
+  it("builds the same blocks a committed turn would, in the same order", () => {
+    const turn = liveTurn([
+      started,
+      { frame: "block", player_id: "b", kind: "reasoning", text: "look", tokens: 21 },
+      { frame: "block", player_id: "b", kind: "tool", tool: "get_board", ok: true, args: {} },
+      { frame: "block", player_id: "b", kind: "reasoning", text: "move", tokens: 81 },
+      {
+        frame: "block",
+        player_id: "b",
+        kind: "tool",
+        tool: "make_move",
+        ok: true,
+        args: { move: "Bb4+" },
+      },
+    ]);
+
+    expect(turn?.blocks.map((b) => b.kind)).toEqual(["reasoning", "tool", "reasoning", "tool"]);
+  });
+
+  it("shows the block still being generated, last", () => {
+    /** The 369-second round, readable while it is happening rather than after. */
+    const turn = liveTurn([
+      started,
+      { frame: "block", player_id: "b", kind: "reasoning", text: "done", tokens: 21 },
+      { frame: "token", player_id: "b", kind: "reasoning", text: "the pawn " },
+      { frame: "token", player_id: "b", kind: "reasoning", text: "on e2" },
+    ]);
+
+    expect(turn?.blocks.at(-1)).toMatchObject({
+      kind: "reasoning",
+      text: "the pawn on e2",
+      // Neither is known until the round returns, and "reasoned for 0s" while it is still
+      // reasoning would be worse than no label at all.
+      tokens: 0,
+      durationMs: null,
+    });
+  });
+
+  it("replaces the fragments with the block they were previewing", () => {
+    /* Otherwise the finished block renders *and* the fragments that predicted it, which is the
+       same text twice with the second copy permanently incomplete. */
+    const turn = liveTurn([
+      started,
+      { frame: "token", player_id: "b", kind: "reasoning", text: "the pawn " },
+      { frame: "block", player_id: "b", kind: "reasoning", text: "the pawn on e2", tokens: 12 },
+    ]);
+
+    expect(turn?.blocks).toHaveLength(1);
+    expect(turn?.blocks[0]).toMatchObject({ text: "the pawn on e2", tokens: 12 });
+  });
+
+  it("keys provisional blocks apart from committed ones", () => {
+    /* React keys on `seq`, and a provisional block colliding with a real one would hand a
+       prediction the DOM of a fact. Negative and descending cannot collide: `seq` is 1-based and
+       gap-free per game (ADR-0008). */
+    const turn = liveTurn([
+      started,
+      { frame: "block", player_id: "b", kind: "reasoning", text: "a", tokens: 1 },
+      { frame: "block", player_id: "b", kind: "reasoning", text: "b", tokens: 1 },
+    ]);
+    const seqs = turn?.blocks.map((b) => b.seq) ?? [];
+
+    expect(seqs.every((seq) => seq < 0)).toBe(true);
+    expect(new Set(seqs).size).toBe(seqs.length);
+  });
+
+  it("carries the by-kind arrays a filter chip reads", () => {
+    const turn = liveTurn([
+      started,
+      { frame: "block", player_id: "b", kind: "reasoning", text: "a", tokens: 1 },
+      { frame: "block", player_id: "b", kind: "tool", tool: "get_board", ok: true, args: {} },
+      { frame: "block", player_id: "b", kind: "said", text: "your move" },
+    ]);
+
+    expect(turn?.reasoning).toEqual(["a"]);
+    expect(turn?.tools.map((t) => t.name)).toEqual(["get_board"]);
+    expect(turn?.said).toEqual(["your move"]);
+  });
+
+  it("renders an illegal attempt from the frame the same way the event does", () => {
+    const turn = liveTurn([
+      started,
+      {
+        frame: "block",
+        player_id: "b",
+        kind: "illegal",
+        tool: "make_move",
+        ok: false,
+        args: { move: "e4" },
+        result: { detail: "no legal move matches" },
+        attempt: 1,
+      },
+    ]);
+
+    expect(turn?.blocks[0]).toEqual({
+      kind: "illegal",
+      seq: expect.any(Number),
+      move: "e4",
+      detail: "no legal move matches",
+      attempt: 1,
+    });
   });
 });

@@ -10,10 +10,17 @@
  * The one thing the browser does *not* do is give us a starting cursor. A page rendered on the
  * server already knows the game up to `event_seq`, so the first connection passes it explicitly —
  * without it the client would replay the whole game and re-animate every move on load.
+ *
+ * **Two kinds of frame arrive here** (ADR-0035). Numbered ones are committed events and are the
+ * record. `delta` frames are what the turn is *doing*: a turn is one transaction, so a
+ * ten-minute one used to deliver every event at once at the end, and these arrive as each round
+ * finishes. They carry no `seq`, are never stored, and are replaced by the committed events
+ * moments later — so they are kept apart from `events` entirely, and a component that ignores
+ * them is correct.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GameEvent } from "@/lib/types";
+import type { GameEvent, LiveFrame } from "@/lib/types";
 
 export type StreamStatus = "connecting" | "live" | "reconnecting" | "closed";
 
@@ -40,6 +47,7 @@ const EVENT_TYPES = [
 
 export function useGameStream({ gameId, apiUrl, afterSeq, enabled = true }: Options) {
   const [events, setEvents] = useState<GameEvent[]>([]);
+  const [live, setLive] = useState<LiveFrame[]>([]);
   const [status, setStatus] = useState<StreamStatus>(enabled ? "connecting" : "closed");
 
   // The cursor lives in a ref so reconnecting never re-runs the effect: putting it in state
@@ -52,6 +60,11 @@ export function useGameStream({ gameId, apiUrl, afterSeq, enabled = true }: Opti
     seen.current.add(event.seq);
     cursor.current = Math.max(cursor.current, event.seq);
     setEvents((previous) => [...previous, event]);
+    /* **A committed event supersedes every frame that predicted it.** They describe the same
+       turn, so keeping both would draw each step twice — once provisionally and once for real.
+       `turn_started` is the boundary: it is the first thing a turn appends, so a turn's own
+       events never clear its own frames, and the next turn's arrival clears the last one's. */
+    if (event.type === "turn_started" || event.type === "move_made") setLive([]);
   }, []);
 
   useEffect(() => {
@@ -76,8 +89,23 @@ export function useGameStream({ gameId, apiUrl, afterSeq, enabled = true }: Opti
       }
     };
 
+    /* Unnumbered and unrecorded, so it never touches the cursor: `Last-Event-ID` must go on
+       naming a committed event or a reconnect would resume from something never written down. */
+    const handleDelta = (raw: Event) => {
+      setStatus("live");
+      try {
+        const frame = JSON.parse((raw as MessageEvent<string>).data) as LiveFrame;
+        if (frame?.frame === "block" || frame?.frame === "token") {
+          setLive((previous) => [...previous, frame]);
+        }
+      } catch {
+        // A frame we cannot parse costs a flicker, never a wrong transcript.
+      }
+    };
+
     source.onopen = () => setStatus("live");
     source.onmessage = handle;
+    source.addEventListener("delta", handleDelta);
 
     // The server names each frame after its event type, so a bare `onmessage` never fires for
     // them. Every type has to be registered explicitly.
@@ -95,5 +123,5 @@ export function useGameStream({ gameId, apiUrl, afterSeq, enabled = true }: Opti
     };
   }, [gameId, apiUrl, enabled, push]);
 
-  return { events, status };
+  return { events, live, status };
 }

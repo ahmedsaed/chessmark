@@ -74,6 +74,33 @@ A human drag to the last rank opens a picker. It used to be a queen either way, 
 every time and wrong in exactly the position that matters: the one where a rook or a knight wins and
 the player cannot say so.
 
+## A turn arrives twice
+
+The panel receives two kinds of frame, and only one of them is the record ([ADR-0035](adr/0035-live-frames-are-not-events.md)).
+
+**Committed events** are numbered, stored, and replayed on reconnect. They arrive when the turn's
+transaction commits — which is *after every provider round has finished*, because a turn is one
+transaction ([ADR-0007](adr/0007-turn-level-jobs.md)). Ply 8 of `e601f9af` spent 632 seconds across
+six rounds and delivered all fifteen of its events stamped the same millisecond.
+
+**Live frames** arrive as each round lands, on the `delta` SSE event. They carry no `seq`, are
+never stored, and are dropped by `useGameStream` at the next `turn_started`. `liveTurn` folds them
+into a provisional `TurnView` that is drawn exactly like a real open turn — because to a reader it
+*is* the open turn; the record has simply not caught up.
+
+Three things follow, and each has bitten:
+
+* **A live frame must never carry an `id:`.** `Last-Event-ID` is how a reconnect resumes, and it
+  has to name a committed event or the client resumes from something that was never written down.
+* **Provisional blocks key negative.** React keys on `seq`, which is 1-based and gap-free, so a
+  provisional block sharing a number with a committed one would hand a prediction the DOM of a
+  fact.
+* **A turn announces itself twice too.** `turn_started` is inside the transaction like everything
+  else, so without a `turn` frame the blocks describe a turn nothing has announced.
+
+A component that ignores `delta` entirely is correct and complete: replay, the PGN and every test
+that reads the log are unaffected.
+
 ## Streaming, and the price of it
 
 Every route is `force-dynamic` — a live game and a leaderboard are both wrong the moment they are

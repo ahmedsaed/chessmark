@@ -16,6 +16,7 @@ import pytest
 from httpx import AsyncClient
 
 from chessmark.agents.scripted import plays, says, scripted, step, tool_call
+from chessmark.api.routes.events import _visible_frame
 from chessmark.db.enums import EventType
 from tests.api.conftest import parse_sse
 from tests.support import Fixture, both_sides, run_next
@@ -210,6 +211,73 @@ async def test_a_connected_spectator_receives_a_turn_as_it_happens(
     assert received, "a connected spectator received nothing"
     assert received == sorted(received)
     assert len(set(received)) == len(received), "no duplicates"
+
+
+# ====================================================================== live frames (ADR-0035)
+
+
+async def test_a_live_frame_carries_no_event_id(
+    client: AsyncClient, game: Fixture, make_worker: Any
+) -> None:
+    """**`Last-Event-ID` must go on naming a committed event.**
+
+    A frame describes a round of a turn that has not committed, so numbering one would let a
+    reconnect resume from something that was never written down — and, if the turn then rolled
+    back, from something that never will be. The cursor is the durable log's alone.
+    """
+    frames: list[str] = []
+    ids: list[str] = []
+
+    async def watch() -> None:
+        async with client.stream("GET", f"/games/{game.game.id}/stream") as response:
+            async for line in response.aiter_lines():
+                if line.startswith("event: delta"):
+                    frames.append(line)
+                elif line.startswith("id:"):
+                    ids.append(line)
+                elif line.strip() == f"event: {EventType.GAME_ENDED}":
+                    return
+
+    reader = asyncio.create_task(watch())
+    await asyncio.sleep(0.5)
+
+    await run_next(make_worker(resigns(), publish=True), game.queue)
+
+    try:
+        await asyncio.wait_for(reader, timeout=15)
+    except TimeoutError:
+        reader.cancel()
+
+    assert frames, "the turn published no live frames"
+    # Every id belongs to a committed event; the frames contributed none.
+    assert all(line.split(":", 1)[1].strip().isdigit() for line in ids)
+
+
+def test_a_frame_is_dropped_from_a_reader_who_may_not_see_it() -> None:
+    """**Invariant 8, on the fastest path by which it could break.**
+
+    This channel exists to deliver the model's words the moment they are generated, so a person
+    playing the game must not be on it. Dropped rather than emptied, unlike the committed event:
+    that one keeps its token count because a turn showing no thinking at all reads as a model that
+    thought nothing, and a frame has no such problem — it is unnumbered and unrecorded, so
+    withholding it leaves the reader exactly where they are now, which is with the redacted event
+    that arrives at commit.
+    """
+    reasoning = {"frame": "block", "kind": "reasoning", "text": "I will take the queen"}
+    tool = {"frame": "block", "kind": "tool", "tool": "get_board"}
+
+    assert _visible_frame(reasoning, withhold=True) is None
+    assert _visible_frame({"frame": "token", "kind": "output", "text": "hi"}, withhold=True) is None
+    # A tool call is a fact about the board and a message was addressed to the reader.
+    assert _visible_frame(tool, withhold=True) == tool
+
+
+def test_a_spectator_sees_every_frame() -> None:
+    """A model-vs-model game has no participant to leak to, and that is where the streaming is
+    worth watching."""
+    frame = {"frame": "token", "kind": "reasoning", "text": "considering Bb4"}
+
+    assert _visible_frame(frame, withhold=False) == frame
 
 
 # ====================================================================== errors

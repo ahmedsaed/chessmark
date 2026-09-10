@@ -15,6 +15,23 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Added
+
+- **A turn streams as it happens** ([ADR-0035]). A turn is one transaction, so it published
+  everything at the end: ply 8 of `e601f9af` spent **632 seconds** across six provider rounds
+  (1.1s, 10.9s, 29s, 220s, **369s**, 2.8s) and delivered all fifteen of its events stamped the same
+  millisecond. Rounds are now announced as they finish, on a channel that carries no `seq`, is
+  never stored, and is superseded by the committed events — so the record is byte-identical whether
+  anyone was watching or not. Measured: the first frame lands a full second ahead of the commit on
+  a turn with two half-second rounds.
+- **Reasoning can stream token by token**, behind `LLM_STREAM` ([ADR-0035]). **Off**, and the
+  reason is the record rather than the risk: LiteLLM's streaming path reads `reasoning_content` and
+  drops `reasoning`, so on several providers the thinking never arrives — and an absent reasoning
+  field is indistinguishable from a model that did not reason, which makes it the one kind of
+  invariant-3 breach nothing downstream can flag. Turn it on per endpoint once `make smoke-llm`
+  shows that model keeping its reasoning through a streamed call.
+
+
 One model was described by two pages, and the numbers on them disagreed.
 
 ### Changed
@@ -333,4 +350,5 @@ flags the old code wrote.
 [ADR-0032]: docs/adr/0032-the-arithmetic-that-decides-a-request.md
 [ADR-0033]: docs/adr/0033-a-tail-budget-in-tokens-and-a-provider-that-cannot-count.md
 [ADR-0034]: docs/adr/0034-one-page-per-model.md
+[ADR-0035]: docs/adr/0035-live-frames-are-not-events.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0
