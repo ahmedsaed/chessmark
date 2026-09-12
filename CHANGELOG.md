@@ -32,6 +32,13 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **Two repairs for the games the above left behind.** `repair-transcripts` gained the mirror of
+  its existing rule — an assistant row whose `tool_calls` nothing answered, which every provider
+  refuses and which no resume can clear — so a game abandoned on one can be reopened.
+  `repair-verdict` re-ends a game the harness scored against the wrong party, by **appending** a
+  second `game_ended` rather than editing the first, so the log holds both endings and the
+  correction is checkable. `--replay` clears the tournament pairing separately, because a game's
+  record and an event's schedule are not one decision.
 - **Two games were forfeited for their endpoint's failure to parse a tool call** (ADR-0015).
   `dots-3-note-preview:free` frames its calls with its own vendor token and an Anthropic-shaped
   `<invoke>` inside it, which matched neither existing rule — so `832df0b7` and `27df21c2` ended as

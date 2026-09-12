@@ -1032,10 +1032,20 @@ async def test_a_turn_always_answers_its_tool_calls(
     Parameterised over the bound because the fault is a *path* that ends a turn, and the interesting
     ones are the edges: 0 ends it the moment the move lands, 3 lets it run past the script.
     """
+    # **The shape that actually did it**, from `a2e44449` ply 1: move, then read-only tools in the
+    # closing rounds, then one more real call as the bound is reached. `already_moved` short-
+    # circuits a repeated `make_move` before the calls run, which is why a script that only ever
+    # repeats itself never reproduced this.
     await play_turn(
         db,
         table,
-        scripted(step(tool_call("make_move", move="e4")), repeat_last=True),
+        scripted(
+            step(tool_call("make_move", move="e4")),
+            step(tool_call("get_board")),
+            step(tool_call("get_legal_moves")),
+            step(tool_call("get_move_history")),
+            repeat_last=True,
+        ),
         limits=TurnLimits(max_closing_rounds=bound),
     )
 
