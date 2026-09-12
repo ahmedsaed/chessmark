@@ -23,7 +23,20 @@ from chessmark.game import Colour
 #: Ratings are computed for the current version only (`bench/ratable.judge`), so the v1 games leave
 #: the leaderboard rather than mixing in. That is the point of versioning it: a rating across two
 #: different prompts measures neither.
-PROMPT_VERSION = "v2"
+#: Bumped to **v2.1** on 2026-09-13: the turn prompt now names the model's own colour and the
+#: opponent's last move.
+#:
+#: **Minor, so the v2 games stay on the board.** Both facts were already free — `get_board` reports
+#: the side to move and `get_move_history` the moves — so no model can now know anything it could
+#: not have asked for in the same turn at no cost. What changed is that it no longer has to: across
+#: one real 40-ply game `get_board` was the first call in 37 of 40 turns, and models were observed
+#: announcing the wrong colour and correcting themselves off the board, because the only statement
+#: of which side they were playing sat in the system prompt a hundred thousand tokens back.
+#:
+#: The position deliberately stays out. Holding a board across eighty moves *is* part of what this
+#: measures, so handing over a FEN each turn would be a major change — see `bench.ratable.same_task`
+#: and ADR-0038 for where that line is drawn.
+PROMPT_VERSION = "v2.1"
 
 _BASE = """\
 You are playing a game of chess as {colour} against {opponent}.
@@ -126,7 +139,46 @@ def build_system_prompt(
 
 #: The one message that carries per-turn state. Deliberately short: the board is available through
 #: tools, and repeating it here would bloat every turn of the transcript.
-TURN_PROMPT = "It is your move. Ply {ply}. Call `make_move` when you have decided."
+#: What a turn is answered against. **Per-turn facts live here, never in the system prompt** —
+#: interpolating any of this above would break the byte-identical prefix prompt caching depends on
+#: (ADR-0003, invariant 2). A new user message each turn is appended, not edited, so it is free.
+#:
+#: **Colour and the opponent's reply, because the model was re-deriving both every turn.**
+#: `get_board` was the first call in 37 of 40 turns across a real game, and the reason is here: the
+#: turn prompt named neither, so the only statement of which side a model is playing sat in the
+#: system prompt a hundred thousand tokens back, behind everything compaction had folded. Models
+#: were observed announcing the wrong colour and then correcting themselves off the board.
+#:
+#: Neither is new information: both are free through `get_board` and `get_move_history`, which is
+#: exactly why saying them costs the measurement nothing (ADR-0038). The **position** deliberately
+#: stays out — holding a board across eighty moves is part of what this measures, and handing over
+#: a FEN each turn would delete it.
+TURN_PROMPT = "It is your move as {colour}. Ply {ply}. Call `make_move` when you have decided."
+
+#: The same, when there is a move to answer. `{last}` is the opponent's reply in SAN.
+TURN_PROMPT_AFTER = (
+    "{opponent} played {last}. It is your move as {colour}. Ply {ply}. "
+    "Call `make_move` when you have decided."
+)
+
+
+def turn_prompt(*, colour: Colour, ply: int, last_move: str | None) -> str:
+    """The turn's user message.
+
+    Two shapes rather than one with an empty clause: a first move has no reply to answer, and
+    "Black played . It is your move" is the kind of seam a model reads as a missing fact.
+    """
+    if last_move is None:
+        return TURN_PROMPT.format(colour=colour.value, ply=ply)
+    return TURN_PROMPT_AFTER.format(
+        opponent=Colour.BLACK.value.capitalize()
+        if colour is Colour.WHITE
+        else Colour.WHITE.value.capitalize(),
+        last=last_move,
+        colour=colour.value,
+        ply=ply,
+    )
+
 
 #: Sent when a model replies without calling any tool. It gets exactly one of these (AGENT-05).
 NUDGE_PROMPT = (

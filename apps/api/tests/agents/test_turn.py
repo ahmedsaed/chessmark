@@ -14,7 +14,15 @@ from chessmark.agents.scripted import plays, prose, raw_tool_call, says, scripte
 from chessmark.agents.tools import MAX_MESSAGE_LENGTH, MAX_MESSAGES_PER_TURN
 from chessmark.agents.turn import MAX_NUDGES, TurnLimits
 from chessmark.db.enums import EventType, TurnStatus
-from chessmark.db.models import GameEvent, LlmCall, Message, Ply, ToolCall, Turn
+from chessmark.db.models import (
+    GameEvent,
+    LlmCall,
+    Message,
+    Ply,
+    ToolCall,
+    TranscriptMessage,
+    Turn,
+)
 from chessmark.game import Colour, GameResult, Termination
 from tests.agents.conftest import Table, play_turn, seat
 
@@ -980,8 +988,10 @@ async def test_a_model_that_will_not_stop_is_stopped(db: AsyncSession, table: Ta
 
     assert result.status is TurnStatus.COMPLETED
     assert result.move is not None and result.move.move.san == "e4"
-    # The move, the two rounds it was allowed to not stop in, and the one that hits the bound.
-    assert result.llm_calls == 4
+    # The move, then the two rounds it was allowed to not stop in. The bound is checked *after*
+    # each round's tool calls have been answered — never between the assistant message and its
+    # results — so the round that reaches it is the last one, not an extra one.
+    assert result.llm_calls == 3
 
 
 async def test_a_move_that_ends_the_game_ends_the_turn(db: AsyncSession, table: Table) -> None:
@@ -998,3 +1008,46 @@ async def test_a_move_that_ends_the_game_ends_the_turn(db: AsyncSession, table: 
     assert len(model.calls) == 1  # type: ignore[attr-defined]
     assert result.outcome is not None
     assert result.outcome.termination is Termination.CHECKMATE
+
+
+@pytest.mark.parametrize("bound", [0, 1, 2, 3])
+async def test_a_turn_always_answers_its_tool_calls(
+    db: AsyncSession, table: Table, bound: int
+) -> None:
+    """**The invariant a turn may never leave broken**, whatever ends it.
+
+    The assistant message carrying a round's `tool_calls` is appended *before* those calls run, so
+    any path that ends the turn between the two leaves it with calls and no results. Every provider
+    refuses that, for that seat, for the rest of the game:
+
+        TOOL_CALLS_MISSING_RESULTS: An assistant message with 'tool_calls' must be followed by
+        tool results
+
+    The transcript is append-only (ADR-0003), so no retry, pause or resume clears it — one such row
+    is terminal for the seat. `a2e44449` died of exactly this message in production two days after
+    `max_closing_rounds` shipped; whether that check was the path is unproven, and it does not need
+    to be for this to be worth pinning. `_run_tool_calls` has warned about it in its docstring since
+    it was written, and the new bound was placed on the wrong side of it.
+
+    Parameterised over the bound because the fault is a *path* that ends a turn, and the interesting
+    ones are the edges: 0 ends it the moment the move lands, 3 lets it run past the script.
+    """
+    await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("make_move", move="e4")), repeat_last=True),
+        limits=TurnLimits(max_closing_rounds=bound),
+    )
+
+    rows = list(
+        await db.scalars(
+            sa.select(TranscriptMessage)
+            .where(TranscriptMessage.player_id == table.white.id)
+            .order_by(TranscriptMessage.seq)
+        )
+    )
+    answered = {r.tool_call_id for r in rows if r.role == "tool" and r.tool_call_id}
+    asked = {call["id"] for r in rows if r.role == "assistant" for call in (r.tool_calls or [])}
+
+    assert asked, "the turn made tool calls"
+    assert asked <= answered, f"unanswered tool calls left in the transcript: {asked - answered}"

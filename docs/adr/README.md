@@ -43,6 +43,7 @@ supersedes the old one, rather than an edit.
 | [0035](0035-live-frames-are-not-events.md) | A turn streams as it happens, and what streams is not an event | Accepted |
 | [0036](0036-a-lost-reasoning-trace-announces-itself.md) | A lost reasoning trace announces itself, so streaming can be on | Accepted |
 | [0037](0037-a-turn-ends-when-the-model-stops.md) | A turn ends when the model stops, not when it moves | Accepted |
+| [0038](0038-a-prompt-version-has-two-parts.md) | A prompt version has two parts, and only one invalidates a result | Accepted |
 
 ## Template
 

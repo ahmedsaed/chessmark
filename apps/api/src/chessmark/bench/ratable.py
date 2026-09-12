@@ -84,6 +84,42 @@ RATED_TERMINATIONS = frozenset(
 )
 
 
+def major(version: str | None) -> str | None:
+    """The part of a prompt version that says *what task this is*.
+
+    `v2.1` and `v2` are the same task; `v3` is a different one. See `same_task`.
+    """
+    if version is None:
+        return None
+    return version.split(".", 1)[0]
+
+
+def same_task(played: str | None, current: str | None) -> bool:
+    """Whether a game played under `played` may be rated alongside one played under `current`.
+
+    **Two kinds of prompt change, and only one of them invalidates a result.**
+
+    A *major* bump means the task changed: a new rule the model is scored against, a different tool
+    surface, a different definition of winning. v1 → v2 was one of those — the automatic draw rules
+    were added, and before that a model could lose half a point to a rule it had never been told
+    existed (ADR-0020). A rating computed across that boundary measures neither side of it, so the
+    older games leave the board.
+
+    A *minor* bump means the same task, stated more conveniently. v2 → v2.1 added the model's own
+    colour and the opponent's last move to the turn prompt — **both already free** through
+    `get_board` and `get_move_history`, which is the test that makes it minor: no model can now
+    know anything it could not have asked for, in the same turn, at no cost (ADR-0038). What
+    changed is how many tool calls it takes to be told, and that is not what the leaderboard
+    reports.
+
+    Every game keeps its exact version in the record either way, so a reader can always separate
+    them; this decides only whether a rating may span the boundary. The distinction is a judgement
+    made once per change and written down in an ADR, not inferred here — the code's job is to
+    honour it, and the honest risk is that "minor" is always the more convenient answer.
+    """
+    return major(played) == major(current)
+
+
 @dataclass(frozen=True, slots=True)
 class Verdict:
     """Whether a game counts, and — when it does not — a sentence saying why.
@@ -160,7 +196,7 @@ def judge(facts: GameFacts, *, prompt_version: str | None = None) -> Verdict:
         if pinned is not None and used and used[0] != pinned:
             return Verdict(False, f"pinned to {pinned} but served by {used[0]}")
 
-    if prompt_version is not None and facts.prompt_version != prompt_version:
+    if prompt_version is not None and not same_task(facts.prompt_version, prompt_version):
         return Verdict(
             False,
             f"played under prompt {facts.prompt_version}, ratings are for {prompt_version}",

@@ -33,6 +33,12 @@ MANGLED_MARKUP = re.compile(
         <\uff5c[A-Z]+\uff5c(?:tool_calls|invoke)>
       | <\|[a-z_]+\|>\s*(?:tool_calls|invoke) # the ASCII-pipe variant of the same
       | <tool_call>                            # Qwen / Hermes style
+        # Dots Studio, seen live on `dots-3-note-preview:free`. Its own framing token, and the
+        # `<invoke name=...>` inside it is Anthropic-shaped without the `<function_calls>` wrapper
+        # that rule anchors on — so neither pattern caught it and the model was forfeited twice
+        # for markup its endpoint failed to parse. Anchored on the vendor token, which nothing
+        # else emits.
+      | <dots_function_call>
       | <function_calls?>                      # Anthropic-style XML
       | <\|python_tag\|>                       # Llama tool syntax
     )""",
