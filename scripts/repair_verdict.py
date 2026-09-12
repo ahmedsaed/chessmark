@@ -110,7 +110,7 @@ async def main() -> int:
                 game_id=game.id,
                 type=EventType.GAME_ENDED,
                 payload={
-                    "result": str(GameResult.UNFINISHED),
+                    "result": str(GameResult.ONGOING),
                     "winner": None,
                     "termination": str(Termination.ABANDONED),
                     "ply_count": game.ply_count,
@@ -121,7 +121,7 @@ async def main() -> int:
 
             game.status = GameStatus.ABORTED
             game.termination = Termination.ABANDONED
-            game.result = GameResult.UNFINISHED
+            game.result = GameResult.ONGOING
             game.winner_colour = None
 
             print(f"{GREEN}re-ended as abandoned{OFF}")
