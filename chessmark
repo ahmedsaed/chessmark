@@ -164,6 +164,10 @@ cmd_repair() { # supersede transcript rows no provider will accept:  ./chessmark
   api_script repair_transcripts.py "$@"
 }
 
+cmd_repair-verdict() { # re-end a game scored against the wrong party:  ./chessmark repair-verdict <id> --reason '..' --write
+  api_script repair_verdict.py "$@"
+}
+
 cmd_repair-forfeits() { # make forfeit flags agree with their games:  ./chessmark repair-forfeits --write
   # Reports by default and writes nothing. `Player.forfeited` is a stored verdict and a published
   # one — it is the leaderboard's forfeits column — so a stale flag is a claim about a model on a
@@ -276,6 +280,10 @@ echo "select count(*) from games;" | ./chessmark sql'
 ./chessmark repair --game <game-id>      # look at one game
 
 # Then reopen anything that was abandoned on it:  ./chessmark resume <game-id>'
+  [repair-verdict]="./chessmark repair-verdict <id> --reason '..'      # report only; writes nothing
+./chessmark repair-verdict <id> --reason '..' --write    # re-end it as abandoned
+./chessmark repair-verdict <id> --reason '..' --replay --write
+                                         # ...and free the pool pairing to be scheduled again"
   [repair-forfeits]='./chessmark repair-forfeits              # report only; writes nothing
 ./chessmark repair-forfeits --write      # apply
 ./chessmark repair-forfeits --game <id>  # look at one game
@@ -329,6 +337,7 @@ ${AMBER}games${OFF}
 $(row latency)
 $(row resume)
 $(row repair)
+$(row repair-verdict)
 $(row repair-forfeits)
 
 ${AMBER}tournaments${OFF}
@@ -357,9 +366,16 @@ row() { printf '  %-15s %s\n' "$1" "$(describe "$1")"; }
 main() {
   local name="${1:-help}"
   shift || true
-  # A hyphen reads better on a command line than an underscore and cannot appear in a function
-  # name, so the two are translated here rather than every hyphenated command being spelled twice.
-  name="${name//-/_}"
+
+  # **The name as typed first.** Bash does allow a hyphen in a function name — `cmd_repair-forfeits`
+  # has had one for weeks — so translating every hyphen to an underscore did not add a spelling,
+  # it shadowed one, and `./chessmark repair-forfeits` answered "no command" for a command that
+  # was right there. Falling back to the underscore form keeps both readings working, which is
+  # what a dispatcher for a tool people type at is for.
+  if ! declare -F "cmd_$name" >/dev/null; then
+    name="${name//-/_}"
+  fi
+
   if declare -F "cmd_$name" >/dev/null; then
     "cmd_$name" "$@"
   else
