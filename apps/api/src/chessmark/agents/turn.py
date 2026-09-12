@@ -453,7 +453,13 @@ class TurnRunner:
             game_id=self.game.id,
             turn_id=turn.id,
             role="user",
-            content=prompts.TURN_PROMPT.format(ply=self.referee.ply + 1),
+            # The same board `get_move_history` reads, so the prompt and the tool can never
+            # disagree about what was just played.
+            content=prompts.turn_prompt(
+                colour=self.colour,
+                ply=self.referee.ply + 1,
+                last_move=next(reversed(self.referee.board.history_san()), None),
+            ),
         )
 
         try:
@@ -1040,17 +1046,28 @@ class TurnRunner:
                     continue
                 return
 
+            if await self._run_tool_calls(turn, result, completion.tool_calls):
+                return
+
+            # **After the calls have been answered, never before them.** The assistant message
+            # carrying them is already in the transcript by this point, and returning here without
+            # running them leaves it with `tool_calls` and no `tool` results — which every provider
+            # refuses, for that seat, for the rest of the game:
+            #
+            #     TOOL_CALLS_MISSING_RESULTS: An assistant message with 'tool_calls' must be
+            #     followed by tool results
+            #
+            # The transcript is append-only (ADR-0003), so no retry, pause or resume can clear it.
+            # It abandoned `a2e44449` at ply 2. `_run_tool_calls` has said so in its docstring the
+            # whole time — *"a missing result corrupts the transcript for every later turn"* — and
+            # this check was written on the wrong side of it.
             if self._move_committed:
                 self._closing_rounds += 1
                 if self._closing_rounds > self.limits.max_closing_rounds:
-                    # It is still calling tools against a move it has already made. The ply is
-                    # committed and the game is sound, so this ends the turn rather than failing
-                    # it — the model did everything the game asked of it and then some.
+                    # Still calling tools against a move it has already made. The ply is committed
+                    # and the game is sound, so this ends the turn rather than failing it.
                     result.status = TurnStatus.COMPLETED
                     return
-
-            if await self._run_tool_calls(turn, result, completion.tool_calls):
-                return
 
         # **A move was played; the model simply never stopped talking.** The ply is committed and
         # the game is sound, so the turn completed — forfeiting here would take a game away from a

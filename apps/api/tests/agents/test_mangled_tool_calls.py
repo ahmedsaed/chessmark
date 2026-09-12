@@ -108,3 +108,37 @@ def test_ordinary_chess_prose_is_not_mangled() -> None:
     assert not mangled_tool_call(
         completion(reasoning="The Sicilian is sharp. I'll play c5 and fight for the centre.")
     )
+
+
+def test_dots_studio_markup_is_recognised() -> None:
+    """**Two games were forfeited on this**, live, days after this rule was written.
+
+    `dots-3-note-preview:free` frames its calls with its own vendor token and puts an
+    Anthropic-shaped `<invoke name=...>` inside it — so the DSML rule missed it (wrong delimiter)
+    and the `<function_calls>` rule missed it too (no wrapper). The model was acting; its endpoint
+    was not parsing it, and it lost `832df0b7` at ply 75 and `27df21c2` at ply 54 for "replying
+    without calling a tool" — the exact claim this file exists to stop being published.
+
+    Verbatim from the first of those.
+    """
+    assert mangled_tool_call(
+        completion(
+            reasoning=(
+                '<dots_function_call> <invoke name="make_move"> '
+                '<parameter name="move"> Rg7 </parameter> </invoke> </dots_function_call>'
+            )
+        )
+    )
+
+
+def test_a_dots_response_that_did_call_a_tool_is_fine() -> None:
+    """Both halves, as ever. A model whose call *was* parsed has nothing wrong with it, and
+    laundering that into an abandoned game is the more flattering mistake."""
+    assert not mangled_tool_call(
+        completion(
+            reasoning='<dots_function_call> <invoke name="get_board"> </invoke> </dots_function_call>',
+            tool_calls=[
+                ToolInvocation(id="c1", name="get_board", arguments={}, raw_arguments="{}")
+            ],
+        )
+    )

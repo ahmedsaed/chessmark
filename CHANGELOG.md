@@ -17,6 +17,43 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **The turn prompt names the model's colour and the opponent's last move** ([ADR-0038]). It said
+  only *"It is your move. Ply 30."*, so the single statement of which side a model was playing sat
+  in the system prompt a hundred thousand tokens back, behind everything compaction had folded —
+  and models were observed announcing the wrong colour and correcting themselves off the board.
+  `get_board` was the **first call in 37 of 40 turns** of a real game, which is what that prompt
+  asks for. The position stays out: holding a board across eighty moves is part of what this
+  measures.
+- **A prompt version has two parts, and ratings span a minor bump** ([ADR-0038]). `v2` → `v2.1`
+  states the same task more conveniently — both new facts were already free through `get_board` and
+  `get_move_history` — so the 68 games played under `v2` keep counting. A major bump still means a
+  different task and still clears the board, as `v1` → `v2` did. Every game keeps its exact version
+  either way.
+
+### Fixed
+
+- **Two repairs for the games the above left behind.** `repair-transcripts` gained the mirror of
+  its existing rule — an assistant row whose `tool_calls` nothing answered, which every provider
+  refuses and which no resume can clear — so a game abandoned on one can be reopened.
+  `repair-verdict` re-ends a game the harness scored against the wrong party, by **appending** a
+  second `game_ended` rather than editing the first, so the log holds both endings and the
+  correction is checkable. `--replay` clears the tournament pairing separately, because a game's
+  record and an event's schedule are not one decision.
+- **Two games were forfeited for their endpoint's failure to parse a tool call** (ADR-0015).
+  `dots-3-note-preview:free` frames its calls with its own vendor token and an Anthropic-shaped
+  `<invoke>` inside it, which matched neither existing rule — so `832df0b7` and `27df21c2` ended as
+  *"replied without calling a tool 4 times in a row"*, a claim about a model manufactured entirely
+  by its host. It has one endpoint, so there is nowhere to route around it; recognising the markup
+  is the whole of the fix.
+- **A turn could end between a tool call and its result** ([ADR-0037]). `max_closing_rounds` was
+  checked before `_run_tool_calls` rather than after, and the assistant message carrying the calls
+  is appended before they run — so the transcript could be left with `tool_calls` and no results,
+  which every provider refuses for that seat for the rest of the game. The transcript is
+  append-only, so no retry, pause or resume clears it.
+
+
+### Added
+
 - **A turn streams as it happens** ([ADR-0035]). A turn is one transaction, so it published
   everything at the end: ply 8 of `e601f9af` spent **632 seconds** across six provider rounds
   (1.1s, 10.9s, 29s, 220s, **369s**, 2.8s) and delivered all fifteen of its events stamped the same

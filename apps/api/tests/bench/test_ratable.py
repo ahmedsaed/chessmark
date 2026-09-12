@@ -14,6 +14,7 @@ from chessmark.bench.ratable import (
     RATED_TERMINATIONS,
     GameFacts,
     judge,
+    same_task,
 )
 from chessmark.game import Termination
 
@@ -226,3 +227,47 @@ def test_the_reason_is_always_populated_on_a_refusal() -> None:
         verdict = judge(bad)
         assert not verdict
         assert verdict.reason, "a refusal with no reason cannot be explained to a reader"
+
+
+# ====================================================================== major and minor (ADR-0038)
+
+
+class TestAPromptVersionThatDidNotChangeTheTask:
+    """**Two kinds of prompt change, and only one invalidates a result.**
+
+    v1 → v2 added the automatic draw rules: before it, a model could lose half a point to a rule it
+    had never been told existed (ADR-0020). That is a different task, and a rating across it
+    measures neither side.
+
+    v2 → v2.1 added the model's own colour and the opponent's last move to the turn prompt — both
+    already free through `get_board` and `get_move_history`. No model can now know anything it
+    could not have asked for in the same turn at no cost; it simply no longer has to. Discarding
+    68 real games over that would throw away the record to record a distinction that is not there.
+    """
+
+    def test_a_minor_bump_keeps_the_older_games(self) -> None:
+        assert same_task("v2", "v2.1")
+        assert same_task("v2.1", "v2")
+
+    def test_a_major_bump_does_not(self) -> None:
+        assert not same_task("v1", "v2")
+        assert not same_task("v2.1", "v3")
+
+    def test_two_minors_of_one_major_are_the_same_task(self) -> None:
+        assert same_task("v2.1", "v2.4")
+
+    def test_a_game_from_the_previous_minor_is_still_ratable(self) -> None:
+        """The property that matters, through `judge` rather than the helper."""
+        verdict = judge(facts(prompt_version="v2"), prompt_version="v2.1")
+
+        assert verdict, verdict.reason
+
+    def test_a_game_from_the_previous_major_is_not(self) -> None:
+        verdict = judge(facts(prompt_version="v1"), prompt_version="v2.1")
+
+        assert not verdict
+        assert "prompt" in verdict.reason
+
+    def test_an_unversioned_game_is_not_smuggled_in(self) -> None:
+        """`None` is not "any version" — it is a game from before the field existed."""
+        assert not same_task(None, "v2.1")

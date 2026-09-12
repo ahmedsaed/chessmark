@@ -321,7 +321,7 @@ async def test_a_context_length_refusal_compacts_and_retries(
     # Refused, summarised, then played — and then the closing rounds, which this scripted model
     # spends re-calling `make_move` because `repeat_last` makes it repeat itself forever. A real
     # model stops; `max_closing_rounds` is what stops one that will not.
-    assert model.calls == 6
+    assert model.calls == 5
 
     events = await _compacted(db, table)
     assert len(events) == 1

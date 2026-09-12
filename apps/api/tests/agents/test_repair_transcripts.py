@@ -22,7 +22,9 @@ from chessmark.db.models import TranscriptMessage
 from tests.agents.conftest import Table
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "scripts"))
-_unsendable = importlib.import_module("repair_transcripts")._unsendable
+_repair = importlib.import_module("repair_transcripts")
+_unsendable = _repair._unsendable
+_ids_without_results = _repair._ids_without_results
 
 pytestmark = pytest.mark.integration
 
@@ -87,3 +89,140 @@ async def test_an_already_superseded_row_is_not_offered_again(
     await db.flush()
 
     assert await _ids(db) == []
+
+
+# ====================================================================== unanswered tool calls
+
+
+async def _unanswered_ids(db: AsyncSession, game: str | None = None) -> set[int]:
+    return await _ids_without_results(db, game)
+
+
+class TestAnAssistantRowNothingAnswered:
+    """The mirror image of the rule above, and the one that abandoned `a2e44449` at ply 2.
+
+    Every provider refuses an assistant message whose `tool_calls` nothing answered —
+    *"TOOL_CALLS_MISSING_RESULTS: An assistant message with 'tool_calls' must be followed by tool
+    results"* — and the transcript is append-only, so one such row finishes that seat for the rest
+    of the game. `max_closing_rounds` wrote them for two days (ADR-0037).
+    """
+
+    async def test_a_call_with_no_result_is_found(self, db: AsyncSession, table: Table) -> None:
+        row = await _row(
+            db,
+            table,
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "get_board", "arguments": "{}"},
+                }
+            ],
+        )
+
+        assert row.id in await _unanswered_ids(db)
+
+    async def test_a_call_with_its_result_is_not(self, db: AsyncSession, table: Table) -> None:
+        """The overwhelming majority of assistant rows. A rule that caught these would supersede a
+        working transcript and break the game it was run to repair."""
+        row = await _row(
+            db,
+            table,
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "get_board", "arguments": "{}"},
+                }
+            ],
+        )
+        await transcript.append_message(
+            db,
+            player_id=table.white.id,
+            game_id=table.game.id,
+            role="tool",
+            content="{}",
+            tool_call_id="c1",
+        )
+        await db.flush()
+
+        assert row.id not in await _unanswered_ids(db)
+
+    async def test_one_unanswered_call_among_several_is_enough(
+        self, db: AsyncSession, table: Table
+    ) -> None:
+        """A response may carry several calls, and the provider requires a result for **each**. A
+        rule reading "any answered" would leave the row that still refuses every later turn."""
+        row = await _row(
+            db,
+            table,
+            tool_calls=[
+                {
+                    "id": "a",
+                    "type": "function",
+                    "function": {"name": "get_board", "arguments": "{}"},
+                },
+                {"id": "b", "type": "function", "function": {"name": "say", "arguments": "{}"}},
+            ],
+        )
+        await transcript.append_message(
+            db,
+            player_id=table.white.id,
+            game_id=table.game.id,
+            role="tool",
+            content="{}",
+            tool_call_id="a",
+        )
+        await db.flush()
+
+        assert row.id in await _unanswered_ids(db)
+
+    async def test_another_seat_s_result_does_not_count(
+        self, db: AsyncSession, table: Table
+    ) -> None:
+        """Tool-call ids are the provider's and are not unique across seats — `a2e44449` carried
+        `get_board_6qd71hvdfemd` on one side and `call_868e...` on the other, but a scripted or
+        retried game can repeat one. Matching on the id alone would call a broken transcript whole
+        because the *opponent* answered a call of the same name."""
+        row = await _row(
+            db,
+            table,
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "get_board", "arguments": "{}"},
+                }
+            ],
+        )
+        await transcript.append_message(
+            db,
+            player_id=table.black.id,
+            game_id=table.game.id,
+            role="tool",
+            content="{}",
+            tool_call_id="c1",
+        )
+        await db.flush()
+
+        assert row.id in await _unanswered_ids(db)
+
+    async def test_a_superseded_row_is_left_alone(self, db: AsyncSession, table: Table) -> None:
+        """Running the repair twice must be a no-op, not a second pass over rows already folded."""
+        import datetime as dt
+
+        row = await _row(
+            db,
+            table,
+            tool_calls=[
+                {
+                    "id": "c1",
+                    "type": "function",
+                    "function": {"name": "get_board", "arguments": "{}"},
+                }
+            ],
+        )
+        row.superseded_at = dt.datetime.now(dt.UTC)
+        await db.flush()
+
+        assert row.id not in await _unanswered_ids(db)

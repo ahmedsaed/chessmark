@@ -77,6 +77,9 @@ resume: ## Reopen a game the harness stopped: make resume GAME=<id> USD=1.50
 repair-transcripts: ## Supersede transcript rows no provider will accept. ARGS=--write to apply
 	cd $(API) && uv run python ../../scripts/repair_transcripts.py $(ARGS)
 
+repair-verdict: ## Re-end a game scored against the wrong party. ARGS="<id> --reason '..' --write"
+	cd $(API) && uv run python ../../scripts/repair_verdict.py $(ARGS)
+
 repair-forfeits: ## Make forfeit flags agree with their games. ARGS=--write to apply
 	cd $(API) && uv run python ../../scripts/repair_forfeits.py $(ARGS)
 
