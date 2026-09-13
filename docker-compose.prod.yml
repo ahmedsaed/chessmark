@@ -125,7 +125,12 @@ services:
     #   docker compose run --rm tournament create --name '…' --slug x --free --format pool
     # rather than a path into the image.
     entrypoint: ["python", "/app/scripts/tournament.py"]
-    command: ["run", "${TOURNAMENT_SLUG:-pool-free}", "--interval", "${TOURNAMENT_INTERVAL:-30}"]
+    # **No slug: it ticks every unfinished tournament it can find** (OPS-24). It used to name one
+    # from `TOURNAMENT_SLUG`, which meant `tournament create` produced an event nothing would ever
+    # tick and `tournament abandon` left this ticking a corpse — both silent, both needing an
+    # `.env` edit and a restart to put right. Which events exist is the database's business, and
+    # the CLI already manages it.
+    command: ["run", "--interval", "${TOURNAMENT_INTERVAL:-30}"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
