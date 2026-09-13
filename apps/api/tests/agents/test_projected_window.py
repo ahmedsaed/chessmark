@@ -34,11 +34,17 @@ from tests.agents.conftest import Table, play_turn
 
 pytestmark = pytest.mark.integration
 
-#: ~600,000 characters, which at the rate the seat below measures for itself is around 150,000
-#: tokens — enough that the room left for an answer stops being the 64,000 we ask for and starts
-#: being what the window can actually spare. It stands in for the ~27,000 tokens of its own
-#: reasoning that `ed491262`'s seat replayed every single turn.
-BALLAST = "position " * 66_667
+#: ~730,000 characters, standing in for the ~27,000 tokens of its own reasoning that
+#: `ed491262`'s seat replayed every single turn.
+#:
+#: **Large enough to dominate the transcript**, which is what keeps the test from being a tripwire
+#: on the system prompt's length. An earlier version let the rate emerge from a scripted token
+#: count over whatever the opening request happened to weigh, and the projection landed at 128,073
+#: against a 131,904 floor — so ADR-0040 lengthening the prompt by a few hundred characters, which
+#: has nothing to do with any of this, failed it. The rate is pinned below and the ballast is most
+#: of what it converts, so a prompt edit moves the result by a few hundred tokens rather than
+#: across the assertion.
+BALLAST = "position " * 81_000
 
 
 async def _register(db: AsyncSession, *, slug: str, context: int) -> None:
@@ -71,45 +77,56 @@ async def test_the_output_bound_follows_a_transcript_that_grew(
 ) -> None:
     """The failure, in miniature: measure, append a great deal, then ask for output.
 
-    Without the projection the second call is sized `context - 40,000 - framing`, because 40,000 is
-    what the provider said about a request that no longer resembles the one going out. That is the
-    62,545 tokens `ed491262` was cleared to generate against a prompt with half that room.
+    Without the projection the last call is sized against 1,000 tokens, because that is what the
+    provider said about a request that no longer resembles the one going out — and it asks for the
+    whole 64,000. That is the 62,545 tokens `ed491262` was cleared to generate against a prompt
+    with half that room.
     """
     slug = "scripted/grew"
     await _register(db, slug=slug, context=200_000)
 
+    # A turn that leaves a great deal behind it, exactly as a reasoning model replaying 27,000
+    # tokens of its own thinking does every turn.
     await play_turn(
         db,
         table,
-        scripted(
-            # A modest, honest measurement: ~1,000 tokens for the few thousand characters this
-            # opening request actually carries. That pairing is the rate everything below reads.
-            step(tool_call("get_board"), prompt_tokens=1_000),
-            # A reply that puts a great deal back into the transcript, exactly as a reasoning model
-            # replaying 27,000 tokens of its own thinking does every turn.
-            step(tool_call("make_move", move="e4"), content=BALLAST, prompt_tokens=1_100),
-            step(content="Played e4.", prompt_tokens=1_100),
-        ),
+        scripted(step(tool_call("make_move", move="e4"), content=BALLAST)),
+        model=slug,
+        colour=Colour.WHITE,
+    )
+    await play_turn(
+        db, table, scripted(step(tool_call("make_move", move="e5"))), colour=Colour.BLACK
+    )
+
+    # **The rate, stated rather than inferred.** 1,000 tokens for 5,000 characters is the ~0.2
+    # tokens per character a real chess transcript runs at; pinning it here is what makes the
+    # assertion about the projection instead of about how long the system prompt happens to be.
+    table.white.last_prompt_tokens = 1_000
+    table.white.last_prompt_characters = 5_000
+    await db.commit()
+
+    before = len(await _asked(db))
+    await play_turn(
+        db,
+        table,
+        scripted(step(tool_call("make_move", move="d4"))),
         model=slug,
         colour=Colour.WHITE,
     )
 
-    asked = await _asked(db)
-    assert asked[1] == 64_000, (
-        "before the ballast lands there is room for everything we ask for, so this call is the "
-        "control: the difference below is the transcript, not the arithmetic"
+    asked = (await _asked(db))[before]
+    assert asked is not None and asked < 64_000, (
+        "the transcript in front of this call is ~730,000 characters. Sized against the 1,000 "
+        "tokens last measured it would ask for the full 64,000 — reading the previous request's "
+        "count is the whole of ADR-0039's bug"
     )
-    assert asked[2] is not None and asked[2] < 64_000, (
-        "the third call goes out with the ballast in front of it. Sized against the previous "
-        "request's 1,100 tokens it would ask for the full 64,000 — which is exactly how "
-        "`ed491262` was cleared to generate 62,545 tokens against a prompt with half that room"
-    )
+
     # What the bound implies we think the prompt now is, read back out of the arithmetic.
-    projected = 200_000 - FRAMING_TOKENS - asked[2]
-    assert 130_000 < projected < 180_000, (
-        f"{projected} tokens for ~600,000 characters of ballast is the rate this seat measured "
-        "for itself, not a constant anybody chose — a figure outside this band means the "
-        "projection is reading a pair that does not describe one transcript"
+    projected = 200_000 - FRAMING_TOKENS - asked
+    assert 120_000 < projected < 180_000, (
+        f"{projected} tokens for ~730,000 characters at the seat's own measured rate — a figure "
+        "outside this band means the projection is reading a token count and a character count "
+        "that do not describe one transcript"
     )
 
 

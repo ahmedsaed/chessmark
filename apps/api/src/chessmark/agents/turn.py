@@ -47,7 +47,7 @@ from chessmark.agents.tools import (
 from chessmark.agents.types import Completion, LlmError, RateLimit, ToolInvocation
 from chessmark.db.enums import EventType, ModerationStatus, TurnStatus
 from chessmark.db.models import Game, LlmCall, Message, Player, ToolCall, Turn
-from chessmark.db.repositories import append_event, record_ply
+from chessmark.db.repositories import append_event, open_draw_offer, record_ply
 from chessmark.game import (
     FORFEIT_TERMINATIONS,
     Colour,
@@ -322,6 +322,7 @@ async def ensure_system_prompt(
             colour=Colour(player.colour),
             opponent=opponent_name,
             max_illegal_retries=game.max_illegal_retries,
+            max_nudges=MAX_NUDGES,
             trash_talk_enabled=game.trash_talk_enabled,
         ),
     )
@@ -447,6 +448,13 @@ class TurnRunner:
             ),
         )
 
+        # **Read once, at the top of the turn** (ADR-0040). It decides both what this turn's prompt
+        # says and whether `accept_draw` can succeed, and those two must not be able to disagree:
+        # telling a model an offer is open and then refusing its acceptance would be the worst of
+        # both. `ToolDispatcher` is synchronous and holds no session, so it is handed the answer.
+        offered_by = await open_draw_offer(self.session, game=self.game)
+        self.dispatcher.draw_offered = offered_by is not None and offered_by != self.player.id
+
         await transcript.append_message(
             self.session,
             player_id=self.player.id,
@@ -459,6 +467,7 @@ class TurnRunner:
                 colour=self.colour,
                 ply=self.referee.ply + 1,
                 last_move=next(reversed(self.referee.board.history_san()), None),
+                draw_offered=self.dispatcher.draw_offered,
             ),
         )
 
@@ -1187,6 +1196,9 @@ class TurnRunner:
                 ),
             )
 
+            if tool_result.offers_draw:
+                await self._record_draw_offer(turn)
+
             if tool_result.message is not None:
                 await self._record_said(turn, tool_result.message)
                 await self.live.send(
@@ -1400,7 +1412,7 @@ class TurnRunner:
             game_id=self.game.id,
             turn_id=turn.id,
             role="user",
-            content=prompts.NUDGE_PROMPT,
+            content=prompts.nudge_prompt(remaining=MAX_NUDGES - self._nudges + 1),
         )
         return True
 
@@ -1488,6 +1500,30 @@ class TurnRunner:
                 "uci": move.move.uci,
                 "fen": move.fen_after,
                 "check": move.move.is_check,
+            },
+        )
+
+    async def _record_draw_offer(self, turn: Turn) -> None:
+        """Record the offer and put it in front of the opponent (ADR-0040).
+
+        `offer_draw` used to do neither: it returned "Draw offered" to the seat that called it and
+        stopped there, so in every model-vs-model game ever played the opponent was never told. The
+        only code that recorded an offer was the human path.
+
+        One `game_events` row, as every state change gets (invariant 7), and it is that row —
+        rather than anything stored on the game — that `open_draw_offer` reads at the top of the
+        opponent's next turn. Nothing is appended to the opponent's transcript here: their turn
+        prompt carries it, which keeps the offer in the one message that says what has happened
+        since they last acted, and keeps the byte-stable history a single append per turn.
+        """
+        await append_event(
+            self.session,
+            game_id=self.game.id,
+            type=EventType.DRAW_OFFERED,
+            payload={
+                "player_id": str(self.player.id),
+                "colour": self.colour.value,
+                "ply": self.referee.ply,
             },
         )
 
