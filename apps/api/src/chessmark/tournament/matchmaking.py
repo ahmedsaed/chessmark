@@ -32,12 +32,28 @@ the same rate-limited Google pool, were paired against each other **seven times 
 never made a single move**: each game paused until the 24-hour window ran out, was abandoned,
 recorded nothing, and was chosen again within the hour. Attempting a pairing is what makes it a
 rematch; whether it survived is a separate question.
+
+## Two policies, one driver (ADR-0041)
+
+Everything above describes `Policy.INFORMATION`, and it optimises the right thing for a young
+pool and the wrong thing for a leaderboard. It contains no fairness term at all, so after 123
+pairings `pool-free` had **44% pair coverage**, one entrant on 25 pairings and another on 1.
+
+`Policy.BALANCE` — the default — asks a different question: *who is furthest behind?* Take the
+entrant with the fewest pairings, then its least-met opponent. It is a greedy incremental round
+robin, and over a dynamic field it converges on what a fixed schedule would give without ever
+writing one down, which is what a pool needs: its entrants come and go with the catalogue, so
+there is no fixture list to freeze.
+
+The driver below — batching, colours, round numbers, availability — is shared. Only the two
+comparisons differ, which is the whole reason this is a policy rather than a second function.
 """
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 
 from chessmark.tournament.pairing import _colour_balance, ordered
 from chessmark.tournament.types import Entrant, Pairing, Result
@@ -45,6 +61,88 @@ from chessmark.tournament.types import Entrant, Pairing, Result
 #: A rating point of separation is worth this much when weighed against a rematch. Set so that any
 #: unmet opponent beats any already-met one: no plausible rating gap reaches it.
 _REMATCH_PENALTY = 100_000.0
+
+
+class Policy(StrEnum):
+    """Which question the matchmaker asks when it chooses the next game.
+
+    The driver is the same either way. What differs is two comparisons, and the difference between
+    them is the difference between a pool that measures well and a pool that measures fairly.
+    """
+
+    #: *Who is furthest behind?* Fewest pairings first, then the least-met opponent. A greedy
+    #: incremental round robin: over a changing field it converges on the coverage a fixed schedule
+    #: would give, without a schedule to invalidate when an entrant joins or leaves.
+    BALANCE = "balance"
+
+    #: *Whose next game teaches us most?* Highest rating deviation first, then the nearest-rated
+    #: opponent who is not a rematch. Right for a young pool where most entrants are unrated;
+    #: wrong for a leaderboard, because it contains no fairness term at all.
+    INFORMATION = "information"
+
+
+@dataclass(frozen=True, slots=True)
+class _Board:
+    """Everything the policies compare, and nothing else.
+
+    Assembled once per call and mutated as a batch is built, so the second game of a batch sees the
+    first. `played` is derived from `met` rather than carried separately: a pairing is a pairing
+    whether or not it produced a result, which is the count that matters here and the one that
+    keeps counting when a model abandons every game it is given.
+    """
+
+    known: dict[str, Form]
+    met: dict[frozenset[str], int]
+    played: dict[str, int]
+
+    def meetings(self, home: str, away: str) -> int:
+        return self.met.get(frozenset({home, away}), 0)
+
+    def record(self, home: str, away: str) -> None:
+        pair = frozenset({home, away})
+        self.met[pair] = self.met.get(pair, 0) + 1
+        self.played[home] = self.played.get(home, 0) + 1
+        self.played[away] = self.played.get(away, 0) + 1
+
+
+#: How a policy ranks the entrant to build a game around, and then its opponent. Both return a
+#: sort key for `min`, so ties always fall through to the entrant key and the choice is
+#: reproducible — a pool that paired differently on a replay would be untestable.
+_HomeKey = Callable[[_Board, str], tuple[object, ...]]
+_AwayKey = Callable[[_Board, str, str], tuple[object, ...]]
+
+
+def _balance_home(board: _Board, key: str) -> tuple[object, ...]:
+    return (board.played.get(key, 0), key)
+
+
+def _balance_away(board: _Board, home: str, key: str) -> tuple[object, ...]:
+    # Rating proximity survives as the **last** tie-break, where it costs nothing: among opponents
+    # equally unmet and equally under-played, the nearer-rated game is still the better one.
+    return (
+        board.meetings(home, key),
+        board.played.get(key, 0),
+        abs(board.known[home].rating - board.known[key].rating),
+        key,
+    )
+
+
+def _information_home(board: _Board, key: str) -> tuple[object, ...]:
+    return (-board.known[key].deviation, board.played.get(key, 0), key)
+
+
+def _information_away(board: _Board, home: str, key: str) -> tuple[object, ...]:
+    return (
+        board.meetings(home, key) * _REMATCH_PENALTY
+        + abs(board.known[home].rating - board.known[key].rating),
+        key,
+    )
+
+
+_POLICIES: dict[Policy, tuple[_HomeKey, _AwayKey]] = {
+    Policy.BALANCE: (_balance_home, _balance_away),
+    Policy.INFORMATION: (_information_home, _information_away),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +158,14 @@ class Form:
     rating: float = 1500.0
     #: Glicko-2's rating deviation. 350 is "never seen"; a settled model is nearer 50.
     deviation: float = 350.0
-    games: int = 0
+
+    #: **There was a `games` counter here and nothing ever set it.** `_form` in
+    #: `orchestration/tournament.py` builds every `Form` from a rating and a deviation, so it was
+    #: `0` for every entrant in production, for the whole life of the pool — while sitting as the
+    #: *second* sort key of the home choice, which therefore broke ties alphabetically rather than
+    #: on who had played least. Removed rather than populated: how many times a pair has been put
+    #: on the board is already known from `_meetings`, and deriving the count from that keeps one
+    #: source instead of two that can disagree (ADR-0041).
 
 
 def matchmake(
@@ -72,6 +177,7 @@ def matchmake(
     round_number: int = 1,
     unavailable: frozenset[str] | set[str] = frozenset(),
     attempts: Sequence[Pairing] = (),
+    policy: Policy = Policy.BALANCE,
 ) -> list[Pairing]:
     """The next `count` games to play.
 
@@ -92,6 +198,10 @@ def matchmake(
 
     Fewer than two available entrants returns no games rather than pairing regardless. The pool
     holds for a tick, which is correct: there is no game worth starting.
+
+    `policy` chooses between the two questions in `Policy`. It defaults to `BALANCE`, which is what
+    a public leaderboard needs: `INFORMATION` ran `pool-free` to 44% pair coverage with one entrant
+    on 25 pairings and another on 1 (ADR-0041).
     """
     field = [e.key for e in ordered(entrants)]
     if len(field) < 2:
@@ -102,7 +212,12 @@ def matchmake(
     # Form is built over the whole field, not the available subset. A resting entrant's rating is
     # still real and is still what an opponent is chosen for proximity to; only its own turn to
     # play is deferred.
-    known = {key: form.get(key, Form(key=key)) for key in field}
+    board = _Board(
+        known={key: form.get(key, Form(key=key)) for key in field},
+        met=met,
+        played=_pairings_each(met),
+    )
+    home_key, away_key = _POLICIES[policy]
 
     available = set(field) - set(unavailable)
     games: list[Pairing] = []
@@ -111,15 +226,8 @@ def matchmake(
         if len(available) < 2:
             break
 
-        # The least-known entrant goes first: their next game is worth the most. Ties break on
-        # fewest games played, then on key so the choice is reproducible.
-        home = min(
-            available,
-            key=lambda key: (-known[key].deviation, known[key].games, key),
-        )
-        away = _closest(home, available - {home}, known, met)
-        if away is None:  # pragma: no cover - unreachable while two entrants remain
-            break
+        home = min(available, key=lambda key: home_key(board, key))
+        away = min(available - {home}, key=lambda key: away_key(board, home, key))
 
         white, black = _colours(home, away, balance)
         # **One round number per game, not per batch.** Every game in a batch used to carry
@@ -133,8 +241,9 @@ def matchmake(
         games.append(Pairing(white=white, black=black, round_number=round_number + len(games)))
 
         # Reflect this game before choosing the next, so a batch does not hand the same model
-        # White three times or repeat a pairing it just made.
-        met[frozenset({home, away})] = met.get(frozenset({home, away}), 0) + 1
+        # White three times, repeat a pairing it just made, or ignore that one of the two is no
+        # longer the entrant furthest behind.
+        board.record(home, away)
         balance[white] = balance.get(white, 0) + 1
         balance[black] = balance.get(black, 0) - 1
         available -= {home, away}
@@ -142,20 +251,18 @@ def matchmake(
     return games
 
 
-def _closest(
-    home: str, candidates: set[str], known: dict[str, Form], met: dict[frozenset[str], int]
-) -> str | None:
-    """The most informative opponent: unmet if possible, then nearest in rating."""
-    if not candidates:
-        return None
-    return min(
-        candidates,
-        key=lambda key: (
-            met.get(frozenset({home, key}), 0) * _REMATCH_PENALTY
-            + abs(known[home].rating - known[key].rating),
-            key,
-        ),
-    )
+def _pairings_each(met: dict[frozenset[str], int]) -> dict[str, int]:
+    """How many pairings each entrant has been given, from the meetings table.
+
+    **Pairings, not settled games**, and the distinction is the whole point of balancing on it: a
+    model whose endpoint abandons everything still has to take its turn, and counting only what
+    finished would send the pool back to it for ever.
+    """
+    played: dict[str, int] = {}
+    for pair, count in met.items():
+        for key in pair:
+            played[key] = played.get(key, 0) + count
+    return played
 
 
 def _colours(home: str, away: str, balance: dict[str, int]) -> tuple[str, str]:

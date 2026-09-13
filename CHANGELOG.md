@@ -17,6 +17,24 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **A pool balances its pairings** ([ADR-0041]). The matchmaker asked "whose next game teaches us
+  most" — highest rating deviation, nearest-rated opponent — which has no fairness term at all.
+  After 123 pairings `pool-free` had **44% pair coverage**, one entrant on 25 pairings and another
+  on 1, and a leader ranked first on nine games who had never met second, fifth, sixth or ninth
+  place. The new default takes the entrant with the **fewest pairings** and its least-met opponent:
+  a greedy incremental round robin that needs no schedule, so it survives a field that changes with
+  the catalogue. Simulated over 19 entrants and 800 pairings, coverage goes 68% → **100%** and the
+  busiest entrant drops from 35% of all games to 12%. `Policy.INFORMATION` is still selectable.
+
+### Removed
+
+- **`Form.games`, which nothing ever set** ([ADR-0041]). It was the second sort key of the pool's
+  home choice, and `_form()` builds every `Form` from a rating and a deviation — so it was `0` for
+  every entrant for the life of the pool, and ties among equally-unknown entrants were breaking
+  alphabetically. The count the new policy needs is derived from the meetings table instead, which
+  keeps one source rather than two that can disagree.
+
+
 - **`get_legal_moves` no longer says which move is mate** ([ADR-0040]). `check` and `checkmate`
   flags were a one-ply search with terminal evaluation, run by us and handed to every seat on every
   move of every turn — so no model playing Chessmark has ever had to *find* mate in one. Every
@@ -468,4 +486,5 @@ flags the old code wrote.
 [ADR-0038]: docs/adr/0038-a-prompt-version-has-two-parts.md
 [ADR-0039]: docs/adr/0039-the-window-is-sized-for-the-request-in-front-of-us.md
 [ADR-0040]: docs/adr/0040-what-a-board-shows-and-what-the-prompt-owes-you.md
+[ADR-0041]: docs/adr/0041-a-pool-balances-its-pairings.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0
