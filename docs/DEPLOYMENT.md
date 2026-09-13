@@ -95,8 +95,17 @@ docker compose run --rm tournament standings pool-free
 docker compose run --rm tournament pause pool-free --abort-live
 ```
 
-The long-running `tournament` container ticks whichever slug `TOURNAMENT_SLUG` names. One container
-per event you want running.
+The long-running `tournament` container ticks **every unfinished event**, discovered from the
+database on each pass — `pending`, `running` and `paused`, since a pending event needs a first tick
+to start and a paused one needs a tick to notice it has been resumed. So `create`, `pause`, `resume`
+and `abandon` are the whole interface: nothing to restart, and two pools can run side by side.
+
+It used to tick whichever slug `TOURNAMENT_SLUG` named, which made `tournament create` produce an
+event nothing would ever tick and `tournament abandon` leave the container ticking a corpse. Both
+failures were silent — the pool sat at zero pairings, looking like a matchmaker that could not find
+a game — and both needed an `.env` edit and a restart (OPS-24). `TOURNAMENT_SLUG` is no longer read.
+
+`run <slug>` still ticks exactly one event, which is what a hand-run `--once` wants.
 
 ## The catalogue keeps itself current
 

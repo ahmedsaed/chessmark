@@ -29,6 +29,7 @@ import argparse
 import asyncio
 import datetime as dt
 import sys
+import uuid
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -40,16 +41,16 @@ sys.path.insert(0, str(API_ROOT / "src"))
 import sqlalchemy as sa  # noqa: E402
 from redis.asyncio import Redis  # noqa: E402
 
-from chessmark.core.halt import Halt  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import ProviderCooldown  # noqa: E402
+from chessmark.core.halt import Halt  # noqa: E402
 from chessmark.db import tournaments as repo  # noqa: E402
 from chessmark.db.enums import GameStatus, TournamentStatus  # noqa: E402
 from chessmark.db.models import Game, Tournament, TournamentEntrant  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.game import Termination  # noqa: E402
 from chessmark.orchestration import TurnQueue  # noqa: E402
-from chessmark.orchestration.tournament import advance  # noqa: E402
+from chessmark.orchestration.tournament import Step, advance  # noqa: E402
 from chessmark.tournament import FieldFilter, Format, TournamentConfig, standings  # noqa: E402
 
 DIM, BOLD, OFF = "\033[2m", "\033[1m", "\033[0m"
@@ -185,8 +186,93 @@ async def resolve_slug(session: Any, slug: str) -> Tournament:
     return tournament
 
 
+class _Reporter:
+    """One event's worth of announce-once state.
+
+    Kept per tournament rather than per loop, because the runner now ticks several and a line that
+    said "paused" for one of them would otherwise silence the others (OPS-24).
+    """
+
+    def __init__(self) -> None:
+        self.named = False
+        self.paused_announced = False
+        self.holding_announced: str | None = None
+
+    def report(self, name: str, tournament_id: uuid.UUID, step: Step) -> None:
+        if not self.named:
+            say(f"{BOLD}{name}{OFF} {DIM}{tournament_id}{OFF}")
+            self.named = True
+
+        if step.status is TournamentStatus.FINISHED:
+            say(f"{GREEN}finished{OFF} — {step.detail}")
+            return
+        if step.status is TournamentStatus.PAUSED:
+            # Waited through rather than exited on. A paused event is temporary, and this is what a
+            # supervised container runs: exiting would have it restarted immediately, print the
+            # same line, and exit again — which is exactly what it did.
+            if not self.paused_announced:
+                say(f"{AMBER}paused{OFF} — {step.detail}; waiting for a resume")
+                self.paused_announced = True
+            return
+
+        self.paused_announced = False
+
+        if step.holding:
+            # Not idle and not an error: the event is deliberately waiting. Said once per reason
+            # rather than once per tick — the same line every thirty seconds is not information,
+            # and it buried the ticks that were.
+            if step.holding != self.holding_announced:
+                say(f"  {DIM}holding — {step.holding}{OFF}")
+                self.holding_announced = step.holding
+            return
+
+        self.holding_announced = None
+
+        if step.idle:
+            return
+
+        bits = []
+        if step.admitted:
+            bits.append(f"admitted {len(step.admitted)}: {', '.join(step.admitted)}")
+        if step.scheduled_round:
+            bits.append(f"scheduled round {step.scheduled_round}")
+        if step.started:
+            bits.append(f"started {step.started}")
+        if step.settled:
+            bits.append(f"settled {step.settled}")
+        say(f"  {' · '.join(bits)}")
+
+
+#: What the runner will tick. `FINISHED` and `ABANDONED` are over; the other three are not —
+#: `PENDING` needs a first tick to start, and `PAUSED` needs one to notice it has been resumed.
+TICKABLE = (TournamentStatus.PENDING, TournamentStatus.RUNNING, TournamentStatus.PAUSED)
+
+
+async def _tickable(sessionmaker: Any) -> list[tuple[uuid.UUID, str]]:
+    """Every event worth a tick, newest last so the order is stable across passes."""
+    async with sessionmaker() as session:
+        rows = await session.execute(
+            sa.select(Tournament.id, Tournament.name)
+            .where(Tournament.status.in_(TICKABLE))
+            .order_by(Tournament.created_at, Tournament.id)
+        )
+        return [(row.id, row.name) for row in rows]
+
+
 async def cmd_run(args: argparse.Namespace) -> int:
-    """Tick the event along until it finishes, pauses, or the operator stops."""
+    """Tick events along until they finish, pause, or the operator stops.
+
+    **With no slug the runner discovers its own work**, every pass, from the tournaments table.
+    That is what the long-running container does, and it is a correction rather than a convenience
+    (OPS-24): the slug used to come from `TOURNAMENT_SLUG` in the environment, so creating a
+    tournament through the CLI produced an event nothing would ever tick, and retiring one left the
+    container ticking a corpse. Both failures are silent — the pool simply sits at zero pairings —
+    and both needed an edit to `.env` and a container restart to fix, which is a deploy-shaped
+    action for what ought to be `tournament create`.
+
+    Naming a slug still works and still means exactly one event, which is what `--once` and a
+    hand-run tick want.
+    """
     settings = get_settings()
     redis: Redis[Any] = Redis.from_url(str(settings.redis_url))
     queue = TurnQueue(redis)
@@ -197,73 +283,46 @@ async def cmd_run(args: argparse.Namespace) -> int:
     cooldown = ProviderCooldown(redis)
     sessionmaker = get_sessionmaker()
 
-    try:
+    fixed: list[tuple[uuid.UUID, str]] | None = None
+    if args.slug:
         async with sessionmaker() as session:
             tournament = await resolve_slug(session, args.slug)
-            tournament_id, name = tournament.id, tournament.name
+            fixed = [(tournament.id, tournament.name)]
 
-        say(f"{BOLD}{name}{OFF} {DIM}{tournament_id}{OFF}")
-        quiet = 0
-        paused_announced = False
-        holding_announced: str | None = None
+    reporters: dict[uuid.UUID, _Reporter] = {}
+    idle_announced = False
 
+    try:
         while True:
-            step = await advance(
-                sessionmaker,
-                queue,
-                tournament_id=tournament_id,
-                halt=halt,
-                cooldown=cooldown,
-            )
+            targets = fixed if fixed is not None else await _tickable(sessionmaker)
 
-            if step.status is TournamentStatus.FINISHED:
-                say(f"{GREEN}finished{OFF} — {step.detail}")
-                return 0
-            if step.status is TournamentStatus.PAUSED:
-                # Waited through rather than exited on. A paused event is temporary, and this is
-                # what a supervised container runs: exiting would have it restarted immediately,
-                # print the same line, and exit again — which is exactly what it did.
-                if not paused_announced:
-                    say(f"{AMBER}paused{OFF} — {step.detail}; waiting for a resume")
-                    paused_announced = True
-                if args.once:
-                    return 0
-                await asyncio.sleep(args.interval)
-                continue
-
-            paused_announced = False
-
-            if step.holding:
-                # Not idle and not an error: the event is deliberately waiting. Said once per
-                # reason rather than once per tick — the same line every thirty seconds is not
-                # information, and it buried the ticks that were.
-                if step.holding != holding_announced:
-                    say(f"  {DIM}holding — {step.holding}{OFF}")
-                    holding_announced = step.holding
-                if args.once:
-                    return 0
-                await asyncio.sleep(args.interval)
-                continue
-
-            holding_announced = None
-
-            if step.idle:
-                quiet += 1
-                if args.once:
-                    say(f"{DIM}nothing to do{OFF}")
-                    return 0
+            if not targets:
+                # Nothing to do is a state, not an error: a fresh deployment has no tournament
+                # until somebody creates one, and the container must be waiting for it rather
+                # than crash-looping.
+                if not idle_announced:
+                    say(f"{DIM}no tournament to tick; waiting for one{OFF}")
+                    idle_announced = True
             else:
-                quiet = 0
-                bits = []
-                if step.admitted:
-                    bits.append(f"admitted {len(step.admitted)}: {', '.join(step.admitted)}")
-                if step.scheduled_round:
-                    bits.append(f"scheduled round {step.scheduled_round}")
-                if step.started:
-                    bits.append(f"started {step.started}")
-                if step.settled:
-                    bits.append(f"settled {step.settled}")
-                say(f"  {' · '.join(bits)}")
+                idle_announced = False
+
+            for tournament_id, name in targets:
+                # **One event's failure is not the others'.** A single loop over several
+                # tournaments must not let a bad row take the rest down with it; the container is
+                # supervised, so an exception here would restart it and stop every pool.
+                try:
+                    step = await advance(
+                        sessionmaker,
+                        queue,
+                        tournament_id=tournament_id,
+                        halt=halt,
+                        cooldown=cooldown,
+                    )
+                except Exception as error:  # reported and retried on the next pass
+                    say(f"{RED}{name}{OFF} — {error}")
+                    continue
+
+                reporters.setdefault(tournament_id, _Reporter()).report(name, tournament_id, step)
 
             if args.once:
                 return 0
@@ -511,8 +570,10 @@ def build_parser() -> argparse.ArgumentParser:
     add_field_options(create)
     create.set_defaults(run=cmd_create)
 
-    run = sub.add_parser("run", help="tick an event along; a worker must be running")
-    run.add_argument("slug")
+    run = sub.add_parser(
+        "run", help="tick events along; a worker must be running. No slug ticks them all"
+    )
+    run.add_argument("slug", nargs="?", help="one event. Omit to tick every unfinished one")
     run.add_argument("--interval", type=float, default=20.0, help="seconds between ticks")
     run.add_argument("--once", action="store_true", help="one step, then exit")
     run.set_defaults(run=cmd_run)

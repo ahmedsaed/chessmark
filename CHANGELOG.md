@@ -17,6 +17,16 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **The tournament runner finds its own work** (OPS-24). The long-running container ticked
+  whichever slug `TOURNAMENT_SLUG` named, so `tournament create` produced an event nothing would
+  ever tick and `tournament abandon` left it ticking a corpse. Both failures are silent — the pool
+  sits at zero pairings, looking like a matchmaker that cannot find a game — and both needed an
+  `.env` edit and a container restart to put right, which is a deploy-shaped action for what ought
+  to be one CLI command. It now discovers every unfinished event each pass, so two pools can run
+  side by side and `create` / `pause` / `resume` / `abandon` are the whole interface. `run <slug>`
+  still ticks exactly one.
+
+
 - **A pool balances its pairings** ([ADR-0041]). The matchmaker asked "whose next game teaches us
   most" — highest rating deviation, nearest-rated opponent — which has no fairness term at all.
   After 123 pairings `pool-free` had **44% pair coverage**, one entrant on 25 pairings and another
