@@ -170,9 +170,33 @@ def endpoint_is_unhealthy(error: BaseException) -> bool:
 #: The provider counting our prompt for us, exactly, in the one place we could not count it
 #: ourselves. Worth parsing rather than merely logging: these two numbers are better than anything
 #: the harness computed, and they are what the reactive rung compacts against (ADR-0021).
-_CONTEXT_LENGTH = re.compile(
-    r"maximum context length is\s*(\d+)\s*tokens.*?requested about\s*(\d+)",
-    re.I | re.S,
+#: **Named groups, because the two wordings state the numbers in opposite orders.** The first says
+#: window-then-request, the second request-then-window, and a positional pair would silently swap
+#: them — compacting `ed491262` against a 290,310-token "window" it had just been refused for
+#: exceeding, which is worse than not matching at all.
+_CONTEXT_LENGTH_PATTERNS = (
+    re.compile(
+        r"maximum context length is\s*(?P<context>\d+)\s*tokens.*?requested about\s*(?P<requested>\d+)",
+        re.I | re.S,
+    ),
+    # `"The request is 290310 tokens long and exceeds this model's context length of 262144
+    # tokens."` — the OpenAI-shaped phrasing, which Nex AGI returns and the pattern above cannot
+    # read. It abandoned a game at ply 43 that the reactive rung existed to rescue: not because the
+    # rung was wrong, but because one regex knew one vendor's sentence.
+    re.compile(
+        r"request is\s*(?P<requested>\d+)\s*tokens?\s*long.*?context length of\s*(?P<context>\d+)",
+        re.I | re.S,
+    ),
+)
+
+#: A 400 that is *about* the window but that nothing above could parse.
+#:
+#: The reactive rung abstains silently when no pattern matches, and an abstention is indistinguishable
+#: from "this was some other 400" — so the next unknown wording costs another game before anyone
+#: notices. This exists so it costs a log line instead.
+_LOOKS_LIKE_CONTEXT = re.compile(
+    r"context[_ ]length|context window|too many tokens|maximum context",
+    re.I,
 )
 
 
@@ -211,14 +235,24 @@ def context_limit_in(text: str) -> ContextLimit | None:
     which is why that one stays the check on the live path — and why this one is only ever asked
     about an error the gateway has *already* classified as a rejected request.
     """
-    match = _CONTEXT_LENGTH.search(text)
+    match = next(filter(None, (p.search(text) for p in _CONTEXT_LENGTH_PATTERNS)), None)
     if match is None:
+        if _LOOKS_LIKE_CONTEXT.search(text):
+            log.warning(
+                "a context-length refusal that no pattern could read, so the reactive rung "
+                "cannot run; add its wording to _CONTEXT_LENGTH_PATTERNS: %s",
+                text[:2000],
+            )
         return None
     parts = _CONTEXT_BREAKDOWN.search(text)
     prompt = None
     if parts is not None:
         prompt = int(parts.group(1)) + int(parts.group(2) or 0)
-    return ContextLimit(context=int(match.group(1)), requested=int(match.group(2)), prompt=prompt)
+    return ContextLimit(
+        context=int(match.group("context")),
+        requested=int(match.group("requested")),
+        prompt=prompt,
+    )
 
 
 def context_limit_from(error: BaseException) -> ContextLimit | None:

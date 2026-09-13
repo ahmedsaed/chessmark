@@ -13,13 +13,14 @@ provider's own numbers and retries instead of abandoning the game.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.agents import compaction, transcript
+from chessmark.agents import compaction, llm, transcript
 from chessmark.agents.registry import sync_model_registry
 from chessmark.agents.scripted import prose, scripted, step, tool_call
 from chessmark.agents.turn import TurnLimits
@@ -46,14 +47,17 @@ class Refuses:
     point of the reactive rung is that the *second* call succeeds, not that the error is swallowed.
     """
 
-    def __init__(self, *after: dict[str, Any]) -> None:
+    def __init__(self, *after: dict[str, Any], refusal: str = CONTEXT_400) -> None:
         self.after = list(after)
         self.calls = 0
+        #: Which wording the endpoint refuses in. Two providers say the same thing in opposite
+        #: orders, and reading only one of them abandoned a game (ADR-0039).
+        self.refusal = refusal
 
     async def __call__(self, **kwargs: Any) -> dict[str, Any]:
         self.calls += 1
         if self.calls == 1:
-            raise _BadRequestError(CONTEXT_400)
+            raise _BadRequestError(self.refusal)
         return self.after[min(self.calls - 2, len(self.after) - 1)]
 
 
@@ -351,3 +355,97 @@ async def test_a_second_refusal_is_not_retried_again(db: AsyncSession, table: Ta
     assert result.status is TurnStatus.FAILED
     assert result.request_rejected, "it keeps its classification once the rung is spent"
     assert calls <= 3, f"refused, summary attempt, one retry — got {calls}"
+
+
+# ================================================ the other way a provider says the same thing
+
+
+#: `ed491262`, verbatim, minus the surrounding OpenRouter envelope. Nex AGI states the two numbers
+#: in the opposite order to the refusal above, and the pattern that read that one could not read
+#: this one at all — so the rung abstained, silently, and the game was abandoned at ply 43.
+NEX_CONTEXT_400 = (
+    "litellm.BadRequestError: OpenrouterException - "
+    '{"error":{"message":"Provider returned error","code":400,"metadata":{"raw":'
+    '"{\\"error\\":{\\"message\\":\\"The request is 290310 tokens long and exceeds this '
+    'model\'s context length of 262144 tokens.\\",\\"type\\":\\"invalid_request_error\\",'
+    '\\"code\\":\\"context_length_exceeded\\"}}","provider_name":"Nex AGI"}}}'
+)
+
+
+class TestARefusalPhrasedTheOtherWay:
+    """One regex knew one vendor's sentence, and abstaining reads exactly like "not about size".
+
+    The numbers are reversed between the two wordings, which is the trap: read positionally, this
+    refusal says the window is 290,310 — the very size it was refused for — and the rung would
+    compact against a window larger than the one that exists.
+    """
+
+    def test_the_numbers_are_not_swapped(self) -> None:
+        limit = llm.context_limit_in(NEX_CONTEXT_400)
+
+        assert limit is not None, "the rung cannot run on a refusal it cannot read"
+        assert limit.context == 262_144, "the window, which is the smaller of the two here"
+        assert limit.requested == 290_310, "and what we asked of it"
+
+    def test_the_original_wording_still_reads(self) -> None:
+        limit = llm.context_limit_in(CONTEXT_400)
+
+        assert limit is not None
+        assert limit.context == 256_000
+        assert limit.requested == 262_254
+        assert limit.prompt == 261_751 + 502, "and its breakdown survives too"
+
+    def test_a_400_about_anything_else_is_left_alone(self) -> None:
+        """So a caller cannot mistake some other 400 for "compact and try again"."""
+        assert llm.context_limit_in("Assistant messages require `content` or `tool_calls`") is None
+
+    def test_an_unreadable_size_refusal_says_so(self) -> None:
+        """The property that makes the next unknown wording cost a log line, not a game.
+
+        Captured with a handler of our own rather than `caplog`, and the logger re-enabled first:
+        `alembic/env.py` calls `fileConfig`, whose default is `disable_existing_loggers=True`, so
+        once any test in this suite has run a migration every `chessmark.*` logger in the process
+        is dead. A test that silently stops observing anything is precisely the failure this
+        assertion exists to catch, so it says that out loud rather than passing vacuously.
+        """
+        seen: list[str] = []
+        handler = logging.Handler()
+        handler.emit = lambda record: seen.append(record.getMessage())  # type: ignore[method-assign]
+        logger = logging.getLogger("chessmark.agents.llm")
+        was_disabled, logger.disabled = logger.disabled, False
+        logger.addHandler(handler)
+        try:
+            assert llm.context_limit_in("this model's context window is full, somehow") is None
+        finally:
+            logger.removeHandler(handler)
+            logger.disabled = was_disabled
+
+        assert any("no pattern could read" in message for message in seen), seen
+
+
+async def test_the_other_wording_also_compacts_and_retries(db: AsyncSession, table: Table) -> None:
+    """The property, end to end: `ed491262` gets its turn back instead of being abandoned."""
+    slug = "scripted/reactive-nex"
+    await _register(db, slug=slug, context=262_144)
+    await _history(db, table, turns=6)
+
+    model = Refuses(
+        prose("Folded."),
+        step(tool_call("make_move", move="e4")),
+        refusal=NEX_CONTEXT_400,
+    )
+
+    result = await play_turn(
+        db, table, model, model=slug, limits=TurnLimits(keep_turns=2, max_kept_messages=12)
+    )
+
+    assert result.status is TurnStatus.COMPLETED, "this refusal abandoned the game at ply 43"
+    assert result.move is not None and result.move.move.san == "e4"
+
+    events = await _compacted(db, table)
+    assert len(events) == 1
+    assert events[0].payload["context_tokens"] == 262_144, "the endpoint's number, not ours"
+    assert events[0].payload["occupied_tokens"] == 290_310, (
+        "no breakdown in this wording, so the total is all there is — and it is still better than "
+        "anything computed on this side"
+    )

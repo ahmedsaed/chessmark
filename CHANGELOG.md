@@ -50,6 +50,20 @@ file is only the record of *what shipped when*.
   is appended before they run — so the transcript could be left with `tool_calls` and no results,
   which every provider refuses for that seat for the rest of the game. The transcript is
   append-only, so no retry, pause or resume clears it.
+- **The window was sized for the previous request, not the one going out** ([ADR-0039]).
+  `ed491262` was abandoned at ply 43 on a 290,310-token request against a 262,144-token window we
+  had recorded correctly. Its last measurement was 195,503 — under the threshold, so it never
+  folded once in 43 plies — while the prompt had grown to 227,765 and `max_tokens` was cleared
+  against the room the stale number implied. The growth was counted, in characters, on the line
+  above the decision; `players.last_prompt_characters` pairs with the measurement to convert it,
+  and that conversion was used only to size the retained tail. Both decisions now read a projection
+  that can only ever be larger than what was measured.
+- **The reactive rung could not read half the refusals it exists to catch** ([ADR-0039]). One
+  regex knew one vendor's phrasing, so Nex AGI's *"The request is 290310 tokens long and exceeds
+  this model's context length of 262144 tokens"* parsed as "some other 400" and the retry that
+  would have rescued the turn never ran. The two wordings state their numbers in opposite orders,
+  so both now use named groups — and a size refusal nothing can parse is logged rather than
+  silently abstained on.
 
 
 ### Added
@@ -420,4 +434,7 @@ flags the old code wrote.
 [ADR-0034]: docs/adr/0034-one-page-per-model.md
 [ADR-0035]: docs/adr/0035-live-frames-are-not-events.md
 [ADR-0036]: docs/adr/0036-a-lost-reasoning-trace-announces-itself.md
+[ADR-0037]: docs/adr/0037-a-turn-ends-when-the-model-stops.md
+[ADR-0038]: docs/adr/0038-a-prompt-version-has-two-parts.md
+[ADR-0039]: docs/adr/0039-the-window-is-sized-for-the-request-in-front-of-us.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

@@ -117,7 +117,21 @@ async def test_the_next_turn_asks_against_the_measured_size(db: AsyncSession, ta
     # stops (AGENT-05), so the last call of a turn is the one where it says it is done, and that
     # one is bounded by the measurement its own move call just produced. Indexed rather than taken
     # from the end, because "the last call" stopped meaning "the move".
-    assert asked[4] == 100_000 - 40_000 - FRAMING_TOKENS, "and every later one is measured"
+    #
+    # **It asks against 40,000 carried forward and grown, not against 40,000** (ADR-0039). The
+    # measurement survived the turn boundary, which is what this file is about and is unchanged;
+    # what it no longer does is describe the request going out, because two turns of transcript
+    # were appended after it was taken. The bound is therefore a little tighter than the
+    # measurement alone implies, and that difference is the transcript.
+    ceiling = 100_000 - 40_000 - FRAMING_TOKENS
+    assert asked[4] is not None
+    assert asked[4] < ceiling, (
+        "sized against the request in front of it, which has grown since 40,000 was counted"
+    )
+    assert asked[4] > ceiling - 10_000, (
+        "and only by the growth — a bound far under this would mean the projection is reading a "
+        "token count and a character count that do not describe one transcript"
+    )
 
 
 async def test_a_full_window_fails_the_turn_instead_of_forfeiting_the_model(
