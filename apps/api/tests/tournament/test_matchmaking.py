@@ -1,12 +1,24 @@
 """Choosing the next game in a pool.
 
-The policy exists to make ratings converge, so the tests are about information rather than
-fairness: does a newly-listed model get played, and are the games it gets informative ones?
+Two policies, and the tests are split accordingly (ADR-0041).
+
+`Policy.INFORMATION` was the only one there was, and it asks whether ratings converge: does a
+newly-listed model get played, and are the games it gets informative ones? Those tests now name
+the policy they were written for, because the default changed out from under them — which is the
+point of naming it.
+
+`Policy.BALANCE` is the default, and asks whether the field is covered evenly. Its tests are about
+fairness, so they assert on counts and coverage rather than on a single choice: the property is
+what the whole schedule looks like, not which pair comes first.
 """
 
 from __future__ import annotations
 
-from chessmark.tournament import Entrant, Form, Pairing, Result, matchmake
+import collections
+
+import pytest
+
+from chessmark.tournament import Entrant, Form, Pairing, Policy, Result, matchmake
 
 FIELD = [Entrant(key=k, seed=i) for i, k in enumerate("ABCD", start=1)]
 
@@ -27,7 +39,7 @@ def test_the_least_known_entrant_is_played_first() -> None:
     what makes a newly listed model settle rather than sit unrated."""
     newcomer = {**SETTLED, "D": Form(key="D", rating=1500, deviation=350)}
 
-    games = matchmake(FIELD, [], newcomer)
+    games = matchmake(FIELD, [], newcomer, policy=Policy.INFORMATION)
 
     assert len(games) == 1
     assert "D" in games[0].pair
@@ -37,7 +49,7 @@ def test_the_opponent_is_the_closest_rated_one() -> None:
     """A foregone conclusion moves neither rating. Near-equals convert a game into information."""
     ratings = form(A=(1500, 350), B=(1520, 40), C=(1800, 40), D=(1200, 40))
 
-    games = matchmake(FIELD, [], ratings)
+    games = matchmake(FIELD, [], ratings, policy=Policy.INFORMATION)
 
     assert games[0].pair == frozenset({"A", "B"}), "1520 is nearest to 1500"
 
@@ -47,7 +59,7 @@ def test_an_unmet_opponent_beats_a_nearer_one_already_played() -> None:
     ratings = form(A=(1500, 350), B=(1505, 40), C=(1600, 40), D=(1200, 40))
     already = [Result(white="A", black="B", white_score=1.0, round_number=1)]
 
-    games = matchmake(FIELD, already, ratings)
+    games = matchmake(FIELD, already, ratings, policy=Policy.INFORMATION)
 
     assert games[0].pair == frozenset({"A", "C"}), "B is nearer but has been played"
 
@@ -104,7 +116,9 @@ def test_colours_even_out_over_time() -> None:
 def test_an_entrant_with_no_recorded_form_is_treated_as_unknown() -> None:
     """A model that has just joined has no rating yet — and unknown is exactly the state that
     should be prioritised, not skipped."""
-    games = matchmake(FIELD, [], form(A=(1500, 40), B=(1500, 40), C=(1500, 40)))
+    games = matchmake(
+        FIELD, [], form(A=(1500, 40), B=(1500, 40), C=(1500, 40)), policy=Policy.INFORMATION
+    )
 
     assert "D" in games[0].pair, "the one with no form is the least known"
 
@@ -186,7 +200,7 @@ class TestAttempts:
         ratings = form(A=(1500, 350), B=(1505, 40), C=(1600, 40), D=(1200, 40))
         dead = [Pairing(white="A", black="B", round_number=1)]
 
-        games = matchmake(FIELD, [], ratings, attempts=dead)
+        games = matchmake(FIELD, [], ratings, attempts=dead, policy=Policy.INFORMATION)
 
         assert games[0].pair == frozenset({"A", "C"}), (
             "B is nearer, but that pairing has been tried and produced nothing"
@@ -197,7 +211,7 @@ class TestAttempts:
         ratings = form(A=(1500, 350), B=(1505, 40), C=(1600, 40), D=(1200, 40))
         dead = [Pairing(white="A", black="B", round_number=n) for n in range(1, 8)]
 
-        games = matchmake(FIELD, [], ratings, attempts=dead)
+        games = matchmake(FIELD, [], ratings, attempts=dead, policy=Policy.INFORMATION)
 
         assert "B" not in games[0].pair
 
@@ -209,7 +223,7 @@ class TestAttempts:
         played = [Result(white="A", black="C", white_score=1.0, round_number=1)]
         dead = [Pairing(white="A", black="B", round_number=2)]
 
-        games = matchmake(FIELD, played, ratings, attempts=dead, count=1)
+        games = matchmake(FIELD, played, ratings, attempts=dead, count=1, policy=Policy.INFORMATION)
 
         assert games[0].pair == frozenset({"A", "D"}), "the only opponent A has not been given"
 
@@ -218,7 +232,7 @@ class TestAttempts:
         ratings = form(A=(1500, 350), B=(1505, 40), C=(1600, 40), D=(1200, 40))
         dead = [Pairing(white="A", black=None, round_number=1)]
 
-        games = matchmake(FIELD, [], ratings, attempts=dead)
+        games = matchmake(FIELD, [], ratings, attempts=dead, policy=Policy.INFORMATION)
 
         assert games[0].pair == frozenset({"A", "B"}), "the nearest rating, unaffected by the bye"
 
@@ -250,3 +264,146 @@ def test_a_single_game_still_takes_the_round_it_was_given() -> None:
     games = matchmake(FIELD, [], SETTLED, count=1, round_number=115)
 
     assert [game.round_number for game in games] == [115]
+
+
+# ============================================================ balance: the greedy round robin
+
+
+def simulate(
+    keys: list[str],
+    ticks: int,
+    *,
+    policy: Policy = Policy.BALANCE,
+    slots: int = 1,
+    joins: dict[int, list[str]] | None = None,
+    unavailable: set[str] | None = None,
+) -> list[Pairing]:
+    """Run the matchmaker over and over, feeding its own output back as attempts.
+
+    Every pairing is fed back as an *attempt* rather than a result, which is the pool's worst case
+    and the honest one: nothing settles, so nothing informs a rating, and a policy that leans on
+    ratings has nothing to lean on. It is also exactly what a field of free models does on a bad
+    day (ADR-0041).
+    """
+    field = list(keys)
+    attempts: list[Pairing] = []
+    for tick in range(ticks):
+        for key in (joins or {}).get(tick, []):
+            field.append(key)
+        entrants = [Entrant(key=k, seed=i) for i, k in enumerate(field, start=1)]
+        attempts += matchmake(
+            entrants,
+            [],
+            {},
+            count=slots,
+            round_number=tick + 1,
+            attempts=attempts,
+            unavailable=frozenset(unavailable or set()),
+            policy=policy,
+        )
+    return attempts
+
+
+def pairings_each(games: list[Pairing], field: list[str]) -> dict[str, int]:
+    return {key: sum(key in g.pair for g in games) for key in field}
+
+
+class TestBalance:
+    """The policy this exists for: every entrant paired as often as every other, and against
+    everybody, over a field that changes while it runs."""
+
+    def test_nobody_gets_a_second_game_before_everybody_has_had_a_first(self) -> None:
+        """The 'boring' failure, in one assertion. `INFORMATION` orbits one entrant — in production
+        the busiest model appeared in 35% of all games — because nothing in it counts games."""
+        field = list("ABCDEF")
+        games = simulate(field, ticks=3)
+
+        assert len(games) == 3
+        assert sorted(key for game in games for key in game.pair) == field
+
+    def test_the_field_is_covered_before_anything_repeats(self) -> None:
+        """A greedy round robin: every pair once before any pair twice."""
+        field = list("ABCDEF")
+        pairs = len(field) * (len(field) - 1) // 2
+
+        games = simulate(field, ticks=pairs)
+
+        assert len({game.pair for game in games}) == pairs, "every pair, exactly once"
+
+    def test_it_keeps_going_round(self) -> None:
+        """A pool never ends, so the round robin simply starts again rather than stalling."""
+        field = list("ABCD")
+        games = simulate(field, ticks=12)
+
+        counts = collections.Counter(game.pair for game in games)
+        assert set(counts.values()) == {2}, "a second full cycle, not a rut"
+
+    def test_pairings_stay_level_across_the_field(self) -> None:
+        field = list("ABCDEFG")
+        games = simulate(field, ticks=21)
+
+        counts = pairings_each(games, field)
+        assert max(counts.values()) - min(counts.values()) <= 1, counts
+
+    def test_a_model_that_never_finishes_a_game_still_takes_its_turn(self) -> None:
+        """The reason the count is of **pairings** and not of settled games. Nothing settles in
+        this simulation at all; a policy counting results would have nothing to balance on and
+        would starve whoever abandons — which is the opposite of what was asked for."""
+        field = list("ABCDEF")
+        games = simulate(field, ticks=15)
+
+        counts = pairings_each(games, field)
+        assert min(counts.values()) >= 4, counts
+
+
+class TestADynamicField:
+    """A pool is not a tournament: entrants arrive and leave with the catalogue, so there is no
+    fixture list to freeze and a newcomer must catch up on its own."""
+
+    def test_a_newcomer_is_paired_immediately(self) -> None:
+        games = simulate(list("ABCD"), ticks=8, joins={4: ["N"]})
+
+        assert any("N" in game.pair for game in games[4:6]), (
+            "a new entrant has no pairings, so it is by definition the furthest behind"
+        )
+
+    def test_a_newcomer_catches_up_rather_than_staying_behind(self) -> None:
+        field = list("ABCDEF")
+        games = simulate(field, ticks=24, joins={6: ["N"]})
+
+        counts = pairings_each(games, [*field, "N"])
+        behind = min(counts[k] for k in field) - counts["N"]
+        assert behind <= 1, (
+            f"a newcomer joining a quarter of the way in is {behind} pairings behind the field; "
+            f"it should converge, because zero pairings is top priority — {counts}"
+        )
+
+    def test_an_entrant_that_leaves_is_simply_not_paired(self) -> None:
+        """Nothing to invalidate — which is the whole reason this is a policy and not a schedule."""
+        games = simulate(list("ABCDE"), ticks=10, unavailable={"E"})
+
+        assert all("E" not in game.pair for game in games)
+
+
+class TestBalanceAgainstInformation:
+    """The two policies side by side on one field, because the trade is the decision (ADR-0041)."""
+
+    @pytest.mark.parametrize("policy", list(Policy))
+    def test_both_cover_the_pair_before_repeating_it(self, policy: Policy) -> None:
+        """The one property they share: an unmet opponent beats a met one either way."""
+        games = simulate(list("ABCD"), ticks=6, policy=policy)
+
+        assert len({game.pair for game in games}) == 6
+
+    def test_information_leaves_the_field_lopsided_and_balance_does_not(self) -> None:
+        """Measured rather than asserted about. With nothing settling, every entrant keeps its
+        default deviation, so `INFORMATION` falls through to rating proximity and the key — and
+        returns to the same entrants. This is `pool-free`'s 44% coverage in miniature."""
+        field = list("ABCDEFGH")
+        spread = {}
+        for policy in Policy:
+            counts = pairings_each(simulate(field, ticks=12, policy=policy), field)
+            spread[policy] = max(counts.values()) - min(counts.values())
+
+        assert spread[Policy.BALANCE] <= 1
+        assert spread[Policy.INFORMATION] > spread[Policy.BALANCE]

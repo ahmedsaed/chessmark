@@ -46,6 +46,7 @@ supersedes the old one, rather than an edit.
 | [0038](0038-a-prompt-version-has-two-parts.md) | A prompt version has two parts, and only one invalidates a result | Accepted |
 | [0039](0039-the-window-is-sized-for-the-request-in-front-of-us.md) | The window is sized for the request in front of us, not the one behind it | Accepted |
 | [0040](0040-what-a-board-shows-and-what-the-prompt-owes-you.md) | What a board shows, and what the prompt owes you | Accepted |
+| [0041](0041-a-pool-balances-its-pairings.md) | A pool balances its pairings, and does it without a schedule | Accepted |
 
 ## Template
 

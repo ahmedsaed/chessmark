@@ -25,10 +25,23 @@ On a server, `./chessmark tournament <subcommand>` and `./chessmark standings <s
 itself, and ranks by Glicko-2 rather than points — which is what makes an open population rankable
 at all.
 
-Its matchmaker follows what the rating actually measures: **the least-known entrant plays first**,
-against the nearest-rated opponent who is not a rematch. It pairs only what it can run, because
-scheduling ahead would freeze that information at the moment it was written, and a pool never runs
-out of fixtures.
+Its matchmaker balances the field: **the entrant with the fewest pairings plays first**, against
+its least-met opponent, breaking ties on that opponent's pairing count and then on rating
+proximity. That is a greedy incremental round robin — it covers every pair before repeating any,
+and it needs no fixture list, which is what lets a pool's field change while it runs. An entrant
+that joins has zero pairings and so is chosen immediately; one that just played goes to the back.
+
+**Pairings, not settled games**, so a model whose endpoint abandons everything still takes its
+turn rather than being handed the pool for ever.
+
+The older policy — least-known entrant first, nearest-rated opponent — is still there as
+`Policy.INFORMATION`. It converges ratings faster and contains no fairness term at all: it ran
+`pool-free` to 44% pair coverage with one entrant on 25 pairings and another on 1
+([ADR-0041](adr/0041-a-pool-balances-its-pairings.md)). Nothing exposes the choice yet; every pool
+takes the default.
+
+Either way it pairs only what it can run: scheduling ahead would write a queue against a field that
+changes, and a pool never runs out of fixtures.
 
 Pools are **ranked** — an unranked one would play forever and measure nothing — and a pool over paid
 models is **refused without `--max-usd`**: with no end, the ceiling is the only thing that ever stops

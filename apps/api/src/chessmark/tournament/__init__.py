@@ -8,7 +8,7 @@ Nothing here knows what a free model is. "The free models", "open weights agains
 vendor's catalogue" are the same machinery with a different `FieldFilter`.
 """
 
-from chessmark.tournament.matchmaking import Form, matchmake
+from chessmark.tournament.matchmaking import Form, Policy, matchmake
 from chessmark.tournament.pairing import ordered, round_robin, schedule, swiss_round
 from chessmark.tournament.standings import Standing, standings
 from chessmark.tournament.types import (
@@ -28,6 +28,7 @@ __all__ = [
     "Form",
     "Format",
     "Pairing",
+    "Policy",
     "Result",
     "Standing",
     "TournamentConfig",

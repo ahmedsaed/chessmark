@@ -1048,14 +1048,20 @@ async def test_an_entrant_that_keeps_producing_nothing_is_rested(
 ) -> None:
     """Counting rematches alone would make this worse, not better.
 
-    It stops one fixture repeating; it does not stop a model that cannot play. That model is still
-    permanently the least-known entrant, so it takes the slot anyway and now burns a *fresh*
-    opponent each time — and both seats of a paused game are parked, so every attempt removes a
-    healthy entrant from the pool for as long as the dead one takes to give up.
+    It stops one fixture repeating; it does not stop a model that cannot play. That model still
+    takes the slot and now burns a *fresh* opponent each time — and both seats of a paused game are
+    parked, so every attempt removes a healthy entrant from the pool for as long as the dead one
+    takes to give up.
+
+    **A field of three, so the repeat is forced by arithmetic rather than by a policy.** This used
+    to seat six and rely on the matchmaker returning to the same least-known entrant — true of
+    `Policy.INFORMATION`, and exactly the pathology `Policy.BALANCE` exists to remove, so the
+    premise evaporated when the default changed (ADR-0041). Two pairings drawn from three entrants
+    must share one whichever policy chooses them, which is the property this test actually needs.
     """
     tournament_id, _ = await make_tournament(
         db,
-        models=6,
+        models=3,
         config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
     )
 
@@ -1070,7 +1076,7 @@ async def test_an_entrant_that_keeps_producing_nothing_is_rested(
 
     # Whoever was in both dead pairings has now failed `DEAD_ATTEMPTS` running.
     exhausted = seen[0] & seen[1]
-    assert exhausted, "the matchmaker chose the same least-known entrant twice, as it always does"
+    assert exhausted, "two pairings from three entrants must share one"
 
     await advance(sessionmaker, queue, tournament_id=tournament_id)
     db.expire_all()
