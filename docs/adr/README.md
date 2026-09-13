@@ -44,6 +44,7 @@ supersedes the old one, rather than an edit.
 | [0036](0036-a-lost-reasoning-trace-announces-itself.md) | A lost reasoning trace announces itself, so streaming can be on | Accepted |
 | [0037](0037-a-turn-ends-when-the-model-stops.md) | A turn ends when the model stops, not when it moves | Accepted |
 | [0038](0038-a-prompt-version-has-two-parts.md) | A prompt version has two parts, and only one invalidates a result | Accepted |
+| [0039](0039-the-window-is-sized-for-the-request-in-front-of-us.md) | The window is sized for the request in front of us, not the one behind it | Accepted |
 
 ## Template
 

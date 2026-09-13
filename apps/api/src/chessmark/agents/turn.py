@@ -575,7 +575,13 @@ class TurnRunner:
         return self.player.transcript_seq > self._folded_at_seq
 
     async def _compact(
-        self, turn: Turn, result: TurnResult, occupied: int | None, window: compaction.Window
+        self,
+        turn: Turn,
+        result: TurnResult,
+        occupied: int | None,
+        window: compaction.Window,
+        *,
+        measured: int | None = None,
     ) -> bool:
         """One compaction pass: trim the kept turns' stale tool output, fold the rest into a
         summary. True when the request actually changed.
@@ -590,7 +596,15 @@ class TurnRunner:
         Failure returns False and the turn proceeds on the history it has. If that is too large the
         provider says so with exact numbers, and `_loop` compacts against those and retries — the
         reactive rung, and the only check of "did it fit" that is not a guess.
+
+        `occupied` is the best figure available for how full the window is, and the two callers
+        supply different kinds: the reactive rung has the provider's exact count of the request it
+        just refused, the proactive one a projection of that count onto the request about to go out
+        (ADR-0039). `measured` carries the underlying measurement through for the event log, which
+        must keep reporting a number somebody returned; it defaults to `occupied`, which is what
+        the reactive rung's already is.
         """
+        measured = occupied if measured is None else measured
         rows = await compaction.live_messages(self.session, self.player.id)
         plan = compaction.plan_compaction(
             rows,
@@ -706,7 +720,13 @@ class TurnRunner:
                 #: What the provider counted before the pass, and `None` when nothing had been
                 #: measured yet. Reported as-is rather than filled in, because a number nobody
                 #: returned is the mistake this whole change exists to remove (AGENT-19).
-                "occupied_tokens": occupied,
+                "occupied_tokens": measured,
+                #: What that measurement projects to for the request this pass was about to send —
+                #: the figure the threshold actually fired on (ADR-0039). Kept in its own field
+                #: rather than folded into the one above, because "the provider said 195,503" and
+                #: "we reckon it is 227,765 by now" are different claims and the log should not
+                #: blur them: the gap between the two is the whole reason this pass exists.
+                "projected_tokens": occupied,
                 "context_tokens": window.context,
                 #: **Characters, and labelled as characters.** How much the pass actually freed is
                 #: worth showing, and an exact count of something real beats a token estimate of
@@ -877,6 +897,11 @@ class TurnRunner:
             # much to the arithmetic deciding whether a request can be sent (AGENT-19).
             occupied = self._prompt_tokens
             window = await self._endpoint_window()
+            # ...and what that measurement says about the request *in front of us*, which has grown
+            # by everything appended since. Both decisions below take this one; `occupied` stays the
+            # measurement, so the event log can keep reporting a number the provider returned
+            # (ADR-0039).
+            projected = self._projected_prompt_tokens(window)
 
             # **Once per transcript, not once per turn.**
             #
@@ -894,9 +919,9 @@ class TurnRunner:
             # mark does not move, and the guard holds.
             if (
                 self._grew_since_fold()
-                and occupied is not None
-                and window.should_compact(occupied)
-                and await self._compact(turn, result, occupied, window)
+                and projected is not None
+                and window.should_compact(projected)
+                and await self._compact(turn, result, projected, window, measured=occupied)
             ):
                 # The prefix was rewritten, so the old measurement describes a transcript that no
                 # longer exists — but `_compact` left a bound behind rather than nothing, and a
@@ -906,6 +931,7 @@ class TurnRunner:
                 messages = [transcript.to_provider_message(row) for row in rows]
                 self._sent_characters = compaction.sent_characters(rows)
                 occupied = self._prompt_tokens
+                projected = self._projected_prompt_tokens(window)
 
             try:
                 completion = await self.gateway.complete(
@@ -918,7 +944,7 @@ class TurnRunner:
                     # ceiling on the answer, so asking for less than the model needs is a
                     # truncation and asking for more than fits is a rejection; this is the largest
                     # value that cannot be rejected.
-                    max_tokens=self._allow(window, occupied),
+                    max_tokens=self._allow(window, projected),
                     # One session per game, both seats included, so a match reads as a conversation
                     # on OpenRouter's own dashboard rather than as a hundred unrelated generations.
                     # See `agents/sessions.py` for why the unit is the game and not the turn.
@@ -1578,6 +1604,68 @@ class TurnRunner:
         await self.session.flush()
 
     # ------------------------------------------------------------------ helpers
+
+    def _projected_prompt_tokens(self, window: compaction.Window) -> int | None:
+        """How full the window is **for the request about to be sent**, not the last one.
+
+        `_prompt_tokens` measures the request the provider answered a round-trip ago, and every
+        decision that matters was reading it: `should_compact` asked whether to fold, and
+        `completion_cap` sized `max_tokens`, both against a transcript that had since grown. Game
+        `ed491262` died on exactly that gap — last measured at 195,503 tokens of a 262,144-token
+        window, comfortably under the 235,930 that triggers a fold, and its very next request was
+        counted by the endpoint at 227,765 plus the 62,545 of output we cleared it to generate. It
+        had added 32,262 tokens inside one turn; the guard band is 26,214 wide. The seat stepped
+        clean over it and was refused, having never compacted once in 43 plies.
+
+        **The growth was never invisible.** `_sent_characters` counts the very rows going out, on
+        the line above the decision, and `players.last_prompt_characters` holds the character count
+        the measurement belongs to. Their quotient is this endpoint's own token-per-character rate
+        for this transcript, measured by the provider (`_tokens_per_character`) — and it was used
+        only to size the retained tail, never to decide whether the request would fit.
+
+        This is not the estimate ADR-0021 deleted. That one was a universal constant — characters
+        over 3.5 — driving a value that reset to zero every turn, and it claimed 477,155 tokens for
+        six plies. This is one measurement divided by another, taken on this conversation, and the
+        provider's count replaces it a round-trip later. It bridges two measurements; it does not
+        stand in for one.
+
+        **It may only ever raise the figure.** `max` against what was actually measured, so a ratio
+        drifting low cannot reproduce the failure it exists to prevent — the worst it can do is fold
+        a turn early or ask for less output. It also handles the case the ratio cannot describe:
+        straight after a fold, `_prompt_tokens` is a *bound* on the pre-fold size while the
+        characters are post-fold, so their quotient is a ratio between two different conversations.
+        Scaling down from a bound would be inventing room; the `max` keeps the bound, which is the
+        conservative answer and what this path did before.
+
+        Nothing here is persisted — `players.last_prompt_tokens` keeps holding only what a provider
+        returned.
+
+        `None` when the seat has never been measured — unmeasured is a state the harness handles
+        honestly, and a ratio with no measurement under it is the thing we are not doing.
+        """
+        measured = self._prompt_tokens
+        if measured is None:
+            return None
+
+        characters = self.player.last_prompt_characters or 0
+        if characters <= 0 or self._sent_characters <= 0:
+            return measured
+
+        projected = max(measured, round(measured * self._sent_characters / characters))
+        # **Never larger than a sendable prompt**, exactly as the post-fold bound is clamped a few
+        # hundred lines up. The conversion is multiplicative, so a stored pair that does not
+        # describe one transcript — an old row, or a seat whose content changed character — scales
+        # the whole figure rather than just the new part of it. Left unclamped that turns a
+        # *prediction* into a `NoRoomToAnswerError` and fails a turn the provider might well have
+        # accepted, which is the harness convicting on a guess. Clamped, the worst case is a small
+        # `max_tokens` and a request that goes out, with the endpoint's own refusal and the
+        # reactive rung behind it — the authority stays the party that can actually count.
+        if window.known:
+            projected = min(
+                projected,
+                window.context - compaction.MIN_USEFUL_COMPLETION - compaction.FRAMING_TOKENS,
+            )
+        return max(measured, projected)
 
     def _tokens_per_character(self) -> float:
         """How this conversation's characters convert to this endpoint's tokens.
