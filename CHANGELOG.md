@@ -15,6 +15,36 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Changed
+
+- **`get_legal_moves` no longer says which move is mate** ([ADR-0040]). `check` and `checkmate`
+  flags were a one-ply search with terminal evaluation, run by us and handed to every seat on every
+  move of every turn — so no model playing Chessmark has ever had to *find* mate in one. Every
+  board client highlights legal moves and captures; none of them tells you which move wins. The
+  move is still listed, `capture` and `promotion` stay, and ADR-0002 still returns the full list on
+  every illegal move.
+- **The prompt states the silence forfeit** ([ADR-0040]). `MAX_NUDGES` has always been 3, so a
+  fourth reply with no tool call forfeits — and the prompt said nothing, while stating the
+  illegal-move forfeit in full. `1815a53f` ended `0-1` on it at ply 176. The nudge now counts down
+  too, as the repeated-call nudge already did. Invariant 12, in the place ADR-0020 missed.
+- **The prompt describes the turn loop it actually has** ([ADR-0037], [ADR-0040]). It still said
+  "you must end by calling `make_move`" after a turn started ending when the model stops, and
+  models read that as *move again*: in `9450f060` the black seat re-called `make_move` after
+  moving, every turn, and was answered `already_moved` every time.
+- **The ranked prompt names no tool the model cannot see** ([ADR-0040]). "Do not use the `say`
+  tool" introduced a tool already absent from the schema, which is how an invented tool call — and
+  then a forfeit — gets produced.
+
+### Fixed
+
+- **A draw by agreement between two models was unreachable** ([ADR-0040]). `offer_draw` wrote no
+  event and told the opponent nothing; only the human path ever recorded an offer. There was no
+  `accept_draw` at all, so `Termination.AGREED_DRAW` could not happen in a ranked game, while the
+  tool suggesting otherwise sat in every cached prefix. Underneath, `open_draw_offer` keyed on the
+  position — right for a human, who does not move after offering, and wrong for a model, which
+  must, so an offer lapsed one ply before the opponent could see it. It now lapses when the
+  *recipient* moves, which is what a decline is over a board.
+
 ### Added
 
 - **The turn prompt names the model's colour and the opponent's last move** ([ADR-0038]). It said
@@ -437,4 +467,5 @@ flags the old code wrote.
 [ADR-0037]: docs/adr/0037-a-turn-ends-when-the-model-stops.md
 [ADR-0038]: docs/adr/0038-a-prompt-version-has-two-parts.md
 [ADR-0039]: docs/adr/0039-the-window-is-sized-for-the-request-in-front-of-us.md
+[ADR-0040]: docs/adr/0040-what-a-board-shows-and-what-the-prompt-owes-you.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

@@ -29,7 +29,7 @@ from chessmark.game import (
 #: results produced under different tool surfaces are not comparable (BENCH-04).
 #: Bumped to v2 on 2026-08-28, adding `claim_draw`. The schema is part of the cached prefix, so it
 #: cannot vary within a game — a new tool is a new version by construction.
-TOOL_SCHEMA_VERSION = "v2"
+TOOL_SCHEMA_VERSION = "v3"
 
 MAX_MESSAGE_LENGTH = 280
 MAX_MESSAGES_PER_TURN = 3
@@ -49,6 +49,7 @@ class ToolName(StrEnum):
     MAKE_MOVE = "make_move"
     SAY = "say"
     OFFER_DRAW = "offer_draw"
+    ACCEPT_DRAW = "accept_draw"
     CLAIM_DRAW = "claim_draw"
     RESIGN = "resign"
 
@@ -92,9 +93,9 @@ def tool_schemas(*, trash_talk_enabled: bool = True) -> list[dict[str, Any]]:
         ),
         _fn(
             ToolName.GET_LEGAL_MOVES,
-            "List every legal move in the current position, in algebraic and UCI notation, with "
-            "flags for captures, checks, and promotions. Free to call, and the reliable way to "
-            "avoid an illegal move.",
+            "List every legal move in the current position, in algebraic and UCI notation, "
+            "marking captures and promotions. Free to call, and the reliable way to avoid an "
+            "illegal move.",
             {},
         ),
         _fn(
@@ -121,7 +122,15 @@ def tool_schemas(*, trash_talk_enabled: bool = True) -> list[dict[str, Any]]:
         ),
         _fn(
             ToolName.OFFER_DRAW,
-            "Offer your opponent a draw.",
+            "Offer your opponent a draw. The offer reaches them at the start of their next turn, "
+            "and stands until they answer it or move. You must still make your own move now.",
+            {},
+        ),
+        _fn(
+            ToolName.ACCEPT_DRAW,
+            "Accept a draw your opponent has offered, ending the game immediately as a draw. "
+            "Only call this when you have been told an offer is open — otherwise it is refused, "
+            "harmlessly, and you play on.",
             {},
         ),
         _fn(
@@ -177,6 +186,12 @@ class ToolResult:
     ends_turn: bool = False
     ends_game: bool = False
 
+    offers_draw: bool = False
+    """Set by `offer_draw`. The dispatcher is synchronous and holds no session, so recording the
+    offer and delivering it to the opponent is the turn loop's job — the same split `move` already
+    uses. Before ADR-0040 nothing did it at all: `offer_draw` returned "Draw offered" to the seat
+    that called it and the opponent was never told, in every model-vs-model game ever played."""
+
 
 @dataclass(slots=True)
 class TurnState:
@@ -199,12 +214,17 @@ class ToolDispatcher:
         state: TurnState,
         max_illegal_retries: int = 5,
         trash_talk_enabled: bool = True,
+        draw_offered: bool = False,
     ) -> None:
         self.referee = referee
         self.colour = colour
         self.state = state
         self.max_illegal_retries = max_illegal_retries
         self.trash_talk_enabled = trash_talk_enabled
+        #: Whether the opponent has an offer standing against this seat, read from `game_events`
+        #: once at the top of the turn. Passed in rather than looked up here because this class is
+        #: synchronous and deliberately knows nothing but the referee.
+        self.draw_offered = draw_offered
 
     # ------------------------------------------------------------------ dispatch
 
@@ -229,6 +249,7 @@ class ToolDispatcher:
             ToolName.MAKE_MOVE: self._make_move,
             ToolName.SAY: self._say,
             ToolName.OFFER_DRAW: self._offer_draw,
+            ToolName.ACCEPT_DRAW: self._accept_draw,
             ToolName.CLAIM_DRAW: self._claim_draw,
             ToolName.RESIGN: self._resign,
         }
@@ -296,13 +317,24 @@ class ToolDispatcher:
             payload={
                 "ok": True,
                 "count": len(moves),
+                # **What a board shows, and nothing a board does not** (ADR-0040).
+                #
+                # `check` and `checkmate` used to be here, and they were a one-ply search with
+                # terminal evaluation handed over free on every move of every turn: no model ever
+                # had to *find* mate in one, it was told. That is the single most decision-relevant
+                # fact in chess, and flagging it compressed the gap between a strong model and a
+                # weak one at exactly the moment a game is decided. `check` went with it because it
+                # made the ADR-0020 shuffle — chasing a bare king with checks into a repetition —
+                # trivial to find without seeing anything.
+                #
+                # A capture stays: every board client marks an occupied destination square
+                # differently, and it is one glance at the position rather than a ply of search.
+                # `promotion` stays because it is mechanical — the board asks you which piece.
                 "moves": [
                     {
                         "san": move.san,
                         "uci": move.uci,
                         **({"capture": True} if move.is_capture else {}),
-                        **({"check": True} if move.is_check else {}),
-                        **({"checkmate": True} if move.is_checkmate else {}),
                         **({"promotion": move.promotion} if move.promotion else {}),
                     }
                     for move in moves
@@ -385,14 +417,47 @@ class ToolDispatcher:
         )
 
     def _offer_draw(self, _arguments: dict[str, Any]) -> ToolResult:
-        # The opponent answers on its own turn; nothing changes yet.
+        # The opponent answers on its own turn; nothing about the position changes yet. What *does*
+        # happen is `offers_draw`, which the turn loop turns into a `draw_offered` event and a line
+        # in the opponent's next turn prompt.
         return ToolResult(
             payload={
                 "ok": True,
                 "offered": True,
-                "detail": "Draw offered. Your opponent will respond on its turn. "
-                "You must still make a move now.",
-            }
+                "detail": "Draw offered. Your opponent will be told at the start of its next turn "
+                "and may accept or play on. You must still make a move now.",
+            },
+            offers_draw=True,
+        )
+
+    def _accept_draw(self, _arguments: dict[str, Any]) -> ToolResult:
+        """Accept the opponent's standing offer, ending the game as a draw.
+
+        **A refusal here is not an illegal move**, for the same reason `claim_draw`'s is not: a
+        model asking whether an offer is open has broken no rule, and charging it against the
+        retry budget would forfeit a seat for asking (ADR-0020).
+        """
+        if not self.draw_offered:
+            return ToolResult(
+                payload={
+                    "ok": False,
+                    "error": "no_draw_offer",
+                    "detail": "Your opponent has not offered a draw, so there is nothing to "
+                    "accept. Play on as normal; this costs you nothing.",
+                },
+                ok=False,
+            )
+
+        outcome = self.referee.agree_draw()
+        return ToolResult(
+            payload={
+                "ok": True,
+                "accepted": True,
+                "result": str(outcome.result),
+                "detail": outcome.detail,
+            },
+            ends_turn=True,
+            ends_game=True,
         )
 
     def _claim_draw(self, _arguments: dict[str, Any]) -> ToolResult:

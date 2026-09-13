@@ -127,6 +127,7 @@ async def test_the_system_prompt_contains_nothing_that_changes_per_turn(
         colour=Colour.WHITE,
         opponent="black-model",
         max_illegal_retries=5,
+        max_nudges=3,
         trash_talk_enabled=True,
     )
 
@@ -155,6 +156,7 @@ async def test_the_system_prompt_contains_nothing_that_changes_per_turn(
         colour=Colour.WHITE,
         opponent="black-model",
         max_illegal_retries=5,
+        max_nudges=3,
         trash_talk_enabled=True,
     )
 

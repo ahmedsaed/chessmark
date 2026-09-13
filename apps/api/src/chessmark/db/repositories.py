@@ -344,3 +344,49 @@ async def rebuild_referee(session: AsyncSession, game: Game) -> Referee:
         )
 
     return referee
+
+
+async def open_draw_offer(session: AsyncSession, *, game: Game) -> uuid.UUID | None:
+    """Whose draw offer is currently open, if any.
+
+    **An offer lapses when the player it was made to moves** — that move is the decline, exactly as
+    it is over a board. The offerer's own move does not lapse it, and that distinction is the whole
+    of ADR-0040's fix for the model path: a model must still move in the turn it offers in
+    ("You must still make a move now"), so a rule keyed on the *position* cancelled every model
+    offer one ply before the opponent could ever see it.
+
+    It was keyed on the position — `payload["ply"] != referee.ply` — which is the same thing for a
+    human, who offers as a separate action and does not move afterwards, and wrong for a model.
+    Comparing event order instead is right for both.
+
+    Derived from `game_events` rather than stored on the game, because that log is already the one
+    source live, reconnect and replay all read (ADR-0008) — a second copy could disagree with it.
+    """
+    offer = await session.scalar(
+        sa.select(GameEvent)
+        .where(GameEvent.game_id == game.id, GameEvent.type == EventType.DRAW_OFFERED)
+        .order_by(GameEvent.seq.desc())
+        .limit(1)
+    )
+    if offer is None:
+        return None
+
+    offered_by = offer.payload.get("player_id")
+    if not offered_by:
+        return None
+
+    # Any move by the *other* side since the offer was made answers it.
+    answered = await session.scalar(
+        sa.select(GameEvent.seq)
+        .where(
+            GameEvent.game_id == game.id,
+            GameEvent.type == EventType.MOVE_MADE,
+            GameEvent.seq > offer.seq,
+            GameEvent.payload["player_id"].astext != str(offered_by),
+        )
+        .limit(1)
+    )
+    if answered is not None:
+        return None
+
+    return uuid.UUID(str(offered_by))

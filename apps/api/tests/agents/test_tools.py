@@ -93,15 +93,38 @@ def test_get_board_describes_the_position() -> None:
     assert payload["fen"].startswith("rnbqkbnr")
 
 
-def test_get_legal_moves_lists_everything_with_flags() -> None:
+def test_get_legal_moves_lists_every_move_and_marks_captures() -> None:
     referee = Referee(start_fen="6k1/5ppp/8/8/8/8/8/R3K3 w Q - 0 1")
     result = dispatcher(referee=referee).execute(call(ToolName.GET_LEGAL_MOVES))
 
     moves = {move["san"]: move for move in result.payload["moves"]}
     assert result.payload["count"] == len(moves)
-    assert moves["Ra8#"]["checkmate"] is True
-    assert moves["Ra8#"]["check"] is True
+    assert "Ra8#" in moves, "every legal move is listed, including the one that ends the game"
     assert "capture" not in moves["Ra2"]
+
+
+def test_get_legal_moves_does_not_say_which_move_is_mate() -> None:
+    """**The line is what a board shows** (ADR-0040).
+
+    `Ra8#` is mate in one. Flagging it was a one-ply search with terminal evaluation handed over
+    free on every move of every turn, so no model ever had to find it — which is the one skill most
+    likely to separate a strong model from a weak one, deleted at exactly the moment a game is
+    decided. `check` went with it: marking every checking move made the ADR-0020 shuffle, chasing a
+    bare king into a repetition, findable without seeing anything.
+
+    The move itself is still there. This is not hiding a legal move — the full list is what
+    ADR-0002 hands back on every illegal one — it is declining to analyse it.
+    """
+    referee = Referee(start_fen="6k1/5ppp/8/8/8/8/8/R3K3 w Q - 0 1")
+    result = dispatcher(referee=referee).execute(call(ToolName.GET_LEGAL_MOVES))
+
+    flags = {key for move in result.payload["moves"] for key in move}
+
+    assert "checkmate" not in flags
+    assert "check" not in flags
+    assert flags <= {"san", "uci", "capture", "promotion"}, (
+        f"an unexpected field reached the move list: {flags}"
+    )
 
 
 def test_get_move_history_can_be_truncated() -> None:
@@ -293,3 +316,12 @@ def test_the_tool_counter_tracks_every_call() -> None:
         dispatch.execute(call(ToolName.GET_BOARD))
 
     assert dispatch.state.tool_calls == 3
+
+
+def test_accept_draw_is_offered() -> None:
+    """It was missing, so `Termination.AGREED_DRAW` could not be reached between two models at
+    all — `DRAW_OFFER_RECEIVED` used to say so outright (ADR-0040)."""
+    names = {schema["function"]["name"] for schema in tool_schemas()}
+
+    assert ToolName.ACCEPT_DRAW in names
+    assert ToolName.OFFER_DRAW in names, "and the half that always existed is still there"

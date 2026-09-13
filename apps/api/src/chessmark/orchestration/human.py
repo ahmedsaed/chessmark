@@ -19,10 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents import prompts, transcript
 from chessmark.db.enums import EventType, GameStatus, ModerationStatus, PlayerKind
-from chessmark.db.models import Game, GameEvent, Message, Player
+from chessmark.db.models import Game, Message, Player
 from chessmark.db.repositories import (
     append_event,
     finish_game,
+    open_draw_offer,
     rebuild_referee,
     record_ply,
 )
@@ -196,31 +197,6 @@ async def offer_draw(session: AsyncSession, *, game: Game, player: Player) -> Hu
     return HumanAction(ply=referee.ply, before_seq=before_seq, detail="draw offered")
 
 
-async def open_draw_offer(
-    session: AsyncSession, *, game: Game, referee: Referee
-) -> uuid.UUID | None:
-    """Whose draw offer is currently open, if any.
-
-    An offer lapses the moment a move is played, as it does over a board: it is open only if the
-    most recent draw offer was made at the position still on the board. Derived from `game_events`
-    rather than stored on the game, because that log is already the one source live, reconnect and
-    replay all read (ADR-0008) — a second copy could disagree with it.
-    """
-    row = await session.scalar(
-        sa.select(GameEvent)
-        .where(GameEvent.game_id == game.id, GameEvent.type == EventType.DRAW_OFFERED)
-        .order_by(GameEvent.seq.desc())
-        .limit(1)
-    )
-    if row is None:
-        return None
-    if int(row.payload.get("ply", -1)) != referee.ply:
-        return None
-
-    offered_by = row.payload.get("player_id")
-    return uuid.UUID(str(offered_by)) if offered_by else None
-
-
 async def respond_to_draw(
     session: AsyncSession, *, game: Game, player: Player, accept: bool
 ) -> HumanAction:
@@ -237,7 +213,7 @@ async def respond_to_draw(
     if game.status is not GameStatus.RUNNING or referee.is_over:
         raise NotYourTurnError("This game is already over.")
 
-    offered_by = await open_draw_offer(session, game=game, referee=referee)
+    offered_by = await open_draw_offer(session, game=game)
     if offered_by is None:
         raise NotYourTurnError("There is no draw offer to answer.")
     if offered_by == player.id:
