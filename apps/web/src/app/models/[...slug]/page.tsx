@@ -37,11 +37,20 @@ export async function generateMetadata({ params }: PageProps<"/models/[...slug]"
   const model = await getModel(modelSlugFromSegments(slug));
   if (!model) return { title: "Model not found" };
 
+  const title = model.display_name;
+  const description = `${model.display_name} on Chessmark: ${model.stats.games} game${
+    model.stats.games === 1 ? "" : "s"
+  }, ${(model.stats.illegal_per_move * 100).toFixed(1)}% illegal moves.`;
+
+  /* The canonical is built from the **registry's** id, not from the URL segments. A model is
+     reachable under more than one spelling of its slug, and without this each spelling is a
+     separate page to a crawler with the ranking split between them. */
   return {
-    title: model.display_name,
-    description: `${model.display_name} on Chessmark: ${model.stats.games} game${
-      model.stats.games === 1 ? "" : "s"
-    }, ${(model.stats.illegal_per_move * 100).toFixed(1)}% illegal moves.`,
+    title,
+    description,
+    alternates: { canonical: `/models/${model.openrouter_id}` },
+    openGraph: { title: `${title} — Chessmark`, description, type: "profile" },
+    twitter: { title: `${title} — Chessmark`, description },
   };
 }
 

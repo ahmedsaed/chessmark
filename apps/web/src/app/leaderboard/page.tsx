@@ -1,15 +1,18 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { getLeaderboard } from "@/lib/api";
 import type { LeaderboardRow } from "@/lib/types";
+import { pageMetadata } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "Leaderboard",
   description:
     "Glicko-2 ratings for language models playing chess, with illegal-move rates and every excluded game listed.",
-};
+  path: "/leaderboard",
+});
 
 function usd(value: string): string {
   const amount = Number(value);

@@ -136,6 +136,43 @@ browser looks wrong. Only routes that **cannot** 404 have one, and `site.spec.ts
 for the three that can. A route that 404s should resolve that check first and stream what comes
 after it.
 
+## Metadata, icons, and the sitemap
+
+`lib/site.ts` is the single source: name, tagline, description, both navs, and `staticRoutes` —
+the list the sitemap is built from. The root layout carries `metadataBase`, the title template,
+and the site-wide OpenGraph block; `app/opengraph-image.tsx` draws the card.
+
+**Metadata keys are inherited wholesale.** A segment that does not set a key gets the parent's
+value verbatim. That cuts both ways and is the thing to know before editing any of it:
+
+* It is why pages that set only `title` all shipped the *root's* OpenGraph block for months —
+  sharing `/leaderboard` produced a card describing the site root. `pageMetadata` in `lib/site.ts`
+  fixes that in one place; a page passes its title, description and path and gets its own card.
+* It is also why **`alternates.canonical` must never go on the root layout.** Inherited, it tells
+  a crawler that every route in the site is a duplicate of `/`. Each page states its own, and
+  `/games/[id]`, `/models/[...slug]` and `/tournaments/[slug]` build theirs from the *record's*
+  id rather than the URL — a model is reachable under more than one spelling of its slug, and an
+  era is a view of one event (ADR-0043), not a page of its own.
+
+**`themeColor` lives in a `viewport` export**, not in `metadata` — Next.js 16 errors on it there.
+
+**The icons are the header's `Mark`**, the 3×3 checker, in literal hex: a favicon is fetched
+outside the document, so a `var(--color-*)` resolves to nothing and the icon renders empty. Its
+light squares take the amber accent rather than `--color-sq-light`, because the two board colours
+are 2.5:1 against each other and at 16px in a tab strip that is a brown square rather than a
+chessboard. `favicon.ico` and `apple-icon.png` are rasterised from `icon.svg`; regenerate all three
+together. Note that XML forbids `--` inside a comment, so a CSS token name cannot be *spelled* in
+`icon.svg` — librsvg rejects the whole file, and the icon silently disappears.
+
+**`app/manifest.ts` injects its own `<link rel="manifest">`.** Do not add one to `metadata` as
+well, or the head carries two.
+
+**The sitemap and the navigation drifted once and will again.** `/tournaments` shipped with
+ADR-0043, went into both navs, and never reached `sitemap.ts` — unlisted for the whole life of the
+feature, because nothing compared the two lists. Both now read `staticRoutes`, and
+`site.test.ts` fails if a nav link is missing from it. A new static route goes in `staticRoutes`
+first.
+
 ## Traps
 
 **The site must load without Clerk keys.** `src/proxy.ts` called `clerkMiddleware()`

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" width="12" height="12">
+  <!-- The site's mark: the 3x3 checker drawn by `Mark` in SiteHeader.tsx.
+       Literal hex rather than the design tokens, because a favicon is fetched outside the
+       document: a CSS custom property resolves to nothing there and the icon renders empty.
+       Light squares take the amber accent rather than the board's light square. The two board
+       colours are 2.5:1 against each other, which at 16px in a tab strip is one muddy brown
+       square rather than a chessboard; amber is the wordmark's colour and holds the pattern
+       at tab size.
+       Note: no double hyphen anywhere in this comment. XML forbids it inside a comment, and
+       spelling a CSS token name here made librsvg reject the whole file. -->
+  <rect width="12" height="12" rx="2" fill="#4b3f2f"/>
+  <g fill="#dca84b">
+    <rect x="4" y="0" width="4" height="4"/>
+    <rect x="0" y="4" width="4" height="4"/>
+    <rect x="8" y="4" width="4" height="4"/>
+    <rect x="4" y="8" width="4" height="4"/>
+  </g>
+</svg>

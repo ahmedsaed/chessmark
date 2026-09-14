@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 
 import { AuthProvider } from "@/components/AuthProvider";
 import { SiteFooter } from "@/components/SiteFooter";
@@ -25,6 +25,18 @@ export const metadata: Metadata = {
     url: siteUrl,
   },
   twitter: { card: "summary_large_image" },
+  /* No `alternates.canonical` here on purpose. Metadata keys are inherited wholesale by any
+     segment that does not set them, so a canonical on the root layout makes every page in the
+     site declare itself a duplicate of `/`. Each page sets its own; `canonicalFor` builds it. */
+};
+
+/* Split from `metadata` because Next.js 16 errors on `themeColor` inside it.
+   `colorScheme` tells the browser to render form controls and scrollbars dark; `globals.css`
+   already sets it on `html`, and this puts it in the document head where the browser reads it
+   before the stylesheet arrives — which is the difference between a white flash and none. */
+export const viewport: Viewport = {
+  themeColor: "#16130e",
+  colorScheme: "dark",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

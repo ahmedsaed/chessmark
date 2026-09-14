@@ -13,9 +13,17 @@ export async function generateMetadata({ params }: PageProps<"/tournaments/[slug
   const tournament = await getTournament(slug);
   if (!tournament) return { title: "Tournament not found" };
 
+  const title = tournament.name;
+  const description = `${tournament.field_description}: ${tournament.entrant_count} entrants, ${tournament.stats.played} of ${tournament.stats.pairings} games played.`;
+
+  /* Canonical without the era query string: the eras are views of one event (ADR-0043), not
+     separate pages, and each would otherwise compete with the others in an index. */
   return {
-    title: tournament.name,
-    description: `${tournament.field_description}: ${tournament.entrant_count} entrants, ${tournament.stats.played} of ${tournament.stats.pairings} games played.`,
+    title,
+    description,
+    alternates: { canonical: `/tournaments/${tournament.slug}` },
+    openGraph: { title: `${title} — Chessmark`, description, type: "article" },
+    twitter: { title: `${title} — Chessmark`, description },
   };
 }
 

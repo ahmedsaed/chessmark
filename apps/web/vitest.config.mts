@@ -17,7 +17,10 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
   test: {
-    include: ["src/lib/**/*.test.ts"],
+    /* `src/app` is here for the metadata routes only — `sitemap.ts` and `robots.ts` are pure
+       functions over the API client, and the sitemap silently lost `/tournaments` for the whole
+       life of that feature because nothing ever ran it. Pages and components stay Playwright's. */
+    include: ["src/lib/**/*.test.ts", "src/app/**/*.test.ts"],
     environment: "node",
     coverage: {
       provider: "v8",
@@ -34,8 +37,6 @@ export default defineConfig({
         // Playwright drives every one of these endpoints through a real browser against a real
         // API, which is the only way the shape of a response gets checked at all.
         "src/lib/api.ts",
-        // Static metadata — the site's name, URL and OpenGraph card. No branches to cover.
-        "src/lib/site.ts",
       ],
       reporter: ["text", "html", "json-summary"],
       // NFR-10: measured *and* enforced. A floor that is merely reported is a number nobody

@@ -1,14 +1,17 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { getBenchSummary } from "@/lib/api";
+import { pageMetadata } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "Methodology",
   description:
     "How Chessmark ranks language models, which games are excluded and why, and where the ranking is weak.",
-};
+  path: "/methodology",
+});
 
 /**
  * How the ranking works, and where it is weak (BENCH-10).

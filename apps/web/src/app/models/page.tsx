@@ -2,13 +2,16 @@ import type { Metadata } from "next";
 
 import { ModelTable } from "@/components/ModelTable";
 import { listModels } from "@/lib/api";
+import { pageMetadata } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "Models",
-  description: "Every model Chessmark can play, what it costs, and what it has done.",
-};
+  description:
+    "Every model Chessmark can play, what it costs, and what it has done.",
+  path: "/models",
+});
 
 /**
  * The catalogue.

@@ -1,14 +1,18 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 
 import { listTournaments } from "@/lib/api";
 import type { TournamentSummary } from "@/lib/types";
+import { pageMetadata } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
-export const metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "Tournaments",
-  description: "Automated events: round robins and Swiss, run unattended against a budget.",
-};
+  description:
+    "Automated events: round robins and Swiss, run unattended against a budget.",
+  path: "/tournaments",
+});
 
 export default async function TournamentsPage() {
   const tournaments = await listTournaments();

@@ -51,6 +51,9 @@ logs/
 # stray screenshots from browser-driven checks
 *.png
 !apps/web/public/**/*.png
+# App Router metadata icons are source, not screenshots. Without this the apple-touch icon is
+# ignored on the way in and the deployed site 404s it — silently, since nothing fails locally.
+!apps/web/src/app/**/*.png
 
 # Database dumps. Local operational state, and they contain real data.
 /backups/

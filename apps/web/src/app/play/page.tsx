@@ -3,13 +3,16 @@ import type { Metadata } from "next";
 import { MyGames } from "@/components/MyGames";
 import { NewGameSection } from "@/components/NewGameSection";
 import { apiUrl, listModels } from "@/lib/api";
+import { pageMetadata } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "Play",
-  description: "Play a language model yourself, or start a game between two of them.",
-};
+  description:
+    "Play a language model yourself, or start a game between two of them.",
+  path: "/play",
+});
 
 /**
  * Starting a game, and returning to one.

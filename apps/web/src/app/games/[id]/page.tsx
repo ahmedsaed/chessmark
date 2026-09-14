@@ -29,6 +29,7 @@ export async function generateMetadata({ params }: PageProps<"/games/[id]">) {
   return {
     title,
     description,
+    alternates: { canonical: `/games/${game.id}` },
     openGraph: { title, description, type: "article" },
     twitter: { card: "summary_large_image", title, description },
   };

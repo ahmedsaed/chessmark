@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
 
@@ -10,6 +11,11 @@ import { pickReplays } from "@/lib/replays";
 import type { GameDetail, GameSummary, LeaderboardRow } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
+
+/* Title and description are the root layout's, which are already this page's — the lobby is the
+   site. Only the canonical is stated, and only here: on the layout it would be inherited by every
+   route and declare the whole site a duplicate of `/`. */
+export const metadata: Metadata = { alternates: { canonical: "/" } };
 
 /**
  * The lobby.

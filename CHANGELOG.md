@@ -17,6 +17,41 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **The site shipped with Vercel's logo as its favicon.** `app/favicon.ico` was the one
+  `create-next-app` wrote in Phase 0 and nothing ever replaced it, so every tab, bookmark and
+  search result carried another company's mark. It is now the site's own — the 3×3 checker
+  `SiteHeader` already draws — as `icon.svg`, with `favicon.ico` and `apple-icon.png` rasterised
+  from it. The light squares take the amber accent rather than the board's light square: the two
+  board colours are 2.5:1 against each other, which at 16px is a brown square rather than a
+  chessboard. The five unreferenced `create-next-app` SVGs in `public/` went with it.
+- **`/tournaments` was missing from the sitemap.** It shipped with [ADR-0043], went into both the
+  header and the footer, and never reached `sitemap.ts` — unlisted for the whole life of the
+  feature, because nothing compared the two lists. The static list now lives in `lib/site.ts` as
+  `staticRoutes`, read by the sitemap, and `site.test.ts` fails if a nav link is absent from it.
+  Individual tournaments are listed too, alongside the models and finished games already there.
+- **Every page's social card described the site root.** Metadata keys are inherited wholesale, and
+  the pages set only `title` — so sharing `/leaderboard` produced the same card, word for word, as
+  sharing `/`. `pageMetadata` gives each page its own OpenGraph and Twitter block from the
+  description it already had.
+- **Nothing declared a canonical URL.** Each page now states its own, and the dynamic routes build
+  theirs from the record rather than the URL: a model is reachable under more than one spelling of
+  its slug, and an era is a view of one event ([ADR-0043]) rather than a page of its own. It is
+  deliberately *not* on the root layout — inherited, a canonical there marks the whole site a
+  duplicate of `/`.
+
+### Added
+
+- **A web app manifest and a theme colour.** Without them the browser paints its own chrome white
+  above a page whose ground is `#16130e` and names a bookmark after the full `<title>`.
+  `themeColor` goes in a `viewport` export; Next.js 16 errors on it inside `metadata`.
+- **The metadata routes are tested.** `sitemap.ts` and `robots.ts` had no test and were never
+  executed by the suite, which is why the sitemap could lose a page in silence. `vitest` now
+  includes `src/app/**/*.test.ts` for these two routes; pages and components stay Playwright's.
+  `lib/site.ts` came out of the coverage exclusion at the same time — it holds real logic now, and
+  its nav predicates had never been run either.
+
+### Fixed
+
 - **`get_legal_moves` was still naming the mating move** ([ADR-0042]). ADR-0040 removed the `check`
   and `checkmate` flags and left the same facts in the SAN string — and a `#` in an alphabetically
   sorted list is easier to pattern-match than the structured flag was. From `1cbf3a36`, the first

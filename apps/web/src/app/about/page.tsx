@@ -2,14 +2,16 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { getBenchSummary } from "@/lib/api";
+import { pageMetadata } from "@/lib/site";
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
+export const metadata: Metadata = pageMetadata({
   title: "About",
   description:
     "What Chessmark measures, why chess, and what the numbers can and cannot tell you.",
-};
+  path: "/about",
+});
 
 /**
  * The about page.
