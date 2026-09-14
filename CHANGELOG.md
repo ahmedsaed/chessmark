@@ -15,7 +15,25 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
-### Changed
+### Fixed
+
+- **`get_legal_moves` was still naming the mating move** ([ADR-0042]). ADR-0040 removed the `check`
+  and `checkmate` flags and left the same facts in the SAN string — and a `#` in an alphabetically
+  sorted list is easier to pattern-match than the structured flag was. From `1cbf3a36`, the first
+  night v3 ran: forty-five moves, exactly one `#`, and the model played it. The suffix is stripped
+  now, through the function `parse` has always used to accept `Nc3` for `Nc3#`. The illegal-move
+  list goes through the same function, so ADR-0002's recovery route cannot be a way around the
+  disclosure line. `get_move_history` keeps its marks — a scoresheet is a record, not an analysis.
+- **`judge` reads the tool schema version** ([ADR-0042]). It was recorded on every game since the
+  registry existed and never checked, which stayed harmless only because every tool change had
+  moved `PROMPT_VERSION` alongside it. Stripping a suffix removes information from a model's view
+  and changes no word of the prompt, so the prompt version could not describe it.
+- **A tournament records the task it opened on, and holds when it moves** ([ADR-0042]). Nothing
+  pinned a pool to a version, so a deploy silently changed what a running event measured: when v3
+  shipped, `pool-free` carried on pairing under a new prompt into a v2 table. A stale event now
+  stops starting games and says which version it opened on; settling is unaffected, so games in
+  flight finish. Events created before the column are unpinned and never hold.
+
 
 - **The tournament runner finds its own work** (OPS-24). The long-running container ticked
   whichever slug `TOURNAMENT_SLUG` named, so `tournament create` produced an event nothing would
@@ -497,4 +515,5 @@ flags the old code wrote.
 [ADR-0039]: docs/adr/0039-the-window-is-sized-for-the-request-in-front-of-us.md
 [ADR-0040]: docs/adr/0040-what-a-board-shows-and-what-the-prompt-owes-you.md
 [ADR-0041]: docs/adr/0041-a-pool-balances-its-pairings.md
+[ADR-0042]: docs/adr/0042-the-notation-was-still-analysing-the-position.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

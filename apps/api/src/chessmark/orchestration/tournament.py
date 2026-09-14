@@ -22,6 +22,9 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from chessmark.agents.prompts import PROMPT_VERSION
+from chessmark.agents.tools import TOOL_SCHEMA_VERSION
+from chessmark.bench.ratable import same_task
 from chessmark.bench.service import compute_ratings
 from chessmark.core.cooldown import ProviderCooldown
 from chessmark.core.halt import SCOPE_ALL, Halt
@@ -193,6 +196,18 @@ async def _holding(
     Checked before starting rather than after, like every other bound here: a game begun outside
     its window, or on an allowance that has run out, cannot be un-begun.
     """
+    # **The task moved under it.** An event measures whatever was deployed when it opened, and a
+    # deploy that changes the prompt or the tool surface changes what its table means — silently,
+    # and mid-crosstable. `pool-free` went on pairing under v3 into a v2 table; `pool-free-v3`
+    # settled three games under a tool surface that named the mating move (ADR-0042).
+    #
+    # **Held rather than rolled over.** Creating an event is an operator's decision — its field,
+    # its concurrency, its budget — so the right behaviour is to stop and say why, not to guess.
+    # Settling is unaffected, so games already in flight finish and score normally.
+    stale = _stale_task(tournament)
+    if stale:
+        return stale
+
     clock = (now or dt.datetime.now(dt.UTC)).time()
     if not within_window(tournament.active_from, tournament.active_until, clock):
         return (
@@ -222,6 +237,26 @@ async def _holding(
             until = f", lifts in {state.until.isoformat()}" if state.until else ""
             return f"the harness is halted: {state.reason}{until}"
 
+    return ""
+
+
+def _stale_task(tournament: Tournament) -> str:
+    """Why this event may start no more games, when the deployed task is not the one it opened on.
+
+    `same_task` rather than equality, so a minor bump — the same task stated more conveniently —
+    passes exactly as it does for the leaderboard (ADR-0038). Unpinned is not stale: every event
+    created before the columns existed carries `NULL`, and a column added today must not stop an
+    event that was running yesterday.
+    """
+    for name, played, current in (
+        ("prompt", tournament.prompt_version, PROMPT_VERSION),
+        ("tool schema", tournament.tool_schema_version, TOOL_SCHEMA_VERSION),
+    ):
+        if played is not None and not same_task(played, current):
+            return (
+                f"it opened on {name} {played} and {current} is deployed — its table measures a "
+                f"task that is no longer being played, so create a new event"
+            )
     return ""
 
 

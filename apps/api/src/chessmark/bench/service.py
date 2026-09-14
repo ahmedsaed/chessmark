@@ -20,6 +20,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.prompts import PROMPT_VERSION
+from chessmark.agents.tools import TOOL_SCHEMA_VERSION
 from chessmark.bench.glicko2 import Glicko2, Outcome
 from chessmark.bench.glicko2 import Rating as Glicko2Rating
 from chessmark.bench.ratable import GameFacts, judge
@@ -231,6 +232,7 @@ async def scan(
     session: AsyncSession,
     *,
     prompt_version: str | None = PROMPT_VERSION,
+    tool_schema_version: str | None = TOOL_SCHEMA_VERSION,
     tournament_id: uuid.UUID | None = None,
 ) -> Scan:
     """Judge every eligible game in one pass, batching every read.
@@ -254,13 +256,16 @@ async def scan(
             is_ranked=game.is_ranked,
             termination=game.termination,
             prompt_version=game.prompt_version,
+            tool_schema_version=game.tool_schema_version,
             pinned_providers=tuple(_pinned(p) for p in players),
             used_providers=tuple(used.get((game.id, p.id), ()) for p in players),
             model_slugs=tuple(str((p.sampling or {}).get("model") or "") for p in players),
             trash_talk_enabled=game.trash_talk_enabled,
         )
 
-        verdict = judge(facts, prompt_version=prompt_version)
+        verdict = judge(
+            facts, prompt_version=prompt_version, tool_schema_version=tool_schema_version
+        )
         if not verdict:
             result.excluded.append(Excluded(game_id=game.id, reason=verdict.reason))
             continue
@@ -343,6 +348,7 @@ async def ratable_games(
     session: AsyncSession,
     *,
     prompt_version: str | None = PROMPT_VERSION,
+    tool_schema_version: str | None = TOOL_SCHEMA_VERSION,
     tournament_id: uuid.UUID | None = None,
 ) -> list[tuple[Game, list[Player], dict[uuid.UUID, str]]]:
     """Every game that may move a rating, with its seats and their precisions.
@@ -351,7 +357,12 @@ async def ratable_games(
     sites deciding it separately is three chances for a leaderboard whose rating, whose
     illegal-move rate and whose "games behind this row" cover different sets of games.
     """
-    scanned = await scan(session, prompt_version=prompt_version, tournament_id=tournament_id)
+    scanned = await scan(
+        session,
+        prompt_version=prompt_version,
+        tool_schema_version=tool_schema_version,
+        tournament_id=tournament_id,
+    )
     return scanned.counted
 
 
@@ -359,6 +370,7 @@ async def compute_ratings(
     session: AsyncSession,
     *,
     prompt_version: str | None = PROMPT_VERSION,
+    tool_schema_version: str | None = TOOL_SCHEMA_VERSION,
     tau: float = 0.5,
     tournament_id: uuid.UUID | None = None,
     scanned: Scan | None = None,
@@ -380,7 +392,12 @@ async def compute_ratings(
     run = RatingRun()
 
     if scanned is None:
-        scanned = await scan(session, prompt_version=prompt_version, tournament_id=tournament_id)
+        scanned = await scan(
+            session,
+            prompt_version=prompt_version,
+            tool_schema_version=tool_schema_version,
+            tournament_id=tournament_id,
+        )
 
     # The exclusions come from the pass that produced the inclusions. Computing them separately was
     # a second identical sweep of every game, and two sweeps are two chances to disagree.
@@ -436,6 +453,7 @@ async def ratings_by_key(
     *,
     tournament_id: uuid.UUID,
     prompt_version: str | None = PROMPT_VERSION,
+    tool_schema_version: str | None = TOOL_SCHEMA_VERSION,
 ) -> dict[str, tuple[float, float, bool]]:
     """One event's rating, deviation and provisional flag, keyed the way a tournament keys its
     entrants (ADR-0027).
@@ -451,7 +469,12 @@ async def ratings_by_key(
     produced.
     """
     # One scan for both halves: the rating, and the game counts that break a slug's ties.
-    scanned = await scan(session, prompt_version=prompt_version, tournament_id=tournament_id)
+    scanned = await scan(
+        session,
+        prompt_version=prompt_version,
+        tool_schema_version=tool_schema_version,
+        tournament_id=tournament_id,
+    )
     run = await compute_ratings(
         session, prompt_version=prompt_version, tournament_id=tournament_id, scanned=scanned
     )
@@ -478,6 +501,7 @@ async def excluded_games(
     session: AsyncSession,
     *,
     prompt_version: str | None = PROMPT_VERSION,
+    tool_schema_version: str | None = TOOL_SCHEMA_VERSION,
     tournament_id: uuid.UUID | None = None,
 ) -> list[Excluded]:
     """Finished games that did not count, with the sentence explaining each.
@@ -485,7 +509,12 @@ async def excluded_games(
     Reported rather than discarded. "Some games are excluded" invites disbelief; a list of ids and
     reasons is checkable (BENCH-10).
     """
-    scanned = await scan(session, prompt_version=prompt_version, tournament_id=tournament_id)
+    scanned = await scan(
+        session,
+        prompt_version=prompt_version,
+        tool_schema_version=tool_schema_version,
+        tournament_id=tournament_id,
+    )
     return scanned.excluded
 
 
@@ -493,6 +522,7 @@ async def compute_aggregates(
     session: AsyncSession,
     *,
     prompt_version: str | None = PROMPT_VERSION,
+    tool_schema_version: str | None = TOOL_SCHEMA_VERSION,
     scanned: Scan | None = None,
 ) -> dict[Contestant, Aggregate]:
     """Per-contestant metrics over the same games the ratings used.

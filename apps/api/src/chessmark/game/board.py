@@ -101,8 +101,21 @@ def _colour_name(colour: chess.Color) -> str:
     return "white" if colour == chess.WHITE else "black"
 
 
-def _normalise_san(san: str) -> str:
-    """Strip check, mate, and annotation suffixes so notations compare equal."""
+def plain_san(san: str) -> str:
+    """SAN without its check, mate and annotation suffixes: `Qxf7#` becomes `Qxf7`.
+
+    Two callers, and they want it for different reasons.
+
+    `parse` has always used it so that `Nc3` and `Nc3#` resolve to the same move — the suffix is a
+    courtesy annotation, not part of a move's identity, and a model that omits it has not made a
+    mistake.
+
+    The agent tool surface uses it to **withhold an analysis it should not be handing over**
+    (ADR-0042). ADR-0040 removed the `check` and `checkmate` flags from `get_legal_moves` on the
+    grounds that no board client tells you which move is mate — and left the same fact in the SAN
+    string, where it is easier to spot than the flag was. In a real v3 game the list came back with
+    forty-five moves sorted alphabetically and exactly one `#` in it; the model played that move.
+    """
     return san.rstrip(_CHECK_SUFFIXES)
 
 
@@ -376,9 +389,9 @@ class ChessBoard:
         The most useful case to catch is a move that is mechanically fine but leaves the king in
         check — the model isn't confused about how the piece moves, it has missed a pin.
         """
-        target = _normalise_san(san)
+        target = plain_san(san)
         for pseudo in self._board.generate_pseudo_legal_moves():
-            if _normalise_san(self._board.san(pseudo)) != target:
+            if plain_san(self._board.san(pseudo)) != target:
                 continue
             if self._board.is_into_check(pseudo):
                 return self._reject(

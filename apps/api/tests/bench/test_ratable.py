@@ -24,6 +24,7 @@ def facts(**overrides: object) -> GameFacts:
         "is_ranked": True,
         "termination": Termination.CHECKMATE,
         "prompt_version": "v1",
+        "tool_schema_version": "v1",
         "pinned_providers": ("Baidu", "Google"),
         "used_providers": (("Baidu",), ("Google",)),
         "model_slugs": ("deepseek/deepseek-v4-pro", "google/gemini-3.7-flash"),
@@ -271,3 +272,48 @@ class TestAPromptVersionThatDidNotChangeTheTask:
     def test_an_unversioned_game_is_not_smuggled_in(self) -> None:
         """`None` is not "any version" — it is a game from before the field existed."""
         assert not same_task(None, "v2.1")
+
+
+# ============================================== the tool surface is the other half of the task
+
+
+class TestTheToolSchemaVersion:
+    """**Recorded since the registry existed, and never read here** until ADR-0042.
+
+    It stayed harmless only because every tool change so far had moved `PROMPT_VERSION` alongside
+    it. ADR-0040 broke that by accident: it removed the `checkmate` flag from `get_legal_moves` and
+    left the same fact in the SAN string, so v3 shipped still naming the mating move. Fixing that
+    removes information from a model's view and changes no word of the prompt — a task change a
+    prompt version cannot describe.
+    """
+
+    def test_an_older_tool_surface_does_not_count(self) -> None:
+        verdict = judge(facts(tool_schema_version="v3"), tool_schema_version="v4")
+
+        assert not verdict
+        assert "tool schema" in verdict.reason
+        assert "v3" in verdict.reason
+
+    def test_a_minor_tool_bump_keeps_the_older_games(self) -> None:
+        """The same major/minor rule as the prompt, because it is the same question: did the task
+        change, or only its convenience? (ADR-0038)"""
+        assert judge(facts(tool_schema_version="v4"), tool_schema_version="v4.1")
+
+    def test_it_is_only_checked_when_one_is_named(self) -> None:
+        """So a rating run can deliberately span surfaces if somebody decides that is what they
+        want — exactly as it can for the prompt."""
+        assert judge(facts(tool_schema_version="v1"))
+
+    def test_an_unversioned_game_is_not_smuggled_in(self) -> None:
+        assert not judge(facts(tool_schema_version=None), tool_schema_version="v4")
+
+    def test_the_prompt_alone_can_no_longer_carry_a_tool_change(self) -> None:
+        """The property that closes the gap. Both versions describe the task; a game matching the
+        prompt and not the tools measured something else, and used to count."""
+        verdict = judge(
+            facts(prompt_version="v3", tool_schema_version="v3"),
+            prompt_version="v3",
+            tool_schema_version="v4",
+        )
+
+        assert not verdict, "matching the prompt is no longer enough"

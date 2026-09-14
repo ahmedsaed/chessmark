@@ -99,7 +99,7 @@ def test_get_legal_moves_lists_every_move_and_marks_captures() -> None:
 
     moves = {move["san"]: move for move in result.payload["moves"]}
     assert result.payload["count"] == len(moves)
-    assert "Ra8#" in moves, "every legal move is listed, including the one that ends the game"
+    assert "Ra8" in moves, "every legal move is listed, including the one that ends the game"
     assert "capture" not in moves["Ra2"]
 
 
@@ -125,6 +125,60 @@ def test_get_legal_moves_does_not_say_which_move_is_mate() -> None:
     assert flags <= {"san", "uci", "capture", "promotion"}, (
         f"an unexpected field reached the move list: {flags}"
     )
+
+
+def test_the_notation_does_not_say_which_move_is_mate_either() -> None:
+    """**ADR-0040 removed the flag and left the fact** (ADR-0042).
+
+    `board.san()` returns `Ra8#`, and in a list of legal moves sorted alphabetically that is one
+    character a model can pattern-match — easier to spot than the structured flag was. It happened
+    in production the first night v3 ran: forty-five moves, one `#`, and the model played it.
+
+    A suffix is a courtesy annotation and not part of a move's identity, which is why `parse` has
+    always accepted `Nc3` for `Nc3#`.
+    """
+    referee = Referee(start_fen="6k1/5ppp/8/8/8/8/8/R3K3 w Q - 0 1")
+    result = dispatcher(referee=referee).execute(call(ToolName.GET_LEGAL_MOVES))
+
+    marked = [move["san"] for move in result.payload["moves"] if set("+#") & set(move["san"])]
+
+    assert not marked, f"the notation is still analysing the position: {marked}"
+
+
+def test_the_illegal_move_list_is_stripped_the_same_way() -> None:
+    """The other way to ask for the list, and it must not be a way around the first.
+
+    ADR-0002 answers an illegal move with every legal move, so a model can always recover. Strip
+    one surface and not the other and a model reads the mate off the board by playing something
+    illegal first — a worse hole than the one being closed.
+    """
+    referee = Referee(start_fen="6k1/5ppp/8/8/8/8/8/R3K3 w Q - 0 1")
+    result = dispatcher(referee=referee).execute(call(ToolName.MAKE_MOVE, move="Qh8"))
+
+    assert not result.ok
+    offered = result.payload["legal_moves_san"]
+    assert "Ra8" in offered, "the full list is still handed back (ADR-0002)"
+    assert not [san for san in offered if set("+#") & set(san)], offered
+
+
+def test_a_move_written_with_its_suffix_is_still_accepted() -> None:
+    """Nothing a model has learned stops working: `parse` normalises before matching, and a model
+    quoting `Ra8#` back from its own reasoning must not be told it is illegal."""
+    referee = Referee(start_fen="6k1/5ppp/8/8/8/8/8/R3K3 w Q - 0 1")
+    result = dispatcher(referee=referee).execute(call(ToolName.MAKE_MOVE, move="Ra8#"))
+
+    assert result.ok, result.payload
+    assert referee.is_over
+
+
+def test_the_move_history_keeps_its_marks() -> None:
+    """A scoresheet, not an analysis. What happened is a record; what is available now is not."""
+    referee = Referee(start_fen="6k1/5ppp/8/8/8/8/8/R3K3 w Q - 0 1")
+    referee.play("Ra8")
+
+    history = dispatcher(referee=referee).execute(call(ToolName.GET_MOVE_HISTORY))
+
+    assert history.payload["moves"] == ["Ra8#"]
 
 
 def test_get_move_history_can_be_truncated() -> None:

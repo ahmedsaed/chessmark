@@ -818,6 +818,17 @@ class Tournament(Base):
     #: pool that rate-limits, and the daily free allowance is consumed at about the rate a single
     #: game generates it.
     max_concurrent: Mapped[int] = mapped_column(default=1, server_default="1")
+
+    #: The task this event is measuring, stamped from the deployed code when it was created
+    #: (ADR-0042). A tournament used to record neither, so a deploy that changed the task changed
+    #: what a running pool measured, silently and mid-table: when v3 shipped, `pool-free` carried
+    #: on pairing under a new prompt into an old crosstable, and `pool-free-v3` settled three games
+    #: under a tool surface that named the mating move.
+    #:
+    #: `NULL` means unpinned, and every event created before this is. Unpinned never holds — a
+    #: column added today must not stop an event that was running yesterday.
+    prompt_version: Mapped[str | None] = mapped_column(sa.Text)
+    tool_schema_version: Mapped[str | None] = mapped_column(sa.Text)
     #: The event's own ceiling, independent of any user's quota — this is the harness spending on
     #: its own initiative rather than a person spending theirs (ADR-0011).
     max_usd: Mapped[Decimal | None] = mapped_column(USD)

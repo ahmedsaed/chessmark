@@ -19,7 +19,9 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.agents.registry import endpoint_is_playable
+from chessmark.agents.tools import TOOL_SCHEMA_VERSION
 from chessmark.db.enums import GameStatus, TournamentStatus
 from chessmark.db.models import (
     Game,
@@ -137,6 +139,11 @@ async def create_tournament(
         max_plies_per_game=config.max_plies_per_game,
         max_usd_per_game=config.max_usd_per_game,
         is_ranked=config.is_ranked,
+        # **The task it is measuring, fixed at creation** (ADR-0042). Read from the deployed code
+        # rather than passed in: an event measures whatever was shipped when it opened, and that
+        # is a fact rather than an option.
+        prompt_version=PROMPT_VERSION,
+        tool_schema_version=TOOL_SCHEMA_VERSION,
     )
     session.add(tournament)
     await session.flush()
