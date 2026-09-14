@@ -509,6 +509,15 @@ export interface TournamentSummary {
 }
 
 export interface TournamentDetail extends TournamentSummary {
+  /**
+   * Which era's table this is, and every era the event has played (ADR-0043).
+   *
+   * A pool never ends, so a prompt or tool change cannot retire it and start a successor — it
+   * opens a new era inside the same event. The page shows the one being played; the rest are a
+   * dropdown.
+   */
+  era: string | null;
+  eras: string[];
   standings: Standing[];
   pairings: TournamentPairing[];
   games: GameSummary[];

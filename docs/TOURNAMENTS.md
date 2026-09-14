@@ -43,6 +43,20 @@ takes the default.
 Either way it pairs only what it can run: scheduling ahead would write a queue against a field that
 changes, and a pool never runs out of fixtures.
 
+### A pool carries its eras
+
+A change to the prompt or the tool surface changes what the games measure, and a pool cannot be
+replaced when that happens — it never ends. So it carries the change internally: an **era** is the
+prompt and tool majors joined (`v3+v4`), stamped on each pairing as it is written, and bumping
+either half opens a new one on the next tick. No abandon, no new slug, no operator step
+([ADR-0043](adr/0043-a-pool-carries-its-eras.md)).
+
+Everything that decides *who plays whom* is scoped to the era being played — a new era starts from
+an empty crosstable and a fresh round robin, rather than believing every pair has already met.
+Concurrency and spend are not scoped: a game that is running costs an allowance whichever era
+scheduled it, and it finishes and scores in its own era. The tournament page shows the current era
+and offers the earlier ones.
+
 Pools are **ranked** — an unranked one would play forever and measure nothing — and a pool over paid
 models is **refused without `--max-usd`**: with no end, the ceiling is the only thing that ever stops
 it. Raise it with `resume --max-usd`; nothing resets on its own.

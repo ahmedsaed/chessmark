@@ -1025,6 +1025,11 @@ class TournamentSummary(Schema):
 
 
 class TournamentDetail(TournamentSummary):
+    #: Which era's table this is, and every era the event has played (ADR-0043). A pool never ends,
+    #: so it carries its task changes internally: the default is whatever is being played now, and
+    #: `?era=` selects a past one.
+    era: str | None = None
+    eras: list[str] = Field(default_factory=list)
     standings: list[StandingOut] = Field(default_factory=list)
     pairings: list[TournamentPairingOut] = Field(default_factory=list)
     games: list[GameSummary] = Field(default_factory=list)

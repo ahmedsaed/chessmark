@@ -94,8 +94,31 @@ def major(version: str | None) -> str | None:
     return version.split(".", 1)[0]
 
 
+def era(prompt_version: str | None, tool_schema_version: str | None) -> str:
+    """The task, as one string: `"v3+v4"`.
+
+    A pool never ends, so it cannot be replaced when the task changes — it has to carry the change
+    inside itself. This is the label it carries (ADR-0043): pairings, standings and the matchmaker's
+    memory of who has met whom are all scoped to one of these, and bumping either half opens a new
+    one on the next tick.
+
+    **Majors only**, so the boundary here is exactly `same_task`'s. A minor bump states the same
+    task more conveniently (ADR-0038); splitting an era on one would throw away a round robin to
+    record a distinction the leaderboard does not make, and the pool's table and the leaderboard
+    would then be able to disagree about what counts.
+
+    `None` on either half is `?`, which is its own era and never equal to a real one — a game from
+    before the field existed measured something we cannot name.
+    """
+    return f"{major(prompt_version) or '?'}+{major(tool_schema_version) or '?'}"
+
+
 def same_task(played: str | None, current: str | None) -> bool:
-    """Whether a game played under `played` may be rated alongside one played under `current`.
+    """Whether a version `played` may be rated alongside `current`.
+
+    Applied to the prompt version and to the tool schema version, with the same rule, because the
+    question is the same one: did the task change, or only its convenience? (ADR-0042)
+
 
     **Two kinds of prompt change, and only one of them invalidates a result.**
 
@@ -149,6 +172,11 @@ class GameFacts:
     is_ranked: bool
     termination: Termination | None
     prompt_version: str | None
+    #: The tool surface the game was played under. **Recorded since the registry existed and never
+    #: read here** until ADR-0042 — which is exactly how `get_legal_moves` came to hand every seat
+    #: a `#` on the mating move while both versions sat still. ADR-0040 removed the `checkmate`
+    #: flag and bumped both versions together, so the gap stayed theoretical for one more day.
+    tool_schema_version: str | None = None
     #: Per seat: the endpoint pinned, and the endpoints that actually served it.
     pinned_providers: tuple[str | None, ...] = ()
     used_providers: tuple[tuple[str, ...], ...] = ()
@@ -162,11 +190,23 @@ def is_floating(model_slug: str) -> bool:
     return model_slug.startswith("~") or model_slug.endswith("-latest")
 
 
-def judge(facts: GameFacts, *, prompt_version: str | None = None) -> Verdict:
+def judge(
+    facts: GameFacts,
+    *,
+    prompt_version: str | None = None,
+    tool_schema_version: str | None = None,
+) -> Verdict:
     """Decide whether a game may move a rating.
 
-    `prompt_version` is the version ratings are currently computed for. A game played under an
-    older prompt measured a different task and is excluded rather than silently mixed in (BENCH-04).
+    `prompt_version` and `tool_schema_version` are the versions ratings are currently computed for.
+    A game played under an older either measured a different task and is excluded rather than
+    silently mixed in (BENCH-04).
+
+    **Both, because the prompt is only half the task** (ADR-0042). The tool surface is the other
+    half, and it can change what a model knows without a word of the prompt moving: ADR-0040 took
+    the `checkmate` flag out of `get_legal_moves` and left the `#` in the notation, so v3 shipped
+    still naming the mating move. Fixing that removes information and changes nothing a prompt
+    version could describe. The gap was recorded in ROADMAP's *Known gaps* the day before it bit.
     """
     if not facts.is_ranked:
         return Verdict(False, "not a ranked game")
@@ -195,6 +235,15 @@ def judge(facts: GameFacts, *, prompt_version: str | None = None) -> Verdict:
             return Verdict(False, f"served by more than one endpoint ({', '.join(sorted(used))})")
         if pinned is not None and used and used[0] != pinned:
             return Verdict(False, f"pinned to {pinned} but served by {used[0]}")
+
+    if tool_schema_version is not None and not same_task(
+        facts.tool_schema_version, tool_schema_version
+    ):
+        return Verdict(
+            False,
+            f"played under tool schema {facts.tool_schema_version}, "
+            f"ratings are for {tool_schema_version}",
+        )
 
     if prompt_version is not None and not same_task(facts.prompt_version, prompt_version):
         return Verdict(

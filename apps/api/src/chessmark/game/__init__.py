@@ -5,7 +5,7 @@ Chessmark that can be reasoned about with no knowledge of LLMs or infrastructure
 `tests/game/test_purity.py` keeps it that way.
 """
 
-from chessmark.game.board import BoardView, ChessBoard, LegalMove, Material
+from chessmark.game.board import BoardView, ChessBoard, LegalMove, Material, plain_san
 from chessmark.game.errors import (
     GameError,
     GameOverError,
@@ -47,5 +47,6 @@ __all__ = [
     "Referee",
     "Termination",
     "final_position_from_pgn",
+    "plain_san",
     "to_pgn",
 ]

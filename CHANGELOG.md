@@ -15,7 +15,30 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
-### Changed
+### Fixed
+
+- **`get_legal_moves` was still naming the mating move** ([ADR-0042]). ADR-0040 removed the `check`
+  and `checkmate` flags and left the same facts in the SAN string — and a `#` in an alphabetically
+  sorted list is easier to pattern-match than the structured flag was. From `1cbf3a36`, the first
+  night v3 ran: forty-five moves, exactly one `#`, and the model played it. The suffix is stripped
+  now, through the function `parse` has always used to accept `Nc3` for `Nc3#`. The illegal-move
+  list goes through the same function, so ADR-0002's recovery route cannot be a way around the
+  disclosure line. `get_move_history` keeps its marks — a scoresheet is a record, not an analysis.
+- **`judge` reads the tool schema version** ([ADR-0042]). It was recorded on every game since the
+  registry existed and never checked, which stayed harmless only because every tool change had
+  moved `PROMPT_VERSION` alongside it. Stripping a suffix removes information from a model's view
+  and changes no word of the prompt, so the prompt version could not describe it.
+- **A pool carries its eras** ([ADR-0043]). We reset a pool by hand three times in two days —
+  `pool-free` → `pool-free-v3` → `pool-free-v4` — because a prompt or tool bump changed what a
+  running event measured. A pool is *defined* by never ending, so an event abandoned and recreated
+  per version is a series of tournaments wearing a pool's name, and the version was leaking into
+  the URL bar because it had nowhere else to live. An era is the prompt and tool **majors** joined
+  — `v3+v4` — stamped on the pairing when it is written; bumping either half opens a new one on the
+  next tick and the pool keeps its slug for good. The matchmaker's memory of who has met whom is
+  scoped to one, without which a new era would open convinced every pair had already played.
+  Concurrency is not scoped: a running game costs an allowance whichever era scheduled it. The
+  tournament page shows the era being played and offers the rest.
+
 
 - **The tournament runner finds its own work** (OPS-24). The long-running container ticked
   whichever slug `TOURNAMENT_SLUG` named, so `tournament create` produced an event nothing would
@@ -497,4 +520,6 @@ flags the old code wrote.
 [ADR-0039]: docs/adr/0039-the-window-is-sized-for-the-request-in-front-of-us.md
 [ADR-0040]: docs/adr/0040-what-a-board-shows-and-what-the-prompt-owes-you.md
 [ADR-0041]: docs/adr/0041-a-pool-balances-its-pairings.md
+[ADR-0042]: docs/adr/0042-the-notation-was-still-analysing-the-position.md
+[ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

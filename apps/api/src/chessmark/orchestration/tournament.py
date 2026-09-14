@@ -539,7 +539,13 @@ async def _schedule_pool(
     now means every choice is made with the latest ratings — including for a model admitted on
     this same tick.
     """
-    waiting = len(await repo.unplayed(session, tournament.id))
+    era = repo.current_era()
+    # **Stale pairings are closed, not left to rot.** A pairing written for the old task will never
+    # be played — the pool has moved on — and leaving it `unplayed` would show a fixture in the
+    # table that nothing will ever start (ADR-0043).
+    await repo.close_stale_pairings(session, tournament.id, era=era)
+
+    waiting = len(await repo.unplayed(session, tournament.id, era=era))
     running = len(await repo.in_flight(session, tournament.id))
     # A game whose wait is over is counted here, not because it is running but because it is next.
     # See `_start_games` for what leaving it out cost.
@@ -587,7 +593,7 @@ async def _schedule_pool(
 
     games = matchmake(
         entrants,
-        await repo.results_so_far(session, tournament.id),
+        await repo.results_so_far(session, tournament.id, era=era),
         await _form(session, tournament),
         count=room,
         round_number=round_number,
@@ -595,7 +601,7 @@ async def _schedule_pool(
         # Abandoned and in-flight pairings, which carry no result and so are invisible to
         # `results_so_far`. Without them a fixture that cannot be played is permanently unmet, and
         # the rematch penalty — the one thing that would stop it being chosen again — never fires.
-        attempts=await repo.attempted(session, tournament.id),
+        attempts=await repo.attempted(session, tournament.id, era=era),
     )
     if not games:
         return None
@@ -683,7 +689,7 @@ async def _start_games(
     if room <= 0:
         return 0, []
 
-    waiting = await repo.unplayed(session, tournament.id)
+    waiting = await repo.unplayed(session, tournament.id, era=repo.current_era())
     if not waiting:
         return 0, []
 

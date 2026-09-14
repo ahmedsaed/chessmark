@@ -23,13 +23,23 @@ from chessmark.game import (
     MoveOutcome,
     Referee,
     Termination,
+    plain_san,
 )
 
 #: Bumped whenever a tool's name, arguments, or semantics change. Recorded on every game, because
 #: results produced under different tool surfaces are not comparable (BENCH-04).
 #: Bumped to v2 on 2026-08-28, adding `claim_draw`. The schema is part of the cached prefix, so it
 #: cannot vary within a game — a new tool is a new version by construction.
-TOOL_SCHEMA_VERSION = "v3"
+#: v3 on 2026-09-13 with `accept_draw`, and the `check`/`checkmate` flags out of `get_legal_moves`
+#: (ADR-0040).
+#:
+#: **v4 on 2026-09-14, and it is the first bump that had to stand on its own** (ADR-0042). v3 took
+#: the flags out and left the same fact in the notation, so the list still came back naming the
+#: mating move — `Qxf7#`, one `#` among forty-five alphabetically sorted moves, and the model
+#: played it. Stripping the suffix removes information without touching a word of the prompt,
+#: which is why `judge` now reads this version too: until today it was recorded and never checked,
+#: and every previous tool change happened to move `PROMPT_VERSION` alongside it.
+TOOL_SCHEMA_VERSION = "v4"
 
 MAX_MESSAGE_LENGTH = 280
 MAX_MESSAGES_PER_TURN = 3
@@ -311,6 +321,17 @@ class ToolDispatcher:
             }
         )
 
+    def _offered_moves(self) -> list[str]:
+        """The legal move list exactly as a model is shown it.
+
+        **One function, because there are two ways to ask for this list and they must agree**
+        (ADR-0042). `get_legal_moves` is the obvious one; the other is an illegal move, which
+        ADR-0002 answers with the full list so a model can always recover. Stripping the suffix
+        from one and not the other would mean a model could read the mate off the board by playing
+        something illegal first, which is a worse surface than the one ADR-0040 set out to close.
+        """
+        return [plain_san(san) for san in self.referee.board.legal_moves_san()]
+
     def _get_legal_moves(self, _arguments: dict[str, Any]) -> ToolResult:
         moves = self.referee.board.legal_moves()
         return ToolResult(
@@ -332,7 +353,13 @@ class ToolDispatcher:
                 # `promotion` stays because it is mechanical — the board asks you which piece.
                 "moves": [
                     {
-                        "san": move.san,
+                        # **Stripped of its `+` and `#`** (ADR-0042). ADR-0040 removed the `check`
+                        # and `checkmate` flags and left the same fact in the notation, where it is
+                        # easier to find than the flag was: one real v3 list came back with 45
+                        # moves in alphabetical order and a single `#` among them, and the model
+                        # played it. A suffix is a courtesy annotation, not part of a move's
+                        # identity — `parse` has always accepted `Nc3` for `Nc3#`.
+                        "san": plain_san(move.san),
                         "uci": move.uci,
                         **({"capture": True} if move.is_capture else {}),
                         **({"promotion": move.promotion} if move.promotion else {}),
@@ -364,7 +391,7 @@ class ToolDispatcher:
                     "attempt": self.state.illegal_attempts,
                     "attempts_remaining": self._attempts_remaining(),
                     "fen": self.referee.board.fen,
-                    "legal_moves_san": self.referee.board.legal_moves_san(),
+                    "legal_moves_san": self._offered_moves(),
                 },
                 ok=False,
                 illegal=True,
@@ -377,6 +404,9 @@ class ToolDispatcher:
             # ADR-0002: the rejection carries everything needed to recover. The benchmark measures
             # whether a model can act correctly given complete information, not whether it guesses.
             rejection = error.as_dict()
+            rejection["legal_moves_san"] = self._offered_moves()
+            # The same list, through the same function: ADR-0002's recovery path must not be a way
+            # around ADR-0040's disclosure line.
             rejection["attempt"] = self.state.illegal_attempts
             rejection["attempts_remaining"] = self._attempts_remaining()
             return ToolResult(payload=rejection, ok=False, illegal=True)

@@ -818,6 +818,7 @@ class Tournament(Base):
     #: pool that rate-limits, and the daily free allowance is consumed at about the rate a single
     #: game generates it.
     max_concurrent: Mapped[int] = mapped_column(default=1, server_default="1")
+
     #: The event's own ceiling, independent of any user's quota — this is the harness spending on
     #: its own initiative rather than a person spending theirs (ADR-0011).
     max_usd: Mapped[Decimal | None] = mapped_column(USD)
@@ -904,6 +905,19 @@ class TournamentGame(Base):
     tournament_id: Mapped[uuid.UUID] = mapped_column(
         _fk("tournaments.id", ondelete="CASCADE"), index=True
     )
+    #: Which task this pairing was written for — `"v3+v4"`, the prompt and tool majors (ADR-0043).
+    #:
+    #: **A pool never ends, so it carries its version changes inside itself** rather than being
+    #: abandoned and recreated: `pool-free`, `pool-free-v3`, `pool-free-v4` was a pool's definition
+    #: leaking into the URL bar. Bumping either half opens a new era on the next tick, and the
+    #: matchmaker's memory of who has met whom is scoped to one — without that it would see a
+    #: completed round robin and start rematching while models that never met under the new rules
+    #: waited.
+    #:
+    #: Stamped when the pairing is written, not derived from the game: an *unplayed* pairing has no
+    #: game to derive from, and those are exactly the rows the matchmaker reads.
+    era: Mapped[str | None] = mapped_column(sa.Text, index=True)
+
     game_id: Mapped[uuid.UUID | None] = mapped_column(
         _fk("games.id", ondelete="SET NULL"), index=True
     )
