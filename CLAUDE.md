@@ -51,6 +51,10 @@ Also useful: `make test-unit` (no database), `make test-llm` (live
 provider, opt-in), `make migration m="..."`, `make drift`, `make seed-models`, `make smoke-llm`,
 `make play ARGS="--scripted"`, `make prune-registry`, `make backfill-identities`.
 
+`make dev-pull` replaces the local database with production's and runs this branch's migrations
+against it — the way to see a change against real data instead of on the live site
+([DEPLOYMENT.md](docs/DEPLOYMENT.md#testing-against-productions-data)).
+
 On a server there is no toolchain — use `./chessmark` ([DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 
 ## Ports — non-standard, deliberately
