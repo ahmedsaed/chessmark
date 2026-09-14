@@ -193,8 +193,16 @@ async def list_tournaments(
 
 
 @router.get("/{slug}", response_model=TournamentDetail)
-async def get_tournament(session: SessionDep, slug: str) -> TournamentDetail:
-    """One tournament: its table, every pairing, and the games behind them."""
+async def get_tournament(
+    session: SessionDep, slug: str, era: str | None = Query(default=None)
+) -> TournamentDetail:
+    """One tournament: its table, every pairing, and the games behind them.
+
+    **A pool shows the era it is playing now** (ADR-0043). A pool never ends, so a change to the
+    prompt or the tool surface cannot retire it and start a successor — it opens a new era inside
+    the same event, and the table people look at is that one. `?era=` picks a past one out of
+    `eras`; anything else would show one crosstable built from two different games.
+    """
     tournament = await session.scalar(sa.select(Tournament).where(Tournament.slug == slug))
     if tournament is None:
         raise HTTPException(
@@ -212,7 +220,13 @@ async def get_tournament(session: SessionDep, slug: str) -> TournamentDetail:
     names = {row.key: row.display_name for row in entrant_rows}
 
     entrants = await repo.entrants_of(session, tournament.id)
-    results = await repo.results_so_far(session, tournament.id)
+    eras = await repo.eras_of(session, tournament.id)
+    # The era being played, unless a reader asked for one this event has actually had. An unknown
+    # era falls back rather than 404ing: a stale link should show the current table, not an error.
+    showing = era if era in eras else (repo.current_era() if repo.current_era() in eras else None)
+    if showing is None:
+        showing = eras[0] if eras else None
+    results = await repo.results_so_far(session, tournament.id, era=showing)
 
     # **A pool is ordered by rating; a closed event by points** (ADR-0027). The format decides,
     # rather than a flag, because it is the format that decides whether a sum of points means
@@ -228,7 +242,10 @@ async def get_tournament(session: SessionDep, slug: str) -> TournamentDetail:
         await session.execute(
             sa.select(TournamentGame, Game.status)
             .outerjoin(Game, Game.id == TournamentGame.game_id)
-            .where(TournamentGame.tournament_id == tournament.id)
+            .where(
+                TournamentGame.tournament_id == tournament.id,
+                *([TournamentGame.era == showing] if showing is not None else []),
+            )
             .order_by(TournamentGame.round_number, TournamentGame.id)
         )
     ).all()
@@ -255,6 +272,8 @@ async def get_tournament(session: SessionDep, slug: str) -> TournamentDetail:
     stats = await _stats(session, tournament.id)
     return TournamentDetail(
         **_summary_fields(tournament, len(entrant_rows), stats),
+        era=showing,
+        eras=eras,
         standings=[
             StandingOut(
                 place=s.place,

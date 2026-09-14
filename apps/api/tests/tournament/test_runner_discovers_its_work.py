@@ -23,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.db.enums import TournamentStatus
 from chessmark.db.models import Tournament
-from chessmark.orchestration.tournament import _stale_task
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "scripts"))
 _runner = importlib.import_module("tournament")
@@ -121,67 +120,3 @@ class TestWhatGetsTicked:
 
         assert first == second
         assert [name for _, name in first] == ["pool-a", "pool-b", "pool-c"]
-
-
-# ================================================ an event measures the task it opened on
-
-
-class TestAStaleTask:
-    """A tournament records its prompt and tool versions at creation (ADR-0042).
-
-    It used to record neither, so a deploy that changed the task changed what a running pool
-    measured — silently, and mid-crosstable. `pool-free` went on pairing under v3 into a v2 table.
-    `pool-free-v3` settled three games under a tool surface whose `get_legal_moves` still named the
-    mating move: the list came back with forty-five moves sorted alphabetically, exactly one `#`
-    among them, and the model played it.
-    """
-
-    async def test_a_new_event_records_what_was_deployed(self, db: AsyncSession) -> None:
-        from chessmark.agents.prompts import PROMPT_VERSION
-        from chessmark.agents.tools import TOOL_SCHEMA_VERSION
-
-        tournament = await _make(db, "pool-now", TournamentStatus.RUNNING)
-
-        assert tournament.prompt_version == PROMPT_VERSION
-        assert tournament.tool_schema_version == TOOL_SCHEMA_VERSION
-
-    async def test_a_stale_prompt_holds_the_event(self, db: AsyncSession) -> None:
-        tournament = await _make(db, "pool-old-prompt", TournamentStatus.RUNNING)
-        tournament.prompt_version = "v1"
-        await db.commit()
-
-        holding = _stale_task(tournament)
-
-        assert "prompt v1" in holding
-        assert "create a new event" in holding, "it says what to do, not only that it stopped"
-
-    async def test_a_stale_tool_surface_holds_it_too(self, db: AsyncSession) -> None:
-        """The half a prompt version cannot describe — and the one that actually bit."""
-        tournament = await _make(db, "pool-old-tools", TournamentStatus.RUNNING)
-        tournament.tool_schema_version = "v3"
-        await db.commit()
-
-        assert "tool schema v3" in _stale_task(tournament)
-
-    async def test_a_minor_bump_does_not_hold_it(self, db: AsyncSession) -> None:
-        """The same major/minor rule the leaderboard uses: the same task, stated more
-        conveniently, is not a reason to stop an event (ADR-0038)."""
-        from chessmark.agents.prompts import PROMPT_VERSION
-
-        tournament = await _make(db, "pool-minor", TournamentStatus.RUNNING)
-        tournament.prompt_version = f"{PROMPT_VERSION}.7"
-        await db.commit()
-
-        assert _stale_task(tournament) == ""
-
-    async def test_an_unpinned_event_never_holds(self, db: AsyncSession) -> None:
-        """Every event created before the column existed carries `NULL`, and a column added today
-        must not stop one that was running yesterday. The migration deliberately does not backfill:
-        writing today's version onto them would assert they measure today's task, which is the
-        claim this exists to stop being made by accident."""
-        tournament = await _make(db, "pool-unpinned", TournamentStatus.RUNNING)
-        tournament.prompt_version = None
-        tournament.tool_schema_version = None
-        await db.commit()
-
-        assert _stale_task(tournament) == ""

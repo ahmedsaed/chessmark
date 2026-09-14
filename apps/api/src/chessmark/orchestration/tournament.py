@@ -22,9 +22,6 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from chessmark.agents.prompts import PROMPT_VERSION
-from chessmark.agents.tools import TOOL_SCHEMA_VERSION
-from chessmark.bench.ratable import same_task
 from chessmark.bench.service import compute_ratings
 from chessmark.core.cooldown import ProviderCooldown
 from chessmark.core.halt import SCOPE_ALL, Halt
@@ -196,18 +193,6 @@ async def _holding(
     Checked before starting rather than after, like every other bound here: a game begun outside
     its window, or on an allowance that has run out, cannot be un-begun.
     """
-    # **The task moved under it.** An event measures whatever was deployed when it opened, and a
-    # deploy that changes the prompt or the tool surface changes what its table means — silently,
-    # and mid-crosstable. `pool-free` went on pairing under v3 into a v2 table; `pool-free-v3`
-    # settled three games under a tool surface that named the mating move (ADR-0042).
-    #
-    # **Held rather than rolled over.** Creating an event is an operator's decision — its field,
-    # its concurrency, its budget — so the right behaviour is to stop and say why, not to guess.
-    # Settling is unaffected, so games already in flight finish and score normally.
-    stale = _stale_task(tournament)
-    if stale:
-        return stale
-
     clock = (now or dt.datetime.now(dt.UTC)).time()
     if not within_window(tournament.active_from, tournament.active_until, clock):
         return (
@@ -237,26 +222,6 @@ async def _holding(
             until = f", lifts in {state.until.isoformat()}" if state.until else ""
             return f"the harness is halted: {state.reason}{until}"
 
-    return ""
-
-
-def _stale_task(tournament: Tournament) -> str:
-    """Why this event may start no more games, when the deployed task is not the one it opened on.
-
-    `same_task` rather than equality, so a minor bump — the same task stated more conveniently —
-    passes exactly as it does for the leaderboard (ADR-0038). Unpinned is not stale: every event
-    created before the columns existed carries `NULL`, and a column added today must not stop an
-    event that was running yesterday.
-    """
-    for name, played, current in (
-        ("prompt", tournament.prompt_version, PROMPT_VERSION),
-        ("tool schema", tournament.tool_schema_version, TOOL_SCHEMA_VERSION),
-    ):
-        if played is not None and not same_task(played, current):
-            return (
-                f"it opened on {name} {played} and {current} is deployed — its table measures a "
-                f"task that is no longer being played, so create a new event"
-            )
     return ""
 
 
@@ -574,7 +539,13 @@ async def _schedule_pool(
     now means every choice is made with the latest ratings — including for a model admitted on
     this same tick.
     """
-    waiting = len(await repo.unplayed(session, tournament.id))
+    era = repo.current_era()
+    # **Stale pairings are closed, not left to rot.** A pairing written for the old task will never
+    # be played — the pool has moved on — and leaving it `unplayed` would show a fixture in the
+    # table that nothing will ever start (ADR-0043).
+    await repo.close_stale_pairings(session, tournament.id, era=era)
+
+    waiting = len(await repo.unplayed(session, tournament.id, era=era))
     running = len(await repo.in_flight(session, tournament.id))
     # A game whose wait is over is counted here, not because it is running but because it is next.
     # See `_start_games` for what leaving it out cost.
@@ -622,7 +593,7 @@ async def _schedule_pool(
 
     games = matchmake(
         entrants,
-        await repo.results_so_far(session, tournament.id),
+        await repo.results_so_far(session, tournament.id, era=era),
         await _form(session, tournament),
         count=room,
         round_number=round_number,
@@ -630,7 +601,7 @@ async def _schedule_pool(
         # Abandoned and in-flight pairings, which carry no result and so are invisible to
         # `results_so_far`. Without them a fixture that cannot be played is permanently unmet, and
         # the rematch penalty — the one thing that would stop it being chosen again — never fires.
-        attempts=await repo.attempted(session, tournament.id),
+        attempts=await repo.attempted(session, tournament.id, era=era),
     )
     if not games:
         return None
@@ -718,7 +689,7 @@ async def _start_games(
     if room <= 0:
         return 0, []
 
-    waiting = await repo.unplayed(session, tournament.id)
+    waiting = await repo.unplayed(session, tournament.id, era=repo.current_era())
     if not waiting:
         return 0, []
 

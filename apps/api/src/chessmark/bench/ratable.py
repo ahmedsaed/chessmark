@@ -94,6 +94,25 @@ def major(version: str | None) -> str | None:
     return version.split(".", 1)[0]
 
 
+def era(prompt_version: str | None, tool_schema_version: str | None) -> str:
+    """The task, as one string: `"v3+v4"`.
+
+    A pool never ends, so it cannot be replaced when the task changes — it has to carry the change
+    inside itself. This is the label it carries (ADR-0043): pairings, standings and the matchmaker's
+    memory of who has met whom are all scoped to one of these, and bumping either half opens a new
+    one on the next tick.
+
+    **Majors only**, so the boundary here is exactly `same_task`'s. A minor bump states the same
+    task more conveniently (ADR-0038); splitting an era on one would throw away a round robin to
+    record a distinction the leaderboard does not make, and the pool's table and the leaderboard
+    would then be able to disagree about what counts.
+
+    `None` on either half is `?`, which is its own era and never equal to a real one — a game from
+    before the field existed measured something we cannot name.
+    """
+    return f"{major(prompt_version) or '?'}+{major(tool_schema_version) or '?'}"
+
+
 def same_task(played: str | None, current: str | None) -> bool:
     """Whether a version `played` may be rated alongside `current`.
 

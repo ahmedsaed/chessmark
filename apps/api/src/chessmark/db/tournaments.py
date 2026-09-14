@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.agents.registry import endpoint_is_playable
 from chessmark.agents.tools import TOOL_SCHEMA_VERSION
+from chessmark.bench.ratable import era
 from chessmark.db.enums import GameStatus, TournamentStatus
 from chessmark.db.models import (
     Game,
@@ -40,6 +41,16 @@ from chessmark.tournament import (
     Result,
     TournamentConfig,
 )
+
+
+def current_era() -> str:
+    """The era the deployed code is playing, which is the one a new pairing joins.
+
+    Composed here rather than in `bench` because this is where the deployed constants are known;
+    `era` itself is pure and takes them as arguments, so it can be tested without importing half
+    the application.
+    """
+    return era(PROMPT_VERSION, TOOL_SCHEMA_VERSION)
 
 
 def contestant_key(model_slug: str, quantization: str | None) -> str:
@@ -139,11 +150,6 @@ async def create_tournament(
         max_plies_per_game=config.max_plies_per_game,
         max_usd_per_game=config.max_usd_per_game,
         is_ranked=config.is_ranked,
-        # **The task it is measuring, fixed at creation** (ADR-0042). Read from the deployed code
-        # rather than passed in: an event measures whatever was shipped when it opened, and that
-        # is a fact rather than an option.
-        prompt_version=PROMPT_VERSION,
-        tool_schema_version=TOOL_SCHEMA_VERSION,
     )
     session.add(tournament)
     await session.flush()
@@ -306,6 +312,7 @@ async def record_round(
                 round_number=pairing.round_number,
                 white_key=pairing.white,
                 black_key=pairing.black,
+                era=current_era(),
             )
             # A bye is a scheduled point rather than a game, so it is settled on the spot.
             if pairing.is_bye:
@@ -318,11 +325,16 @@ async def record_round(
     return written
 
 
-async def results_so_far(session: AsyncSession, tournament_id: uuid.UUID) -> list[Result]:
-    """Every settled pairing, in the shape the pure module pairs and ranks from.
+async def results_so_far(
+    session: AsyncSession, tournament_id: uuid.UUID, *, era: str | None = None
+) -> list[Result]:
+    """Every settled pairing of one era, in the shape the pure module pairs and ranks from.
 
     Abandoned pairings are omitted rather than scored: a game the harness could not run is not a
     finding about either player, and awarding it would put a loss on a record for our own failure.
+
+    `era` defaults to every era, which is what a caller wanting the whole history asks for; the
+    matchmaker and the live table pass the current one (ADR-0043).
     """
     rows = await session.scalars(
         sa.select(TournamentGame)
@@ -330,6 +342,7 @@ async def results_so_far(session: AsyncSession, tournament_id: uuid.UUID) -> lis
             TournamentGame.tournament_id == tournament_id,
             TournamentGame.white_score.is_not(None),
             TournamentGame.abandoned_reason.is_(None),
+            *([TournamentGame.era == era] if era is not None else []),
         )
         .order_by(TournamentGame.round_number, TournamentGame.id)
     )
@@ -344,7 +357,9 @@ async def results_so_far(session: AsyncSession, tournament_id: uuid.UUID) -> lis
     ]
 
 
-async def attempted(session: AsyncSession, tournament_id: uuid.UUID) -> list[Pairing]:
+async def attempted(
+    session: AsyncSession, tournament_id: uuid.UUID, *, era: str | None = None
+) -> list[Pairing]:
     """Every pairing written down that has produced no result — the other half of
     `results_so_far`.
 
@@ -363,6 +378,7 @@ async def attempted(session: AsyncSession, tournament_id: uuid.UUID) -> list[Pai
         .where(
             TournamentGame.tournament_id == tournament_id,
             TournamentGame.white_score.is_(None),
+            *([TournamentGame.era == era] if era is not None else []),
         )
         .order_by(TournamentGame.round_number, TournamentGame.id)
     )
@@ -373,7 +389,11 @@ async def attempted(session: AsyncSession, tournament_id: uuid.UUID) -> list[Pai
 
 
 async def unplayed(
-    session: AsyncSession, tournament_id: uuid.UUID, *, round_number: int | None = None
+    session: AsyncSession,
+    tournament_id: uuid.UUID,
+    *,
+    round_number: int | None = None,
+    era: str | None = None,
 ) -> list[TournamentGame]:
     """Pairings with no result and no game in flight — what a restart should pick up."""
     query = sa.select(TournamentGame).where(
@@ -381,11 +401,55 @@ async def unplayed(
         TournamentGame.white_score.is_(None),
         TournamentGame.abandoned_reason.is_(None),
         TournamentGame.game_id.is_(None),
+        *([TournamentGame.era == era] if era is not None else []),
     )
     if round_number is not None:
         query = query.where(TournamentGame.round_number == round_number)
     rows = await session.scalars(query.order_by(TournamentGame.round_number, TournamentGame.id))
     return list(rows)
+
+
+async def close_stale_pairings(session: AsyncSession, tournament_id: uuid.UUID, *, era: str) -> int:
+    """Retire pairings written for a task the pool is no longer playing (ADR-0043).
+
+    An era change leaves whatever was scheduled and unstarted behind it. Those fixtures will never
+    run — the matchmaker is pairing for the new era now — and an `unplayed` row nothing will ever
+    start is a fixture on the table that is a lie. Marked with a reason rather than deleted, so the
+    old era's crosstable still shows what it had planned when it ended.
+
+    Only rows with no game: anything already in flight belongs to its own era and finishes there.
+    """
+    stale = list(
+        await session.scalars(
+            sa.select(TournamentGame).where(
+                TournamentGame.tournament_id == tournament_id,
+                TournamentGame.era.is_not(None),
+                TournamentGame.era != era,
+                TournamentGame.white_score.is_(None),
+                TournamentGame.abandoned_reason.is_(None),
+                TournamentGame.game_id.is_(None),
+            )
+        )
+    )
+    for row in stale:
+        row.abandoned_reason = f"the pool moved on to {era}"
+        row.ended_at = dt.datetime.now(dt.UTC)
+    return len(stale)
+
+
+async def eras_of(session: AsyncSession, tournament_id: uuid.UUID) -> list[str]:
+    """Every era this event has played, newest first.
+
+    Read from the pairings rather than stored on the tournament: the eras an event has been through
+    are a fact about what it played, and a second copy could disagree with it.
+    """
+    rows = await session.scalars(
+        sa.select(TournamentGame.era)
+        .where(TournamentGame.tournament_id == tournament_id, TournamentGame.era.is_not(None))
+        .group_by(TournamentGame.era)
+        .order_by(sa.func.max(TournamentGame.round_number).desc())
+    )
+    return [row for row in rows if row]
 
 
 async def in_flight(session: AsyncSession, tournament_id: uuid.UUID) -> list[TournamentGame]:

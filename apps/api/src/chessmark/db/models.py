@@ -819,16 +819,6 @@ class Tournament(Base):
     #: game generates it.
     max_concurrent: Mapped[int] = mapped_column(default=1, server_default="1")
 
-    #: The task this event is measuring, stamped from the deployed code when it was created
-    #: (ADR-0042). A tournament used to record neither, so a deploy that changed the task changed
-    #: what a running pool measured, silently and mid-table: when v3 shipped, `pool-free` carried
-    #: on pairing under a new prompt into an old crosstable, and `pool-free-v3` settled three games
-    #: under a tool surface that named the mating move.
-    #:
-    #: `NULL` means unpinned, and every event created before this is. Unpinned never holds — a
-    #: column added today must not stop an event that was running yesterday.
-    prompt_version: Mapped[str | None] = mapped_column(sa.Text)
-    tool_schema_version: Mapped[str | None] = mapped_column(sa.Text)
     #: The event's own ceiling, independent of any user's quota — this is the harness spending on
     #: its own initiative rather than a person spending theirs (ADR-0011).
     max_usd: Mapped[Decimal | None] = mapped_column(USD)
@@ -915,6 +905,19 @@ class TournamentGame(Base):
     tournament_id: Mapped[uuid.UUID] = mapped_column(
         _fk("tournaments.id", ondelete="CASCADE"), index=True
     )
+    #: Which task this pairing was written for — `"v3+v4"`, the prompt and tool majors (ADR-0043).
+    #:
+    #: **A pool never ends, so it carries its version changes inside itself** rather than being
+    #: abandoned and recreated: `pool-free`, `pool-free-v3`, `pool-free-v4` was a pool's definition
+    #: leaking into the URL bar. Bumping either half opens a new era on the next tick, and the
+    #: matchmaker's memory of who has met whom is scoped to one — without that it would see a
+    #: completed round robin and start rematching while models that never met under the new rules
+    #: waited.
+    #:
+    #: Stamped when the pairing is written, not derived from the game: an *unplayed* pairing has no
+    #: game to derive from, and those are exactly the rows the matchmaker reads.
+    era: Mapped[str | None] = mapped_column(sa.Text, index=True)
+
     game_id: Mapped[uuid.UUID | None] = mapped_column(
         _fk("games.id", ondelete="SET NULL"), index=True
     )

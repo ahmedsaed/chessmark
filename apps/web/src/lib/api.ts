@@ -206,8 +206,12 @@ export function listTournaments(limit = 20): Promise<TournamentSummary[]> {
 }
 
 /** One tournament with its table, pairings and games, or null for an unknown slug. */
-export function getTournament(slug: string): Promise<TournamentDetail | null> {
-  return getOrNull<TournamentDetail>(`/tournaments/${slug}`);
+export function getTournament(
+  slug: string,
+  era?: string,
+): Promise<TournamentDetail | null> {
+  const query = era ? `?era=${encodeURIComponent(era)}` : "";
+  return getOrNull<TournamentDetail>(`/tournaments/${slug}${query}`);
 }
 
 /** The PGN download URL. Handed to the browser as a link so the file arrives with its filename. */

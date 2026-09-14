@@ -19,9 +19,53 @@ export async function generateMetadata({ params }: PageProps<"/tournaments/[slug
   };
 }
 
-export default async function TournamentPage({ params }: PageProps<"/tournaments/[slug]">) {
+/**
+ * Which era this table is, and a way back to the earlier ones (ADR-0043).
+ *
+ * A pool carries its task changes internally rather than being replaced, so the heading has to say
+ * which task these numbers came from — a crosstable that does not is a crosstable a reader cannot
+ * check. Rendered as plain links rather than a control: the page is a server component, and one
+ * `<a>` per era needs no JavaScript to be correct.
+ *
+ * Silent for an event that has only ever played one era, which is every closed tournament and a
+ * new pool. There is nothing to choose between, and a dropdown offering one option is furniture.
+ */
+function Eras({ tournament, slug }: { tournament: TournamentDetail; slug: string }) {
+  if (tournament.eras.length < 2) return null;
+
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+        Era
+      </span>
+      {tournament.eras.map((name) => {
+        const current = name === tournament.era;
+        return (
+          <Link
+            key={name}
+            href={`/tournaments/${slug}?era=${encodeURIComponent(name)}`}
+            aria-current={current ? "page" : undefined}
+            className={
+              current
+                ? "rounded border border-accent px-2 py-0.5 font-mono text-[10.5px] text-accent"
+                : "rounded border border-rule px-2 py-0.5 font-mono text-[10.5px] text-ink-faint transition-colors hover:border-accent hover:text-accent"
+            }
+          >
+            {name}
+          </Link>
+        );
+      })}
+    </div>
+  );
+}
+
+export default async function TournamentPage({
+  params,
+  searchParams,
+}: PageProps<"/tournaments/[slug]">) {
   const { slug } = await params;
-  const tournament = await getTournament(slug);
+  const { era } = await searchParams;
+  const tournament = await getTournament(slug, typeof era === "string" ? era : undefined);
   if (!tournament) notFound();
 
   return (
@@ -42,6 +86,8 @@ export default async function TournamentPage({ params }: PageProps<"/tournaments
         {formatLabel(tournament)}
         {tournament.is_ranked ? " · ranked" : " · unranked"}
       </p>
+
+      <Eras tournament={tournament} slug={slug} />
 
       <Progress tournament={tournament} />
       {tournament.format === "swiss" && tournament.status !== "finished" && (

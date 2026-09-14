@@ -1,4 +1,4 @@
-# 0042. The notation was still analysing the position, and nothing pinned a pool to a task
+# 0042. The notation was still analysing the position
 
 **Status:** Accepted
 **Date:** 2026-09-14
@@ -45,14 +45,6 @@ It stayed harmless only because every previous tool change happened to move `PRO
 alongside it. ADR-0040's *Consequences* said so, and said it "will not stay harmless." It was
 harmless for eighteen hours.
 
-### Nothing pinned a pool to a task either
-
-`Tournament` recorded neither version. A tournament's crosstable counts every settled game; the
-leaderboard excludes by version; the two already disagreed. Worse, a **deploy silently changed what
-a running pool was measuring**: when v3 shipped, `pool-free` carried on pairing under a new prompt
-into a v2 table, and `pool-free-v3` settled three games under a tool surface that named the mate.
-Each time, the repair was to notice by hand and create a new pool.
-
 ## Decision
 
 **`get_legal_moves` returns SAN without its suffixes**, through `game.plain_san` — the function that
@@ -71,17 +63,7 @@ check anyway, and the disclosure rule is about what we hand a *model*.
 prompt. The prompt is half the task and the tools are the other half; a game matching one and not
 the other measured something else and used to count.
 
-**A tournament records the task it opened on**, and holds rather than starting new games when the
-deployed versions are no longer `same_task`. Settling is unaffected, so games in flight finish and
-score normally. Held rather than rolled over because creating an event is an operator's decision —
-its field, its concurrency, its budget — so the right behaviour is to stop and say why, naming the
-versions and telling the operator to create a new event.
-
-**Unpinned never holds, and the migration does not backfill.** Every event predating the column
-carries `NULL`. Stamping today's versions onto them would be a guess, and a wrong one for precisely
-the events that matter: `pool-free` opened on v2 and `pool-free-v3` on a superseded tool surface.
-Writing today's version there would assert they measure today's task, which is the claim this column
-exists to stop being made by accident.
+What a *tournament* does when the task moves is [ADR-0043](0043-a-pool-carries-its-eras.md).
 
 ## Alternatives considered
 
@@ -101,22 +83,15 @@ to be confused.
 **Let the three v3 games mix.** Cheapest, and it sets the precedent of ignoring a known gap the
 first time it bites.
 
-**Roll a stale pool over automatically** — abandon it and open a successor with the same field.
-Tempting, and it makes a deploy quietly end an event, which is a larger thing to do without being
-asked than stopping one is.
-
 ## Consequences
 
-**The board clears again**, three games after the last time. `pool-free-v3` is abandoned and
-`pool-free-v4` opened; the v3 games stay readable and stop counting on the tool version.
-
-**Two pools now hold instead of playing**, and will say so in the runner's log — both are already
-retired or about to be, so nothing is lost. Anything created from now on stops on its own when the
-task moves, which is the point.
+**The board clears again**, three games after the last time. The v3 games stay readable and stop
+counting on the tool version.
 
 **A model that quotes `Nc3#` back is still understood.** `parse` normalises before matching, so
 nothing a model has learned stops working; it simply is not told.
 
-**Expect this to hold a pool at an inconvenient moment.** That is the trade: a table that measures
-one task, at the cost of a deploy occasionally stopping an event until somebody creates the next
-one. The alternative is the silence we have had three times.
+**The tool version is now load-bearing**, and a change to a tool's *output* has to move it even
+when the schema is untouched. Nothing enforces that; it is a judgement made per change and written
+in an ADR, exactly as the prompt's major/minor line is — and the honest risk is the same one, that
+"minor" is always the more convenient answer.
