@@ -1,0 +1,10 @@
+`public/` must exist even when it is empty.
+
+The web image does `COPY --from=build /app/public ./public`, and Docker fails the build when the
+source is missing. Emptying this directory therefore breaks the deploy, not the dev server — and
+git does not track directories, so removing the last file here removes the directory itself. That
+is exactly how it broke: the five unreferenced `create-next-app` SVGs were deleted, `make check`
+stayed green, and the image failed to build on main.
+
+Nothing is served from here today. The app's icons are App Router metadata files in `src/app/`
+(`icon.svg`, `apple-icon.png`, `favicon.ico`), not static assets.

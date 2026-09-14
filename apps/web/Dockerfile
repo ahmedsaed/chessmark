@@ -57,6 +57,8 @@ ENV NODE_ENV=production \
 # served by a CDN. There is no CDN here, so they are copied in and `server.js` serves them.
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
+# `public` is empty but must exist — see `apps/web/public/.gitkeep`. Docker fails this COPY when
+# the source directory is absent, and git drops a directory once its last file goes.
 COPY --from=build /app/public ./public
 
 RUN useradd --create-home --uid 10001 chessmark && chown -R chessmark:chessmark /app

@@ -193,6 +193,12 @@ throwing proxy is not a guard.**
 `NEXT_PUBLIC_API_URL` produced a build that fetched from nowhere. `lib/env.ts` (`originFromEnv`)
 is the one place that decides, and it trims and falls back on blank.
 
+**`apps/web/public/` must exist even though it is empty.** The web image copies it, Docker fails
+a `COPY` whose source is missing, and git drops a directory when its last file goes — so deleting
+the unreferenced `create-next-app` SVGs broke the *deploy* while `make check` stayed green and the
+dev server never noticed. `.gitkeep` holds it open. Nothing is served from there: the icons are
+App Router metadata files in `src/app/`.
+
 **Client-side filtering is the point on `/models`.** It filters the whole catalogue with zero
 requests across nine keystrokes — measured, and asserted by the browser suite. Note that not every
 URL containing `/models` is an API call: a router prefetch is not a request the page made.
