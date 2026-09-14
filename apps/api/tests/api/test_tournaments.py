@@ -17,7 +17,7 @@ from chessmark.db import tournaments as repo
 from chessmark.db.enums import GameStatus
 from chessmark.db.models import Game, ModelEndpoint, ModelRegistry, TournamentGame
 from chessmark.game import GameResult, Termination
-from chessmark.tournament import FieldFilter, Format, TournamentConfig
+from chessmark.tournament import FieldFilter, Format, Pairing, TournamentConfig
 
 pytestmark = pytest.mark.integration
 
@@ -278,3 +278,68 @@ async def test_a_live_game_is_not_counted_as_a_decisive_result(
     assert stats["decisive"] == 0, "nobody has won anything yet"
     assert stats["draws"] == 0
     assert stats["mean_plies"] is None, "no finished game to average over"
+
+
+# ====================================================================== eras (ADR-0043)
+
+
+class TestTheNumbersMatchTheTable:
+    """The header and the crosstable have to be about the same games.
+
+    `_stats` counted every pairing an event had ever had, which was right until an event could have
+    more than one era. Left alone it would report `pool-free`'s 123 pairings and 88 played above a
+    `v3+v4` table with four rows in it — two different events on one page.
+    """
+
+    async def test_the_counts_are_scoped_to_the_era_shown(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
+        tournament_id, _ = await make_event(db, slug="eras-scoped")
+        await repo.record_round(db, tournament_id, [Pairing(white="a", black="b", round_number=99)])
+        stale = [r for r in await repo.unplayed(db, tournament_id) if r.round_number == 99]
+        stale[0].era = "v1+v1"
+        # ...and one from the task being played now, so there are two eras to choose between.
+        await repo.record_round(
+            db, tournament_id, [Pairing(white="c", black="d", round_number=100)]
+        )
+        await db.commit()
+
+        body = (await client.get("/tournaments/eras-scoped")).json()
+
+        assert body["era"] == repo.current_era()
+        assert body["eras"] == [repo.current_era(), "v1+v1"]
+        assert all(p["round_number"] != 99 for p in body["pairings"]), (
+            "the stale era's fixture is not on the current table"
+        )
+
+    async def test_an_older_era_can_be_asked_for(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
+        tournament_id, _ = await make_event(db, slug="eras-older")
+        await repo.record_round(db, tournament_id, [Pairing(white="a", black="b", round_number=99)])
+        stale = [r for r in await repo.unplayed(db, tournament_id) if r.round_number == 99]
+        stale[0].era = "v1+v1"
+        # ...and one from the task being played now, so there are two eras to choose between.
+        await repo.record_round(
+            db, tournament_id, [Pairing(white="c", black="d", round_number=100)]
+        )
+        await db.commit()
+
+        body = (await client.get("/tournaments/eras-older?era=v1%2Bv1")).json()
+
+        assert body["era"] == "v1+v1"
+        assert body["stats"]["pairings"] == 1
+        assert [p["round_number"] for p in body["pairings"]] == [99]
+
+    async def test_an_unknown_era_falls_back_rather_than_404ing(
+        self, client: AsyncClient, db: AsyncSession
+    ) -> None:
+        """A stale link should show the current table, not an error."""
+        tournament_id, _ = await make_event(db, slug="eras-unknown")
+        await repo.record_round(db, tournament_id, [Pairing(white="a", black="b", round_number=99)])
+        await db.commit()
+
+        response = await client.get("/tournaments/eras-unknown?era=nonsense")
+
+        assert response.status_code == 200
+        assert response.json()["era"] == repo.current_era()
