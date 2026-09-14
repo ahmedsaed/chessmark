@@ -107,6 +107,32 @@ a game — and both needed an `.env` edit and a restart (OPS-24). `TOURNAMENT_SL
 
 `run <slug>` still ticks exactly one event, which is what a hand-run `--once` wants.
 
+## Testing against production's data
+
+```
+make dev-pull                  # prod → the local database, then this branch's migrations
+make dev-pull ARGS=--full      # transcripts and raw payloads too
+```
+
+`CHESSMARK_SSH` in `.env` says how ssh reaches the server, and that is the whole configuration.
+`pg_dump` runs **inside the server's container**, so its version matches the server's and nothing
+has to be installed on either host — the same reasoning `backup.py` uses.
+
+Three things about it are deliberate:
+
+- **`alembic upgrade head` runs last.** That is the reason to do this at all: a migration meets real
+  rows here or it meets them on production, and only one of those can be undone by typing the
+  command again.
+- **Emails and Clerk ids are scrubbed on the way in**, deterministically from the row id, so a user
+  is still recognisably one user. On the way in rather than remembered later, because a dump on a
+  laptop is one that can be attached to an issue or committed by accident.
+- **`llm_calls`, `transcript_messages`, `game_events` and `tool_calls` carry no data** without
+  `--full`. Their schema is always there, so nothing is missing and no foreign key is violated —
+  what is skipped is the overwhelming majority of the bytes, needed by two pages. The replay and
+  the turn inspector will be empty; everything else is production.
+
+**It drops the local database.** That is what it is for, and it is worth knowing before it happens.
+
 ## The catalogue keeps itself current
 
 `refresh_catalogue.py` registers what OpenRouter offers and then sweeps each model's endpoints —
