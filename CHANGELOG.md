@@ -20,10 +20,12 @@ file is only the record of *what shipped when*.
 - **The site shipped with Vercel's logo as its favicon.** `app/favicon.ico` was the one
   `create-next-app` wrote in Phase 0 and nothing ever replaced it, so every tab, bookmark and
   search result carried another company's mark. It is now the site's own — the 3×3 checker
-  `SiteHeader` already draws — as `icon.svg`, with `favicon.ico` and `apple-icon.png` rasterised
-  from it. The light squares take the amber accent rather than the board's light square: the two
-  board colours are 2.5:1 against each other, which at 16px is a brown square rather than a
-  chessboard. The five unreferenced `create-next-app` SVGs in `public/` went with it.
+  `SiteHeader` already draws, in the header's own board colours — as `icon.svg`, with
+  `favicon.ico` and `apple-icon.png` rasterised from it. An amber-square variant was tried for
+  legibility and rejected: it is the sharper icon judged against itself (4.75:1 inside, against
+  the board pair's 2.99:1) and the weaker one judged against a light tab strip, where it falls to
+  1.94:1 and loses its edges while the board pair holds at 3.07:1. The five unreferenced
+  `create-next-app` SVGs in `public/` went with it.
 - **`/tournaments` was missing from the sitemap.** It shipped with [ADR-0043], went into both the
   header and the footer, and never reached `sitemap.ts` — unlisted for the whole life of the
   feature, because nothing compared the two lists. The static list now lives in `lib/site.ts` as

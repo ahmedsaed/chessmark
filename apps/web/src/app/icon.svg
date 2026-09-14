@@ -1,15 +1,16 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" width="12" height="12">
-  <!-- The site's mark: the 3x3 checker drawn by `Mark` in SiteHeader.tsx.
+  <!-- The site's mark: the 3x3 checker drawn by `Mark` in SiteHeader.tsx, in the header's own
+       board colours, so the tab and the page agree about what Chessmark looks like.
        Literal hex rather than the design tokens, because a favicon is fetched outside the
        document: a CSS custom property resolves to nothing there and the icon renders empty.
-       Light squares take the amber accent rather than the board's light square. The two board
-       colours are 2.5:1 against each other, which at 16px in a tab strip is one muddy brown
-       square rather than a chessboard; amber is the wordmark's colour and holds the pattern
-       at tab size.
+       The board pair is 2.99:1 against itself, which is low for a 16px pattern, and an amber
+       version reads more sharply on a dark tab strip. It lost on the strip that matters more:
+       against a light one the accent is 1.94:1 and the tile dissolves at its edges, where the
+       board pair is 3.07:1 and keeps its silhouette. Fidelity and the light-strip case agree.
        Note: no double hyphen anywhere in this comment. XML forbids it inside a comment, and
        spelling a CSS token name here made librsvg reject the whole file. -->
   <rect width="12" height="12" rx="2" fill="#4b3f2f"/>
-  <g fill="#dca84b">
+  <g fill="#9c8869">
     <rect x="4" y="0" width="4" height="4"/>
     <rect x="0" y="4" width="4" height="4"/>
     <rect x="8" y="4" width="4" height="4"/>

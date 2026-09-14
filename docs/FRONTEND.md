@@ -156,12 +156,20 @@ value verbatim. That cuts both ways and is the thing to know before editing any 
 
 **`themeColor` lives in a `viewport` export**, not in `metadata` — Next.js 16 errors on it there.
 
-**The icons are the header's `Mark`**, the 3×3 checker, in literal hex: a favicon is fetched
-outside the document, so a `var(--color-*)` resolves to nothing and the icon renders empty. Its
-light squares take the amber accent rather than `--color-sq-light`, because the two board colours
-are 2.5:1 against each other and at 16px in a tab strip that is a brown square rather than a
-chessboard. `favicon.ico` and `apple-icon.png` are rasterised from `icon.svg`; regenerate all three
-together. Note that XML forbids `--` inside a comment, so a CSS token name cannot be *spelled* in
+**The icons are the header's `Mark`**, the 3×3 checker, in the header's own board colours and in
+literal hex: a favicon is fetched outside the document, so a `var(--color-*)` resolves to nothing
+and the icon renders empty. `favicon.ico` and `apple-icon.png` are rasterised from `icon.svg`;
+regenerate all three together, and give `apple-icon.png` no corner radius — iOS applies its own
+mask, and a rounded source is rounded twice.
+
+An amber-square version was tried and rejected, and the reason is worth keeping because the
+obvious measurement is the wrong one. Judged *inside* the icon, amber wins easily: 4.75:1 against
+the dark square where the board pair is only 2.99:1. But a favicon is read against a tab strip,
+not against itself — and there amber is 1.94:1 on a light strip, so the tile dissolves at its
+edges, while the board pair is 3.07:1 and keeps its silhouette. **Measure an icon against what it
+sits on, not against itself.**
+
+Note that XML forbids `--` inside a comment, so a CSS token name cannot be *spelled* in
 `icon.svg` — librsvg rejects the whole file, and the icon silently disappears.
 
 **`app/manifest.ts` injects its own `<link rel="manifest">`.** Do not add one to `metadata` as
