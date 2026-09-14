@@ -498,16 +498,36 @@ async def cmd_withdraw(args: argparse.Namespace) -> int:
 
 
 async def cmd_standings(args: argparse.Namespace) -> int:
+    """One era's table (ADR-0043).
+
+    **Scoped, like the page it mirrors.** It read every era, so after `pool-free` opened `v3+v4`
+    the site showed an empty new table and this showed all 88 games of the one before it — the same
+    event reported two ways, which is worse than either answer alone. `--era` picks an older one and
+    the header says which is being shown, because a crosstable that does not name its task is one a
+    reader cannot check.
+    """
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
         tournament = await resolve_slug(session, args.slug)
+        eras = await repo.eras_of(session, tournament.id)
+        # The era being played, unless asked for one this event has had. Falling back rather than
+        # failing: an event from before eras existed has none, and reports across all of them.
+        era = (
+            args.era
+            if args.era in eras
+            else (repo.current_era() if repo.current_era() in eras else None)
+        )
+        if era is None and eras:
+            era = eras[0]
         entrants = await repo.entrants_of(session, tournament.id)
-        results = await repo.results_so_far(session, tournament.id)
+        results = await repo.results_so_far(session, tournament.id, era=era)
         used = await repo.spent(session, tournament.id)
         status, name = tournament.status, tournament.name
 
     table = standings(entrants, results)
-    print(f"{BOLD}{name}{OFF}  {DIM}{status} · {len(results)} games · ${used:.4f}{OFF}\n")
+    shown = f" · era {era}" if era else ""
+    others = [e for e in eras if e != era]
+    print(f"{BOLD}{name}{OFF}  {DIM}{status}{shown} · {len(results)} games · ${used:.4f}{OFF}\n")
     print(f"  {'#':>3}  {'model':<44} {'pts':>5} {'w/d/l':>9} {'sb':>6}")
     for standing in table:
         record = f"{standing.wins}/{standing.draws}/{standing.losses}"
@@ -515,6 +535,8 @@ async def cmd_standings(args: argparse.Namespace) -> int:
             f"  {standing.place:>3}  {standing.key:<44} {standing.score:>5.1f} "
             f"{record:>9} {standing.sonneborn_berger:>6.2f}"
         )
+    if others:
+        print(f"\n  {DIM}earlier eras: {', '.join(others)} — show one with --era{OFF}")
     return 0
 
 
@@ -611,6 +633,7 @@ def build_parser() -> argparse.ArgumentParser:
     withdraw.set_defaults(run=cmd_withdraw)
 
     table = sub.add_parser("standings", help="print the table")
+    table.add_argument("--era", help="an earlier era of this event; omit for the one being played")
     table.add_argument("slug")
     table.set_defaults(run=cmd_standings)
 

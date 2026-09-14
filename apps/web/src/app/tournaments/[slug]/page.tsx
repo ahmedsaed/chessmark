@@ -23,39 +23,52 @@ export async function generateMetadata({ params }: PageProps<"/tournaments/[slug
  * Which era this table is, and a way back to the earlier ones (ADR-0043).
  *
  * A pool carries its task changes internally rather than being replaced, so the heading has to say
- * which task these numbers came from — a crosstable that does not is a crosstable a reader cannot
- * check. Rendered as plain links rather than a control: the page is a server component, and one
- * `<a>` per era needs no JavaScript to be correct.
+ * which task these numbers came from — a crosstable that does not name its task is one a reader
+ * cannot check. It sits beside the status chip because it is the same kind of fact about the event.
  *
- * Silent for an event that has only ever played one era, which is every closed tournament and a
- * new pool. There is nothing to choose between, and a dropdown offering one option is furniture.
+ * **A `<details>` rather than a client component.** The page is a server component and this is a
+ * menu of two or three links; a disclosure gets the click-to-open, the keyboard and the focus ring
+ * from the browser, ships no JavaScript, and closes by itself because every item navigates. What
+ * it does not get is close-on-outside-click, which is the price and a small one at this size.
+ *
+ * Silent for an event that has only ever played one era — every closed tournament and every new
+ * pool. There is nothing to choose between, and a menu offering one option is furniture.
  */
-function Eras({ tournament, slug }: { tournament: TournamentDetail; slug: string }) {
-  if (tournament.eras.length < 2) return null;
+function EraMenu({ tournament, slug }: { tournament: TournamentDetail; slug: string }) {
+  if (tournament.eras.length < 2) {
+    return tournament.era ? (
+      <span className="border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">
+        {tournament.era}
+      </span>
+    ) : null;
+  }
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2">
-      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-        Era
-      </span>
-      {tournament.eras.map((name) => {
-        const current = name === tournament.era;
-        return (
-          <Link
-            key={name}
-            href={`/tournaments/${slug}?era=${encodeURIComponent(name)}`}
-            aria-current={current ? "page" : undefined}
-            className={
-              current
-                ? "rounded border border-accent px-2 py-0.5 font-mono text-[10.5px] text-accent"
-                : "rounded border border-rule px-2 py-0.5 font-mono text-[10.5px] text-ink-faint transition-colors hover:border-accent hover:text-accent"
-            }
-          >
-            {name}
-          </Link>
-        );
-      })}
-    </div>
+    <details className="group relative">
+      <summary className="flex cursor-pointer list-none items-center gap-1 border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint transition-colors hover:border-accent hover:text-accent [&::-webkit-details-marker]:hidden">
+        {tournament.era ?? "all eras"}
+        <span aria-hidden className="transition-transform group-open:rotate-180">
+          ▾
+        </span>
+      </summary>
+      <ul className="absolute left-0 top-full z-10 mt-1 min-w-full border border-line bg-surface-2 py-1 shadow-sm">
+        {tournament.eras.map((name) => (
+          <li key={name}>
+            <Link
+              href={`/tournaments/${slug}?era=${encodeURIComponent(name)}`}
+              aria-current={name === tournament.era ? "page" : undefined}
+              className={`block whitespace-nowrap px-2.5 py-1 font-mono text-[10px] ${
+                name === tournament.era
+                  ? "text-accent"
+                  : "text-ink-faint transition-colors hover:text-accent"
+              }`}
+            >
+              {name}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -80,14 +93,13 @@ export default async function TournamentPage({
       <div className="mt-4 flex flex-wrap items-baseline gap-3">
         <h1 className="font-serif text-4xl leading-tight text-ink">{tournament.name}</h1>
         <StatusChip status={tournament.status} />
+        <EraMenu tournament={tournament} slug={slug} />
       </div>
       <p className="mt-1 font-mono text-xs text-ink-faint">
         {tournament.field_description} · {tournament.entrant_count} entrants ·{" "}
         {formatLabel(tournament)}
         {tournament.is_ranked ? " · ranked" : " · unranked"}
       </p>
-
-      <Eras tournament={tournament} slug={slug} />
 
       <Progress tournament={tournament} />
       {tournament.format === "swiss" && tournament.status !== "finished" && (
