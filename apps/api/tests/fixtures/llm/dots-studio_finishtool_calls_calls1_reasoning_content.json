@@ -1,0 +1,86 @@
+{
+  "name": "dots-studio_finishtool_calls_calls1_reasoning_content",
+  "model": "dots-studio/dots-3-note-preview:free",
+  "source": "live",
+  "note": "Recorded from production game cc095c52, turn 7840, dots-studio/dots-3-note-preview:free on an unnamed endpoint. finish_reason=tool_calls, 300 completion tokens, 201 of them reasoning.",
+  "request": {
+    "model": "openrouter/dots-studio/dots-3-note-preview:free",
+    "max_tokens": 64000,
+    "tool_choice": "auto",
+    "extra_body": {
+      "usage": {
+        "include": true
+      },
+      "provider": {
+        "only": [
+          "AtlasCloud"
+        ],
+        "sort": "price",
+        "allow_fallbacks": true
+      },
+      "session_id": "game-cc095c52-81b5-4403-9237-c4548570f5b8"
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": "\n\nI've played 25. Re1, attacking the loose black rook on e8. Black will likely have to move it. Let me see their reply."
+      },
+      {
+        "role": "user",
+        "content": "Black played Rxe1+. It is your move as white. Ply 53. Call `make_move` when you have decided."
+      }
+    ],
+    "_trimmed": "164 messages in the real request; the last 2 are kept. The response is verbatim — that is what `replay()` returns and what the normaliser is tested against."
+  },
+  "response": {
+    "id": "gen-1789437454-rUTxczi8jSNw8xryVDFI",
+    "model": "dots-studio/dots-3-note-preview:free",
+    "usage": {
+      "cost": 0,
+      "total_tokens": 17232,
+      "prompt_tokens": 16932,
+      "completion_tokens": 300,
+      "prompt_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": null,
+        "video_tokens": 0,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "completion_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "video_tokens": null,
+        "reasoning_tokens": 201,
+        "accepted_prediction_tokens": null,
+        "rejected_prediction_tokens": null
+      }
+    },
+    "object": "chat.completion.chunk",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "\n\nBlack's rook captured on e1 with check. I need to move the king out of check — Kh1 is safe. Black has traded rooks, so I should still be up a Queen and Bishop. Let me respond.\n\n",
+          "reasoning": "The rook on e8 captured on e1 with check. I need to respond to the check. The king is on g1, and the rook on e1 checks along the first rank. My legal responses: Kf1, Kh1, or block. Actually the king can move to f1 or h1 (g1 is where it is, e1-f1-g1-h1 — the rook checks along the rank, so king must leave the first rank or block). Blocking isn't possible since nothing is between. So Kf1 or Kh1.\n\nLet me just play Kh1 to be safe.\n\nActually, wait — after Rxe1+, black has given up their rook. Let me check material. Black had a rook on e8, it captured on e1. So black traded rook for rook. Now material: I'm up a Queen and Bishop still? Let me think. Earlier I was up queen + bishop. The rook trades are even. So I should still be up queen + bishop.\n\nLet me just respond to check with Kh1.\n",
+          "tool_calls": [
+            {
+              "id": "call_3112258362ee47358d3efc5f",
+              "type": "function",
+              "function": {
+                "name": "make_move",
+                "arguments": "{\"move\": \"Kh1\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "created": 1789437455
+  }
+}

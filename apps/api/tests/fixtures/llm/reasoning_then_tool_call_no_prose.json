@@ -1,0 +1,86 @@
+{
+  "name": "reasoning_then_tool_call_no_prose",
+  "model": "inclusionai/ling-3.0-flash-fin:free",
+  "source": "live",
+  "note": "Recorded from production game 27df21c2, turn 6912, inclusionai/ling-3.0-flash-fin:free on an unnamed endpoint. This shape has already cost us a game — see `harvest_cassettes.py` for which. finish_reason=tool_calls, 21 completion tokens, 16 of them reasoning.",
+  "request": {
+    "model": "openrouter/inclusionai/ling-3.0-flash-fin:free",
+    "max_tokens": 26214,
+    "tool_choice": "auto",
+    "extra_body": {
+      "usage": {
+        "include": true
+      },
+      "provider": {
+        "only": [
+          "Novita"
+        ],
+        "sort": "price",
+        "allow_fallbacks": true
+      },
+      "session_id": "game-27df21c2-c148-45ff-8ea9-4ef959410696"
+    },
+    "messages": [
+      {
+        "role": "system",
+        "content": "You are playing a game of chess as white against Dots Studio: Dots3-Note Preview (free).\n\nThis is a benchmark of how reliably you can operate over a long horizon, so how you act matters as much as how well you play.\n\n## How to act\n\nYou interact with the game only through tools. There is no other way to move — describing a move in prose does nothing.\n\nEvery turn, you must end by calling `make_move` exactly once. Before that you may call the read-only tools (`get_board`, `get_legal_moves`, `get_move_history`) as often as you need to understand the position. They are free and they do not consume your turn.\n\n## Rules that will be enforced\n\n- `get_legal_moves` returns every move you may play. If you are unsure whether a move is legal, call it.\n- An illegal move is rejected with an explanation and the full list of legal moves. You may try again. If you fail more than 5 times in a single turn, you forfeit the game.\n- Moves are given in standard algebraic notation (e4, Nf3, O-O, exd5, e8=Q) or UCI (e2e4, g1f3, e7e8q). Either is accepted.\n- The server is the sole authority on the position. Your own view of the board can drift; the board returned by `get_board` cannot.\n\n## How the game can end\n\nCheckmate, stalemate, resignation and insufficient material end it as you would expect.\n\nTwo draw rules are **claimable — they do not apply unless you claim them**:\n\n- **Threefold repetition.** If the same position has occurred three times, `claim_draw` ends the game as a draw. The occurrences do not have to be consecutive, and different moves in between do not reset the count; what matters is that the position recurs. `get_board` reports `repetition_count`.\n- **The fifty-move rule.** If fifty moves have passed with no capture and no pawn move, `claim_draw` ends the game as a draw. `get_board` reports `plies_until_fifty_move_draw`.\n\n`claim_draw` is refused, harmlessly, when neither applies — it tells you how far off each one is and you carry on. It costs you nothing and is never counted as an illegal move.\n\nTwo more apply **automatically, with no claim from anybody**, so that a game cannot continue for ever: a **fivefold** repetition, and **seventy-five** moves with no capture and no pawn move.\n\nThis means a repetition is yours to use or to avoid. If you are worse, repeating and claiming is a way to save half a point. If you are better, do not repeat and do not let your opponent repeat — check the counts, and make progress with a capture or a pawn move. A won game can be drawn by shuffling, or by chasing the enemy king with checks that return to the same position.\n\n## Playing\n\nPlay to win. Think about material, king safety, development, and what your opponent threatens. You are welcome to reason at length before moving — your reasoning is recorded but is never shown to your opponent during the game.\n\n## Talking\n\nThis is a ranked game. Do not use the `say` tool; it is disabled. Play the position.\n"
+      },
+      {
+        "role": "user",
+        "content": "It is your move. Ply 1. Call `make_move` when you have decided."
+      }
+    ],
+    "_trimmed": "2 messages in the real request; the last 2 are kept. The response is verbatim — that is what `replay()` returns and what the normaliser is tested against."
+  },
+  "response": {
+    "id": "gen-1789185010-0xrMA3M6NZjoTU4oEiMY",
+    "model": "inclusionai/ling-3.0-flash-fin:free",
+    "usage": {
+      "cost": 0,
+      "total_tokens": 1610,
+      "prompt_tokens": 1589,
+      "completion_tokens": 21,
+      "prompt_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": null,
+        "video_tokens": 0,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "completion_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "video_tokens": null,
+        "reasoning_tokens": 16,
+        "accepted_prediction_tokens": null,
+        "rejected_prediction_tokens": null
+      }
+    },
+    "object": "chat.completion.chunk",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "reasoning": "Let me start by looking at the board to understand the position.",
+          "tool_calls": [
+            {
+              "id": "call_bd16063244af423495bc9a66",
+              "type": "function",
+              "function": {
+                "name": "get_board",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "created": 1789185011
+  }
+}

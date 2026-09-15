@@ -1,0 +1,97 @@
+{
+  "name": "inclusionai_finishtool_calls_calls1_content",
+  "model": "inclusionai/ling-3.0-flash-fin:free",
+  "source": "live",
+  "note": "Recorded from production game 7da295c2, turn 7383, inclusionai/ling-3.0-flash-fin:free on an unnamed endpoint. finish_reason=tool_calls, 32 completion tokens, 0 of them reasoning.",
+  "request": {
+    "model": "openrouter/inclusionai/ling-3.0-flash-fin:free",
+    "max_tokens": 32768,
+    "tool_choice": "auto",
+    "extra_body": {
+      "usage": {
+        "include": true
+      },
+      "provider": {
+        "only": [
+          "Novita"
+        ],
+        "sort": "price",
+        "allow_fallbacks": true
+      },
+      "session_id": "game-7da295c2-72e3-4b1b-ad85-571a83402322"
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_0dfdc41ae8714947836ad672",
+            "type": "function",
+            "function": {
+              "name": "make_move",
+              "arguments": "{\"move\": \"Kf2\"}"
+            }
+          }
+        ]
+      },
+      {
+        "name": "make_move",
+        "role": "tool",
+        "content": "{\"attempt\": 1, \"attempts_remaining\": 4, \"detail\": \"no legal move in this position matches 'Kf2'.\", \"error\": \"illegal_move\", \"fen\": \"5r2/2p4p/1r4p1/N3k3/1p5P/3b2P1/PP3K2/R4R2 w - - 1 29\", \"legal_moves_san\": [\"Ke1\", \"Ke3\", \"Kg1\", \"Kg2\"], \"move\": \"Kf2\", \"ok\": false, \"reason\": \"not_reachable\"}",
+        "tool_call_id": "call_0dfdc41ae8714947836ad672"
+      }
+    ],
+    "_trimmed": "185 messages in the real request; the last 2 are kept. The response is verbatim — that is what `replay()` returns and what the normaliser is tested against."
+  },
+  "response": {
+    "id": "gen-1789346748-8uJbU1li5fklMEDleT25",
+    "model": "inclusionai/ling-3.0-flash-fin:free",
+    "usage": {
+      "cost": 0,
+      "total_tokens": 69453,
+      "prompt_tokens": 69421,
+      "completion_tokens": 32,
+      "prompt_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": null,
+        "video_tokens": 0,
+        "cached_tokens": 69248,
+        "cache_write_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "completion_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "video_tokens": null,
+        "reasoning_tokens": 0,
+        "accepted_prediction_tokens": null,
+        "rejected_prediction_tokens": null
+      }
+    },
+    "object": "chat.completion.chunk",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "Illegal. Let me play **Ke3** to continue centralizing the",
+          "tool_calls": [
+            {
+              "id": "call_e53e33af2f4d4f19b80ab4a8",
+              "type": "function",
+              "function": {
+                "name": "make_move",
+                "arguments": "{\"move\": \"Ke3\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "created": 1789346749
+  }
+}

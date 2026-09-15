@@ -1,0 +1,105 @@
+{
+  "name": "several_tool_calls_at_once",
+  "model": "inclusionai/ling-3.0-flash-fin:free",
+  "source": "live",
+  "note": "Recorded from production game 27df21c2, turn 6914, inclusionai/ling-3.0-flash-fin:free on an unnamed endpoint. This shape has already cost us a game — see `harvest_cassettes.py` for which. finish_reason=tool_calls, 15 completion tokens, 0 of them reasoning.",
+  "request": {
+    "model": "openrouter/inclusionai/ling-3.0-flash-fin:free",
+    "max_tokens": 32768,
+    "tool_choice": "auto",
+    "extra_body": {
+      "usage": {
+        "include": true
+      },
+      "provider": {
+        "only": [
+          "Novita"
+        ],
+        "sort": "price",
+        "allow_fallbacks": true
+      },
+      "session_id": "game-27df21c2-c148-45ff-8ea9-4ef959410696"
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_f509350e69834d25a27a20d1",
+            "type": "function",
+            "function": {
+              "name": "get_legal_moves",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      {
+        "name": "get_legal_moves",
+        "role": "tool",
+        "content": "{\"count\": 29, \"moves\": [{\"san\": \"Ba3\", \"uci\": \"f8a3\"}, {\"san\": \"Bb4\", \"uci\": \"f8b4\"}, {\"san\": \"Bc5\", \"uci\": \"f8c5\"}, {\"san\": \"Bd6\", \"uci\": \"f8d6\"}, {\"san\": \"Be7\", \"uci\": \"f8e7\"}, {\"san\": \"Ke7\", \"uci\": \"e8e7\"}, {\"san\": \"Na6\", \"uci\": \"b8a6\"}, {\"san\": \"Nc6\", \"uci\": \"b8c6\"}, {\"san\": \"Ne7\", \"uci\": \"g8e7\"}, {\"san\": \"Nf6\", \"uci\": \"g8f6\"}, {\"san\": \"Nh6\", \"uci\": \"g8h6\"}, {\"san\": \"Qe7\", \"uci\": \"d8e7\"}, {\"san\": \"Qf6\", \"uci\": \"d8f6\"}, {\"san\": \"Qg5\", \"uci\": \"d8g5\"}, {\"san\": \"Qh4\", \"uci\": \"d8h4\"}, {\"san\": \"a5\", \"uci\": \"a7a5\"}, {\"san\": \"a6\", \"uci\": \"a7a6\"}, {\"san\": \"b5\", \"uci\": \"b7b5\"}, {\"san\": \"b6\", \"uci\": \"b7b6\"}, {\"san\": \"c5\", \"uci\": \"c7c5\"}, {\"san\": \"c6\", \"uci\": \"c7c6\"}, {\"san\": \"d5\", \"uci\": \"d7d5\"}, {\"san\": \"d6\", \"uci\": \"d7d6\"}, {\"san\": \"f5\", \"uci\": \"f7f5\"}, {\"san\": \"f6\", \"uci\": \"f7f6\"}, {\"san\": \"g5\", \"uci\": \"g7g5\"}, {\"san\": \"g6\", \"uci\": \"g7g6\"}, {\"san\": \"h5\", \"uci\": \"h7h5\"}, {\"san\": \"h6\", \"uci\": \"h7h6\"}], \"ok\": true}",
+        "tool_call_id": "call_f509350e69834d25a27a20d1"
+      }
+    ],
+    "_trimmed": "18 messages in the real request; the last 2 are kept. The response is verbatim — that is what `replay()` returns and what the normaliser is tested against."
+  },
+  "response": {
+    "id": "gen-1789185040-STlwsMSbulJXbUDxgOHb",
+    "model": "inclusionai/ling-3.0-flash-fin:free",
+    "usage": {
+      "cost": 0,
+      "total_tokens": 3464,
+      "prompt_tokens": 3449,
+      "completion_tokens": 15,
+      "prompt_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": null,
+        "video_tokens": 0,
+        "cached_tokens": 2880,
+        "cache_write_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "completion_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "video_tokens": null,
+        "reasoning_tokens": 0,
+        "accepted_prediction_tokens": null,
+        "rejected_prediction_tokens": null
+      }
+    },
+    "object": "chat.completion.chunk",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_93c0ae511712485aa14b1291",
+              "type": "function",
+              "function": {
+                "name": "get_board",
+                "arguments": "{}"
+              }
+            },
+            {
+              "id": "call_429c1264d5c3476fa4e25c53",
+              "type": "function",
+              "function": {
+                "name": "get_move_history",
+                "arguments": "{}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "created": 1789185040
+  }
+}

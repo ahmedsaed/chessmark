@@ -3,7 +3,7 @@ SHELL := /bin/bash
 API := apps/api
 WEB := apps/web
 
-.PHONY: help setup up down logs psql redis api web dev test lint fmt typecheck check clean dev-pull
+.PHONY: help setup up down logs psql redis api web dev test lint fmt typecheck check clean dev-pull harvest-cassettes
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -86,6 +86,9 @@ repair-forfeits: ## Make forfeit flags agree with their games. ARGS=--write to a
 # Schedules; does not play. A worker must be running for the games to advance.
 # A backup nobody has restored is a hypothesis. `--verify` restores into a scratch database and
 # compares every table's row count with the source, then drops it.
+harvest-cassettes: ## Record real provider response shapes from production. ARGS=--write to keep them
+	cd $(API) && uv run python ../../scripts/harvest_cassettes.py $(ARGS)
+
 dev-pull: ## Replace the local database with production's. ARGS=--full for transcripts too
 	cd $(API) && uv run python ../../scripts/snapshot.py $(ARGS)
 
