@@ -323,6 +323,14 @@ export interface StreamNotice {
   text: string;
   /** When a pause will be retried, if it said. */
   resumeAfter: string | null;
+  /**
+   * How many identical notices this one stands for, when a run was folded into it.
+   *
+   * A provider that keeps refusing produces pause, resume, pause, resume — `f129b600` filled the
+   * panel with eight of them saying the same sentence, and the reader had to count rows to learn
+   * the one thing that mattered, which is that it had been refused eight times.
+   */
+  count?: number;
 }
 
 /** A turn as `/games/{id}/turns` returns it. Replay needs the id to fetch raw payloads. */
