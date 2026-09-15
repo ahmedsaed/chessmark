@@ -14,7 +14,9 @@
  * game total exactly, and it was short by precisely the completion count.
  */
 
-import type { GameDetail, Player } from "@/lib/types";
+import Link from "next/link";
+
+import type { GameDetail, Player, TournamentRef } from "@/lib/types";
 
 function usd(value: string): string {
   const amount = Number(value);
@@ -76,6 +78,8 @@ export function StatsRail({
         )}
       </div>
 
+      {game.tournament && <EventCard event={game.tournament} />}
+
       {white && (
         <PlayerCard
           player={white}
@@ -99,6 +103,54 @@ export function StatsRail({
       </div>
 
     </aside>
+  );
+}
+
+/**
+ * Where this game came from — shown only when it came from somewhere.
+ *
+ * Most games are started by hand and have no event, so the card is absent rather than empty: a row
+ * reading "Event —" on every casual game would be three lines of nothing on the common case.
+ *
+ * **The era is the row that earns this card.** The event name and round are a breadcrumb, and a
+ * reader could guess them from the tournament page. The era cannot be got anywhere else on this
+ * page, and it is what says which other results this one is comparable to — a game played under
+ * `v2+v3` was answering a different prompt with different tools, and is not the same measurement
+ * (ADR-0043).
+ *
+ * **Deliberately no standings position.** A pool never ends, so its table is *today's*. Printing
+ * "3rd of 16" beside a game from August would answer a question nobody asked with a number that
+ * was not true when the game was played.
+ */
+function EventCard({ event }: { event: TournamentRef }) {
+  return (
+    <div className="flex flex-col gap-1.5 border border-line bg-surface-2 p-3">
+      <Label>Event</Label>
+      <Link
+        href={`/tournaments/${event.slug}`}
+        className="truncate font-mono text-xs text-accent hover:underline"
+      >
+        {event.name}
+      </Link>
+      <Row
+        label="Round"
+        value={String(event.round_number)}
+        muted
+        title={
+          event.format === "pool"
+            ? "a pool numbers one round per game, so this is the Nth pairing it scheduled"
+            : undefined
+        }
+      />
+      {event.era && (
+        <Row
+          label="Era"
+          value={event.era}
+          muted
+          title="the prompt and tool-schema majors this game was played under — results are comparable within an era, not across one"
+        />
+      )}
+    </div>
   );
 }
 
@@ -257,10 +309,22 @@ function Stat({
   );
 }
 
-function Row({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
+function Row({
+  label,
+  value,
+  muted,
+  title,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+  title?: string;
+}) {
   return (
     <div className="tabular flex justify-between gap-2 font-mono text-[11px] text-ink-dim">
-      <span>{label}</span>
+      <span title={title} className={title ? "cursor-help" : undefined}>
+        {label}
+      </span>
       <span className={muted ? "text-ink-faint" : "text-ink"}>{value}</span>
     </div>
   );

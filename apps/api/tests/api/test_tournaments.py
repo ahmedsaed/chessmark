@@ -343,3 +343,106 @@ class TestTheNumbersMatchTheTable:
 
         assert response.status_code == 200
         assert response.json()["era"] == repo.current_era()
+
+
+# ========================================================= a game says which event it belongs to
+
+
+async def _seat_a_tournament_game(db: AsyncSession, tournament_id, *, era: str | None = "v3+v4"):
+    """Create a real game and record it as an event pairing, the way the runner would."""
+    from chessmark.orchestration.match import Seat, create_match
+
+    match = await create_match(
+        db,
+        white=Seat(display_name="w", model="scripted/white"),
+        black=Seat(display_name="b", model="scripted/black"),
+    )
+    db.add(
+        TournamentGame(
+            tournament_id=tournament_id,
+            era=era,
+            round_number=217,
+            white_key="scripted/white",
+            black_key="scripted/black",
+            game_id=match.game.id,
+        )
+    )
+    await db.commit()
+    return match.game.id
+
+
+async def test_a_tournament_game_names_its_event(client: AsyncClient, db: AsyncSession) -> None:
+    """The left rail's Event card. Without this a reader has a game with no answer to *why was
+    this played* — and, more usefully, no way to see which task it ran under."""
+    tournament_id, _ = await make_event(db)
+    game_id = await _seat_a_tournament_game(db, tournament_id)
+
+    body = (await client.get(f"/games/{game_id}")).json()
+
+    assert body["tournament"] == {
+        "slug": "test-cup",
+        "name": "Test Cup",
+        "format": "round_robin",
+        "round_number": 217,
+        "era": "v3+v4",
+    }
+
+
+async def test_a_game_nobody_scheduled_names_no_event(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Most games are started by hand. The card is absent, not empty — null rather than a blank
+    record the page would have to special-case anyway."""
+    from chessmark.orchestration.match import Seat, create_match
+
+    match = await create_match(
+        db,
+        white=Seat(display_name="w", model="scripted/white"),
+        black=Seat(display_name="b", model="scripted/black"),
+    )
+    await db.commit()
+
+    body = (await client.get(f"/games/{match.game.id}")).json()
+
+    assert body["tournament"] is None
+
+
+async def test_naming_the_event_costs_one_query(client: AsyncClient, db: AsyncSession) -> None:
+    """**A game page is on the critical path of every replay and every live view** (CLAUDE.md,
+    *a new read endpoint is measured*).
+
+    The event's name comes along on the join that finds the pairing rather than as a second read,
+    and a game with no event pays the same one query to learn so. Counted against the same page
+    without an event, so what this forbids is the card costing more than the fact it states.
+    """
+    tournament_id, _ = await make_event(db)
+    with_event = await _seat_a_tournament_game(db, tournament_id)
+
+    from chessmark.orchestration.match import Seat, create_match
+
+    match = await create_match(
+        db,
+        white=Seat(display_name="w", model="scripted/white"),
+        black=Seat(display_name="b", model="scripted/black"),
+    )
+    await db.commit()
+
+    statements: list[str] = []
+
+    def record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    sa.event.listen(db.bind.sync_engine, "before_cursor_execute", record)
+    try:
+        await client.get(f"/games/{match.game.id}")
+        plain = len(statements)
+        statements.clear()
+        await client.get(f"/games/{with_event}")
+        evented = len(statements)
+    finally:
+        sa.event.remove(db.bind.sync_engine, "before_cursor_execute", record)
+
+    assert evented == plain, (
+        f"a game in an event took {evented} queries against {plain} for one outside — the card is "
+        "reading the tournament separately from the pairing that points at it"
+    )
