@@ -61,7 +61,7 @@ from chessmark.db.models import (
     Turn,
 )
 from chessmark.db.quotas import note_game_started
-from chessmark.db.repositories import load_events, load_terminal_events, rebuild_referee
+from chessmark.db.repositories import load_events, rebuild_referee
 from chessmark.game import Colour, IllegalMoveError
 from chessmark.game.pgn import PgnMetadata, to_pgn
 from chessmark.orchestration import human as human_play
@@ -352,25 +352,26 @@ async def get_event_log(
     after_seq: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=5000)] = 1000,
 ) -> list[EventOut]:
-    """The event log as a plain list — the replay path (ADR-0008).
+    """One page of the event log, oldest first — the replay path (ADR-0008).
 
     The same rows the SSE stream delivers live, which is what keeps live and replay consistent —
     including the withholding: a person reading their own live game must not be handed their
     opponent's thinking here either (`api/redaction.py`).
+
+    **Paged by cursor, and the cursor is `seq`.** Pass the `seq` of the last row you received as
+    `after_seq` to get the next page; a page shorter than `limit` is the end. That is the same
+    contract `Last-Event-ID` already uses for SSE reconnect, so there is one way to say "from
+    here" rather than two.
+
+    A caller that reads one page and stops now sees a *prefix* of the game and can tell — the page
+    is full, so there is more. This used to append the terminal events to a truncated page instead,
+    so that a reader got the ending rather than a log stopping at an arbitrary ply. That was the
+    right instinct and the wrong mechanism: it put a hole in the middle of a result that looked
+    continuous, and it broke the cursor, because the last `seq` in the page was no longer the
+    boundary of what had been read. Following the cursor delivers the ending *and* everything
+    before it.
     """
     events = await load_events(session, game.id, after_seq=after_seq, limit=limit)
-
-    # **The ending is never the thing that gets dropped.** `limit` takes rows from the front, which
-    # is what replay needs — the board is rebuilt by replaying moves from the start — but it means
-    # a game longer than the cap loses its *tail*, and the tail is where the result is. No error,
-    # no gap, just a game that stops mid-move-list and never says how it finished. A 147-ply game
-    # already writes 1,093 events; a reasoning-heavy one near the 300-ply cap will cross 5,000.
-    #
-    # So when the log was cut, the terminal events are fetched separately and appended. The result
-    # is still ordered by `seq` and still starts at the beginning; what changes is that the last
-    # thing in it is the ending rather than an arbitrary ply.
-    if len(events) == limit:
-        events += await load_terminal_events(session, game.id, after_seq=events[-1].seq)
 
     withhold = await must_withhold_thinking(session, game)
 
