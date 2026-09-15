@@ -17,6 +17,23 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **A pool with nothing rated yet ranked everybody first** . `_placed_by_rating` gives
+  an unrated entrant the place of the first unrated one — which, when none are rated, is place 1
+  for all of them, with the order falling through to the entrant key. Production showed it twice
+  over: every past era, whose games are excluded from ratings by version and so can never have one,
+  and `pool-free` itself between an era opening and its first ratable game finishing. An empty
+  ratings map and no ratings at all describe the same table, so it now falls back to points.
+
+### Added
+
+- **A turn says when the model folded its own history** . A compaction was already a
+  notice in the stream, because folding changes what the model can see from there on — but a notice
+  sits *between* turns, so it answered "what happened" and not "to which turn". The step count now
+  carries a `compacted` marker, counted rather than flagged because a long turn can fold twice.
+
+
+### Fixed
+
 - **The site shipped with Vercel's logo as its favicon.** `app/favicon.ico` was the one
   `create-next-app` wrote in Phase 0 and nothing ever replaced it, so every tab, bookmark and
   search result carried another company's mark. It is now the site's own — the 3×3 checker

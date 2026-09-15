@@ -121,3 +121,49 @@ def test_an_empty_tournament_still_produces_a_full_table() -> None:
     assert [s.key for s in table] == ["A", "B", "C", "D"]
     assert all(s.score == 0.0 and s.played == 0 for s in table)
     assert all(s.place == 1 for s in table), "nobody has separated themselves yet"
+
+
+# ==================================================== a pool with nothing rated yet
+
+
+class TestNobodyIsRatedYet:
+    """**"Everybody is unrated" and "there are no ratings" are the same table.**
+
+    Only the argument differs, and the rating order has nothing to sort on in either. Left to it,
+    `_placed_by_rating` gives every unrated entrant the place of the *first* unrated one — which,
+    with none rated, is place 1 for all of them — and the order falls through to the entrant key.
+
+    Production showed it twice over: every past era, whose games are excluded from ratings by
+    version and so can never have one, and `pool-free` itself between the era opening and its first
+    ratable game finishing. Both rendered a field of joint firsts in alphabetical order.
+    """
+
+    def test_an_empty_ratings_map_falls_back_to_points(self) -> None:
+        table = standings(FIELD, [game("A", "B", 1.0), game("C", "D", 1.0, 2)], {})
+
+        assert [(s.key, s.place) for s in table] == [("A", 1), ("C", 1), ("B", 3), ("D", 3)]
+
+    def test_it_matches_what_no_ratings_at_all_would_give(self) -> None:
+        """The property, stated as the equivalence it is."""
+        results = [game("A", "B", 1.0), game("C", "D", 1.0, 2)]
+
+        assert [(s.key, s.place) for s in standings(FIELD, results, {})] == [
+            (s.key, s.place) for s in standings(FIELD, results, None)
+        ]
+
+    def test_one_rated_entrant_is_enough_to_keep_the_rating_order(self) -> None:
+        """The fallback must not swallow a real rating order. A pool where one model has finished a
+        ratable game is ranked by rating, with the rest sharing last — which is what an unmeasured
+        entrant is owed (ADR-0027)."""
+        table = standings(FIELD, [game("A", "B", 1.0)], {"B": (1800.0, 40.0, False)})
+
+        assert table[0].key == "B", "rated first, even having lost the only game"
+        assert table[0].place == 1
+        assert {s.place for s in table[1:]} == {2}, "the unrated share the place after it"
+
+    def test_a_rating_nobody_in_the_field_has_does_not_count(self) -> None:
+        """A stale key — a model withdrawn from the event — must not switch the table into an order
+        it has no data for."""
+        table = standings(FIELD, [game("A", "B", 1.0)], {"withdrawn/model": (1800.0, 40.0, False)})
+
+        assert [(s.key, s.place) for s in table] == [("A", 1), ("B", 2), ("C", 2), ("D", 2)]
