@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { GameActions } from "@/components/GameActions";
 import { GameView } from "@/components/GameView";
 import { Replay } from "@/components/Replay";
-import { apiUrl, getGame, getGameTournament, listEvents, listTurns, pgnUrl } from "@/lib/api";
+import { apiUrl, getGame, listEvents, listTurns, pgnUrl } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -44,15 +44,9 @@ export default async function GamePage({ params }: PageProps<"/games/[id]">) {
   const finished = TERMINAL.has(game.status);
 
   // A finished game needs its turn rows too, to reach the raw payloads behind each ply (LOG-07).
-  //
-  // The event standings are a third request rather than part of the game, because they are six
-  // queries against `GET /games/{id}`'s one and the game is what the board waits on. `tournament`
-  // on the game is the cheap flag that says whether there is anything to ask for — most games are
-  // started by hand, and asking anyway would be a wasted round trip on every one of them.
-  const [events, turns, event] = await Promise.all([
+  const [events, turns] = await Promise.all([
     listEvents(id),
     finished ? listTurns(id) : Promise.resolve([]),
-    game.tournament ? getGameTournament(id) : Promise.resolve(null),
   ]);
 
   return (
@@ -68,7 +62,6 @@ export default async function GamePage({ params }: PageProps<"/games/[id]">) {
           apiUrl={apiUrl}
           events={events}
           turns={turns}
-          event={event}
           actions={<GameActions pgnHref={pgnUrl(id)} />}
         />
       ) : (
@@ -76,7 +69,6 @@ export default async function GamePage({ params }: PageProps<"/games/[id]">) {
           game={game}
           apiUrl={apiUrl}
           initialEvents={events}
-          event={event}
           actions={<GameActions pgnHref={pgnUrl(id)} />}
         />
       )}

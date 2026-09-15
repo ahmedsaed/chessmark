@@ -25,7 +25,7 @@ import { StatsRail } from "@/components/StatsRail";
 import { buildFrames } from "@/lib/animation";
 import { eventsThroughPly, plyCount, turnIdsByPly } from "@/lib/replay";
 import { foldEvents } from "@/lib/turns";
-import type { GameDetail, GameEvent, GameTournament, TurnSummary, TurnView } from "@/lib/types";
+import type { GameDetail, GameEvent, TurnSummary, TurnView } from "@/lib/types";
 
 export function Replay({
   game,
@@ -33,7 +33,6 @@ export function Replay({
   events,
   turns: turnRows,
   actions,
-  event,
 }: {
   game: GameDetail;
   apiUrl: string;
@@ -41,7 +40,6 @@ export function Replay({
   turns: TurnSummary[];
   /** Copy-link and PGN. They ride the status row rather than a bar of their own (UI feedback). */
   actions?: React.ReactNode;
-  event?: GameTournament | null;
 }) {
   const total = useMemo(() => plyCount(events), [events]);
 
@@ -121,7 +119,7 @@ export function Replay({
           and in flex the same knot ties itself the other way. Both were tried. */}
       <div className="grid grid-cols-1 gap-4 lg:h-[calc(100dvh-9.5rem)] lg:grid-cols-[minmax(0,1fr)_min(calc(100dvh-12rem),52vw)_minmax(0,1fr)]">
         <div className="order-3 min-w-0 overflow-y-auto lg:order-none">
-          <StatsRail game={game} toMove={sideToMove} activePly={ply} event={event} />
+          <StatsRail game={game} toMove={sideToMove} activePly={ply} />
         </div>
 
         <div className="order-1 flex min-h-0 min-w-0 flex-col gap-2 lg:order-none">

@@ -590,30 +590,6 @@ const Turn = memo(function Turn({ turn, name, filter, open, onToggle, onInspect 
               />
             )}
 
-            {/* **The turn where the history was cut.** The compaction notice already
-                sits in the stream, because folding changes what the model can see from here on —
-                but a notice lives *between* turns, so it answers "what happened" and not "to which
-                turn". Someone scanning for where a model lost the plan it announced at move 12
-                had nothing to scan. Beside the step count because that is the turn's own summary
-                line, and a count rather than a flag because a long turn can fold twice. */}
-            {turn.compactions > 0 && (
-              <span
-                title={
-                  turn.compactions === 1
-                    ? "The model folded its own history during this turn"
-                    : `The model folded its own history ${turn.compactions} times during this turn`
-                }
-                data-testid="turn-compacted"
-                className="inline-flex items-center gap-1 border border-line bg-surface px-2 py-1 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint"
-              >
-                <span aria-hidden className="text-accent">
-                  ⌦
-                </span>
-                compacted
-                {turn.compactions > 1 && <span>· {turn.compactions}</span>}
-              </span>
-            )}
-
             {/* Not a disclosure: there is nothing behind it to open. The count is the honest
                 thing to show — it says the model *is* reasoning, and how much, without saying
                 what about (invariant 8). Revealed in full once the game is over. */}

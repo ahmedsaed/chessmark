@@ -16,7 +16,7 @@
 
 import Link from "next/link";
 
-import type { GameDetail, GameTournament, Player, SeatStanding } from "@/lib/types";
+import type { GameDetail, Player } from "@/lib/types";
 
 function usd(value: string): string {
   const amount = Number(value);
@@ -41,14 +41,11 @@ export function StatsRail({
   game,
   toMove,
   activePly,
-  event,
 }: {
   game: GameDetail;
   toMove: "white" | "black" | null;
   /** Replay only: how far through the game the board currently is. */
   activePly?: number;
-  /** The event that scheduled this game, when one did. Fetched apart from the game. */
-  event?: GameTournament | null;
 }) {
   const white = game.players.find((p) => p.colour === "white");
   const black = game.players.find((p) => p.colour === "black");
@@ -79,6 +76,31 @@ export function StatsRail({
             muted
           />
         )}
+        {/* **One line, and only when there is one.** Most games are started by hand and have no
+            event, so this is absent rather than a row reading "Event —".
+            It was a card of its own at the foot of the rail carrying both models' places and
+            records. That answered a question worth answering and cost the rail its entire height —
+            and the fix for *that* was to shrink everything else, which made the page worse than
+            the card made it better. The tournament page is one click away and shows the standings
+            properly; this only has to say which event, and then get out of the way.
+            Round and era ride the tooltip. Era is what says which results this one is comparable
+            to (ADR-0043), so it earns a mention — not a line of its own. */}
+        {game.tournament && (
+          <div className="flex justify-between gap-2 font-mono text-[11px] text-ink-dim">
+            <span>Event</span>
+            <Link
+              href={`/tournaments/${game.tournament.slug}`}
+              title={`Round ${game.tournament.round_number}${
+                game.tournament.era
+                  ? `, era ${game.tournament.era} — the prompt and tool-schema majors this game was played under. Results are comparable within an era, not across one.`
+                  : ""
+              }`}
+              className="min-w-0 truncate text-accent hover:underline"
+            >
+              {game.tournament.name}
+            </Link>
+          </div>
+        )}
       </div>
 
       {white && (
@@ -103,157 +125,7 @@ export function StatsRail({
         <Row label="Tokens" value={game.total_tokens.toLocaleString()} muted />
       </div>
 
-      {event && <EventCard event={event} />}
     </aside>
-  );
-}
-
-/**
- * Where this game came from, and how its two players stand in it.
- *
- * Shown only when the game came from somewhere. Most games are started by hand, so the card is
- * absent rather than empty — a row reading "Event —" on every casual game would be a block of
- * nothing on the common case.
- *
- * **A two-row slice of the standings table**, rather than a breadcrumb. The event's name and round
- * a reader could have guessed from the tournament page; what they cannot get anywhere else is how
- * these two models — the ones actually on the board above — compare inside the event that put them
- * there. That is the question the card exists to answer, so the seats are the card and the name is
- * the heading.
- *
- * **The era is the other row that earns its place.** It says which results this one is comparable
- * to: a game played under `v2+v3` answered a different prompt with different tools and is not the
- * same measurement (ADR-0043). The table below it is scoped to that era for the same reason.
- *
- * **The standings still move, and the footnote says so.** A game early in an era sits beside a
- * table that later games have changed. Storing a snapshot per game would fix that and is not worth
- * a column; saying which table this is costs a line.
- */
-function EventCard({ event }: { event: GameTournament }) {
-  const { tournament, seats, ranked_by, entrants } = event;
-  const byRating = ranked_by === "rating";
-
-  return (
-    <div className="flex flex-col gap-2 border border-line bg-surface-2 p-3">
-      <Label>Event</Label>
-
-      <Link
-        href={`/tournaments/${tournament.slug}`}
-        className="truncate font-mono text-xs text-accent hover:underline"
-      >
-        {tournament.name}
-      </Link>
-
-      <p className="font-mono text-[9.5px] text-ink-faint">
-        <span
-          title={
-            tournament.format === "pool"
-              ? "a pool numbers one round per game, so this is the Nth pairing it scheduled"
-              : undefined
-          }
-        >
-          round {tournament.round_number}
-        </span>
-        {tournament.era && (
-          <>
-            {" · "}
-            <span title="the prompt and tool-schema majors this game was played under — results are comparable within an era, not across one">
-              era {tournament.era}
-            </span>
-          </>
-        )}
-        {" · "}
-        {entrants} entrants
-      </p>
-
-      <div className="flex flex-col gap-px border border-line-soft bg-line-soft">
-        {seats.map((seat) => (
-          <SeatRow key={seat.colour} seat={seat} byRating={byRating} entrants={entrants} />
-        ))}
-      </div>
-
-      <p className="font-mono text-[8.5px] leading-relaxed text-ink-faint">
-        {byRating ? "Rating" : "Score"} and place in this {tournament.era ? "era" : "event"}, as
-        they stand now — not as they stood when this game was played.
-      </p>
-    </div>
-  );
-}
-
-/**
- * One seat's line in the Event card.
- *
- * Built like a `PlayerCard` rather than a table row so the two read as a pair: the same colour
- * swatch, the same name treatment, the same stat grid underneath. A reader scanning down the rail
- * meets each model twice and should recognise it the second time.
- *
- * A seat with no `place` is a seat the table does not carry — a human, or a model seated outside
- * the field. It keeps its row and says so, because an absent row would read as a rendering fault.
- */
-function SeatRow({
-  seat,
-  byRating,
-  entrants,
-}: {
-  seat: SeatStanding;
-  byRating: boolean;
-  entrants: number;
-}) {
-  return (
-    <div className="flex flex-col gap-1.5 bg-surface px-2 py-2">
-      <div className="flex min-w-0 items-center gap-2">
-        <i
-          aria-hidden
-          className={`block h-2 w-2 flex-none border border-line ${
-            seat.colour === "white" ? "bg-piece-white" : "bg-piece-black"
-          }`}
-        />
-        <b className="truncate font-mono text-[10.5px] font-normal text-ink">
-          {seat.display_name}
-        </b>
-        {!seat.in_field && (
-          <span
-            title="no longer in this event's field — it keeps its record but gets no new pairings"
-            className="ml-auto flex-none cursor-help font-mono text-[8.5px] uppercase tracking-wider text-ink-faint"
-          >
-            left
-          </span>
-        )}
-      </div>
-
-      {seat.place === null ? (
-        <p className="font-mono text-[9.5px] text-ink-faint">not an entrant in this event</p>
-      ) : (
-        <dl className="grid grid-cols-3 gap-2">
-          <Cell label="Place" value={`${seat.place} / ${entrants}`} />
-          <Cell
-            label={byRating ? "Rating" : "Score"}
-            value={
-              byRating
-                ? seat.rating === null
-                  ? "unrated"
-                  : `${Math.round(seat.rating)}${seat.rating_provisional ? "?" : ""}`
-                : String(seat.score)
-            }
-            title={
-              byRating && seat.rating_provisional
-                ? "still too few games for this rating to be read as a placing"
-                : undefined
-            }
-          />
-          <Cell label="Record" value={`${seat.wins}-${seat.draws}-${seat.losses}`} />
-        </dl>
-      )}
-    </div>
-  );
-}
-
-function Cell({ label, value, title }: { label: string; value: string; title?: string }) {
-  return (
-    <div title={title} className={title ? "cursor-help" : undefined}>
-      <dt className="font-mono text-[8.5px] uppercase tracking-[0.1em] text-ink-faint">{label}</dt>
-      <dd className="tabular mt-0.5 font-mono text-[11px] text-ink">{value}</dd>
-    </div>
   );
 }
 

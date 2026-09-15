@@ -36,7 +36,6 @@ from chessmark.api.schemas import (
     EventOut,
     GameDetail,
     GameSummary,
-    GameTournamentOut,
     HumanActionResponse,
     HumanMoveRequest,
     HumanSayRequest,
@@ -46,12 +45,9 @@ from chessmark.api.schemas import (
     PlyOut,
     RawCallOut,
     SeatOut,
-    SeatStanding,
     TournamentRef,
     TurnDetail,
 )
-from chessmark.bench.service import ratings_by_key
-from chessmark.db import tournaments as tournament_repo
 from chessmark.db.credits import InsufficientCreditsError, charge, cost_of
 from chessmark.db.enums import GameStatus, ModerationStatus, PlayerKind
 from chessmark.db.models import (
@@ -74,8 +70,6 @@ from chessmark.game.pgn import PgnMetadata, to_pgn
 from chessmark.orchestration import human as human_play
 from chessmark.orchestration.match import Seat, create_match, start_match
 from chessmark.orchestration.queue import AdvanceTurn
-from chessmark.tournament import Format
-from chessmark.tournament import standings as compute_standings
 
 router = APIRouter(prefix="/games", tags=["games"])
 
@@ -308,102 +302,6 @@ async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
         current_fen=referee.board.fen,
         served_by=await _served_by(session, game.id),
         tournament=await _tournament_of(session, game.id),
-    )
-
-
-@router.get("/{game_id}/event", response_model=GameTournamentOut)
-async def get_game_event(session: SessionDep, game: GameDep) -> GameTournamentOut:
-    """The event this game was played for, and where its two seats stand in it.
-
-    **Its own endpoint, because it is six queries and `/games/{id}` is one.** A game page is on the
-    critical path of every replay and every live view, and a card below the fold must not be paid
-    for on the way to the board. The page asks for this alongside the event log.
-
-    **The table is the game's own era, not today's** (ADR-0043). A pool carries its task changes
-    inside itself, so a table built from every era at once would rank these two models partly on
-    games played under a different prompt with a different tool surface — the exact comparison eras
-    exist to prevent. The ratings are asked for the versions *this game* recorded, which is why
-    they are passed explicitly rather than left to default to whatever is current.
-
-    It still moves: a game early in an era sits beside a table that later games have changed. That
-    is unavoidable without storing a snapshot per game, and the page says which it is showing.
-    """
-    pairing = (
-        await session.execute(
-            sa.select(TournamentGame, Tournament)
-            .join(Tournament, Tournament.id == TournamentGame.tournament_id)
-            .where(TournamentGame.game_id == game.id)
-            .order_by(TournamentGame.round_number)
-            .limit(1)
-        )
-    ).first()
-    if pairing is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="This game was not scheduled by a tournament.",
-        )
-    row, tournament = pairing
-
-    entrants = await tournament_repo.entrants_of(session, tournament.id)
-    results = await tournament_repo.results_so_far(session, tournament.id, era=row.era)
-    playable = await tournament_repo.in_field(
-        session, tournament, tournament_repo.filter_from_json(tournament.field_filter)
-    )
-
-    # A pool is ordered by rating, a closed event by points (ADR-0027) — the format decides,
-    # because it is the format that decides whether a sum of points means anything.
-    is_pool = tournament.format == str(Format.POOL)
-    ratings = (
-        await ratings_by_key(
-            session,
-            tournament_id=tournament.id,
-            prompt_version=game.prompt_version,
-            tool_schema_version=game.tool_schema_version,
-        )
-        if is_pool
-        else None
-    )
-    table = {s.key: s for s in compute_standings(entrants, results, ratings)}
-    names = {e.key: e.label or e.key for e in entrants}
-
-    # A seat's own name, for a key the table does not carry — a human, or a model seated outside
-    # the field. Read once rather than per seat.
-    players = await _players(session, game.id)
-
-    seats = []
-    for colour, key in ((Colour.WHITE, row.white_key), (Colour.BLACK, row.black_key)):
-        # Seated by the **pairing's** key rather than by the player's model slug. The pairing was
-        # written with the entrant keys, so a pool that pins precision (`model@fp8`) matches
-        # without this having to know how a key is spelled.
-        standing = table.get(key) if key else None
-        seats.append(
-            SeatStanding(
-                colour=colour.value,
-                key=key,
-                display_name=names.get(key or "") or _display(players, colour),
-                place=standing.place if standing else None,
-                played=standing.played if standing else 0,
-                wins=standing.wins if standing else 0,
-                draws=standing.draws if standing else 0,
-                losses=standing.losses if standing else 0,
-                score=standing.score if standing else 0.0,
-                rating=standing.rating if standing else None,
-                rating_provisional=standing.rating_provisional if standing else False,
-                in_field=not playable or (key in playable if key else False),
-            )
-        )
-
-    return GameTournamentOut(
-        tournament=TournamentRef(
-            slug=tournament.slug,
-            name=tournament.name,
-            format=str(tournament.format),
-            round_number=row.round_number,
-            era=row.era,
-        ),
-        ranked_by="rating" if is_pool else "score",
-        entrants=len(entrants),
-        seats=seats,
     )
 
 

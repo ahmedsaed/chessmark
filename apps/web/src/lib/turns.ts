@@ -183,9 +183,6 @@ export function liveTurn(frames: LiveFrame[]): TurnView | null {
     said: blocks.filter((b) => b.kind === "said").map((b) => b.text),
     san: null,
     live: true,
-    // A live frame is provisional and carries no compaction notice of its own (ADR-0035); the
-    // committed events replace it, and the count arrives with them.
-    compactions: 0,
   };
 }
 
@@ -342,7 +339,6 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
       said: [],
       san: null,
       live: false,
-      compactions: 0,
     };
     turns.push(turn);
     return turn;
@@ -377,7 +373,6 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
           said: [],
           san: null,
           live: true,
-          compactions: 0,
         };
         turns.push(current);
         break;
@@ -474,11 +469,6 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
          It closes the live turn's fold no more than a tool call does — compaction happens *inside*
          a turn, before the model answers, so the turn stays open. */
       case "compacted": {
-        /* **And mark the turn it happened in.** Compaction runs inside a turn, before the model
-           answers, so whichever turn is open owns it — the same reasoning that keeps the turn's
-           fold open across one. Without this the only trace is a notice *between* turns, which
-           answers "what happened" and not "to which turn". */
-        if (current) current.compactions += 1;
         notices.push({
           key: `compacted-${event.seq}`,
           seq: event.seq,

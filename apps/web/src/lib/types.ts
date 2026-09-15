@@ -99,34 +99,6 @@ export interface GameDetail extends GameSummary {
   tournament: TournamentRef | null;
 }
 
-/** Where one seat of a game stands in the event that scheduled it. */
-export interface SeatStanding {
-  colour: "white" | "black";
-  /** Null when this seat is not an entrant — a human, or a model seated outside the field. */
-  key: string | null;
-  display_name: string;
-  /** Null for a seat with no row in the table. */
-  place: number | null;
-  played: number;
-  wins: number;
-  draws: number;
-  losses: number;
-  score: number;
-  /** Glicko-2 over this event's games alone; null for a closed event — see `ranked_by`. */
-  rating: number | null;
-  rating_provisional: boolean;
-  in_field: boolean;
-}
-
-/** A game's event, and where its two seats stand in it. Fetched separately from the game. */
-export interface GameTournament {
-  tournament: TournamentRef;
-  /** `"rating"` for a pool, `"score"` for a closed event (ADR-0027). */
-  ranked_by: "rating" | "score";
-  entrants: number;
-  seats: SeatStanding[];
-}
-
 /** Which event a game was played for — enough to say so and to link there. */
 export interface TournamentRef {
   slug: string;
@@ -334,19 +306,6 @@ export interface TurnView {
   san: string | null;
   /** True until the move lands — the live turn stays expanded (ADR-0013). */
   live: boolean;
-  /**
-   * How many times the model folded its own history during this turn.
-   *
-   * A compaction is already a notice in the stream, because it changes what the model can see from
-   * here on. This is the other half of the same fact: *which turn it happened in*. A reader
-   * wondering why a model forgot a plan it announced at move 12 can find the notice; a reader
-   * scanning for where the history was cut could not, because the notice sits between turns and
-   * the turn itself said nothing.
-   *
-   * Counted rather than flagged: a long turn can fold more than once, and "twice" is a different
-   * story from "once".
-   */
-  compactions: number;
 }
 
 /**
