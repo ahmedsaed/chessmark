@@ -77,6 +77,14 @@ def standings(
     An entrant the ratings do not name — one who has not yet completed a ratable game — sorts last
     rather than at 1500. An unrated model is not an average model; it is an unmeasured one, and
     seating it mid-table would be the same claim the deviation exists to avoid making.
+
+    **When the ratings name nobody in the field, the table falls back to points.**
+    "Everybody is unrated" and "there are no ratings" are the same state, and the rating order has
+    nothing to sort on in it: `_placed_by_rating` gives every unrated entrant the place of the first
+    unrated one, so with none rated that is place 1 for all of them, and the order collapses to
+    alphabetical. A pool whose games are all excluded — every past era, and any pool before its
+    first ratable game finishes — showed a field of joint firsts in alphabetical order, which is
+    not a ranking and does not look like an absent one either.
     """
     known = {e.key: e for e in entrants}
     relevant = [r for r in results if all(k in known for k in r.players)]
@@ -121,7 +129,10 @@ def standings(
         for key in known
     ]
 
-    if ratings is not None:
+    # **Somebody has to be rated for a rating order to mean anything.** An empty mapping and `None`
+    # describe the same table; only the argument differs, and sorting on a column where every cell
+    # is null is not an order.
+    if ratings is not None and any(key in ratings for key in known):
         # `math.inf` for the unrated, so they sort last under a descending rating rather than
         # landing wherever 1500 happens to fall in this field.
         table.sort(

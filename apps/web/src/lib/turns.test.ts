@@ -840,3 +840,41 @@ describe("sameTurnContent", () => {
     expect(sameTurnContent(open, { ...open, san: "Bb4+", live: false })).toBe(false);
   });
 });
+
+describe("a compaction belongs to the turn it happened in", () => {
+  it("marks the open turn, not only the stream", () => {
+    // Compaction runs *inside* a turn, before the model answers, so whichever turn is open owns
+    // it. Without this the only trace is a notice *between* turns, which says what happened and
+    // not to which turn — nothing to scan when you are looking for where a model lost the plan it
+    // announced at move 12.
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 12, colour: "white", model: "white-model" }),
+      event("compacted", { folded: 40, trimmed: 3, kept: 8 }),
+      event("move_made", { ply: 12, colour: "white", san: "e4" }),
+    ];
+
+    const { turns, notices } = foldEvents(events, []);
+
+    expect(turns[0].compactions).toBe(1);
+    expect(notices.map((n) => n.kind)).toEqual(["compacted"]);
+  });
+
+  it("counts them, because a long turn can fold twice", () => {
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 12, colour: "white", model: "white-model" }),
+      event("compacted", {}),
+      event("compacted", {}),
+      event("move_made", { ply: 12, colour: "white", san: "e4" }),
+    ];
+
+    expect(foldEvents(events, []).turns[0].compactions).toBe(2);
+  });
+
+  it("leaves a turn that did not compact at zero", () => {
+    seq = 0;
+
+    expect(foldEvents(turn(1, "white", "e4"), []).turns[0].compactions).toBe(0);
+  });
+});
