@@ -38,6 +38,7 @@ from chessmark.db.models import (
 )
 from chessmark.orchestration.match import Seat, create_match, start_match
 from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
+from chessmark.orchestration.worker import PAUSE_WINDOW
 from chessmark.tournament import Form, Format, matchmake, round_robin, swiss_round
 
 log = logging.getLogger(__name__)
@@ -50,17 +51,45 @@ log = logging.getLogger(__name__)
 #: is given is a slot nothing comes out of.
 DEAD_ATTEMPTS = 2
 
-#: How long such an entrant rests before the pool tries it again.
+#: The shortest rest that can be observed at all, and the unit the rest is built from.
 #:
-#: **Not a withdrawal, and deliberately not indefinite.** A free pool that is hot today is usually
-#: serving by morning, and the entrant has to be able to come back on its own or a bad afternoon
-#: would remove a model from the benchmark permanently. Six hours is four attempts a day, which is
-#: enough to notice a recovery and few enough that the pool is not rediscovering the same rate limit
-#: within the hour.
+#: **A rest shorter than this rests nobody**, which is what six hours did for the whole life of the
+#: pool. A strike cannot be *earned* faster than a pairing can finish, and a dead pairing takes the
+#: full `PAUSE_WINDOW` to finish — so by the time the second strike lands, `_engaged_entrants`
+#: has already been holding that entrant for a day, and it measures from the same `ended_at` this
+#: does. Six hours expired eighteen hours inside a block that was already in force. Nothing ever
+#: rested; `gemma-4-26b` took eight pairings and `glm-5.2` four while the mechanism meant to stop
+#: them was running.
 #:
-#: It is measured from the *end* of the last dead attempt, and that attempt already spent
-#: `worker.PAUSE_WINDOW` — a full day — proving the point.
-DEAD_REST = dt.timedelta(hours=6)
+#: Anchored on `PAUSE_WINDOW` rather than chosen, so the two cannot drift apart the next time either
+#: is tuned. That is the whole reason it is an import and not a number.
+DEAD_REST = PAUSE_WINDOW
+
+#: Where the backoff stops. A week is long enough that a delisted model costs the pool almost
+#: nothing and short enough that it is still checked on — the point is never to remove it.
+DEAD_REST_CAP = dt.timedelta(days=7)
+
+
+def dead_rest(deaths: int) -> dt.timedelta:
+    """How long an entrant rests after `deaths` consecutive dead pairings.
+
+    **Doubling, because one number cannot describe both failures.** A flat rest treats "the
+    provider was hot yesterday afternoon" and "this model was delisted three weeks ago"
+    identically: too short and the pool spends a pairing a day on a model that has not moved since
+    August, too long and a model having one bad day is off the board for a week.
+
+    So the first rest is one `PAUSE_WINDOW` and each further strike doubles it — 1 day, 2, 4,
+    capped at `DEAD_REST_CAP`. A model that is merely busy loses a day; one that is gone is asked
+    weekly instead of daily, and is never removed.
+
+    **Recovery is immediate and costs nothing.** The run is counted from the most recent attempt
+    backwards and stops at the first one that produced a result, so a single finished game returns
+    an entrant to full standing on the next tick however deep its backoff had gone. That is what
+    keeps this *skipped, not withdrawn*: the entrant always holds its place in the pool, its rating
+    and its record — only its next turn is deferred.
+    """
+    rest: dt.timedelta = DEAD_REST * 2 ** max(deaths - DEAD_ATTEMPTS, 0)
+    return min(rest, DEAD_REST_CAP)
 
 
 def within_window(active_from: dt.time | None, active_until: dt.time | None, now: dt.time) -> bool:
@@ -521,7 +550,7 @@ async def _fruitless_entrants(
         # Rows come back naive when the driver drops the timezone; they are stored in UTC.
         if ended.tzinfo is None:
             ended = ended.replace(tzinfo=dt.UTC)
-        if now - ended < DEAD_REST:
+        if now - ended < dead_rest(deaths):
             resting.add(key)
     return resting
 

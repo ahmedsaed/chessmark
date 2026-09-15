@@ -30,6 +30,7 @@ from chessmark.game import GameResult, Termination
 from chessmark.orchestration.tournament import (
     DEAD_ATTEMPTS,
     DEAD_REST,
+    DEAD_REST_CAP,
     _engaged_entrants,
     _fruitless_entrants,
     advance,
@@ -1226,3 +1227,144 @@ async def test_a_paused_pairing_still_holds_its_entrants(
     held = await _engaged_entrants(db, tournament_id, list(entrants))
 
     assert held == engaged, "a paused pairing stopped holding its seats"
+
+
+# ================================================ the rest has to outlast the strike that earns it
+
+
+async def _dead_pairings(
+    db: AsyncSession,
+    tournament_id: uuid.UUID,
+    *,
+    key: str,
+    against: list[str],
+    ended_ago: dt.timedelta,
+    apart: dt.timedelta = dt.timedelta(days=1),
+    settled_first: bool = False,
+) -> None:
+    """Write `len(against)` finished-and-abandoned pairings for `key`, most recent `ended_ago` ago.
+
+    Written rather than played. Driving the pool to produce four *consecutive* deaths for one
+    entrant means fighting the matchmaker, which is deliberately trying to spread pairings around —
+    and the thing under test is how the run is counted, not how it is produced.
+
+    `settled_first` puts a completed game *older* than the run, which must not break it, and the
+    caller flips it to check the opposite: the run stops at the first pairing that produced a
+    result, so a game in the middle clears everything before it.
+    """
+    now = dt.datetime.now(dt.UTC)
+    for index, opponent in enumerate(against):
+        ended = now - ended_ago - apart * index
+        db.add(
+            TournamentGame(
+                tournament_id=tournament_id,
+                era=repo.current_era(),
+                round_number=900 + index,
+                white_key=key,
+                black_key=opponent,
+                white_score=0.5 if (settled_first and index == len(against) - 1) else None,
+                abandoned_reason=(
+                    None if (settled_first and index == len(against) - 1) else "provider"
+                ),
+                started_at=ended - dt.timedelta(hours=24),
+                ended_at=ended,
+            )
+        )
+    await db.commit()
+
+
+async def _rested(db: AsyncSession, tournament_id: uuid.UUID) -> set[str]:
+    entrants = list(await repo.entrants_of(db, tournament_id))
+    return await _fruitless_entrants(db, tournament_id, entrants)
+
+
+async def test_a_rest_outlasts_the_time_it_takes_to_earn_a_strike(db: AsyncSession, queue) -> None:
+    """**The bug: six hours could never be observed.**
+
+    A strike cannot be earned faster than a pairing can finish, and a dead pairing takes the full
+    `PAUSE_WINDOW` to finish. By the time the second strike lands, `_engaged_entrants` has been
+    holding the entrant for a day — measured from the same `ended_at` this is. A six-hour rest
+    expired eighteen hours inside a block already in force, so nothing was ever rested and
+    `gemma-4-26b` took eight pairings while the mechanism meant to stop it was running.
+    """
+    tournament_id, entrants = await make_tournament(
+        db, models=5, config=TournamentConfig(format=Format.POOL, field=FieldFilter())
+    )
+    keys = [e.key for e in entrants]
+
+    await _dead_pairings(
+        db, tournament_id, key=keys[0], against=keys[1:3], ended_ago=dt.timedelta(hours=12)
+    )
+
+    assert keys[0] in await _rested(db, tournament_id), (
+        "twelve hours after its second dead pairing and already pairable again — which is inside "
+        "the 24h the next attempt would take to fail, so the pool never sees the rest at all"
+    )
+
+
+async def test_the_rest_lengthens_with_the_run(db: AsyncSession, queue) -> None:
+    """One number cannot describe both "hot yesterday afternoon" and "delisted in August".
+
+    Four dead pairings buy four days; two buy one. Three days after the last death the persistent
+    failure is still resting and the occasional one is long back.
+    """
+    tournament_id, entrants = await make_tournament(
+        db, models=8, config=TournamentConfig(format=Format.POOL, field=FieldFilter())
+    )
+    keys = [e.key for e in entrants]
+    three_days = dt.timedelta(days=3)
+
+    await _dead_pairings(db, tournament_id, key=keys[0], against=keys[1:5], ended_ago=three_days)
+    await _dead_pairings(db, tournament_id, key=keys[5], against=keys[6:8], ended_ago=three_days)
+
+    rested = await _rested(db, tournament_id)
+
+    assert keys[0] in rested, "four consecutive deaths earns four days; three have passed"
+    assert keys[5] not in rested, "two deaths earns one day, and that lapsed two days ago"
+
+
+async def test_the_backoff_is_capped(db: AsyncSession, queue) -> None:
+    """It defers an entrant; it never removes one. Ten consecutive deaths would be 128 days
+    undoubled, and a model the catalogue still lists has to keep being checked on."""
+    tournament_id, entrants = await make_tournament(
+        db, models=12, config=TournamentConfig(format=Format.POOL, field=FieldFilter())
+    )
+    keys = [e.key for e in entrants]
+
+    await _dead_pairings(
+        db, tournament_id, key=keys[0], against=keys[1:11], ended_ago=DEAD_REST_CAP
+    )
+
+    assert keys[0] not in await _rested(db, tournament_id), (
+        "a rest longer than the cap is a withdrawal wearing a rest's clothes"
+    )
+
+
+async def test_one_finished_game_clears_the_whole_backoff(db: AsyncSession, queue) -> None:
+    """**Recovery is immediate, however deep the backoff went.** The run is counted from the most
+    recent attempt backwards and stops at the first that produced a result, so a model that comes
+    back is not serving out a sentence earned while it was down."""
+    tournament_id, entrants = await make_tournament(
+        db, models=8, config=TournamentConfig(format=Format.POOL, field=FieldFilter())
+    )
+    keys = [e.key for e in entrants]
+
+    # Four abandonments, then — most recently — a game that finished.
+    await _dead_pairings(
+        db, tournament_id, key=keys[0], against=keys[1:5], ended_ago=dt.timedelta(hours=1)
+    )
+    db.add(
+        TournamentGame(
+            tournament_id=tournament_id,
+            era=repo.current_era(),
+            round_number=999,
+            white_key=keys[0],
+            black_key=keys[5],
+            white_score=1.0,
+            started_at=dt.datetime.now(dt.UTC) - dt.timedelta(minutes=30),
+            ended_at=dt.datetime.now(dt.UTC) - dt.timedelta(minutes=10),
+        )
+    )
+    await db.commit()
+
+    assert keys[0] not in await _rested(db, tournament_id)

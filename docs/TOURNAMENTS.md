@@ -113,6 +113,103 @@ leader was half a point better off than it had earned.
 `_state` reads the game's status wherever there is a game, and falls back to the pairing's own
 columns only for a pairing that has none.
 
+## How a pool chooses its next game
+
+Worth reading once end to end, because the pieces look alike and are not. Every tick asks one
+question — *how many games can start right now, and who plays them?* — and answers it in six steps
+(`orchestration/tournament.py`, `_schedule_pool`):
+
+```
+1. era = current_era()                    "v3+v4" — the prompt and tool majors
+   close_stale_pairings(era)              fixtures written for an older task will never be played
+
+2. room = max_concurrent - waiting - running - due
+   if room <= 0: stop                     nothing to schedule into
+
+3. resting  = _fruitless_entrants(...)   ─┐
+   resting |= _engaged_entrants(...)      ├─ "ask me again later"
+   resting |= _resting_entrants(...)     ─┘
+
+4. pairable = entrants ∩ in_field(...)    "stop asking"
+
+5. matchmake(pairable, results, form, count=room,
+             unavailable=resting, attempts=attempted)
+
+6. record_round(games)
+```
+
+Steps 3 and 4 differ in kind. **`resting` defers an entrant; `in_field` removes one.** A model that
+left the free tier is not resting and must not be shown as though it will be back on the next tick.
+
+### The choice itself
+
+Strip the policy indirection out of `matchmake` and `Policy.BALANCE` is two nested minima:
+
+```python
+home = min(available,           key=lambda k: (played[k], k))
+away = min(available - {home},  key=lambda k: (met[{home, k}],       # least-met by home
+                                               played[k],            # then furthest behind
+                                               abs(rating gap),      # then closest match
+                                               k))                   # then reproducible
+```
+
+Colours go to whoever is owed White, both drop out of `available`, the meeting is recorded, and the
+loop runs again for the next game of the batch — so the second game sees the first. That is the
+whole algorithm: **a greedy incremental round robin.** Always serve whoever is furthest behind,
+against whoever they have met least. Over a field that changes with the catalogue it converges on
+what a fixed schedule would give, without a schedule to invalidate when an entrant joins or leaves.
+
+### Four counts, two dimensions
+
+The counts are the part that gets confused, and there are only four:
+
+| | keyed by **pair** | keyed by **entrant** |
+| --- | --- | --- |
+| settled games only | `results` | — |
+| every attempt | `met[{a,b}]` | `played[a]` |
+
+`results` are games that finished with a score, and feed ratings and colour balance. `attempts` are
+pairings that produced no result — abandoned, or still running. `met` is the sum of both by pair;
+`played` is `met` summed per entrant. All four are scoped to the current era, so bumping a prompt or
+tool major resets the board.
+
+**`met` and `played` deliberately count attempts**, which is the fix described below.
+
+### Four filters, and the timescale each one owns
+
+Steps 3 and 4 union three sets into one `resting`, which makes them look like one mechanism. They
+are four, and **they differ on timescale** — each exists because the one above it is too
+short-sighted:
+
+| filter | asks | timescale | source |
+| --- | --- | --- | --- |
+| `_resting_entrants` | is this provider hot *this minute*? | 60s → hours | Redis cooldown |
+| `_engaged_entrants` | does it already hold an unfinished pairing? | up to `PAUSE_WINDOW` | pairing table |
+| `_fruitless_entrants` | has it failed to finish anything *lately*? | days | pairing table |
+| `in_field` | is it still in the catalogue at all? | until it returns | registry |
+
+A cooldown's first rung lapses in sixty seconds and a free shared pool stays hot for a day and a
+half. An engagement block lifts the moment a pairing settles, and a model that just abandoned will
+abandon the next one too. Separately from all four, the **rematch count inside `matchmake` is a
+preference, not a filter** — it does not stop anyone playing, it sends a repeat fixture to the back
+of the queue.
+
+### Filtering does not unbalance the pool
+
+Worth stating because it is the obvious worry and the answer is not obvious. **A filtered entrant
+keeps its turn rather than losing it:** `played` is a cumulative count, not a rotation index, so a
+model skipped this tick still has the lowest count and is chosen the moment it is available. There
+is no schedule to fall out of.
+
+Simulated over 400 ticks of a 16-model pool, a model unavailable on **half** of all ticks ends with
+a pairing count identical to the field's. Only past roughly 90% unavailability does it fall
+measurably behind — and a model unavailable that often is not playing anyway.
+
+The one place filtering does leave a mark is the *opponent* choice: if the ideal opponent is
+filtered out, the matchmaker substitutes the next best rather than waiting, and that meeting is
+recorded. So pairs between reliable models are very slightly over-represented. It costs coverage
+nothing over a pool's lifetime.
+
 ## The matchmaker and unavailability
 
 The pool must not pair a model that is resting, and **must not pair one that already has a paused
@@ -146,14 +243,29 @@ a *fresh* opponent each time. Both seats of a paused game are parked while it wa
 attempt would take a healthy entrant out of the pool for a day with it — seven dead games wasting
 two models that were failing anyway becomes thirteen wasting the field.
 
-So the second half: an entrant whose **last two finished pairings both came to nothing** rests for
-six hours (`DEAD_ATTEMPTS`, `DEAD_REST`). It is asked of the pairing table rather than the cooldown
-because the timescales differ by two orders of magnitude — a cooldown's first rung lapses in sixty
-seconds, and a free shared pool stays hot for a day and a half. Every one of those six abandoned
-games was scheduled at a moment when nothing was resting.
+So the second half: an entrant whose **last two finished pairings both came to nothing** rests
+(`DEAD_ATTEMPTS`, `dead_rest`). It is asked of the pairing table rather than the cooldown because
+the timescales differ by two orders of magnitude — a cooldown's first rung lapses in sixty seconds,
+and a free shared pool stays hot for a day and a half. Every one of those six abandoned games was
+scheduled at a moment when nothing was resting.
 
-Rested, **not withdrawn**: the span is measured from the last dead attempt and lapses on its own, so
-a bad afternoon cannot quietly remove a model from the benchmark.
+**A rest shorter than the strike that earns it rests nobody.** `DEAD_REST` was six hours for the
+whole life of the pool and never once fired. A strike cannot be earned faster than a pairing can
+finish, and a dead pairing takes the full `PAUSE_WINDOW` to finish — so by the time the second
+strike lands, `_engaged_entrants` has been holding that entrant for a day, measured from the same
+`ended_at`. Six hours expired eighteen hours inside a block already in force. `gemma-4-26b` took
+eight pairings and `glm-5.2` four while the mechanism meant to stop them was running.
+
+`DEAD_REST` is therefore `PAUSE_WINDOW` itself — imported, not chosen, so the two cannot drift apart
+— and `dead_rest(deaths)` doubles it per further strike up to a week. One number cannot describe
+both *"the provider was hot yesterday afternoon"* and *"delisted in August"*: flat, it either spends
+a pairing a day on a model that has not moved since summer, or puts a model having one bad day off
+the board for a week.
+
+Rested, **not withdrawn**: recovery is immediate however deep the backoff went. The run is counted
+from the most recent attempt backwards and stops at the first that produced a result, so one
+finished game returns an entrant to full standing on the next tick — a bad afternoon cannot quietly
+remove a model from the benchmark.
 
 ## The table means different things in different formats
 
