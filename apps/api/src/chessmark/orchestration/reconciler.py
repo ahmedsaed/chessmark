@@ -51,10 +51,11 @@ from chessmark.core.halt import Halt, HaltState
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import EventType, GameStatus, PlayerKind
 from chessmark.db.models import Game, GameEvent, Player, Tournament, TournamentGame
-from chessmark.db.repositories import append_event, finish_game, rebuild_referee
+from chessmark.db.repositories import append_event, finish_game, load_events, rebuild_referee
 from chessmark.game import Colour, GameResult, Outcome, Termination
 from chessmark.orchestration.match import model_for
 from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
+from chessmark.orchestration.worker import publish_events
 
 log = logging.getLogger(__name__)
 
@@ -386,6 +387,11 @@ async def reconcile(
 ) -> ReconcileReport:
     report = ReconcileReport()
     jobs: list[AdvanceTurn] = []
+    #: Events this sweep appended, to fan out **after** the commit. The reconciler wrote them
+    #: straight to Postgres and published none, so a spectator watching a game come back from a
+    #: rate limit saw nothing until they reloaded — the board sat under a "paused" notice that had
+    #: stopped being true minutes before.
+    fresh: list[tuple[uuid.UUID, list[GameEvent]]] = []
 
     # First, so the rest of the sweep reads a halt that is already as lifted as it can be — a
     # top-up noticed here saves every game below it from being held for another minute.
@@ -405,7 +411,9 @@ async def reconcile(
             if await waiting_on_human(session, game):
                 last = await _last_event_at(session, game)
                 if last is None or last < idle_cutoff:
+                    before = game.event_seq
                     await abandon(session, game)
+                    fresh.append((game.id, await load_events(session, game.id, after_seq=before)))
                     report.abandoned.append(str(game.id))
                     log.info("abandoned idle human game %s at ply %s", game.id, game.ply_count)
                 else:
@@ -429,11 +437,22 @@ async def reconcile(
         # a free-model cap must not strand a paid game for a day.
         held = await halted_games(session, due, state)
         report.held = [str(game.id) for game in due if game.id in held]
+        if state is not None:
+            for game in due:
+                if game.id in held:
+                    before = game.event_seq
+                    await _say_it_is_held(session, game, state)
+                    if game.event_seq != before:
+                        fresh.append(
+                            (game.id, await load_events(session, game.id, after_seq=before))
+                        )
 
         playable = [game for game in due if game.id not in held]
         for game in await with_room_to_run(session, playable):
             log.info("resuming %s at ply %s: %s", game.id, game.ply_count, game.pause_reason)
+            before = game.event_seq
             jobs.append(await resume(session, game))
+            fresh.append((game.id, await load_events(session, game.id, after_seq=before)))
             report.resumed.append(str(game.id))
 
     if report.held and state is not None:
@@ -454,6 +473,17 @@ async def reconcile(
     with contextlib.suppress(Exception):
         report.reaped = await queue.reap_consumers()
 
+    # After the commit, like every other publisher: a subscriber must never be told about a state
+    # the database has not accepted.
+    print(
+        "DEBUG fresh:",
+        [(str(g)[:8], [e.seq for e in ev]) for g, ev in fresh],
+        "redis:",
+        redis is not None,
+    )
+    for game_id, events in fresh:
+        await publish_events(redis, game_id, events)
+
     for job in jobs:
         await queue.enqueue(job)
         if str(job.game_id) not in report.resumed:
@@ -461,6 +491,57 @@ async def reconcile(
             log.info("requeued stalled game %s at ply %s", job.game_id, job.expected_ply)
 
     return report
+
+
+async def _say_it_is_held(session: AsyncSession, game: Game, state: HaltState) -> None:
+    """Record on the game that a halt is what it is now waiting for.
+
+    **A game already paused when a halt begins can never say so.** `_pause_for_halt` writes one
+    notice per pause and returns early when the game is already `PAUSED` — right, or a redelivered
+    job would append a second notice for a board that has not moved — so a game holding a provider
+    pause when the allowance runs out gets nothing. `9b4bced5` sat for fifteen hours showing
+    *"rate-limited by Google AI Studio"*, a reason that had stopped being true within the hour,
+    while the thing actually holding it went unmentioned on the page and lived only in a log line
+    on the server.
+
+    It was never *stuck*: the reconciler was correctly declining to resume it. But "held, and here
+    is by what" and "waiting on a provider that answered ages ago" look identical from outside, and
+    only one of them is true.
+
+    **Written once per halt, not once per tick.** The sweep runs on a timer and would otherwise
+    append an event a minute for as long as the halt stands; the stored reason is the flag, the
+    same way `_pause_for_halt` uses the status.
+
+    **`resume_after` is deliberately left where it is.** It is already in the past, which is what
+    keeps `find_resumable` handing this game back every tick — and that is what resumes it the
+    moment the halt lifts. Moving it to `state.until` would read better on the page and would
+    strand the game until then even if the credits arrived a minute later.
+    """
+    reason = f"the harness is halted: {state.reason}"
+    if game.pause_reason == reason:
+        return
+
+    previous = game.pause_reason
+    game.pause_reason = reason
+    await append_event(
+        session,
+        game_id=game.id,
+        type=EventType.GAME_PAUSED,
+        payload={
+            "reason": reason,
+            # The same structural marker `_pause_for_halt` writes, so everything that tells a halt
+            # from a provider pause by asking for this key — `worker._halted_for`, which keeps
+            # these hours off the abandonment clock — counts this span too (ADR-0019).
+            "halt_source": state.source,
+            "halt_scope": state.scope,
+            "resume_after": state.until.isoformat() if state.until else None,
+            # What it *was* waiting for. The provider pause was real and is still the reason it
+            # stopped; the halt is only the reason it has not come back.
+            "previous_reason": previous,
+            "held": True,
+        },
+    )
+    log.info("game %s is held behind the %s halt: %s", game.id, state.scope, state.reason)
 
 
 async def _last_event_at(session: AsyncSession, game: Game) -> dt.datetime | None:
