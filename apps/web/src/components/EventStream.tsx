@@ -230,6 +230,7 @@ export function EventStream({
               <Turn
                 key={entry.turn.key}
                 turn={entry.turn}
+                waits={entry.waits}
                 name={turnName(entry.turn, players)}
                 filter={filter}
                 open={isOpen(entry.turn)}
@@ -344,11 +345,22 @@ export function reasoningLabel(block: { tokens: number; durationMs: number | nul
 }
 
 /**
- * The harness, not a player.
+ * The harness, not a player — but it still says whose endpoint we are waiting on.
  *
- * Full width and sideless, because a pause belongs to neither model. A rate limit is not something
- * a contestant did, and drawing it as one player's message would attribute the harness's failure to
- * a model.
+ * Full width, because a pause belongs to the harness rather than to a contestant: a rate limit is
+ * not something a model *did*, and drawing it as one player's message would attribute our failure
+ * to them.
+ *
+ * It used to carry no seat at all, for that reason, and that was worse. Every turn block is
+ * labelled with a model and a side, so an unlabelled row attaches itself to the block above it —
+ * a deepseek rate limit sat under GLM's move and read as GLM's problem. The failed attempt is
+ * rolled back whole, so there is no turn block of its own for the notice to sit under; the seat
+ * marker is the only thing that can say which player the harness is stuck on.
+ *
+ * So: the seat is named in the turn header's idiom, on the seat's own side, and nothing else — the
+ * row below already says what happened, and a second word here would read as a verdict on the
+ * model rather than a fact about its endpoint. The model is stripped from the body when the header
+ * carries it, or the row says the same name twice.
  *
  * `bad` for the pause, matching how every other fault in this app is drawn, and the quiet `line` /
  * `ink-faint` pair for the resume — one is a thing to know about, the other is only the
@@ -415,7 +427,7 @@ function Bubble({
   );
 }
 
-function Notice({ notice }: { notice: StreamNotice }) {
+function Notice({ notice, bare = false }: { notice: StreamNotice; bare?: boolean }) {
   const paused = notice.kind === "paused";
   /* A compaction is machinery, not a fault — the model doing its own housekeeping — so it reads in
      the `machine` register the tool calls use rather than in `bad`. Only a pause is a problem.
@@ -430,8 +442,33 @@ function Notice({ notice }: { notice: StreamNotice }) {
         ? "border-accent-deep bg-surface-2 text-accent"
         : "border-line bg-surface-3 text-ink-faint";
 
+  // `bare` drops the marker, not the knowledge: inside a section the turn's own header already
+  // names the seat, which is exactly when the name must come out of the body too.
+  const seat = bare ? undefined : notice.seat;
+  // "deepseek/x rate-limited by BaseTen" under a header already reading DEEPSEEK/X is the same
+  // name twice on one row.
+  const named = notice.seat?.model;
+  const body =
+    named && notice.text.startsWith(`${named} `) ? notice.text.slice(named.length + 1) : notice.text;
+
   return (
-    <div role="status" className={`border px-3 py-2 font-mono text-[11px] leading-relaxed ${tone}`}>
+    <div className="flex flex-col gap-1">
+      {seat && (
+        <div
+          className={`flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint ${
+            seat.colour === "white" ? "" : "flex-row-reverse"
+          }`}
+        >
+          <i
+            aria-hidden
+            className={`block h-2 w-2 border border-line ${
+              seat.colour === "white" ? "bg-piece-white" : "bg-piece-black"
+            }`}
+          />
+          {seat.model ?? seat.colour}
+        </div>
+      )}
+      <div role="status" className={`border px-3 py-2 font-mono text-[11px] leading-relaxed ${tone}`}>
       <span className="uppercase tracking-[0.1em]">{NOTICE_LABEL[notice.kind]}</span>
       {/* The count is the fact a folded run exists to state: not that it paused, but that it
           paused this many times for the same reason. */}
@@ -440,10 +477,11 @@ function Notice({ notice }: { notice: StreamNotice }) {
           ×{notice.count}
         </span>
       )}
-      <span className="text-ink-dim"> · {notice.text}</span>
+      <span className="text-ink-dim"> · {body}</span>
       {notice.resumeAfter && (
         <span className="text-ink-faint"> · retrying {relativeTime(notice.resumeAfter)}</span>
       )}
+      </div>
     </div>
   );
 }
@@ -498,6 +536,8 @@ interface TurnProps {
   filter: Filter;
   /** Whether the turn is unrolled into its steps. Finished turns fold to a line (ADR-0013). */
   open: boolean;
+  /** The waits that led to this turn: the pauses its seat sat through before it could play. */
+  waits: StreamNotice[];
   onToggle: (key: string, currentlyOpen: boolean) => void;
   onInspect?: (turn: TurnView) => void;
 }
@@ -528,13 +568,22 @@ function sameTurn(before: TurnProps, after: TurnProps): boolean {
     before.filter === after.filter &&
     before.open === after.open &&
     before.name === after.name &&
+    before.waits === after.waits &&
     before.onToggle === after.onToggle &&
     before.onInspect === after.onInspect &&
     sameTurnContent(before.turn, after.turn)
   );
 }
 
-const Turn = memo(function Turn({ turn, name, filter, open, onToggle, onInspect }: TurnProps) {
+const Turn = memo(function Turn({
+  turn,
+  waits,
+  name,
+  filter,
+  open,
+  onToggle,
+  onInspect,
+}: TurnProps) {
   const isWhite = turn.colour === "white";
   const detail = filter === "all";
   const steps = detail && open;
@@ -551,16 +600,6 @@ const Turn = memo(function Turn({ turn, name, filter, open, onToggle, onInspect 
        of them happens to be open — the last turn of a finished game is unrolled by default, so an
        index over *open* turns names a different row than an index over all of them. */
     <div className="flex flex-col gap-2" data-testid="turn">
-      {turn.san && (
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-          <span className="h-px bg-line" />
-          <span className="tabular border border-accent-deep bg-surface px-2 py-0.5 font-mono text-[11px] text-accent">
-            {moveLabel(turn.ply, turn.san)}
-          </span>
-          <span className="h-px bg-line" />
-        </div>
-      )}
-
       <div className={`flex flex-col gap-1.5 ${align}`}>
         <div
           className={`flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint ${
@@ -624,6 +663,26 @@ const Turn = memo(function Turn({ turn, name, filter, open, onToggle, onInspect 
           </div>
         )}
 
+        {/* **Below the step counter, and first in the sequence.** These are the waits this seat
+            sat through before it could play, and they belong inside the section rather than above
+            it: the counter is the turn's summary line, and a pause is part of what the turn cost.
+
+            First, because that is the order it happened in. The refused attempt is rolled back
+            whole (`ProviderFailureError`), so it leaves no turn row and no steps — in `f129b600`
+            the rolled-back turns are the gaps in the id sequence, 7854-7856 and 7859. Its pauses
+            therefore sit *before* the surviving turn's first step, and unrolling the steps puts
+            them where they happened without anything having to interleave them.
+
+            Full width, because a rate limit is the harness's failure and not something a
+            contestant did — but inside the section, so a reader can see whose. */}
+        {waits.length > 0 && (
+          <div className="flex w-full flex-col gap-1.5">
+            {waits.map((notice) => (
+              <Notice key={notice.key} notice={notice} bare />
+            ))}
+          </div>
+        )}
+
         {/* **In order.** Reasoning, prose, tool calls and refusals as the model produced them, so
             the block after a tool result is visibly *about* that result. */}
         {steps && (
@@ -654,6 +713,21 @@ const Turn = memo(function Turn({ turn, name, filter, open, onToggle, onInspect 
             </p>
           ))}
       </div>
+
+      {/* **Below the turn, not above it.** The chip is the move the turn *produced*, so a reader
+          meets the thinking, the tool calls and then the move — the order it happened in. Above,
+          it announced a move before anything that led to it and, worse, it closed the section
+          above rather than this one: a pause that belonged to the *next* seat appeared under the
+          previous seat's block and read as that player's problem. */}
+      {turn.san && (
+        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+          <span className="h-px bg-line" />
+          <span className="tabular border border-accent-deep bg-surface px-2 py-0.5 font-mono text-[11px] text-accent">
+            {moveLabel(turn.ply, turn.san)}
+          </span>
+          <span className="h-px bg-line" />
+        </div>
+      )}
     </div>
   );
 }, sameTurn);
