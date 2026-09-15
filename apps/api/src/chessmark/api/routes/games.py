@@ -45,6 +45,7 @@ from chessmark.api.schemas import (
     PlyOut,
     RawCallOut,
     SeatOut,
+    TournamentRef,
     TurnDetail,
 )
 from chessmark.db.credits import InsufficientCreditsError, charge, cost_of
@@ -58,6 +59,8 @@ from chessmark.db.models import (
     Player,
     Ply,
     ToolCall,
+    Tournament,
+    TournamentGame,
     Turn,
 )
 from chessmark.db.quotas import note_game_started
@@ -254,6 +257,41 @@ async def list_my_games(
     return out
 
 
+async def _tournament_of(session: AsyncSession, game_id: uuid.UUID) -> TournamentRef | None:
+    """The event this game was scheduled for, if any.
+
+    **One query, and it stays one.** `tournament_games` is the join row and it already carries the
+    round and the era, so the event's name comes along on the same join rather than as a second
+    read — a game page is on the critical path of every replay and every live view.
+
+    A game belongs to at most one pairing in practice, but `game_id` carries no unique constraint
+    (the uniqueness is on the fixture, `(tournament, round, white, black)`), so the order is pinned
+    rather than left to the planner: a page that named a different event on a refresh would be a
+    bug nobody could reproduce.
+    """
+    row = (
+        await session.execute(
+            sa.select(
+                Tournament.slug,
+                Tournament.name,
+                Tournament.format,
+                TournamentGame.round_number,
+                TournamentGame.era,
+            )
+            .join(Tournament, Tournament.id == TournamentGame.tournament_id)
+            .where(TournamentGame.game_id == game_id)
+            .order_by(TournamentGame.round_number)
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return None
+    slug, name, format_, round_number, era = row
+    return TournamentRef(
+        slug=slug, name=name, format=str(format_), round_number=round_number, era=era
+    )
+
+
 @router.get("/{game_id}", response_model=GameDetail)
 async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
     referee = await rebuild_referee(session, game)
@@ -263,6 +301,7 @@ async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
         moves=referee.board.history_san(),
         current_fen=referee.board.fen,
         served_by=await _served_by(session, game.id),
+        tournament=await _tournament_of(session, game.id),
     )
 
 

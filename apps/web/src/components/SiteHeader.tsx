@@ -36,14 +36,16 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-ground/85 backdrop-blur-md">
-      <div className="mx-auto flex h-14 w-full max-w-[2200px] items-center gap-3 px-5 md:gap-6">
+      <div className="mx-auto flex h-14 w-full max-w-[2200px] items-center gap-2 px-5 md:gap-6">
         <Link
           href="/"
           className="flex flex-none items-center gap-2.5 transition-opacity hover:opacity-80"
           aria-label={`${siteName} home`}
         >
           <Mark />
-          <span className="font-mono text-xs uppercase tracking-[0.24em] text-accent">
+          {/* The mark alone below 360px. The wordmark is 95px of a 320px bar, and a phone that
+              narrow has to choose between the site's name and its sign-in button. */}
+          <span className="font-mono text-xs uppercase tracking-[0.24em] text-accent max-[359px]:hidden">
             {siteName}
           </span>
         </Link>
@@ -54,15 +56,22 @@ export function SiteHeader() {
           ))}
         </nav>
 
+        {/* **A glyph, not a word.** It read "menu" and "close", and those are 51px and 57px — on a
+            390px phone the bar was already one pixel over, so the account controls were squeezed
+            and "sign in" wrapped onto two lines. Clicking made it visibly worse, because "close"
+            is six pixels wider than "menu": the button was changing the height of its neighbours.
+            27px square instead of 51-57 wide, and the width no longer moves when it is pressed.
+            The label lives in `aria-label` either way, so a screen reader reads the same thing it
+            always did. */}
         <button
           type="button"
           onClick={() => setOpenFor(open ? null : pathname)}
           aria-expanded={open}
           aria-controls="primary-nav-panel"
           aria-label="Navigation"
-          className="ml-auto flex-none border border-line px-2 py-1 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink md:hidden"
+          className="ml-auto flex-none border border-line p-1.5 text-ink-faint transition-colors hover:border-accent-dim hover:text-ink md:hidden"
         >
-          {open ? "close" : "menu"}
+          <MenuGlyph open={open} />
         </button>
 
         <AccountBar apiUrl={apiUrl} />
@@ -105,6 +114,27 @@ function NavLink({
     >
       {link.label}
     </Link>
+  );
+}
+
+/** Three rules, or a cross when the panel is open. Drawn rather than typed so the box never
+ *  changes width between the two states — which is the whole bug this replaced. */
+function MenuGlyph({ open }: { open: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden className="block">
+      {open ? (
+        <g stroke="currentColor" strokeWidth="1.5">
+          <line x1="2.5" y1="2.5" x2="11.5" y2="11.5" />
+          <line x1="11.5" y1="2.5" x2="2.5" y2="11.5" />
+        </g>
+      ) : (
+        <g stroke="currentColor" strokeWidth="1.5">
+          <line x1="1.5" y1="3.5" x2="12.5" y2="3.5" />
+          <line x1="1.5" y1="7" x2="12.5" y2="7" />
+          <line x1="1.5" y1="10.5" x2="12.5" y2="10.5" />
+        </g>
+      )}
+    </svg>
   );
 }
 

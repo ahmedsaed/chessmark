@@ -14,6 +14,8 @@
  * game total exactly, and it was short by precisely the completion count.
  */
 
+import Link from "next/link";
+
 import type { GameDetail, Player } from "@/lib/types";
 
 function usd(value: string): string {
@@ -73,6 +75,31 @@ export function StatsRail({
             value={game.is_ranked ? "yes" : `no · talk ${game.trash_talk_enabled ? "on" : "off"}`}
             muted
           />
+        )}
+        {/* **One line, and only when there is one.** Most games are started by hand and have no
+            event, so this is absent rather than a row reading "Event —".
+            It was a card of its own at the foot of the rail carrying both models' places and
+            records. That answered a question worth answering and cost the rail its entire height —
+            and the fix for *that* was to shrink everything else, which made the page worse than
+            the card made it better. The tournament page is one click away and shows the standings
+            properly; this only has to say which event, and then get out of the way.
+            Round and era ride the tooltip. Era is what says which results this one is comparable
+            to (ADR-0043), so it earns a mention — not a line of its own. */}
+        {game.tournament && (
+          <div className="flex justify-between gap-2 font-mono text-[11px] text-ink-dim">
+            <span>Event</span>
+            <Link
+              href={`/tournaments/${game.tournament.slug}`}
+              title={`Round ${game.tournament.round_number}${
+                game.tournament.era
+                  ? `, era ${game.tournament.era} — the prompt and tool-schema majors this game was played under. Results are comparable within an era, not across one.`
+                  : ""
+              }`}
+              className="min-w-0 truncate text-accent hover:underline"
+            >
+              {game.tournament.name}
+            </Link>
+          </div>
         )}
       </div>
 
@@ -257,10 +284,22 @@ function Stat({
   );
 }
 
-function Row({ label, value, muted }: { label: string; value: string; muted?: boolean }) {
+function Row({
+  label,
+  value,
+  muted,
+  title,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+  title?: string;
+}) {
   return (
     <div className="tabular flex justify-between gap-2 font-mono text-[11px] text-ink-dim">
-      <span>{label}</span>
+      <span title={title} className={title ? "cursor-help" : undefined}>
+        {label}
+      </span>
       <span className={muted ? "text-ink-faint" : "text-ink"}>{value}</span>
     </div>
   );

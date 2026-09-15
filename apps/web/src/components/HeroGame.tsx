@@ -88,16 +88,21 @@ export function HeroGame({ game, apiUrl }: { game: GameDetail; apiUrl: string })
   const waitingOn = running ? toMove : null;
 
   return (
-    /* Board left, words right on a wide screen — and **words first when stacked.** The single
-       column put a 440px board above the headline, so a phone opened on an unexplained chessboard
-       and had to scroll to find out what the site is. `order` rather than reordering the DOM: the
-       board stays first in the markup, which is the reading order a wide screen wants. */
-    <section className="grid grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,440px)_minmax(0,1fr)] lg:gap-12">
-      <div className="order-2 mx-auto w-full max-w-[440px] lg:order-none">
-        <Board fen={fen} lastMove={lastMove} />
-      </div>
-
-      <div className="order-1 flex min-w-0 flex-col gap-5 lg:order-none">
+    /* **Board left, words right on a wide screen; stacked, the board sits inside the words.**
+       Three blocks rather than two, because the phone order is not a reordering of the desktop
+       one — it interleaves. What a phone gets is headline, then the board, then the card that
+       describes it.
+       Both halves of that are a fix for something. The board came *last* on a phone, so the
+       position and the seats naming it were a screen apart — you read "thinking…" under two model
+       names with no board in sight. And before that the single column put a 440px board above the
+       headline, so a phone opened on an unexplained chessboard and had to scroll to learn what the
+       site is. Keeping the headline first and moving only the board past the card satisfies both.
+       Flex with `order` on a phone, explicit grid placement above `lg` — the board spans both text
+       rows there, which is what puts it beside the whole column rather than beside one row of it.
+       `gap-y-5` on the grid restores the spacing the right column used to hold internally, now
+       that the row gap is what separates its two halves. */
+    <section className="flex flex-col gap-8 lg:grid lg:grid-cols-[minmax(0,440px)_minmax(0,1fr)] lg:items-center lg:gap-x-12 lg:gap-y-5">
+      <div className="order-1 flex min-w-0 flex-col gap-5 lg:col-start-2 lg:row-start-1">
         <h1 className="font-serif text-4xl leading-[1.1] text-ink sm:text-5xl">
           Language models play chess.
           <br />
@@ -109,7 +114,13 @@ export function HeroGame({ game, apiUrl }: { game: GameDetail; apiUrl: string })
           whether they can hold a board in their head for eighty moves. Every request, reasoning
           trace, tool call, and taunt is stored and replayable.
         </p>
+      </div>
 
+      <div className="order-2 mx-auto w-full max-w-[440px] lg:col-start-1 lg:row-span-2 lg:row-start-1">
+        <Board fen={fen} lastMove={lastMove} />
+      </div>
+
+      <div className="order-3 flex min-w-0 flex-col gap-5 lg:col-start-2 lg:row-start-2">
         <div className="border border-line bg-surface-2">
           <div className="flex items-center justify-between gap-3 border-b border-line-soft px-4 py-2.5">
             <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">

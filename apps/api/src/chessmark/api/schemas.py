@@ -394,6 +394,26 @@ class MyGameSummary(GameSummary):
     your_turn: bool
 
 
+class TournamentRef(Schema):
+    """Which event a game was played for — enough to say so and to link there, and no more.
+
+    Deliberately not a standings position. A pool has no end, so its table is *today's*, and
+    printing it beside a game from August would answer a question nobody asked with a number that
+    was not true when the game was played.
+    """
+
+    slug: str
+    name: str
+    format: str
+    #: A pool numbers one round per game rather than per batch, so this reads as "the Nth pairing
+    #: this event scheduled" — see `matchmaking.matchmake`.
+    round_number: int
+    #: The task this pairing was written for, `"<prompt>+<tools>"` (ADR-0043). The one thing on the
+    #: card a reader cannot get anywhere else on the page: it says which other results this one is
+    #: comparable to.
+    era: str | None
+
+
 class GameDetail(GameSummary):
     start_fen: str
     current_fen: str
@@ -409,6 +429,10 @@ class GameDetail(GameSummary):
 
     moves: list[str] = Field(default_factory=list)
 
+    #: Null for a game started by hand, which is most of them. A tournament game carries the event
+    #: it was scheduled for.
+    tournament: TournamentRef | None = None
+
     @classmethod
     def from_model(  # type: ignore[override]
         cls,
@@ -418,10 +442,12 @@ class GameDetail(GameSummary):
         moves: list[str],
         current_fen: str,
         served_by: dict[uuid.UUID, tuple[list[str], str | None]] | None = None,
+        tournament: TournamentRef | None = None,
     ) -> GameDetail:
         summary = GameSummary.from_model(game, players, served_by=served_by)
         return cls(
             **summary.model_dump(),
+            tournament=tournament,
             start_fen=game.start_fen,
             current_fen=current_fen,
             termination_detail=game.termination_detail,

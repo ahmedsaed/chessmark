@@ -95,6 +95,19 @@ export interface GameDetail extends GameSummary {
   /** Highest event sequence emitted so far — the stream's starting cursor. */
   event_seq: number;
   moves: string[];
+  /** Null for a game started by hand, which is most of them. */
+  tournament: TournamentRef | null;
+}
+
+/** Which event a game was played for — enough to say so and to link there. */
+export interface TournamentRef {
+  slug: string;
+  name: string;
+  format: string;
+  /** A pool numbers one round per game, so this reads as "the Nth pairing scheduled". */
+  round_number: number;
+  /** The task it was written for, `"<prompt>+<tools>"` (ADR-0043). */
+  era: string | null;
 }
 
 export interface ModelInfo {
@@ -293,19 +306,6 @@ export interface TurnView {
   san: string | null;
   /** True until the move lands — the live turn stays expanded (ADR-0013). */
   live: boolean;
-  /**
-   * How many times the model folded its own history during this turn.
-   *
-   * A compaction is already a notice in the stream, because it changes what the model can see from
-   * here on. This is the other half of the same fact: *which turn it happened in*. A reader
-   * wondering why a model forgot a plan it announced at move 12 can find the notice; a reader
-   * scanning for where the history was cut could not, because the notice sits between turns and
-   * the turn itself said nothing.
-   *
-   * Counted rather than flagged: a long turn can fold more than once, and "twice" is a different
-   * story from "once".
-   */
-  compactions: number;
 }
 
 /**

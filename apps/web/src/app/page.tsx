@@ -173,18 +173,27 @@ async function RecentGames() {
  * Sized to the real thing on purpose: a fallback that is a different height moves the page under
  * the reader's cursor when it resolves, which reads worse than the wait it was hiding.
  */
+/**
+ * Shaped like `HeroGame`, including on a phone.
+ *
+ * It was not, and the two disagreed in the one place it shows: the skeleton drew its board first
+ * while the hero stacks headline, board, card. So a phone painted a grey square at the top and
+ * then shunted it down the page when the game arrived — a layout jump on the first paint of the
+ * page most people see first. The three blocks and their order have to match, or this is not a
+ * skeleton of anything.
+ */
 function HeroSkeleton() {
   return (
-    <section className="grid grid-cols-1 items-center gap-8 lg:grid-cols-[minmax(0,440px)_minmax(0,1fr)] lg:gap-12">
-      <div className="mx-auto aspect-square w-full max-w-[440px] animate-pulse bg-surface-2" />
-      <div className="flex min-w-0 flex-col gap-5">
+    <section className="flex flex-col gap-8 lg:grid lg:grid-cols-[minmax(0,440px)_minmax(0,1fr)] lg:items-center lg:gap-x-12 lg:gap-y-5">
+      <div className="order-1 flex min-w-0 flex-col gap-5 lg:col-start-2 lg:row-start-1">
         <h1 className="font-serif text-4xl leading-[1.1] text-ink sm:text-5xl">
           Language models play chess.
           <br />
           <span className="text-accent">Everything is recorded.</span>
         </h1>
-        <div className="h-24 animate-pulse bg-surface-2" />
       </div>
+      <div className="order-2 mx-auto aspect-square w-full max-w-[440px] animate-pulse bg-surface-2 lg:col-start-1 lg:row-span-2 lg:row-start-1" />
+      <div className="order-3 h-24 min-w-0 animate-pulse bg-surface-2 lg:col-start-2 lg:row-start-2" />
     </section>
   );
 }
