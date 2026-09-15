@@ -234,6 +234,11 @@ class TurnWorker:
         #: reason: a scripted provider never rate-limits anything. Without it a game still pauses
         #: — it just pauses on the first rung every time, and the matchmaker learns nothing.
         self.cooldown = cooldown
+        # **Wired here because the gateway is handed in already built**, and the thing that
+        # remembers endpoints is this. A call that came back says the endpoint is serving; the
+        # gateway is the only place that knows one did.
+        if cooldown is not None and gateway.on_success is None:
+            gateway.on_success = self._endpoint_served
         #: Where a turn announces its rounds before it commits (ADR-0035). Defaults to the same
         #: Redis the committed events go out on, because a worker that can publish one can publish
         #: the other; a worker with neither simply does not stream, and plays an identical game.
@@ -421,11 +426,10 @@ class TurnWorker:
             if result.status is TurnStatus.FAILED and result.outcome is None:
                 raise ProviderFailureError(result)
 
-            # It served a whole turn, so whatever it refused earlier is over. Without this the
-            # cooldown ladder only ever climbs, and an endpoint that was briefly hot last night
-            # would rest for an hour over its next single refusal.
-            if self.cooldown is not None:
-                await self.cooldown.clear(model_for(player), provider=_pinned_provider(player))
+            # The cooldown is cleared by `_endpoint_served`, per answered call, rather than here.
+            # A turn is many calls against a growing transcript, so "it finished a turn" is a much
+            # stronger claim than "it is serving" — and waiting for the stronger one meant an
+            # endpoint that answered three times and refused the fourth climbed a rung anyway.
 
             if referee.is_over:
                 await self._conclude(session, game, referee.outcome)
@@ -1174,6 +1178,22 @@ class TurnWorker:
                 "total_cost_usd": str(game.total_cost_usd),
             },
         )
+
+    async def _endpoint_served(self, model: str, provider: str | None) -> None:
+        """An endpoint answered, so forget what it refused before.
+
+        Called per *call* (`LlmGateway.on_success`), which is the whole point: the ladder exists to
+        stop us hammering an endpoint that has gone away, and a call that came back is proof it has
+        not. Resetting only on a completed turn conflated "will not talk to us" with "cannot finish
+        an eighty-move game's turn in one go", and only the first deserves an hour's rest.
+
+        The provider comes from the **response**, not from the seat's pin: what answered is what
+        should be credited, and on an unpinned seat those are not always the same endpoint.
+        """
+        if self.cooldown is None:
+            return
+        with contextlib.suppress(Exception):
+            await self.cooldown.clear(model, provider=provider)
 
     async def _publish(self, game_id: uuid.UUID, events: list[GameEvent]) -> None:
         """Fan out committed events for live spectators (ADR-0008).

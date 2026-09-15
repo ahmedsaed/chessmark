@@ -125,6 +125,12 @@ async def create_match(
                 seat.model,
                 quantization=seat.quantization,
                 provider=seat.provider,
+                # **Only a rated game is pinned** (ADR-0044). Pinning buys a reproducible number
+                # and costs every other endpoint the model has — `deepseek-v4.1-flash` has
+                # eighteen, and an exhibition game pinned to the one BaseTen was throttling spent
+                # its life climbing the cooldown ladder while seventeen others were answering.
+                # A game nobody will rate gains nothing from the first and pays all of the second.
+                pin=is_ranked,
             )
         ).to_record()
 
@@ -212,8 +218,13 @@ async def resolve_routing(
     *,
     quantization: str | None = None,
     provider: str | None = None,
+    pin: bool = True,
 ) -> ProviderRouting:
     """Pin one endpoint for this seat, for the whole game (ADR-0015).
+
+    `pin=False` leaves the seat on the unpinned policy — see ADR-0044. A pin buys reproducibility
+    and costs every other endpoint the model has; that is the right trade for a rated result and
+    the wrong one for a game nobody will rate.
 
     This used to *filter* precisions and leave the router to pick among what remained. That was
     the wrong shape twice over: it assumed 4-bit is not worth measuring, and it did not actually
@@ -231,6 +242,8 @@ async def resolve_routing(
     if not model_slug:
         return routing
 
+    # An explicit provider is an instruction, not a policy, and it is honoured whether or not the
+    # game is rated: that is what makes it useful for telling a model's fault from its host's.
     if provider is not None:
         # Explicitly forced, usually to tell a model's fault apart from its host's.
         return replace(routing, only=(provider,), quantizations=())
@@ -239,8 +252,16 @@ async def resolve_routing(
         endpoint = await select_endpoint(session, model_slug=model_slug, quantization=quantization)
     except NoEndpointError:
         # Asking for a precision nothing serves is the caller's mistake and should surface as one.
+        # Asked **before** `pin` is consulted: an unranked game may go unpinned, but it must not
+        # silently seat a different contestant than the one requested.
         if quantization is not None:
             raise
+        return routing
+
+    # A requested precision is an instruction too, and honouring it means pinning: the precision
+    # lives on the endpoint, so leaving the router free to pick would seat `model@fp8` for a caller
+    # who asked for `model@fp4` — different contestants (ADR-0015).
+    if not pin and quantization is None:
         return routing
 
     # `quantizations` is cleared: the endpoint *is* the constraint now, and naming a precision as

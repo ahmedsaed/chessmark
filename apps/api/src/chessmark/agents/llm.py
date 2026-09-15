@@ -14,6 +14,7 @@ Two design choices carry most of the weight:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as dt
 import logging
 import random
@@ -89,6 +90,10 @@ log = logging.getLogger(__name__)
 #: Called once per provider attempt, with the model slug. Used to count a request allowance
 #: that no response header reports — see `core.budget.FreeTierBudget`.
 AttemptFn = Callable[[str], Awaitable[None]]
+
+#: Called with `(model, provider)` after a provider call comes back. Whoever owns the endpoint
+#: memory wires this; the gateway itself remembers nothing between calls.
+SuccessFn = Callable[[str, str | None], Awaitable[None]]
 
 #: Called with `("reasoning" | "output", text)` for each fragment a streamed call produces. Purely
 #: for display (ADR-0035): nothing stored, costed or replayed comes from here.
@@ -655,6 +660,7 @@ class LlmGateway:
         completion_fn: CompletionFn | None = None,
         sleep_fn: SleepFn | None = None,
         on_attempt: AttemptFn | None = None,
+        on_success: SuccessFn | None = None,
         timeout: float = 600.0,
         attribution: dict[str, str] | None = None,
         stream: bool = False,
@@ -667,6 +673,10 @@ class LlmGateway:
         self._complete = completion_fn or _default_completion
         self._sleep = sleep_fn or asyncio.sleep
         self._on_attempt = on_attempt
+        #: **Public, because the worker wires it and the gateway is handed in already built.**
+        #: A call that came back is evidence about the endpoint, and the thing that remembers
+        #: endpoints is the cooldown, which the worker owns.
+        self.on_success = on_success
         self.timeout = timeout
         #: **On, because the loss it risks is detectable** (ADR-0036). LiteLLM's streaming path
         #: drops `reasoning` on some providers, so a streamed call can come back with the model's
@@ -901,6 +911,17 @@ class LlmGateway:
                 attempts=attempt,
             )
             self._check_reasoning_survived(completion, key=endpoint_key)
+
+            # **One answered call is the evidence, not one finished turn.** The cooldown ladder
+            # used to reset only when a whole turn committed, and a turn is many calls against a
+            # long transcript — so an endpoint that answered three times and refused the fourth
+            # climbed a rung, every time, to the hour cap. The longer the game the less likely a
+            # turn completes, which made the ladder harshest on exactly the endpoint a long game
+            # most needs. `deepseek-v4.1-flash` on BaseTen went 60s → 300s → 900s this way without
+            # ever having gone away.
+            if self.on_success is not None:
+                with contextlib.suppress(Exception):
+                    await self.on_success(model, completion.provider)
             return completion
 
             # Unreachable: the loop either returns or raises.

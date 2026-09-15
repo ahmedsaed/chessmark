@@ -15,6 +15,35 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A contended endpoint could end a game that had eighteen others to choose from**
+  ([ADR-0044]). Two correct mechanisms combining into a game that could not be played: ADR-0015
+  pins one endpoint per seat so a *rated* number is reproducible, and `resolve_routing` never asked
+  whether the game was rated — so an exhibition game was pinned to the one endpoint BaseTen was
+  throttling and spent its life climbing the cooldown ladder. Only a game that will be rated is
+  pinned now. An explicit provider or precision is still honoured either way, and a precision
+  nothing serves still refuses the match.
+- **The cooldown ladder reset on a finished turn rather than an answered call** ([ADR-0044]). A
+  turn is many calls against a growing transcript, so an endpoint that answered the board read and
+  was refused on the move never reached the reset: 60s, 300s, 900s, to the hour cap, against an
+  endpoint that had never gone away. The direction was the perverse part — the longer the game the
+  less likely a turn completes, so the ladder was harshest on exactly the endpoint a long game most
+  needs. `LlmGateway.on_success` clears it per call, crediting the provider that *answered* rather
+  than the one the seat is pinned to.
+- **A game already paused when a halt began could not say so.** `_pause_for_halt` writes one notice
+  per pause and returns early when the game is already paused, so a game holding a provider pause
+  when the free allowance ran out was never told: `9b4bced5` sat fifteen hours showing
+  "rate-limited by Google AI Studio", a reason that had stopped being true within the hour. It was
+  never stuck — the reconciler was correctly declining to resume it — but held and stranded look
+  identical from outside. Written once per halt, carrying the same `halt_source` key that keeps
+  those hours off the abandonment clock.
+- **The reconciler published none of the events it wrote.** `worker._publish` was the only
+  publisher, so a game the reconciler resumed had its `game_resumed` committed to Postgres and sent
+  to nobody — a spectator watching a game come back from a rate limit saw the stale "paused" notice
+  until they reloaded. The publisher is shared now, and the sweep fans out what it appended after
+  the commit.
+
 ## [0.2.0] — 2026-09-15
 
 ### Added
@@ -580,5 +609,6 @@ flags the old code wrote.
 [ADR-0041]: docs/adr/0041-a-pool-balances-its-pairings.md
 [ADR-0042]: docs/adr/0042-the-notation-was-still-analysing-the-position.md
 [ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
+[ADR-0044]: docs/adr/0044-a-contended-endpoint-should-not-end-a-game.md
 [0.2.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

@@ -21,6 +21,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.scripted import step, tool_call
 from chessmark.core.cooldown import LADDER_SECONDS, ProviderCooldown
 from chessmark.db.enums import EventType, GameStatus, PlayerKind
 from chessmark.db.models import Game, GameEvent, Player
@@ -821,3 +822,73 @@ class TestAHaltDoesNotSpendThePatience:
         await db.commit()
 
         assert (await worker.handle(game.first_job)).outcome == PAUSED
+
+
+#: The provider `SHARED_POOL_429` names. A cooldown is keyed by model and provider, so a test that
+#: loads strikes under a different key is testing an empty ladder.
+PROVIDER = "Google AI Studio"
+
+
+def answers_then_limits() -> Any:
+    """A seat that answers one call and is refused on the next — the shape the ladder got wrong.
+
+    This is what a contended endpoint actually looks like from inside a turn: it serves the board
+    read, and by the time the move goes out the shared pool is hot again. The turn never completes,
+    so nothing downstream ever said "this endpoint is serving".
+    """
+    served = {"calls": 0}
+
+    async def complete(**_kwargs: Any) -> Any:
+        served["calls"] += 1
+        if served["calls"] == 1:
+            # Named, because a cooldown is keyed by model *and* provider: the endpoint that
+            # answered has to be the one whose strikes are forgiven, and in production that name
+            # comes off the response the same way.
+            return {**step(tool_call("get_board")), "provider": PROVIDER}
+        raise SharedPoolError
+
+    return complete
+
+
+class TestTheLadderResetsOnAnAnsweredCall:
+    """**One answered call is the evidence, not one finished turn** (ADR-0044).
+
+    The ladder used to reset only when a whole turn committed, and a turn is many calls against a
+    growing transcript. So an endpoint that answered and was then refused climbed a rung — every
+    time, to the hour cap — without ever having gone away. The longer the game the less likely a
+    turn completes, which made the ladder harshest on exactly the endpoint a long game most needs.
+    `deepseek-v4.1-flash` on BaseTen went 60s, 300s, 900s this way while seventeen other endpoints
+    for the same model sat unused.
+    """
+
+    async def test_an_answered_call_resets_the_rung_the_refusal_lands_on(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        cooldown = ProviderCooldown(redis)
+        for _ in range(3):
+            await cooldown.note(SEATED_MODEL, provider=PROVIDER)
+
+        worker = make_worker(answers_then_limits(), cooldown=cooldown)
+        assert (await worker.handle(game.first_job)).outcome == PAUSED
+
+        paused = await _events(db, game.game.id, EventType.GAME_PAUSED)
+        assert paused, "the turn did not pause"
+        assert paused[-1].payload["seconds"] == LADDER_SECONDS[0], (
+            f"the endpoint answered a call and its refusal still rested "
+            f"{paused[-1].payload['seconds']}s — the ladder kept strikes it had disproved"
+        )
+
+    async def test_a_turn_that_never_got_an_answer_still_escalates(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """The half that must not change. An endpoint that has said nothing is exactly what the
+        ladder is for, and resetting on hope would hammer it every sixty seconds."""
+        cooldown = ProviderCooldown(redis)
+        for _ in range(3):
+            await cooldown.note(SEATED_MODEL, provider=PROVIDER)
+
+        worker = make_worker(rate_limited, cooldown=cooldown)
+        assert (await worker.handle(game.first_job)).outcome == PAUSED
+
+        paused = await _events(db, game.game.id, EventType.GAME_PAUSED)
+        assert paused[-1].payload["seconds"] == LADDER_SECONDS[3]
