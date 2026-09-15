@@ -11,7 +11,6 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTimeline,
-  collapseNoticeRuns,
   compactionText,
   foldEvents,
   liveTurn,
@@ -867,166 +866,107 @@ describe("a compaction still reaches the stream", () => {
   });
 });
 
-describe("a run of identical pauses folds into one row", () => {
-  const pause = (seq: number, text: string, resumeAfter: string | null = null) => ({
-    kind: "notice" as const,
-    notice: { key: `p-${seq}`, seq, kind: "paused" as const, text, resumeAfter },
-  });
-  const resume = (seq: number, text: string) => ({
-    kind: "notice" as const,
-    notice: { key: `r-${seq}`, seq, kind: "resumed" as const, text, resumeAfter: null },
-  });
-  const aTurn = (seq: number): TimelineEntry => ({
-    kind: "turn",
-    turn: liveTurn([
-      { frame: "turn", player_id: "w", colour: "white", ply: seq, model: "m" },
-      { frame: "token", player_id: "w", kind: "reasoning", text: "thinking" },
-    ])!,
-  });
-
+describe("a section is a seat's waits plus its turn", () => {
   const RATE = "deepseek rate-limited by BaseTen (upstream_provider_shared_pool)";
+  const HALT = "the harness is halted: the free-model allowance for the day is spent (429)";
 
-  it("counts the pauses and keeps the last one's wait", () => {
-    // Production `f129b600`: eight rows saying the same sentence, and the reader had to count
-    // them to learn the only thing the run says.
-    const folded = collapseNoticeRuns([
-      pause(1, RATE, "2026-09-15T16:00:00Z"),
-      resume(2, RATE),
-      pause(3, RATE, "2026-09-15T16:15:00Z"),
-      resume(4, RATE),
-      pause(5, RATE, "2026-09-15T16:45:00Z"),
-    ]);
+  const pause = (seq: number, text = RATE, resumeAfter: string | null = null) => ({
+    key: `p-${seq}`,
+    seq,
+    kind: "paused" as const,
+    text,
+    resumeAfter,
+    seat: { colour: "white" as const, model: "deepseek/deepseek-v4.1-flash" },
+  });
+  const resume = (seq: number) => ({
+    key: `r-${seq}`,
+    seq,
+    kind: "resumed" as const,
+    text: "the wait is over",
+    resumeAfter: null,
+  });
+  const halt = (seq: number) => ({
+    key: `h-${seq}`,
+    seq,
+    kind: "paused" as const,
+    text: HALT,
+    resumeAfter: null,
+  });
+  const turnAt = (seq: number, colour: "white" | "black" = "white"): TurnView => ({
+    ...liveTurn([
+      { frame: "turn", player_id: "x", colour, ply: 1, model: "m" },
+      { frame: "token", player_id: "x", kind: "reasoning", text: "x" },
+    ])!,
+    seq,
+    colour,
+    key: `t-${seq}`,
+  });
 
-    expect(folded).toHaveLength(1);
-    const only = folded[0];
-    expect(only.kind).toBe("notice");
-    if (only.kind !== "notice") return;
-    expect(only.notice.count).toBe(3);
-    expect(only.notice.resumeAfter).toBe("2026-09-15T16:45:00Z");
+  const shape = (rows: TimelineEntry[]) =>
+    rows.map((row) =>
+      row.kind === "notice" ? `notice:${row.notice.kind}` : `turn:${row.turn.seq}+${row.waits.length}`,
+    );
+
+  it("gives a turn the waits its own seat sat through", () => {
+    // The attempt that was refused is rolled back whole, so there is no turn row for it — the
+    // waits belong to the turn that eventually succeeded. Before this they were spliced in as
+    // loose rows and the header had to be un-drawn afterwards by a backwards scan.
+    const rows = buildTimeline([turnAt(20)], [pause(10), resume(11), pause(12), resume(13)]);
+
+    // Two rows, not four: the pauses fold into one carrying the count, and the resume that *ends*
+    // the run survives, because then it really did come back.
+    expect(shape(rows)).toEqual(["turn:20+2"]);
+    const [only] = rows;
+    if (only.kind !== "turn") throw new Error("expected a turn");
+    expect(only.waits.map((w) => w.kind)).toEqual(["paused", "resumed"]);
+  });
+
+  it("counts a folded run once and keeps the last wait", () => {
+    const rows = buildTimeline(
+      [turnAt(20)],
+      [pause(10, RATE, "16:00"), resume(11), pause(12, RATE, "16:45")],
+    );
+
+    const [only] = rows;
+    if (only.kind !== "turn") throw new Error("expected a turn");
+    expect(only.waits).toHaveLength(1);
+    expect(only.waits[0].count).toBe(2);
+    expect(only.waits[0].resumeAfter).toBe("16:45");
   });
 
   it("keeps two different reasons apart", () => {
     // A rate limit followed by a halt must never read as one thing that happened twice.
-    const HALT = "the harness is halted: the free-model allowance for the day is spent (429)";
-    const folded = collapseNoticeRuns([pause(1, RATE), resume(2, RATE), pause(3, HALT)]);
+    const rows = buildTimeline([turnAt(20)], [pause(10), resume(11), halt(12)]);
 
-    expect(folded.map((e) => (e.kind === "notice" ? e.notice.text : "turn"))).toEqual([
-      RATE,
-      RATE,
-      HALT,
-    ]);
+    const [only] = rows;
+    if (only.kind !== "turn") throw new Error("expected a turn");
+    expect(only.waits.map((w) => w.text)).toEqual([RATE, "the wait is over", HALT]);
   });
 
-  it("does not fold across a turn", () => {
-    // A pause before a move and a pause after it are two different waits, and folding them would
-    // hide the move between.
-    const folded = collapseNoticeRuns([pause(1, RATE), aTurn(2), pause(3, RATE)]);
+  it("does not hand one seat's waits to the other", () => {
+    const rows = buildTimeline([turnAt(20, "black")], [pause(10)]);
 
-    expect(folded).toHaveLength(3);
-    expect(folded.every((e) => e.kind !== "notice" || !e.notice.count)).toBe(true);
+    expect(shape(rows)).toEqual(["notice:paused", "turn:20+0"]);
   });
 
-  it("keeps a resume that ends a run", () => {
-    // It really did come back, and that is the last thing that happened.
-    const folded = collapseNoticeRuns([pause(1, RATE), resume(2, RATE)]);
+  it("leaves a wait with no turn after it as a row of its own", () => {
+    // The game is still paused. It keeps its own seat marker, because no section covers it.
+    const rows = buildTimeline([turnAt(10)], [pause(20)]);
 
-    expect(folded.map((e) => (e.kind === "notice" ? e.notice.kind : "turn"))).toEqual([
-      "paused",
-      "resumed",
-    ]);
+    expect(shape(rows)).toEqual(["turn:10+0", "notice:paused"]);
   });
 
-  it("leaves a single pause alone", () => {
-    const folded = collapseNoticeRuns([pause(1, RATE)]);
+  it("puts the waits above the turn in progress, as a reload does", () => {
+    // `liveTurn` uses seq -1 so its key cannot collide with a real turn's. Right for keys, wrong
+    // for order: a pause sat under THINKING while live and above that turn after a refresh.
+    const rows = buildTimeline([turnAt(10), turnAt(-1)], [pause(12)]);
 
-    expect(folded).toHaveLength(1);
-    expect(folded[0].kind === "notice" && folded[0].notice.count).toBeUndefined();
-  });
-});
-
-describe("a live turn sorts last", () => {
-  const notice = (seq: number) => ({
-    key: `p-${seq}`,
-    seq,
-    kind: "paused" as const,
-    text: "rate-limited",
-    resumeAfter: null,
-  });
-  const committed = (seq: number): TurnView => ({ ...liveTurnAt(1), seq, key: `t-${seq}` });
-  function liveTurnAt(ply: number): TurnView {
-    return liveTurn([
-      { frame: "turn", player_id: "w", colour: "white", ply, model: "m" },
-      { frame: "token", player_id: "w", kind: "reasoning", text: "thinking" },
-    ])!;
-  }
-
-  it("puts a pause above the turn in progress, as a reload does", () => {
-    // `liveTurn` uses seq -1 so its key cannot collide with a real turn's. That is right for keys
-    // and wrong for order: -1 sorts before everything, so a notice could never be placed above the
-    // live turn — the pause sat *under* THINKING while live and jumped *above* that turn on the
-    // next reload, once it had a real seq. Same events, two orders.
-    const rows = buildTimeline([committed(10), liveTurnAt(2)], [notice(12)]);
-
-    expect(rows.map((r) => (r.kind === "notice" ? "notice" : `turn:${r.turn.seq}`))).toEqual([
-      "turn:10",
-      "notice",
-      "turn:-1",
-    ]);
+    expect(shape(rows)).toEqual(["turn:10+0", "turn:-1+1"]);
   });
 
-  it("orders the same once that turn is committed", () => {
-    const live = buildTimeline([committed(10), liveTurnAt(2)], [notice(12)]);
-    const reloaded = buildTimeline([committed(10), committed(14)], [notice(12)]);
+  it("orders committed turns by seq", () => {
+    const rows = buildTimeline([turnAt(10), turnAt(20, "black")], [pause(15)]);
 
-    expect(live.map((r) => r.kind)).toEqual(reloaded.map((r) => r.kind));
-  });
-
-  it("still orders committed turns by seq", () => {
-    const rows = buildTimeline([committed(10), committed(20)], [notice(15)]);
-
-    expect(rows.map((r) => (r.kind === "notice" ? "notice" : `turn:${r.turn.seq}`))).toEqual([
-      "turn:10",
-      "notice",
-      "turn:20",
-    ]);
-  });
-});
-
-describe("a pause names the seat it is waiting on", () => {
-  it("carries the colour and model off the payload", () => {
-    // The failed attempt is rolled back whole, so there is no turn block for it. Without a seat
-    // marker the row attaches to the turn above — a deepseek rate limit sat under GLM's move and
-    // read as GLM's problem.
-    seq = 0;
-    const { notices } = foldEvents(
-      [
-        event("game_paused", {
-          reason: "deepseek/deepseek-v4.1-flash rate-limited by BaseTen",
-          colour: "white",
-          model: "deepseek/deepseek-v4.1-flash",
-        }),
-      ],
-      [],
-    );
-
-    expect(notices[0].seat).toEqual({
-      colour: "white",
-      model: "deepseek/deepseek-v4.1-flash",
-    });
-  });
-
-  it("names no seat for a halt, which belongs to no player", () => {
-    seq = 0;
-    const { notices } = foldEvents(
-      [
-        event("game_paused", {
-          reason: "the harness is halted: the free-model allowance for the day is spent (429)",
-          halt_source: "free_tier",
-        }),
-      ],
-      [],
-    );
-
-    expect(notices[0].seat).toBeUndefined();
+    expect(shape(rows)).toEqual(["turn:10+0", "notice:paused", "turn:20+0"]);
   });
 });

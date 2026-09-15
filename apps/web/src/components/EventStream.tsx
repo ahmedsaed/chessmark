@@ -46,7 +46,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { buildTimeline, sameTurnContent } from "@/lib/turns";
-import type { TimelineEntry } from "@/lib/turns";
 import type { Player, StreamNotice, ToolCallView, TurnBlock, TurnView } from "@/lib/types";
 
 type Filter = "all" | "moves-talk" | "talk" | "moves";
@@ -224,17 +223,17 @@ export function EventStream({
         {filter === "moves" ? (
           <MoveList turns={visible} />
         ) : (
-          timeline.map((entry, index) =>
+          timeline.map((entry) =>
             entry.kind === "notice" ? (
               <Notice key={entry.notice.key} notice={entry.notice} />
             ) : (
               <Turn
                 key={entry.turn.key}
                 turn={entry.turn}
+                waits={entry.waits}
                 name={turnName(entry.turn, players)}
                 filter={filter}
                 open={isOpen(entry.turn)}
-                headless={sameSeatAbove(timeline, index, entry.turn.colour)}
                 onToggle={toggle}
                 onInspect={onInspect}
               />
@@ -421,7 +420,7 @@ function Bubble({
   );
 }
 
-function Notice({ notice }: { notice: StreamNotice }) {
+function Notice({ notice, bare = false }: { notice: StreamNotice; bare?: boolean }) {
   const paused = notice.kind === "paused";
   /* A compaction is machinery, not a fault — the model doing its own housekeeping — so it reads in
      the `machine` register the tool calls use rather than in `bad`. Only a pause is a problem.
@@ -436,13 +435,14 @@ function Notice({ notice }: { notice: StreamNotice }) {
         ? "border-accent-deep bg-surface-2 text-accent"
         : "border-line bg-surface-3 text-ink-faint";
 
-  const seat = notice.seat;
+  // `bare` drops the marker, not the knowledge: inside a section the turn's own header already
+  // names the seat, which is exactly when the name must come out of the body too.
+  const seat = bare ? undefined : notice.seat;
   // "deepseek/x rate-limited by BaseTen" under a header already reading DEEPSEEK/X is the same
   // name twice on one row.
+  const named = notice.seat?.model;
   const body =
-    seat?.model && notice.text.startsWith(`${seat.model} `)
-      ? notice.text.slice(seat.model.length + 1)
-      : notice.text;
+    named && notice.text.startsWith(`${named} `) ? notice.text.slice(named.length + 1) : notice.text;
 
   return (
     <div className="flex flex-col gap-1">
@@ -529,8 +529,8 @@ interface TurnProps {
   filter: Filter;
   /** Whether the turn is unrolled into its steps. Finished turns fold to a line (ADR-0013). */
   open: boolean;
-  /** The notice above already named this seat, so the turn does not repeat it. */
-  headless?: boolean;
+  /** The waits that led to this turn: the pauses its seat sat through before it could play. */
+  waits: StreamNotice[];
   onToggle: (key: string, currentlyOpen: boolean) => void;
   onInspect?: (turn: TurnView) => void;
 }
@@ -561,36 +561,19 @@ function sameTurn(before: TurnProps, after: TurnProps): boolean {
     before.filter === after.filter &&
     before.open === after.open &&
     before.name === after.name &&
-    before.headless === after.headless &&
+    before.waits === after.waits &&
     before.onToggle === after.onToggle &&
     before.onInspect === after.onInspect &&
     sameTurnContent(before.turn, after.turn)
   );
 }
 
-/**
- * Whether the row above already put this seat's name at the head of the section.
- *
- * A pause is written for the seat that could not play, and the attempt it belongs to is rolled
- * back whole — so the notice is the first thing in that seat's section and carries the name. The
- * turn that eventually succeeds then follows it, and printing the name a second time reads as two
- * different players rather than one that waited and then moved.
- */
-function sameSeatAbove(
-  timeline: TimelineEntry[],
-  index: number,
-  colour: "white" | "black",
-): boolean {
-  const above = timeline[index - 1];
-  return above?.kind === "notice" && above.notice.seat?.colour === colour;
-}
-
 const Turn = memo(function Turn({
   turn,
+  waits,
   name,
   filter,
   open,
-  headless,
   onToggle,
   onInspect,
 }: TurnProps) {
@@ -611,24 +594,20 @@ const Turn = memo(function Turn({
        index over *open* turns names a different row than an index over all of them. */
     <div className="flex flex-col gap-2" data-testid="turn">
       <div className={`flex flex-col gap-1.5 ${align}`}>
-        {/* Suppressed when a notice for this same seat sits directly above: it has already put the
-            model's name at the head of the section, and repeating it here reads as two players. */}
-        {!headless && (
-          <div
-            className={`flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint ${
-              isWhite ? "" : "flex-row-reverse"
+        <div
+          className={`flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint ${
+            isWhite ? "" : "flex-row-reverse"
+          }`}
+        >
+          <i
+            aria-hidden
+            className={`block h-2 w-2 border border-line ${
+              isWhite ? "bg-piece-white" : "bg-piece-black"
             }`}
-          >
-            <i
-              aria-hidden
-              className={`block h-2 w-2 border border-line ${
-                isWhite ? "bg-piece-white" : "bg-piece-black"
-              }`}
-            />
-            {name}
-            {turn.live && <span className="text-accent">· thinking</span>}
-          </div>
-        )}
+          />
+          {name}
+          {turn.live && <span className="text-accent">· thinking</span>}
+        </div>
 
         {filter !== "talk" && !turn.human && (
           <div className={`flex flex-wrap items-center gap-1.5 ${isWhite ? "" : "justify-end"}`}>
@@ -674,6 +653,26 @@ const Turn = memo(function Turn({
                 raw
               </button>
             )}
+          </div>
+        )}
+
+        {/* **Below the step counter, and first in the sequence.** These are the waits this seat
+            sat through before it could play, and they belong inside the section rather than above
+            it: the counter is the turn's summary line, and a pause is part of what the turn cost.
+
+            First, because that is the order it happened in. The refused attempt is rolled back
+            whole (`ProviderFailureError`), so it leaves no turn row and no steps — in `f129b600`
+            the rolled-back turns are the gaps in the id sequence, 7854-7856 and 7859. Its pauses
+            therefore sit *before* the surviving turn's first step, and unrolling the steps puts
+            them where they happened without anything having to interleave them.
+
+            Full width, because a rate limit is the harness's failure and not something a
+            contestant did — but inside the section, so a reader can see whose. */}
+        {waits.length > 0 && (
+          <div className="flex w-full flex-col gap-1.5">
+            {waits.map((notice) => (
+              <Notice key={notice.key} notice={notice} bare />
+            ))}
           </div>
         )}
 
