@@ -67,14 +67,18 @@ function Bar({ apiUrl }: { apiUrl: string }) {
   if (!isLoaded) return null;
 
   return (
-    <span className="ml-auto flex items-center gap-3">
+    /* `shrink-0`: this is the one thing in the header that must not be compressed. It was
+       shrinkable, so when the bar ran out of room the browser took the space from here and "sign
+       in" wrapped to two lines — a 40px button in a row of 27px ones, and the site's own sign-in
+       control the thing that gave way. Everything else in the bar is either fixed or droppable. */
+    <span className="ml-auto flex shrink-0 items-center gap-2 md:gap-3">
       {/* `Show` replaced `SignedIn`/`SignedOut` in @clerk/nextjs Core 3 — the older components are
           still exported and throw at render time, so the swap is not optional. */}
       <Show when="signed-out">
         <SignInButton mode="modal">
           <button
             type="button"
-            className="border border-line bg-surface px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink"
+            className="whitespace-nowrap border border-line bg-surface px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink"
           >
             sign in
           </button>
@@ -82,7 +86,7 @@ function Bar({ apiUrl }: { apiUrl: string }) {
         <SignUpButton mode="modal">
           <button
             type="button"
-            className="border border-accent-deep bg-accent px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim"
+            className="whitespace-nowrap border border-accent-deep bg-accent px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim"
           >
             sign up
           </button>
