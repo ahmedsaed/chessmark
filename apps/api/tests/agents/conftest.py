@@ -16,8 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.scripted import CompletionFn
 from chessmark.agents.turn import TurnLimits, TurnResult, TurnRunner, ensure_system_prompt
-from chessmark.db.enums import PlayerKind
-from chessmark.db.models import Game, Player
+from chessmark.db.enums import PlayerKind, TurnStatus
+from chessmark.db.models import Game, Player, Turn
 from chessmark.db.repositories import add_player, create_game
 from chessmark.game import ChessBoard, Colour, Referee
 
@@ -93,9 +93,21 @@ async def play_turn(
     limits: TurnLimits | None = None,
     model: str = "scripted/model",
 ) -> TurnResult:
-    """Run one whole turn with a scripted model, exactly as the worker will."""
+    """Run one whole turn with a scripted model, exactly as the worker will.
+
+    Including the resume: if this seat's last turn was interrupted by a provider, that turn is
+    continued rather than a new one opened (ADR-0045). The worker decides the same way, and a
+    helper that did not would let a test pass on a path production never takes.
+    """
     player = table.player(colour)
     opponent = table.player(colour.opponent)
+
+    last = (
+        await db.scalars(
+            sa.select(Turn).where(Turn.player_id == player.id).order_by(Turn.id.desc()).limit(1)
+        )
+    ).first()
+    resuming = last if last is not None and last.status is TurnStatus.INTERRUPTED else None
 
     await ensure_system_prompt(
         db, game=table.game, player=player, opponent_name=table.opponent_name(colour)
@@ -111,7 +123,7 @@ async def play_turn(
         model=model,
         limits=limits,
     )
-    result = await runner.run()
+    result = await runner.run(resuming)
     await db.commit()
     return result
 

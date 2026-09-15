@@ -44,6 +44,14 @@ class TurnStatus(StrEnum):
     FAILED = "failed"
     FORFEITED = "forfeited"
 
+    #: The provider stopped answering part-way through, and the rounds it *did* complete were kept
+    #: (ADR-0045). Distinct from `FAILED`, which is a turn that produced nothing worth keeping —
+    #: this one holds real calls, real tool results and real spend, and the retry continues from it.
+    #:
+    #: It never carries a `ply_number`: no move came out of it, which is the same thing a forfeited
+    #: turn says about itself and what keeps a ply-keyed index unambiguous.
+    INTERRUPTED = "interrupted"
+
 
 class ModerationStatus(StrEnum):
     PENDING = "pending"
