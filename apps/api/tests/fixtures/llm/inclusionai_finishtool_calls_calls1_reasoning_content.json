@@ -1,0 +1,108 @@
+{
+  "name": "inclusionai_finishtool_calls_calls1_reasoning_content",
+  "model": "inclusionai/ling-3.0-flash-fin:free",
+  "source": "live",
+  "note": "Recorded from production game cc095c52, turn 7844, inclusionai/ling-3.0-flash-fin:free on Novita. finish_reason=tool_calls, 650 completion tokens, 476 of them reasoning.",
+  "request": {
+    "model": "openrouter/inclusionai/ling-3.0-flash-fin:free",
+    "max_tokens": 32768,
+    "tool_choice": "auto",
+    "extra_body": {
+      "usage": {
+        "include": true
+      },
+      "provider": {
+        "only": [
+          "Novita"
+        ],
+        "sort": "price",
+        "allow_fallbacks": true
+      },
+      "session_id": "game-cc095c52-81b5-4403-9237-c4548570f5b8"
+    },
+    "messages": [
+      {
+        "name": "get_board",
+        "role": "tool",
+        "content": "{\"board\": \"  h g f e d c b a\\n1 . K . r . . . . 1\\n2 P P . . . . B . 2\\n3 . . . . . P . . 3\\n4 . . . . . P . . 4\\n5 . . . . . . . . 5\\n6 . . . . . . . p 6\\n7 p p . . . . . . 7\\n8 k . . . . . . . 8\\n  h g f e d c b a\", \"castling_rights\": \"-\", \"en_passant\": null, \"fen\": \"7k/6pp/p7/8/2P5/2P5/1B4PP/4r1K1 w - - 0 27\", \"halfmove_clock\": 0, \"in_check\": true, \"legal_move_count\": 1, \"material\": {\"balance\": -1, \"black\": 8, \"white\": 7}, \"move_number\": 27, \"ok\": true, \"plies_until_fifty_move_draw\": 100, \"repetition_count\": 1, \"side_to_move\": \"white\", \"you_are\": \"black\"}",
+        "tool_call_id": "call_9a5da7954ecc474f8c5870a9"
+      },
+      {
+        "role": "user",
+        "content": "White played Kf2. It is your move as black. Ply 54. Call `make_move` when you have decided."
+      }
+    ],
+    "_trimmed": "234 messages in the real request; the last 2 are kept. The response is verbatim — that is what `replay()` returns and what the normaliser is tested against."
+  },
+  "response": {
+    "id": "gen-1789437494-Vs7VvhcTRFUEPbd3QOsF",
+    "model": "inclusionai/ling-3.0-flash-fin:free",
+    "usage": {
+      "cost": 0,
+      "is_byok": false,
+      "cost_details": {
+        "upstream_inference_cost": 0,
+        "upstream_inference_prompt_cost": 0,
+        "upstream_inference_completions_cost": 0
+      },
+      "total_tokens": 49619,
+      "prompt_tokens": 48969,
+      "completion_tokens": 650,
+      "prompt_tokens_details": {
+        "audio_tokens": 0,
+        "video_tokens": 0,
+        "cached_tokens": 44800,
+        "cache_write_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "completion_tokens_details": {
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "reasoning_tokens": 476
+      }
+    },
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "I see White played Kf2 to escape check. Now I have a clear winning opportunity — my g-pawn can promote! Let me play `g8=",
+          "tool_calls": [
+            {
+              "id": "call_639e3adf308342c58d842b6c",
+              "type": "function",
+              "index": 0,
+              "function": {
+                "name": "make_move",
+                "arguments": "{\"move\": \"g8=Q\"}"
+              }
+            }
+          ],
+          "function_call": null,
+          "reasoning_content": "White played Kf2. Now it's my turn as black (ply 54). Let me look at the position after Kf2:\n\nWhite: Kf2, Bb2, pawns on c3, c4, g2, h2\nBlack: Kh8, Re1, pawns on a6, g7, h7\n\nMy rook is on e1 (giving check was resolved by Kf2). Now I need to make my best move.\n\nThe key opportunity: g7-g8=Q (promotion)! The pawn on g7 can move to g8 and promote to a queen. Is this safe?\n\nLooking at the position:\n- White's bishop on b2 attacks along the b2-c3-d4-e5-f6-g7 diagonal. So the bishop attacks g7 but not g8 (g8 is a dark square, bishop is light-squared).\n- White's king is on f2, far from g8.\n- So g8 is safe for a queen!\n\nIf I play g7-g8=Q, I get a queen and likely win the game. But wait — I need to make sure the move is legal. The pawn on g7 can move to g8 (one square forward). There's nothing blocking. And g8 is not attacked by any White piece. So yes, g8=Q is legal and a winning move!\n\nBut wait — should I also consider other moves? Let me think about what else is available:\n\nLooking at the legal moves... actually I need to call get_legal_moves to see what's available. But based on the position, g8=Q seems like the best move.\n\nActually, let me also consider: after g8=Q, White has pieces that could attack the queen. But I'd have a queen vs a bishop and pawns, which is winning.\n\nLet me go with g8=Q.\n\nBut wait — I should also consider the rook. Maybe I should do something with the rook too. But promotion is the most immediate winning move.\n\nLet me also check: is there anything preventing g8=Q? Looking at the board:\n- Rank 8: `7k` → 7 empty (a8-g8), k(h8). So g8 is empty. The pawn on g7 can move to g8.\n- Is g8 attacked? White's bishop on b2 attacks g7 (light square diagonal). But g8 is a dark square, not attacked by the bishop. White's king on f2 attacks e1, e2, e3, f1, f3, g1, g2, g3 — not g8. So g8 is safe.\n\nYes, g8=Q is the winning move!",
+          "provider_specific_fields": {
+            "refusal": null,
+            "reasoning": "White played Kf2. Now it's my turn as black (ply 54). Let me look at the position after Kf2:\n\nWhite: Kf2, Bb2, pawns on c3, c4, g2, h2\nBlack: Kh8, Re1, pawns on a6, g7, h7\n\nMy rook is on e1 (giving check was resolved by Kf2). Now I need to make my best move.\n\nThe key opportunity: g7-g8=Q (promotion)! The pawn on g7 can move to g8 and promote to a queen. Is this safe?\n\nLooking at the position:\n- White's bishop on b2 attacks along the b2-c3-d4-e5-f6-g7 diagonal. So the bishop attacks g7 but not g8 (g8 is a dark square, bishop is light-squared).\n- White's king is on f2, far from g8.\n- So g8 is safe for a queen!\n\nIf I play g7-g8=Q, I get a queen and likely win the game. But wait — I need to make sure the move is legal. The pawn on g7 can move to g8 (one square forward). There's nothing blocking. And g8 is not attacked by any White piece. So yes, g8=Q is legal and a winning move!\n\nBut wait — should I also consider other moves? Let me think about what else is available:\n\nLooking at the legal moves... actually I need to call get_legal_moves to see what's available. But based on the position, g8=Q seems like the best move.\n\nActually, let me also consider: after g8=Q, White has pieces that could attack the queen. But I'd have a queen vs a bishop and pawns, which is winning.\n\nLet me go with g8=Q.\n\nBut wait — I should also consider the rook. Maybe I should do something with the rook too. But promotion is the most immediate winning move.\n\nLet me also check: is there anything preventing g8=Q? Looking at the board:\n- Rank 8: `7k` → 7 empty (a8-g8), k(h8). So g8 is empty. The pawn on g7 can move to g8.\n- Is g8 attacked? White's bishop on b2 attacks g7 (light square diagonal). But g8 is a dark square, not attacked by the bishop. White's king on f2 attacks e1, e2, e3, f1, f3, g1, g2, g3 — not g8. So g8 is safe.\n\nYes, g8=Q is the winning move!",
+            "reasoning_details": [
+              {
+                "text": "White played Kf2. Now it's my turn as black (ply 54). Let me look at the position after Kf2:\n\nWhite: Kf2, Bb2, pawns on c3, c4, g2, h2\nBlack: Kh8, Re1, pawns on a6, g7, h7\n\nMy rook is on e1 (giving check was resolved by Kf2). Now I need to make my best move.\n\nThe key opportunity: g7-g8=Q (promotion)! The pawn on g7 can move to g8 and promote to a queen. Is this safe?\n\nLooking at the position:\n- White's bishop on b2 attacks along the b2-c3-d4-e5-f6-g7 diagonal. So the bishop attacks g7 but not g8 (g8 is a dark square, bishop is light-squared).\n- White's king is on f2, far from g8.\n- So g8 is safe for a queen!\n\nIf I play g7-g8=Q, I get a queen and likely win the game. But wait — I need to make sure the move is legal. The pawn on g7 can move to g8 (one square forward). There's nothing blocking. And g8 is not attacked by any White piece. So yes, g8=Q is legal and a winning move!\n\nBut wait — should I also consider other moves? Let me think about what else is available:\n\nLooking at the legal moves... actually I need to call get_legal_moves to see what's available. But based on the position, g8=Q seems like the best move.\n\nActually, let me also consider: after g8=Q, White has pieces that could attack the queen. But I'd have a queen vs a bishop and pawns, which is winning.\n\nLet me go with g8=Q.\n\nBut wait — I should also consider the rook. Maybe I should do something with the rook too. But promotion is the most immediate winning move.\n\nLet me also check: is there anything preventing g8=Q? Looking at the board:\n- Rank 8: `7k` → 7 empty (a8-g8), k(h8). So g8 is empty. The pawn on g7 can move to g8.\n- Is g8 attacked? White's bishop on b2 attacks g7 (light square diagonal). But g8 is a dark square, not attacked by the bishop. White's king on f2 attacks e1, e2, e3, f1, f3, g1, g2, g3 — not g8. So g8 is safe.\n\nYes, g8=Q is the winning move!",
+                "type": "reasoning.text",
+                "index": 0,
+                "format": "unknown"
+              }
+            ]
+          }
+        },
+        "finish_reason": "tool_calls",
+        "provider_specific_fields": {
+          "native_finish_reason": "tool_calls"
+        }
+      }
+    ],
+    "created": 1789437494,
+    "provider": "Novita",
+    "service_tier": null,
+    "system_fingerprint": null
+  }
+}

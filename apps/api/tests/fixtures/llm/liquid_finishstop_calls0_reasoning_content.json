@@ -1,0 +1,88 @@
+{
+  "name": "liquid_finishstop_calls0_reasoning_content",
+  "model": "liquid/lfm-2.5-2.6b:free",
+  "source": "live",
+  "note": "Recorded from production game 1cbf3a36, turn 7358, liquid/lfm-2.5-2.6b:free on an unnamed endpoint. finish_reason=stop, 278 completion tokens, 120 of them reasoning.",
+  "request": {
+    "model": "openrouter/liquid/lfm-2.5-2.6b:free",
+    "max_tokens": 8192,
+    "tool_choice": "auto",
+    "extra_body": {
+      "usage": {
+        "include": true
+      },
+      "provider": {
+        "only": [
+          "Liquid"
+        ],
+        "sort": "price",
+        "allow_fallbacks": true
+      },
+      "session_id": "game-1cbf3a36-4c47-453a-8a78-72f4f06d0f8d"
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "chatcmpl-tool-8b290dad3d0967c0",
+            "type": "function",
+            "function": {
+              "name": "make_move",
+              "arguments": "{\"move\": \"e5\"}"
+            }
+          }
+        ]
+      },
+      {
+        "name": "make_move",
+        "role": "tool",
+        "content": "{\"fen\": \"rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2\", \"ok\": true, \"played\": \"e5\", \"ply\": 2, \"uci\": \"e7e5\"}",
+        "tool_call_id": "chatcmpl-tool-8b290dad3d0967c0"
+      }
+    ],
+    "_trimmed": "8 messages in the real request; the last 2 are kept. The response is verbatim — that is what `replay()` returns and what the normaliser is tested against."
+  },
+  "response": {
+    "id": "gen-1789346354-yK7EYG5m2D66ILMPUCuO",
+    "model": "liquid/lfm-2.5-2.6b:free",
+    "usage": {
+      "cost": 0,
+      "total_tokens": 2672,
+      "prompt_tokens": 2394,
+      "completion_tokens": 278,
+      "prompt_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": null,
+        "video_tokens": 0,
+        "cached_tokens": 2288,
+        "cache_write_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "completion_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "video_tokens": null,
+        "reasoning_tokens": 120,
+        "accepted_prediction_tokens": null,
+        "rejected_prediction_tokens": null
+      }
+    },
+    "object": "chat.completion.chunk",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "I've played **e5** as Black. The position is now:\n\n```\n  h g f e d c b a\n1 R N B K Q B N R 1\n2 P P P . P P P P 2\n3 . . . . . . . . 3\n4 . . . P . . . . 4\n5 . . . . . . . . 5\n6 . . . . . . . . 6\n7 p p p p p p p p 7\n8 r n b k q b n r 8\n```\n\nIt's White's turn now (move 2). My move was e5, controlling the center and supporting the e-pawn push later. The game continues.",
+          "reasoning": "The move was successful. I've played e5 as Black. The board now shows the position after Black's move. Let me verify the current state and then provide a response. The move was e5, which is a natural developing move for Black (controlling the center and preparing to castle or develop further). The game is now at move 2 (after White's e4 and Black's e5).\n\nI should confirm the move was correctly made and then wait for the next turn. The system indicates the move was successful with \"ok\": true and \"played\": \"e5\"."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "created": 1789346355
+  }
+}

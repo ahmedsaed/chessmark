@@ -1,0 +1,88 @@
+{
+  "name": "dots-studio_finishstop_calls0_reasoning_content",
+  "model": "dots-studio/dots-3-note-preview:free",
+  "source": "live",
+  "note": "Recorded from production game cc095c52, turn 7611, dots-studio/dots-3-note-preview:free on an unnamed endpoint. finish_reason=stop, 64 completion tokens, 28 of them reasoning.",
+  "request": {
+    "model": "openrouter/dots-studio/dots-3-note-preview:free",
+    "max_tokens": 64000,
+    "tool_choice": "auto",
+    "extra_body": {
+      "usage": {
+        "include": true
+      },
+      "provider": {
+        "only": [
+          "AtlasCloud"
+        ],
+        "sort": "price",
+        "allow_fallbacks": true
+      },
+      "session_id": "game-cc095c52-81b5-4403-9237-c4548570f5b8"
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_9d9c475a066f4117a541aa16",
+            "type": "function",
+            "function": {
+              "name": "make_move",
+              "arguments": "{\"move\": \"e4\"}"
+            }
+          }
+        ]
+      },
+      {
+        "name": "make_move",
+        "role": "tool",
+        "content": "{\"fen\": \"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1\", \"ok\": true, \"played\": \"e4\", \"ply\": 1, \"uci\": \"e2e4\"}",
+        "tool_call_id": "call_9d9c475a066f4117a541aa16"
+      }
+    ],
+    "_trimmed": "6 messages in the real request; the last 2 are kept. The response is verbatim — that is what `replay()` returns and what the normaliser is tested against."
+  },
+  "response": {
+    "id": "gen-1789432778-HbaoqYgaGse3WnWqxuSH",
+    "model": "dots-studio/dots-3-note-preview:free",
+    "usage": {
+      "cost": 0,
+      "total_tokens": 2114,
+      "prompt_tokens": 2050,
+      "completion_tokens": 64,
+      "prompt_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": null,
+        "video_tokens": 0,
+        "cached_tokens": 1536,
+        "cache_write_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "completion_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "video_tokens": null,
+        "reasoning_tokens": 28,
+        "accepted_prediction_tokens": null,
+        "rejected_prediction_tokens": null
+      }
+    },
+    "object": "chat.completion.chunk",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "\n\nI've played 1. e4, opening the center and developing a pawn. Now it's black's turn — I'll wait to see their reply.",
+          "reasoning": "I've played e4. Now it's black's turn. I'll wait for the opponent's move by checking the board again next turn."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "created": 1789432779
+  }
+}

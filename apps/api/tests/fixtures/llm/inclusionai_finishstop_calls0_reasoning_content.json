@@ -1,0 +1,88 @@
+{
+  "name": "inclusionai_finishstop_calls0_reasoning_content",
+  "model": "inclusionai/ling-3.0-flash-sante:free",
+  "source": "live",
+  "note": "Recorded from production game 8692cba1, turn 7585, inclusionai/ling-3.0-flash-sante:free on an unnamed endpoint. finish_reason=stop, 743 completion tokens, 639 of them reasoning.",
+  "request": {
+    "model": "openrouter/inclusionai/ling-3.0-flash-sante:free",
+    "max_tokens": 32768,
+    "tool_choice": "auto",
+    "extra_body": {
+      "usage": {
+        "include": true
+      },
+      "provider": {
+        "only": [
+          "Novita"
+        ],
+        "sort": "price",
+        "allow_fallbacks": true
+      },
+      "session_id": "game-8692cba1-461a-450f-8dae-a68aced23c1e"
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_f6b62f6f97554fb49f698afe",
+            "type": "function",
+            "function": {
+              "name": "get_board",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      {
+        "name": "get_board",
+        "role": "tool",
+        "content": "{\"board\": \"  a b c d e f g h\\n8 r n b q k b n r 8\\n7 p p p p . p p p 7\\n6 . . . . . . . . 6\\n5 . . . . p . . . 5\\n4 . . . . P . . . 4\\n3 . . . . . N . . 3\\n2 P P P P . P P P 2\\n1 R N B Q K B . R 1\\n  a b c d e f g h\", \"castling_rights\": \"KQkq\", \"en_passant\": null, \"fen\": \"rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2\", \"halfmove_clock\": 1, \"in_check\": false, \"legal_move_count\": 29, \"material\": {\"balance\": 0, \"black\": 39, \"white\": 39}, \"move_number\": 2, \"ok\": true, \"plies_until_fifty_move_draw\": 99, \"repetition_count\": 1, \"side_to_move\": \"black\", \"you_are\": \"white\"}",
+        "tool_call_id": "call_f6b62f6f97554fb49f698afe"
+      }
+    ],
+    "_trimmed": "11 messages in the real request; the last 2 are kept. The response is verbatim — that is what `replay()` returns and what the normaliser is tested against."
+  },
+  "response": {
+    "id": "gen-1789431281-hCblKXFt4a0OhYfLiImx",
+    "model": "inclusionai/ling-3.0-flash-sante:free",
+    "usage": {
+      "cost": 0,
+      "total_tokens": 3544,
+      "prompt_tokens": 2801,
+      "completion_tokens": 743,
+      "prompt_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": null,
+        "video_tokens": 0,
+        "cached_tokens": 2432,
+        "cache_write_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "completion_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "video_tokens": null,
+        "reasoning_tokens": 639,
+        "accepted_prediction_tokens": null,
+        "rejected_prediction_tokens": null
+      }
+    },
+    "object": "chat.completion.chunk",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "I've played Nf3. Now it's black's turn. I'll wait for you to tell me black's next move before continuing.",
+          "reasoning": "I need to wait for the opponent to move. The system said \"Black played e5. It is your move as white. Ply 3.\" but then the get_board shows it's black's turn. Let me re-read...\n\nActually, looking at the flow: I made e4 (ply 1), then the user said \"Black played e5. It is your move as white. Ply 3.\" - but then I called Nf3 and it succeeded with ply 3. But then the get_board shows it's black's turn...\n\nWait, I think there's confusion. Let me re-read the conversation:\n\n1. User: \"It is your move as white. Ply 1.\"\n2. I called e4, success, ply 1.\n3. User: \"Black played e5. It is your move as white. Ply 3.\"\n4. I called Nf3, success, ply 3.\n5. Now get_board shows it's black's turn, ply 2... wait no, it says \"side_to_move\": \"black\"\n\nHmm, but the user said \"Ply 3\" and I played Nf3 as the 3rd ply. Now it's black's turn (ply 4). But the user message says \"Black played e5. It is your move as white. Ply 3.\" - this seems like they're telling me the position after black's response and asking me to move.\n\nBut I already moved Nf3 and it was accepted. Now I should wait for black to respond, or maybe the user expects me to continue?\n\nActually, I think the user's message was just updating me on the game state before I made my move. My Nf3 was accepted. Now it's black's turn. I should wait for the user to tell me what black played, or I could call get_board again to see the current state.\n\nActually, looking at the get_board result, it shows side_to_move is \"black\". So it's waiting for the opponent (black) to move. The user will presumably tell me black's next move.\n\nBut wait - the user said \"Black played e5. It is your move as white. Ply 3.\" and then I moved Nf3. Now the board shows it's black's turn. So I should just wait for the user to inform me of black's next move.\n\nHmm, but the user is expecting me to continue playing. Let me just wait for their next message about black's move. I don't need to make another move right now - it's black's turn.\n\nActually, I think the conversation flow is a bit mixed up. The user told me \"Black played e5. It is your move as white. Ply 3.\" - this was the prompt for ply 3 (my second move). I played Nf3. Now it should be black's turn (ply 4). \n\nI think I'm done for now - I made my move (Nf3) and it was accepted. I should just wait for the user to tell me black's response. But maybe I should call get_board to confirm the state?\n\nActually, I already called get_board and it shows it's black's turn. So I should just wait. Let me not make any more moves since it's not my turn yet."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "created": 1789431282
+  }
+}

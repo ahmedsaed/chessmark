@@ -235,3 +235,79 @@ def test_live_fixtures_report_a_provider_cost() -> None:
             assert extract_provider_cost(cassette.response) is not None, (
                 f"{cassette.name} has no provider cost — is `usage: {{include: true}}` still sent?"
             )
+
+
+# ================================================== the corpus, recorded from production
+
+
+class TestEveryRecordedShape:
+    """**Sixteen response shapes from five vendors, taken off real games.**
+
+    `agents/scripted.py` exercises the whole turn loop without a provider, which is what makes the
+    suite free — and it can only produce shapes somebody thought to write. Every parsing failure
+    that reached production was a shape nobody thought to write: `<dots_function_call>` markup,
+    a refusal worded *"The request is N tokens long"*, forty-four tokens of multilingual noise with
+    `finish_reason: stop`.
+
+    These do not stop the *next* unknown shape. They stop the known ones coming back, which is the
+    difference between finding something once and finding it twice. Recorded with
+    `make harvest-cassettes`.
+    """
+
+    def test_the_corpus_covers_more_than_one_vendor(self) -> None:
+        """A normaliser proven against one vendor is proven against one vendor. The shapes differ
+        by vendor — where reasoning lives, whether `content` is empty beside a tool call, what
+        `usage` is called — which is the entire reason this module exists."""
+        vendors = {c.model.split("/")[0] for c in load_all_cassettes() if c.is_live_recording}
+
+        assert len(vendors) >= 4, f"only {vendors} — the normaliser is barely being tested"
+
+    @pytest.mark.parametrize("name", cassette_names())
+    def test_a_recorded_response_yields_a_usable_turn(self, name: str) -> None:
+        """Beyond "does not raise": what the turn loop reads off it has to make sense.
+
+        A tool call with no name is unrunnable, a negative token count is unbillable, and both have
+        happened to somebody. The loop trusts these fields without re-checking them.
+        """
+        parsed = normalise_response(load_cassette(name).response)
+
+        for call in parsed.tool_calls:
+            assert call.name, f"{name} has a tool call with no name"
+            assert call.id, f"{name} has a tool call with no id — its result cannot be matched"
+        assert parsed.usage.completion >= 0
+        assert parsed.usage.cached <= parsed.usage.prompt
+
+    @pytest.mark.parametrize("name", cassette_names())
+    def test_a_recorded_response_says_why_it_stopped(self, name: str) -> None:
+        """`finish_reason` decides whether a truncation is the endpoint's ceiling or our own
+        `max_tokens`, and ADR-0024 turned a game on exactly that distinction — a model holding rook
+        and two bishops was scored a loss because the two were indistinguishable."""
+        parsed = normalise_response(load_cassette(name).response)
+
+        assert parsed.finish_reason, f"{name} does not say why it stopped"
+
+    def test_a_truncation_is_recorded_and_reads_as_one(self) -> None:
+        """`finish_reason: length` with no tool call is the shape ADR-0031 elides from the replayed
+        transcript: a fragment that reached no call has nothing to be load-bearing for, and
+        re-sending it made each retry harder than the attempt that failed."""
+        parsed = normalise_response(load_cassette("truncated_before_any_tool_call").response)
+
+        assert parsed.finish_reason == "length"
+        assert parsed.tool_calls == []
+
+    def test_several_tool_calls_in_one_response_all_survive(self) -> None:
+        """Each needs its own `tool` result or the transcript is refused for the rest of the game.
+        Dropping the second is silent at parse time and fatal a turn later."""
+        parsed = normalise_response(load_cassette("several_tool_calls_at_once").response)
+
+        assert len(parsed.tool_calls) > 1
+        assert len({call.id for call in parsed.tool_calls}) == len(parsed.tool_calls), (
+            "two calls sharing an id cannot both be answered"
+        )
+
+    def test_reasoning_beside_an_empty_content_is_not_read_as_silence(self) -> None:
+        """A model that reasons and then calls a tool sends `content: ""`. Reading that as "said
+        nothing" is how a turn nudges a model that was working — and four nudges forfeit a game."""
+        parsed = normalise_response(load_cassette("reasoning_then_tool_call_no_prose").response)
+
+        assert parsed.tool_calls, "the call is there whatever the content says"

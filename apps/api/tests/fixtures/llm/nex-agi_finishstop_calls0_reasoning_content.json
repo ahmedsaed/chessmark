@@ -1,0 +1,88 @@
+{
+  "name": "nex-agi_finishstop_calls0_reasoning_content",
+  "model": "nex-agi/nex-n2.5-mini:free",
+  "source": "live",
+  "note": "Recorded from production game 866bf1db, turn 7409, nex-agi/nex-n2.5-mini:free on an unnamed endpoint. finish_reason=stop, 124 completion tokens, 131 of them reasoning.",
+  "request": {
+    "model": "openrouter/nex-agi/nex-n2.5-mini:free",
+    "max_tokens": 64000,
+    "tool_choice": "auto",
+    "extra_body": {
+      "usage": {
+        "include": true
+      },
+      "provider": {
+        "only": [
+          "Nex AGI"
+        ],
+        "sort": "price",
+        "allow_fallbacks": true
+      },
+      "session_id": "game-866bf1db-55cb-41e9-a0dc-83e8c5fb7bac"
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_89c0cf3f4416421e85dcac13",
+            "type": "function",
+            "function": {
+              "name": "make_move",
+              "arguments": "{\"move\": \"e4\"}"
+            }
+          }
+        ]
+      },
+      {
+        "name": "make_move",
+        "role": "tool",
+        "content": "{\"fen\": \"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1\", \"ok\": true, \"played\": \"e4\", \"ply\": 1, \"uci\": \"e2e4\"}",
+        "tool_call_id": "call_89c0cf3f4416421e85dcac13"
+      }
+    ],
+    "_trimmed": "4 messages in the real request; the last 2 are kept. The response is verbatim — that is what `replay()` returns and what the normaliser is tested against."
+  },
+  "response": {
+    "id": "gen-1789347061-D06uoyeWTmwaRz7q7i62",
+    "model": "nex-agi/nex-n2.5-mini:free",
+    "usage": {
+      "cost": 0,
+      "total_tokens": 2113,
+      "prompt_tokens": 1989,
+      "completion_tokens": 124,
+      "prompt_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": null,
+        "video_tokens": 0,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "completion_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "video_tokens": null,
+        "reasoning_tokens": 131,
+        "accepted_prediction_tokens": null,
+        "rejected_prediction_tokens": null
+      }
+    },
+    "object": "chat.completion.chunk",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "White played **1. e4**.",
+          "reasoning": "\nWe need respond? User said ply1 call. Done. Need likely end turn. No more tool because make succeeded and prohibited calling again. Could say maybe nothing? In game tool context, final response perhaps concise. But if assistant final, turn ends. We need not call anything. We should perhaps not add prose? Yet every turn must call exactly once and succeeded. Final message can be empty? We need output. Usually after tool call, assistant final maybe \"White played 1.e4.\" But benchmark says stop there or sentence. Do so.\n"
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "created": 1789347061
+  }
+}

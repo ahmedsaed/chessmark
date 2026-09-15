@@ -1,0 +1,97 @@
+{
+  "name": "inclusionai_finishtool_calls_calls1",
+  "model": "inclusionai/ling-3.0-flash-fin:free",
+  "source": "live",
+  "note": "Recorded from production game cc095c52, turn 7696, inclusionai/ling-3.0-flash-fin:free on an unnamed endpoint. finish_reason=tool_calls, 15 completion tokens, 0 of them reasoning.",
+  "request": {
+    "model": "openrouter/inclusionai/ling-3.0-flash-fin:free",
+    "max_tokens": 32768,
+    "tool_choice": "auto",
+    "extra_body": {
+      "usage": {
+        "include": true
+      },
+      "provider": {
+        "only": [
+          "Novita"
+        ],
+        "sort": "price",
+        "allow_fallbacks": true
+      },
+      "session_id": "game-cc095c52-81b5-4403-9237-c4548570f5b8"
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "call_e4f3c8821d2c461c934a4b7e",
+            "type": "function",
+            "function": {
+              "name": "make_move",
+              "arguments": "{\"move\": \"cxb4\"}"
+            }
+          }
+        ]
+      },
+      {
+        "name": "make_move",
+        "role": "tool",
+        "content": "{\"fen\": \"r3k2r/2p3pp/p3p3/8/1p6/1P6/2PP1PPP/R1BQ1RK1 w kq - 0 15\", \"ok\": true, \"played\": \"cxb4\", \"ply\": 28, \"uci\": \"c5b4\"}",
+        "tool_call_id": "call_e4f3c8821d2c461c934a4b7e"
+      }
+    ],
+    "_trimmed": "124 messages in the real request; the last 2 are kept. The response is verbatim — that is what `replay()` returns and what the normaliser is tested against."
+  },
+  "response": {
+    "id": "gen-1789435379-JU5Stu4actO0xTCqsTlh",
+    "model": "inclusionai/ling-3.0-flash-fin:free",
+    "usage": {
+      "cost": 0,
+      "total_tokens": 15174,
+      "prompt_tokens": 15159,
+      "completion_tokens": 15,
+      "prompt_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": null,
+        "video_tokens": 0,
+        "cached_tokens": 15040,
+        "cache_write_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "completion_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "video_tokens": null,
+        "reasoning_tokens": 0,
+        "accepted_prediction_tokens": null,
+        "rejected_prediction_tokens": null
+      }
+    },
+    "object": "chat.completion.chunk",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": null,
+          "tool_calls": [
+            {
+              "id": "call_db1d7b0be3a64c948edb0c74",
+              "type": "function",
+              "function": {
+                "name": "make_move",
+                "arguments": "{\"move\": \"Be7\"}"
+              }
+            }
+          ]
+        },
+        "finish_reason": "tool_calls"
+      }
+    ],
+    "created": 1789435380
+  }
+}

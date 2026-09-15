@@ -188,6 +188,43 @@ and behind a fingerprint was the fix ([ADR-0032](adr/0032-the-leaderboard-is-sto
 A cached result needs a test that it **cannot be served stale** — `test_snapshot.py` asserts that a
 new game, a tampered fingerprint and an empty table all rebuild rather than publish an old number.
 
+## Assert the claim, not the change
+
+A test written against a *fix* can only assert the fix. ADR-0040 removed the `checkmate` flag from
+`get_legal_moves` and the test asserted `"checkmate" not in flags` — which is a restatement of the
+diff. The claim was *"a model cannot read the mate off the list"*, and the `#` was still in the SAN
+string: `Qxf7#`, one `#` among forty-five alphabetically sorted moves, and the model played it the
+first night it shipped.
+
+The rule that falls out: **a test for a rule about what a model can see scans the whole payload for
+the thing being withheld, not the field that was edited.** It generalises — testing the era
+*display* would have missed the matchmaker reading a completed round robin from a task nobody was
+playing (ADR-0043), which is the same mistake about a different subject.
+
+## The invariants are checked against games that were played
+
+`tests/agents/test_the_invariants_hold.py` plays games through the real turn loop with scripted
+models that behave the way real ones do — calling tools after moving, truncating with and without a
+tool call, going silent, repeating, playing illegal moves — and then asks the database the
+questions CLAUDE.md's invariants ask.
+
+It exists because every test in the suite asserts one thing about one path, and the failures that
+reached production were properties of a *whole game* that no single test was watching. The
+`max_closing_rounds` ordering bug corrupted **242 transcript rows across 14 seats** with `make
+check` green throughout; reintroducing it fails three tests in that file.
+
+A new invariant belongs there rather than in a test of its own.
+
+## The cassette corpus is recorded from production
+
+`make harvest-cassettes` walks recent games on the public API and records one cassette per distinct
+response *shape* — sixteen of them, across five vendors. `make harvest-cassettes ARGS="--game <id>"`
+reads one named game instead, for the shapes of something that has just broken.
+
+The scripted double can only produce shapes somebody thought to write, and every parsing failure
+that reached production was a shape nobody thought to write. The corpus does not prevent the next
+unknown one; it stops the known ones coming back.
+
 ## Writing a test that would have caught the bug
 
 The habit this codebase holds to: when a test is written for a fix, **verify it fails without the

@@ -1,0 +1,88 @@
+{
+  "name": "cohere_finishstop_calls0_reasoning_content",
+  "model": "cohere/north-mini-code:free",
+  "source": "live",
+  "note": "Recorded from production game 144825cc, turn 7298, cohere/north-mini-code:free on an unnamed endpoint. finish_reason=stop, 782 completion tokens, 498 of them reasoning.",
+  "request": {
+    "model": "openrouter/cohere/north-mini-code:free",
+    "max_tokens": 64000,
+    "tool_choice": "auto",
+    "extra_body": {
+      "usage": {
+        "include": true
+      },
+      "provider": {
+        "only": [
+          "Cohere"
+        ],
+        "sort": "price",
+        "allow_fallbacks": true
+      },
+      "session_id": "game-144825cc-3a6f-4955-a50c-54eeefea1907"
+    },
+    "messages": [
+      {
+        "role": "assistant",
+        "content": null,
+        "tool_calls": [
+          {
+            "id": "get_board_b1xbf8scfyrw",
+            "type": "function",
+            "function": {
+              "name": "get_board",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      {
+        "name": "get_board",
+        "role": "tool",
+        "content": "{\"board\": \"  a b c d e f g h\\n8 r . b q . r k . 8\\n7 p p p . . p p p 7\\n6 . . n . . n . . 6\\n5 . B . p . . . . 5\\n4 . . . . P . . . 4\\n3 . . Q . . N . . 3\\n2 P P P . . P P P 2\\n1 R . B . K . . R 1\\n  a b c d e f g h\", \"castling_rights\": \"KQ\", \"en_passant\": null, \"fen\": \"r1bq1rk1/ppp2ppp/2n2n2/1B1p4/4P3/2Q2N2/PPP2PPP/R1B1K2R w KQ - 2 9\", \"halfmove_clock\": 2, \"in_check\": false, \"legal_move_count\": 49, \"material\": {\"balance\": 0, \"black\": 35, \"white\": 35}, \"move_number\": 9, \"ok\": true, \"plies_until_fifty_move_draw\": 98, \"repetition_count\": 1, \"side_to_move\": \"white\", \"you_are\": \"white\"}",
+        "tool_call_id": "get_board_b1xbf8scfyrw"
+      }
+    ],
+    "_trimmed": "76 messages in the real request; the last 2 are kept. The response is verbatim — that is what `replay()` returns and what the normaliser is tested against."
+  },
+  "response": {
+    "id": "gen-1789344471-TWQ3JHX1SJZeESqh11FB",
+    "model": "cohere/north-mini-code:free",
+    "usage": {
+      "cost": 0,
+      "total_tokens": 8750,
+      "prompt_tokens": 7968,
+      "completion_tokens": 782,
+      "prompt_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": null,
+        "video_tokens": 0,
+        "cached_tokens": 0,
+        "cache_write_tokens": 0,
+        "cache_creation_tokens": 0
+      },
+      "completion_tokens_details": {
+        "text_tokens": null,
+        "audio_tokens": 0,
+        "image_tokens": 0,
+        "video_tokens": null,
+        "reasoning_tokens": 498,
+        "accepted_prediction_tokens": null,
+        "rejected_prediction_tokens": null
+      }
+    },
+    "object": "chat.completion.chunk",
+    "choices": [
+      {
+        "index": 0,
+        "message": {
+          "role": "assistant",
+          "content": "I've analyzed the position carefully. Now I need to make a strategic decision. The key points are:\n\n- Black's queen on d8 is under attack from my bishop on b5\n- Black's king is on g8 with an exposed rook on h8\n- I have the material advantage with Qd4 and Nxd5 trade possible\n\nGiven this configuration, I believe my strongest move is **Ne5**. This move:\n1. Regains material by recapturing on d5 with Nxe5\n2. Opens lines for my queen and bishop\n3. Puts pressure on black's queen on d8\n4. Develops my knight to a strong central square\n5. Gives me an initiative in the center\n\nLet me play Ne5 to regain the material advantage and activate my pieces.I've carefully analyzed this position and now I'll make a decisive move. **Ne5!**\n\nThis is the key move because:\n- It regains the material advantage by recapturing on d5, winning a pawn back\n- It opens the e-file for my queen to move to e7 (check!)\n- It activates my knight to a strong central square\n- It puts double pressure on black's queen with both bishop on b5 and knight on e5\n- It attacks black's rook on h8 and queen\n\nThis gives me a significant material and positional advantage while maintaining active piece play.",
+          "reasoning": "This is an interesting position after black's castling. Let me analyze the position:\n\nCurrent board after black castled:\n- White has Qd4, Nc3, Nf3, Bb5 (but looks like it moved to b5 already?)\n- Black has king on g8, queen on d8, rooks on a8 and h8?\n- Black has a pawn on d5 (which just moved)\n- White has bishop on b5 that captured something\n- White has knight on c3, another knight on f3\n- White has queen on d4\n- Black has a knight on c6 and f6, and there was also a knight on f6 that moved earlier?\n\nLooking at the position more carefully:\n- White's bishop is on b5 (originally from Bb4+)\n- White has Qd4, Nc3, Nf3\n- Black's king is on g8, queen on d8, rook on a8 and h8?\n- There's a black knight on c6 (originally from black's knight that moved earlier)\n- There's a black knight on f6\n\nThe position looks balanced but white has made some progress while black's king is still on g8 with exposed rook on h8.\n\nLet me think about white's best move. White has several options:\n1. Qd5? but might go to e5 forking king and queen\n2. Ne5? to regain material with Nxe5\n3. Bc6? to attack black's queen\n4. Nf6? dangerous capture but king safety concerns\n5. Rfe1? or Rde1 to activate rook\n6. Nxd5? recapture on d5\n\nLet me check some specific threats. Black's queen on d8 is under attack from white's bishop on b5. \n\nThe position now looks like a queen trade race situation. White's bishop on b5 gives check to black's queen on d8, creating a very delicate tactical situation. I'm considering moves that could challenge black's king while being careful about my own pieces.\n\nQf6 and Nd5 both threaten Qxd8, which would win black's queen. The bishop could also move to c6 or capture on d5. These are critical moves that could completely change the balance of the game.\n\nI'm weighing different strategic options, considering whether to go for the queen or try to gain more material. The bishop trade remains a key tactical element in this complex middle-game scenario."
+        },
+        "finish_reason": "stop"
+      }
+    ],
+    "created": 1789344471
+  }
+}
