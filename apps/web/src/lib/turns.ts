@@ -8,6 +8,7 @@
 
 import type {
   Colour,
+  EventType,
   GameEvent,
   LiveFrame,
   StreamNotice,
@@ -161,10 +162,16 @@ export interface StreamState {
  * turn — the only difference is that the record has not caught up.
  */
 export function liveTurn(frames: LiveFrame[]): TurnView | null {
+  /* **The last `turn` frame, and only what came after it.** A frame is a prediction, and a new
+     `turn` frame supersedes every prediction before it — the server deletes its buffer on one for
+     exactly that reason. The client keeps appending to a single list and clears it on a committed
+     `turn_started`, which a *resumed* turn never appends (ADR-0045): without this slice the rounds
+     of the attempt that was interrupted are drawn again beneath the retry, next to the committed
+     record of those same rounds. */
   const started = [...frames].reverse().find((frame) => frame.frame === "turn");
   if (started === undefined) return null;
 
-  const blocks = liveBlocks(frames);
+  const blocks = liveBlocks(frames.slice(frames.lastIndexOf(started) + 1));
   return {
     // Negative, so it can never collide with a real turn's key or sort after one.
     key: `live-${started.ply}`,
@@ -265,6 +272,81 @@ export function liveBlocks(frames: LiveFrame[]): TurnBlock[] {
 }
 
 /**
+ * Whether a committed event supersedes the frames that predicted it.
+ *
+ * Frames are a prediction of events that have not committed yet, so the moment the real ones
+ * arrive the prediction has to go or the panel draws each step twice. Two events say that:
+ *
+ * - `turn_started` is the first thing a turn appends, so a turn's own events never clear its own
+ *   frames and the next turn's arrival clears the last one's. `move_made` is the same boundary
+ *   reached from the other side.
+ * - `game_paused` is the boundary a **resumed** turn has instead. An interrupted turn commits the
+ *   rounds it completed and appends the pause ([ADR-0045]); the retry appends no second
+ *   `turn_started`, so without this the frames predicting those committed rounds stay on screen
+ *   beside the record of them.
+ *
+ * Here rather than in the hook because it is half of one rule — `withLiveTurn` is the other half,
+ * and a test can only hold the two to the same story if they are in the same place.
+ */
+export function supersedesFrames(type: EventType): boolean {
+  return type === "turn_started" || type === "move_made" || type === "game_paused";
+}
+
+/**
+ * The committed turns with the turn in flight drawn into them (ADR-0035).
+ *
+ * Three cases, and the middle one is the reason this is a function rather than a line:
+ *
+ * - **No committed row for the ply.** The turn is one transaction and its events do not exist
+ *   until it ends, so the live frames are all there is — append them as a row of their own.
+ * - **A committed row that has not moved.** An interrupted turn is written down with the rounds it
+ *   completed and the pause that stopped it (ADR-0045), and the retry *continues* it. There is one
+ *   turn here, so there is one header: the live rounds go beneath the ones already recorded.
+ *   Appending instead drew the same turn twice — a committed `0 steps · 1 pause` above a second
+ *   header with the resumed rounds under it — which is what a reader sees as the harness losing
+ *   track of whose turn it is.
+ * - **A committed row that moved.** The turn is finished. Its own events carry every step with
+ *   real sequence numbers, so keeping the prediction beside them would draw each step twice, once
+ *   as a guess and once as the record.
+ */
+export function withLiveTurn(turns: TurnView[], frames: LiveFrame[]): TurnView[] {
+  const provisional = liveTurn(frames);
+  if (provisional === null) return turns;
+
+  /* The *last* row for the ply: a ply can hold more than one when an attempt was recorded and
+     abandoned, and the turn in flight continues the newest of them, never the first. */
+  const index = turns.findLastIndex((turn) => turn.ply === provisional.ply);
+  if (index === -1) return [...turns, provisional];
+
+  const committed = turns[index];
+  if (committed.san !== null) return turns;
+
+  /* **The attempt the frames predicted may already be in the record.** A turn commits its rounds
+     all at once, so a round appearing in the row is proof that the attempt which produced it has
+     ended — and everything the frames were predicting is now written down. The rounds of the
+     attempt still running are the ones after the last pause: while there are none, the frames are
+     all there is to show; once there are any, keeping them would draw each of those rounds twice,
+     once as a guess and once as the record. */
+  const pause = committed.blocks.findLastIndex((block) => block.kind === "paused");
+  if (committed.blocks.slice(pause + 1).some((block) => block.kind !== "paused")) return turns;
+
+  const merged = [...turns];
+  merged[index] = {
+    ...committed,
+    /* The committed identity wins — its `key` and `seq` are what the timeline sorts and React
+       keys on, and swapping them mid-turn would throw away the DOM of the blocks already drawn. */
+    blocks: [...committed.blocks, ...provisional.blocks],
+    reasoning: [...committed.reasoning, ...provisional.reasoning],
+    output: [...committed.output, ...provisional.output],
+    tools: [...committed.tools, ...provisional.tools],
+    illegal: [...committed.illegal, ...provisional.illegal],
+    said: [...committed.said, ...provisional.said],
+    live: true,
+  };
+  return merged;
+}
+
+/**
  * Whether two renderings of one turn are the same, for the panel's memo.
  *
  * Here rather than beside the component because it is a rule about a turn, and because getting it
@@ -347,6 +429,20 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
   /** The turn an event belongs to, opening one if the last is closed or absent. */
   const turnFor = (event: GameEvent, payload: Record<string, unknown>): TurnView => {
     if (current && current.san === null) return current;
+
+    /* **A turn goes on past its move** ([ADR-0037]): the model is asked once more after
+       `make_move`, and what it does with that round is usually `say`. A message has no
+       `turn_started` of its own, so one from the closing round looked like an event belonging to
+       no turn and was given a fresh one — a second header for the seat that had just moved, with
+       the move divider stranded between the two halves of a single turn and the closing round
+       under a heading of its own.
+
+       **A model's turn only.** A person's turn really is over when they move — the next thing they
+       type may be minutes later and is a row of its own — but a model's closing round is the same
+       provider call, still open, still inside the turn. */
+    const player = asString(payload.player_id);
+    if (current && !current.human && player && current.playerId === player) return current;
+
     current = openTurn(event, payload);
     return current;
   };

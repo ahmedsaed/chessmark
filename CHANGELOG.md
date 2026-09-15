@@ -92,6 +92,29 @@ ladder, the record, the page — was built around that discard.
   publisher, so a game the reconciler resumed had its `game_resumed` committed to Postgres and sent
   to nobody — a spectator watching a game come back from a rate limit saw the stale "paused" notice
   until they reloaded.
+- **A turn that talked after it moved was drawn as two.** A turn does not end at `make_move` — the
+  model is asked once more and answers ([ADR-0037]) — and what it does with that round is usually
+  `say`. A message carries no `turn_started`, so it fell through to the branch that exists for a
+  *person's* actions, which have none either, and opened a turn nobody had started: one turn under
+  two headers for the same seat, with its own move divider between the halves. A model's closing
+  round is the same provider call and stays in the turn; a person's message after their move still
+  opens a row of its own, because their turn really did end when they moved.
+- **An interrupted turn was drawn twice.** Keeping the rounds a turn completed made it a committed
+  row that has not moved ([ADR-0045]), and the panel appended the turn in flight beside every such
+  row — so a paused turn showed two headers for one seat, `0 steps · 1 pause` above the resumed
+  rounds. The turn in flight now merges into the row it is continuing: one turn, one header, the
+  live rounds beneath the recorded ones.
+- **A paused turn's frames outlived the pause.** Live frames are cleared by `turn_started`, and a
+  resumed turn appends no second one — so after the pause committed, the frames predicting the
+  rounds it had just recorded stayed on screen beside them. A pause clears them, and `liveTurn`
+  reads only the frames after the newest `turn` frame, which is the boundary the server already
+  uses to clear its own buffer.
+- **Four kinds of event never reached the browser.** The SSE frames are named after their event
+  type, so each type has to be registered explicitly, and the list was written by hand:
+  `game_paused`, `game_resumed`, `output` and `compacted` were all added after it. Every one was
+  published, delivered and discarded, which is why a pause appeared only on a reload — a symptom
+  investigated twice as a publishing problem. The list is keyed by the type union now, so the next
+  one that is missing does not compile.
 - **A live turn sorted first instead of last.** `liveTurn` gives the in-progress turn `seq: -1` so
   its key cannot collide with a real one. Right for keys, wrong for order: a notice could never be
   placed above it, so a pause sat *under* the THINKING block while live and jumped *above* that turn
