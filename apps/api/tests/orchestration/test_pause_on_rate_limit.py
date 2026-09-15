@@ -829,7 +829,7 @@ class TestAHaltDoesNotSpendThePatience:
 PROVIDER = "Google AI Studio"
 
 
-def answers_then_limits() -> Any:
+def answers_then_limits(*, names_provider: bool = True) -> Any:
     """A seat that answers one call and is refused on the next — the shape the ladder got wrong.
 
     This is what a contended endpoint actually looks like from inside a turn: it serves the board
@@ -841,10 +841,10 @@ def answers_then_limits() -> Any:
     async def complete(**_kwargs: Any) -> Any:
         served["calls"] += 1
         if served["calls"] == 1:
-            # Named, because a cooldown is keyed by model *and* provider: the endpoint that
-            # answered has to be the one whose strikes are forgiven, and in production that name
-            # comes off the response the same way.
-            return {**step(tool_call("get_board")), "provider": PROVIDER}
+            response = step(tool_call("get_board"))
+            # A response that names the endpoint, or one that does not — production sends both,
+            # and the fix turned on getting the second right.
+            return {**response, "provider": PROVIDER} if names_provider else response
         raise SharedPoolError
 
     return complete
@@ -876,6 +876,40 @@ class TestTheLadderResetsOnAnAnsweredCall:
         assert paused[-1].payload["seconds"] == LADDER_SECONDS[0], (
             f"the endpoint answered a call and its refusal still rested "
             f"{paused[-1].payload['seconds']}s — the ladder kept strikes it had disproved"
+        )
+
+    async def test_an_answer_that_names_no_endpoint_still_credits_the_pinned_one(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """**The response does not always say who served it.**
+
+        OpenRouter puts `provider` at the top level of the response and for several models it is
+        simply absent — every call in production game `f129b600` came back with `provider: None`.
+        Crediting that answer to `model|*` left the strikes under `model|BaseTen`, where the
+        refusal had put them, and the ladder went on climbing across turns that had plainly
+        succeeded: 1800s on the first pause after a completed move. The seat's pin is the answer
+        when the response has none.
+        """
+        cooldown = ProviderCooldown(redis)
+        for _ in range(3):
+            await cooldown.note(SEATED_MODEL, provider=PROVIDER)
+
+        # On the *player*, which is where the worker reads routing from before each turn — the
+        # seat is pinned for the whole game (ADR-0015) and that pin is what the call went to.
+        await db.execute(
+            sa.update(Player)
+            .where(Player.game_id == game.game.id, Player.colour == "white")
+            .values(provider_routing={"only": [PROVIDER], "quantizations": []})
+        )
+        await db.commit()
+
+        worker = make_worker(answers_then_limits(names_provider=False), cooldown=cooldown)
+        assert (await worker.handle(game.first_job)).outcome == PAUSED
+
+        paused = await _events(db, game.game.id, EventType.GAME_PAUSED)
+        assert paused[-1].payload["seconds"] == LADDER_SECONDS[0], (
+            f"an answered call that named no endpoint rested {paused[-1].payload['seconds']}s — "
+            "its strikes were cleared under the wrong key"
         )
 
     async def test_a_turn_that_never_got_an_answer_still_escalates(

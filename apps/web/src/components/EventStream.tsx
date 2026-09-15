@@ -45,7 +45,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { sameTurnContent } from "@/lib/turns";
+import { collapseNoticeRuns, sameTurnContent } from "@/lib/turns";
 import type { Player, StreamNotice, ToolCallView, TurnBlock, TurnView } from "@/lib/types";
 
 type Filter = "all" | "moves-talk" | "talk" | "moves";
@@ -161,7 +161,7 @@ export function EventStream({
         else entries.splice(at, 0, item);
       }
     }
-    return entries;
+    return collapseNoticeRuns(entries);
   }, [visible, notices, filter]);
 
   /**
@@ -437,6 +437,13 @@ function Notice({ notice }: { notice: StreamNotice }) {
   return (
     <div role="status" className={`border px-3 py-2 font-mono text-[11px] leading-relaxed ${tone}`}>
       <span className="uppercase tracking-[0.1em]">{NOTICE_LABEL[notice.kind]}</span>
+      {/* The count is the fact a folded run exists to state: not that it paused, but that it
+          paused this many times for the same reason. */}
+      {notice.count && notice.count > 1 && (
+        <span className="ml-1.5 border border-current px-1 py-px text-[9px]">
+          ×{notice.count}
+        </span>
+      )}
       <span className="text-ink-dim"> · {notice.text}</span>
       {notice.resumeAfter && (
         <span className="text-ink-faint"> · retrying {relativeTime(notice.resumeAfter)}</span>

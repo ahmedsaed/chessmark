@@ -9,8 +9,14 @@
  */
 
 import { describe, expect, it } from "vitest";
-
-import { compactionText, foldEvents, liveTurn, sameTurnContent } from "@/lib/turns";
+import {
+  collapseNoticeRuns,
+  compactionText,
+  foldEvents,
+  liveTurn,
+  sameTurnContent,
+} from "@/lib/turns";
+import type { TimelineEntry } from "@/lib/turns";
 import type { EventType, GameEvent, LiveFrame } from "@/lib/types";
 
 let seq = 0;
@@ -857,5 +863,82 @@ describe("a compaction still reaches the stream", () => {
 
     expect(notices.map((n) => n.kind)).toEqual(["compacted"]);
     expect(notices[0].text).toContain("40");
+  });
+});
+
+describe("a run of identical pauses folds into one row", () => {
+  const pause = (seq: number, text: string, resumeAfter: string | null = null) => ({
+    kind: "notice" as const,
+    notice: { key: `p-${seq}`, seq, kind: "paused" as const, text, resumeAfter },
+  });
+  const resume = (seq: number, text: string) => ({
+    kind: "notice" as const,
+    notice: { key: `r-${seq}`, seq, kind: "resumed" as const, text, resumeAfter: null },
+  });
+  const aTurn = (seq: number): TimelineEntry => ({
+    kind: "turn",
+    turn: liveTurn([
+      { frame: "turn", player_id: "w", colour: "white", ply: seq, model: "m" },
+      { frame: "token", player_id: "w", kind: "reasoning", text: "thinking" },
+    ])!,
+  });
+
+  const RATE = "deepseek rate-limited by BaseTen (upstream_provider_shared_pool)";
+
+  it("counts the pauses and keeps the last one's wait", () => {
+    // Production `f129b600`: eight rows saying the same sentence, and the reader had to count
+    // them to learn the only thing the run says.
+    const folded = collapseNoticeRuns([
+      pause(1, RATE, "2026-09-15T16:00:00Z"),
+      resume(2, RATE),
+      pause(3, RATE, "2026-09-15T16:15:00Z"),
+      resume(4, RATE),
+      pause(5, RATE, "2026-09-15T16:45:00Z"),
+    ]);
+
+    expect(folded).toHaveLength(1);
+    const only = folded[0];
+    expect(only.kind).toBe("notice");
+    if (only.kind !== "notice") return;
+    expect(only.notice.count).toBe(3);
+    expect(only.notice.resumeAfter).toBe("2026-09-15T16:45:00Z");
+  });
+
+  it("keeps two different reasons apart", () => {
+    // A rate limit followed by a halt must never read as one thing that happened twice.
+    const HALT = "the harness is halted: the free-model allowance for the day is spent (429)";
+    const folded = collapseNoticeRuns([pause(1, RATE), resume(2, RATE), pause(3, HALT)]);
+
+    expect(folded.map((e) => (e.kind === "notice" ? e.notice.text : "turn"))).toEqual([
+      RATE,
+      RATE,
+      HALT,
+    ]);
+  });
+
+  it("does not fold across a turn", () => {
+    // A pause before a move and a pause after it are two different waits, and folding them would
+    // hide the move between.
+    const folded = collapseNoticeRuns([pause(1, RATE), aTurn(2), pause(3, RATE)]);
+
+    expect(folded).toHaveLength(3);
+    expect(folded.every((e) => e.kind !== "notice" || !e.notice.count)).toBe(true);
+  });
+
+  it("keeps a resume that ends a run", () => {
+    // It really did come back, and that is the last thing that happened.
+    const folded = collapseNoticeRuns([pause(1, RATE), resume(2, RATE)]);
+
+    expect(folded.map((e) => (e.kind === "notice" ? e.notice.kind : "turn"))).toEqual([
+      "paused",
+      "resumed",
+    ]);
+  });
+
+  it("leaves a single pause alone", () => {
+    const folded = collapseNoticeRuns([pause(1, RATE)]);
+
+    expect(folded).toHaveLength(1);
+    expect(folded[0].kind === "notice" && folded[0].notice.count).toBeUndefined();
   });
 });

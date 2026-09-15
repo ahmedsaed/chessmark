@@ -920,8 +920,18 @@ class LlmGateway:
             # most needs. `deepseek-v4.1-flash` on BaseTen went 60s → 300s → 900s this way without
             # ever having gone away.
             if self.on_success is not None:
+                # **The response does not always name the endpoint.** OpenRouter puts `provider` at
+                # the top level and for several models it simply is not there — every call in
+                # `f129b600` came back with `provider: None`. Crediting that answer to `model|*`
+                # left the strikes under `model|BaseTen`, where the refusal had put them, so the
+                # ladder went on climbing across turns that had plainly succeeded: 1800s on the
+                # first pause after a completed move. The seat's pin is the answer when the
+                # response has none — it is the endpoint the call was sent to.
+                served = completion.provider or (
+                    self.routing.only[0] if self.routing and self.routing.only else None
+                )
                 with contextlib.suppress(Exception):
-                    await self.on_success(model, completion.provider)
+                    await self.on_success(model, served)
             return completion
 
             # Unreachable: the loop either returns or raises.

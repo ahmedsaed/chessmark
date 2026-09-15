@@ -544,3 +544,81 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
   // A game that reached a result is not paused, whatever order the events arrived in.
   return { turns, moves, ended, notices, paused: ended ? null : paused };
 }
+
+
+/** One row of the stream: a turn, or a notice about the harness. */
+export type TimelineEntry =
+  | { kind: "turn"; turn: TurnView }
+  | { kind: "notice"; notice: StreamNotice };
+
+/**
+ * Fold a run of identical pauses into one row.
+ *
+ * A provider that keeps refusing produces pause, resume, pause, resume, for as long as it keeps
+ * refusing. `f129b600` filled its panel with eight of them carrying the same sentence, and a reader
+ * had to count rows to learn the only thing the run actually says: it was refused eight times, and
+ * here is when it tries next.
+ *
+ * **Only genuinely identical pauses fold.** The text is the whole reason — model, provider and
+ * limit source — so two pauses for different reasons keep their own rows and stay legible as two
+ * different problems. A rate limit followed by a halt must never read as one thing that happened
+ * nine times.
+ *
+ * **Only an adjacent run folds.** A pause before a move and a pause after it are separated by the
+ * turn between them, which breaks the run — so the panel still reads in order and a fold can never
+ * hide play. The `resumed` rows *inside* a run are absorbed, because "it came back and was refused
+ * again" is what the count already says; a `resumed` that ends a run survives, because then it
+ * really did come back and that is the last thing that happened.
+ */
+export function collapseNoticeRuns(entries: TimelineEntry[]): TimelineEntry[] {
+  const out: TimelineEntry[] = [];
+
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.kind !== "notice" || entry.notice.kind !== "paused") {
+      out.push(entry);
+      continue;
+    }
+
+    const text = entry.notice.text;
+    let last = entry.notice;
+    let count = 1;
+    let j = i + 1;
+
+    // Walk forward while the run continues: a resume, then the same pause again.
+    while (j < entries.length) {
+      const next = entries[j];
+      if (next.kind !== "notice") break;
+      if (next.notice.kind === "resumed") {
+        const after = entries[j + 1];
+        const continues =
+          after !== undefined &&
+          after.kind === "notice" &&
+          after.notice.kind === "paused" &&
+          after.notice.text === text;
+        if (!continues) break;
+        last = after.notice;
+        count += 1;
+        j += 2;
+        continue;
+      }
+      if (next.notice.kind === "paused" && next.notice.text === text) {
+        last = next.notice;
+        count += 1;
+        j += 1;
+        continue;
+      }
+      break;
+    }
+
+    // The *last* pause of the run is the one shown: its `resumeAfter` is the wait a reader is
+    // actually in, and the earlier ones have already elapsed.
+    out.push({
+      kind: "notice",
+      notice: count > 1 ? { ...last, key: entry.notice.key, count } : entry.notice,
+    });
+    i = j - 1;
+  }
+
+  return out;
+}
