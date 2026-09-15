@@ -15,25 +15,235 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-15
+
+### Added
+
+- **`docs/TOURNAMENTS.md` explains how a pool chooses its next game.** The file documented the
+  mechanisms one at a time and never laid them side by side, which is how a rest nested inside a
+  longer block went unnoticed for the life of the pool. The six-step tick, `Policy.BALANCE` as the
+  two nested minima it actually is, the four counts that are easy to confuse, and the four filters
+  in a table ordered by the timescale each one owns. The README caught up with deployment at the
+  same time: it described it as not yet built.
+- **The invariants are checked against games that were actually played.** CLAUDE.md lists twelve
+  rules that "if broken, quietly ruin the project" and nothing checked them against a finished game.
+  Every failure that reached production was a property of a *whole game* that no single test was
+  looking at: the dangling tool call corrupted 242 transcript rows across 14 seats with `make check`
+  green throughout. `agents/scripted.py` plugs in as the provider, so the real turn loop, referee,
+  tool dispatch and persistence all run with no network — and the models are behaviours taken from
+  real games, named for the model that produced them, because a scripted model invented from
+  imagination tests imagination. Alongside them, 16 recorded provider responses in
+  `tests/fixtures/llm/`, harvested from production by `scripts/harvest_cassettes.py`: the shapes
+  that have already cost us a game — vendor-framed tool calls, a context refusal phrased back to
+  front, truncation with and without a call — so each is found once rather than twice.
+- **`make dev-pull` replaces the local database with production's** and runs the branch's migrations
+  against it. Changes were being checked on the live site because there was no other way to see them
+  against real data — which is a bad way to find out that a standings table ranks every model first.
+- **The winner wears a ribbon.** A finished game's result was on the card's border and in the status
+  line, which is enough to read and not enough to *scan*. `winner_colour` is null until the game
+  ends and null for every draw, so the band appears exactly when there is a winner.
+- **A game says which event it belongs to.** A tournament game had no answer on its own page to
+  *why was this played*. The pairing row knows — it is the thing that points at the game — and the
+  left rail now carries one line naming the event and linking to it, with the round and the era in
+  its tooltip. Absent rather than empty for the games nobody scheduled, which is most of them. A
+  fuller card carrying both seats' places and records was built and withdrawn: it cost the rail its
+  whole height, and the tournament page shows the standings properly one click away.
+- **A web app manifest and a theme colour.** Without them the browser paints its own chrome white
+  above a page whose ground is `#16130e` and names a bookmark after the full `<title>`.
+  `themeColor` goes in a `viewport` export; Next.js 16 errors on it inside `metadata`.
+- **The metadata routes are tested.** `sitemap.ts` and `robots.ts` had no test and were never
+  executed by the suite, which is why the sitemap could lose a page in silence. `vitest` now
+  includes `src/app/**/*.test.ts` for these two routes; pages and components stay Playwright's.
+  `lib/site.ts` came out of the coverage exclusion at the same time — it holds real logic now, and
+  its nav predicates had never been run either.
+- **The turn prompt names the model's colour and the opponent's last move** ([ADR-0038]). It said
+  only *"It is your move. Ply 30."*, so the single statement of which side a model was playing sat
+  in the system prompt a hundred thousand tokens back, behind everything compaction had folded —
+  and models were observed announcing the wrong colour and correcting themselves off the board.
+  `get_board` was the **first call in 37 of 40 turns** of a real game, which is what that prompt
+  asks for. The position stays out: holding a board across eighty moves is part of what this
+  measures.
+- **A prompt version has two parts, and ratings span a minor bump** ([ADR-0038]). `v2` → `v2.1`
+  states the same task more conveniently — both new facts were already free through `get_board` and
+  `get_move_history` — so the 68 games played under `v2` keep counting. A major bump still means a
+  different task and still clears the board, as `v1` → `v2` did. Every game keeps its exact version
+  either way.
+- **A turn streams as it happens** ([ADR-0035]). A turn is one transaction, so it published
+  everything at the end: ply 8 of `e601f9af` spent **632 seconds** across six provider rounds
+  (1.1s, 10.9s, 29s, 220s, **369s**, 2.8s) and delivered all fifteen of its events stamped the same
+  millisecond. Rounds are now announced as they finish, on a channel that carries no `seq`, is
+  never stored, and is superseded by the committed events — so the record is byte-identical whether
+  anyone was watching or not. Measured: the first frame lands a full second ahead of the commit on
+  a turn with two half-second rounds.
+- **A spectator arriving mid-turn is caught up** ([ADR-0035]). Frames are fire-and-forget, so
+  somebody opening a game nine minutes into a round got the committed backfill — everything up to
+  the *last* turn — and then a still board until this one committed. They were the one reader the
+  streaming never reached. The in-flight turn's frames are kept and replayed on connect.
+- **Reasoning streams token by token** ([ADR-0035], [ADR-0036]). LiteLLM's streaming path reads
+  `reasoning_content` and drops `reasoning`, so on some providers the thinking would never arrive —
+  and an absent reasoning field is indistinguishable from a model that did not reason, which is
+  what made this the one invariant-3 breach nothing downstream could flag. It *is* distinguishable
+  from a **billed** one: a response reporting `reasoning_tokens > 0` and carrying no reasoning text
+  is one where the text existed, was paid for, and was not collected. That endpoint goes back to
+  whole responses on the spot, so the cost of learning it is one call. On by default;
+  `LLM_STREAM=false` stops asking providers to stream at all.
+- **The model catalogue now refreshes itself** (OPS-23). `refresh_catalogue.py` was written to be
+  scheduled — its own header says so — and nothing scheduled it: no cron container, no timer, no
+  workflow, no call from the API, the worker or the tournament runner. It ran when somebody
+  remembered the command. Prices set the spend caps *and* what a user is charged in credits
+  (ADR-0016) and endpoint rows are what the picker pins to, so every day nobody remembered was a
+  day of wrong caps, wrong prices and models the field could not play. A `catalogue` service now
+  runs it at start-up and every `CATALOGUE_INTERVAL_HOURS` (12); a failed pass is logged and the
+  loop waits, because a scheduled sweep that exits on a bad night is restarted straight back into
+  it. `--every HOURS` is on the script, so `make refresh-catalogue` and `./chessmark catalogue`
+  still run one pass and still fail loudly. It spends nothing — `/models` and `/endpoints` are
+  metadata, not inference.
+- **A tournament's schedule shows the latest ten matches and loads more on request.** A pool never
+  ends, so its schedule only grows — and it was rendered whole, several hundred linked rows in one
+  column, under the standings table that is the reason most people open the page. The order was
+  already newest-round-first, so the first page is the part worth seeing. Every pairing is already
+  on the page, so "load more" is a slice rather than a request: nothing to wait for and nothing to
+  fail. The count says `10 of 312` while there is more, and the button says how much is left.
+- **`tournament set <slug> --max-concurrent N`** changes a running event's concurrency without a
+  hand-written `UPDATE`. It was settable only at `create`, which is the one moment nobody knows the
+  right value — it depends on how many workers are up, how hot the free pools are that day, and how
+  long a turn is taking. Takes effect on the next tick; refuses zero, which is a pause that does not
+  say it is one. Omit the value to print the current setting. (OPS-22)
+
+### Changed
+
+- **The landing hero puts the board above the game it describes, on a phone.** The board came last
+  in the stacked order, so the position and the card naming its two seats were a screen apart — you
+  read "thinking…" under two model names with no board in sight. The headline still comes first,
+  which was itself a fix: a single column opened a phone on an unexplained chessboard.
+- **A model has one page** ([ADR-0034]). `/models/{slug}` and `/leaderboard/{slug}?q=` both headed
+  a panel `W / D / L` — one over every game, one over the ratable ones — and neither said so, so
+  which pair a reader saw depended on whether they arrived from the leaderboard or from the
+  tournament table. The contestant is a block on the model page now, one per precision, carrying
+  its rating and the ratable games behind it (BENCH-02). The old URL redirects, `?q=fp8` becoming
+  `#c-fp8`.
+- **The games that did not count are listed with the reason** ([ADR-0034], BENCH-10). The
+  difference between the two figures, itemised and grouped, on the page that prints both. Two
+  W/D/L figures are honest only if a reader can see what separates them.
+- **`players.last_prompt_characters` is recorded beside `last_prompt_tokens`** ([ADR-0033]), both
+  counted at the same instant on the same transcript. Their quotient converts our exact character
+  counts into that endpoint's tokens, which is what lets a tail budget be expressed in the unit the
+  window is in. It sizes a retention policy, never a safety bound: whether a request can be sent is
+  still decided by the provider's own count alone (AGENT-19).
+- **`FRAMING_TOKENS` is 4,096, not 256** ([ADR-0032]). One thousandth of a 256,000-token window is
+  a rounding error against a count taken on the provider's side; comparable agents hold back 4,096.
+- **An unmeasured call holds back the reserve rather than half the window** ([ADR-0032]). 25,600
+  against 256,000 where the old bound asked for 128,000. Half a window "always fits" for a game's
+  genuine first call and not for a resumed one carrying 227,440 tokens, which is how a request for
+  64,000 output reached an endpoint with 27,802 tokens of room.
+- **`context_exceeded` is a harness ending, not a forfeit** ([ADR-0031]). While the agent had no
+  way to shrink its own history, filling the window was something the model did; now that it folds
+  its history when the window fills, reaching the wall says our fold did not keep up. It leaves
+  the rated set and becomes resumable, following `timeout` and `truncated`.
+- **A new contestant starts at 1500 ± 500, and a rating above ± 110 is marked provisional**
+  ([ADR-0028]). Both numbers are Lichess's, adopted verbatim rather than tuned. The wider prior
+  suits a field the matchmaker keeps refreshing — it pairs whoever is *least* known, so most games
+  are spent on models that have barely played, and Glickman's 350 is calibrated for the opposite
+  population. The mark is the deviation said in a word; today it applies to **every** contestant,
+  at ± 150 to ± 265 over two to nine games each, which is the honest thing for the page to say.
+  Provisional never reorders anything, and an *unrated* entrant is not marked provisional. Ratings
+  are recomputed from the games on every request, so this needs no migration. (BENCH-12)
+- **A rating deviation is capped at the prior it started from** ([ADR-0029]). `_decay` widened it
+  every idle rating period and nothing bounded it, so it could pass the deviation we give a model
+  nobody has ever seen — and there is no state of knowledge worse than that. Measured, the breach
+  needed about 2,270 idle daily periods (six years), so nothing was close to it; the cap is
+  Glickman's own rule and the leaderboard is meant to outlive its first year. Applied to the
+  deviation a period *starts* from, so games still shrink it and a long-idle model stays
+  measurable. (BENCH-12)
+- **A pool's standings are ranked by a rating computed over that pool's games** ([ADR-0027]), with
+  the deviation as the tiebreak; a closed event still ranks by score, Sonneborn-Berger and direct
+  encounter. A pool has no fixed schedule, so its entrants finish unequal numbers of games and a sum
+  of points partly measures how many they were handed — in `pool-free`, two models that had won
+  every game they played stood third and fourth behind one that had lost a game in eight. Points and
+  W/D/L stay on the page; they no longer decide the order. The rating is that pool's own, so a place
+  cannot move because of a game played elsewhere, and the eligibility rules are unchanged by the
+  scope. An entrant with no ratable game reads `unrated` and sorts last, never 1500. (BENCH-11)
+
+### Removed
+
+- **`Form.games`, which nothing ever set** ([ADR-0041]). It was the second sort key of the pool's
+  home choice, and `_form()` builds every `Form` from a rating and a deviation — so it was `0` for
+  every entrant for the life of the pool, and ties among equally-unknown entrants were breaking
+  alphabetically. The count the new policy needs is derived from the meetings table instead, which
+  keeps one source rather than two that can disagree.
+- **`get_legal_moves` no longer says which move is mate** ([ADR-0040]). `check` and `checkmate`
+  flags were a one-ply search with terminal evaluation, run by us and handed to every seat on every
+  move of every turn — so no model playing Chessmark has ever had to *find* mate in one. Every
+  board client highlights legal moves and captures; none of them tells you which move wins. The
+  move is still listed, `capture` and `promotion` stay, and ADR-0002 still returns the full list on
+  every illegal move.
+- **The prompt states the silence forfeit** ([ADR-0040]). `MAX_NUDGES` has always been 3, so a
+  fourth reply with no tool call forfeits — and the prompt said nothing, while stating the
+  illegal-move forfeit in full. `1815a53f` ended `0-1` on it at ply 176. The nudge now counts down
+  too, as the repeated-call nudge already did. Invariant 12, in the place ADR-0020 missed.
+- **The prompt describes the turn loop it actually has** ([ADR-0037], [ADR-0040]). It still said
+  "you must end by calling `make_move`" after a turn started ending when the model stops, and
+  models read that as *move again*: in `9450f060` the black seat re-called `make_move` after
+  moving, every turn, and was answered `already_moved` every time.
+- **The ranked prompt names no tool the model cannot see** ([ADR-0040]). "Do not use the `say`
+  tool" introduced a tool already absent from the schema, which is how an invented tool call — and
+  then a forfeit — gets produced.
+
 ### Fixed
 
+- **The header's sign-in buttons wrapped to two lines on a phone.** At 390px the bar needed 336px of
+  335, and the account controls were the only shrinkable thing in it, so the browser took the space
+  from there and "sign in" broke across two lines — a 40px button in a row of 27px ones. Pressing
+  the nav trigger made it visibly worse, because "close" is six pixels wider than "menu": the button
+  was changing the height of its neighbours. The trigger is a drawn glyph now, fixed at 27px square
+  in both states; the account controls are `shrink-0` and `whitespace-nowrap`; and below 360px the
+  wordmark drops to the mark alone, because 95px of a 320px bar is a choice between the site's name
+  and its sign-in button.
+- **A pool kept pairing models that had left the free tier** ([ADR-0042]). `pool-free` reported 21
+  entrants against a free tier serving 16: a pool keeps a departed model's record and its rating,
+  correctly, but it must not keep handing it games. The field is narrowed before matchmaking rather
+  than inside it, and the standings mute a closed row and say why on hover — a reader looking at a
+  row that will never gain another game deserves to be told which kind of row it is.
+- **A game recorded a precision policy no seat was bound by** (#43). `create_match` wrote the game's
+  `provider_routing` before the seats resolved, so it could only carry the *request* — fp8 and above
+  — while `resolve_routing` then pinned one endpoint per seat and cleared the filter, because once
+  an endpoint is chosen the endpoint is the constraint ([ADR-0015]). Across `pool-free`, 15 seats in
+  14 games ran at `nvfp4` or `fp4` under a record saying they could not. Nothing was mis-rated — a
+  contestant is `(model, quantization)`, so `model@nvfp4` is its own row — but invariant 3 is about
+  a record a reader can trust, and this one was untrue.
+- **The event log was truncated rather than paged** (#44). `/games/{id}/events` took `after_seq` and
+  `limit`, and nothing followed the cursor: the web client asked for 5,000 rows once and took
+  whatever came back. A 147-ply game already writes 1,093 events and a reasoning-heavy one near the
+  300-ply cap crosses the cap — and replay rebuilds the board by walking moves from ply 0, so a
+  dropped row is a wrong position, not a short list. A first attempt appended the game's *terminal*
+  events to a truncated page so a reader at least learned how it ended; that looked continuous while
+  the middle was missing, and it broke the cursor, because the last `seq` in the page was no longer
+  the boundary of what had been read. One page per request now, a short page means the end, and the
+  client follows the cursor — the same contract `Last-Event-ID` already uses for SSE reconnect.
+- **A halt spent the patience of every game it paused** (#40). `_pause_for_halt` declines to abandon
+  during a halt, which is right — a halt is ours, and writing off a game over it would make a
+  harness bound into a finding about a player ([ADR-0019]). But skipping the check never stopped the
+  clock, so the hours we chose not to play were charged to the game and judged the moment the halt
+  lifted. The daily free allowance runs out most days and the halt holds to UTC midnight: ~8.3
+  hours, a third of the window. Halt spans are now subtracted, identified by the `halt_source` key
+  the payload already carries — a provider pause writes `limit_source`, so the two are disjoint by
+  construction and nothing has to match on the wording of a log line.
+- **A rest shorter than the strike that earns it rested nobody** (#41). 0.1.0 shipped a six-hour
+  rest for an entrant whose last two finished pairings both came to nothing. It could never fire: a
+  strike cannot be *earned* faster than a pairing can finish, a dead pairing takes the full 24-hour
+  `PAUSE_WINDOW` to finish, and the engagement bound shipped alongside it already holds that entrant
+  for a day from the same `ended_at`. Six hours expired eighteen hours inside a block already in
+  force, which is why `gemma-4-26b` took eight pairings and `glm-5.2` four while the mechanism meant
+  to stop them was running. The rest is now `PAUSE_WINDOW` itself — imported, not chosen, so the two
+  cannot drift apart — doubling per further strike to a cap of a week. Still skipped, not withdrawn:
+  the run is counted backwards from the most recent attempt and stops at the first that produced a
+  result, so one finished game restores full standing on the next tick.
 - **A pool with nothing rated yet ranked everybody first** . `_placed_by_rating` gives
   an unrated entrant the place of the first unrated one — which, when none are rated, is place 1
   for all of them, with the order falling through to the entrant key. Production showed it twice
   over: every past era, whose games are excluded from ratings by version and so can never have one,
   and `pool-free` itself between an era opening and its first ratable game finishing. An empty
   ratings map and no ratings at all describe the same table, so it now falls back to points.
-
-### Added
-
-- **A turn says when the model folded its own history** . A compaction was already a
-  notice in the stream, because folding changes what the model can see from there on — but a notice
-  sits *between* turns, so it answered "what happened" and not "to which turn". The step count now
-  carries a `compacted` marker, counted rather than flagged because a long turn can fold twice.
-
-
-### Fixed
-
 - **The site shipped with Vercel's logo as its favicon.** `app/favicon.ico` was the one
   `create-next-app` wrote in Phase 0 and nothing ever replaced it, so every tab, bookmark and
   search result carried another company's mark. It is now the site's own — the 3×3 checker
@@ -57,20 +267,6 @@ file is only the record of *what shipped when*.
   its slug, and an era is a view of one event ([ADR-0043]) rather than a page of its own. It is
   deliberately *not* on the root layout — inherited, a canonical there marks the whole site a
   duplicate of `/`.
-
-### Added
-
-- **A web app manifest and a theme colour.** Without them the browser paints its own chrome white
-  above a page whose ground is `#16130e` and names a bookmark after the full `<title>`.
-  `themeColor` goes in a `viewport` export; Next.js 16 errors on it inside `metadata`.
-- **The metadata routes are tested.** `sitemap.ts` and `robots.ts` had no test and were never
-  executed by the suite, which is why the sitemap could lose a page in silence. `vitest` now
-  includes `src/app/**/*.test.ts` for these two routes; pages and components stay Playwright's.
-  `lib/site.ts` came out of the coverage exclusion at the same time — it holds real logic now, and
-  its nav predicates had never been run either.
-
-### Fixed
-
 - **`get_legal_moves` was still naming the mating move** ([ADR-0042]). ADR-0040 removed the `check`
   and `checkmate` flags and left the same facts in the SAN string — and a `#` in an alphabetically
   sorted list is easier to pattern-match than the structured flag was. From `1cbf3a36`, the first
@@ -92,8 +288,6 @@ file is only the record of *what shipped when*.
   scoped to one, without which a new era would open convinced every pair had already played.
   Concurrency is not scoped: a running game costs an allowance whichever era scheduled it. The
   tournament page shows the era being played and offers the rest.
-
-
 - **The tournament runner finds its own work** (OPS-24). The long-running container ticked
   whichever slug `TOURNAMENT_SLUG` named, so `tournament create` produced an event nothing would
   ever tick and `tournament abandon` left it ticking a corpse. Both failures are silent — the pool
@@ -102,8 +296,6 @@ file is only the record of *what shipped when*.
   to be one CLI command. It now discovers every unfinished event each pass, so two pools can run
   side by side and `create` / `pause` / `resume` / `abandon` are the whole interface. `run <slug>`
   still ticks exactly one.
-
-
 - **A pool balances its pairings** ([ADR-0041]). The matchmaker asked "whose next game teaches us
   most" — highest rating deviation, nearest-rated opponent — which has no fairness term at all.
   After 123 pairings `pool-free` had **44% pair coverage**, one entrant on 25 pairings and another
@@ -112,36 +304,6 @@ file is only the record of *what shipped when*.
   a greedy incremental round robin that needs no schedule, so it survives a field that changes with
   the catalogue. Simulated over 19 entrants and 800 pairings, coverage goes 68% → **100%** and the
   busiest entrant drops from 35% of all games to 12%. `Policy.INFORMATION` is still selectable.
-
-### Removed
-
-- **`Form.games`, which nothing ever set** ([ADR-0041]). It was the second sort key of the pool's
-  home choice, and `_form()` builds every `Form` from a rating and a deviation — so it was `0` for
-  every entrant for the life of the pool, and ties among equally-unknown entrants were breaking
-  alphabetically. The count the new policy needs is derived from the meetings table instead, which
-  keeps one source rather than two that can disagree.
-
-
-- **`get_legal_moves` no longer says which move is mate** ([ADR-0040]). `check` and `checkmate`
-  flags were a one-ply search with terminal evaluation, run by us and handed to every seat on every
-  move of every turn — so no model playing Chessmark has ever had to *find* mate in one. Every
-  board client highlights legal moves and captures; none of them tells you which move wins. The
-  move is still listed, `capture` and `promotion` stay, and ADR-0002 still returns the full list on
-  every illegal move.
-- **The prompt states the silence forfeit** ([ADR-0040]). `MAX_NUDGES` has always been 3, so a
-  fourth reply with no tool call forfeits — and the prompt said nothing, while stating the
-  illegal-move forfeit in full. `1815a53f` ended `0-1` on it at ply 176. The nudge now counts down
-  too, as the repeated-call nudge already did. Invariant 12, in the place ADR-0020 missed.
-- **The prompt describes the turn loop it actually has** ([ADR-0037], [ADR-0040]). It still said
-  "you must end by calling `make_move`" after a turn started ending when the model stops, and
-  models read that as *move again*: in `9450f060` the black seat re-called `make_move` after
-  moving, every turn, and was answered `already_moved` every time.
-- **The ranked prompt names no tool the model cannot see** ([ADR-0040]). "Do not use the `say`
-  tool" introduced a tool already absent from the schema, which is how an invented tool call — and
-  then a forfeit — gets produced.
-
-### Fixed
-
 - **A draw by agreement between two models was unreachable** ([ADR-0040]). `offer_draw` wrote no
   event and told the opponent nothing; only the human path ever recorded an offer. There was no
   `accept_draw` at all, so `Termination.AGREED_DRAW` could not happen in a ranked game, while the
@@ -149,24 +311,6 @@ file is only the record of *what shipped when*.
   position — right for a human, who does not move after offering, and wrong for a model, which
   must, so an offer lapsed one ply before the opponent could see it. It now lapses when the
   *recipient* moves, which is what a decline is over a board.
-
-### Added
-
-- **The turn prompt names the model's colour and the opponent's last move** ([ADR-0038]). It said
-  only *"It is your move. Ply 30."*, so the single statement of which side a model was playing sat
-  in the system prompt a hundred thousand tokens back, behind everything compaction had folded —
-  and models were observed announcing the wrong colour and correcting themselves off the board.
-  `get_board` was the **first call in 37 of 40 turns** of a real game, which is what that prompt
-  asks for. The position stays out: holding a board across eighty moves is part of what this
-  measures.
-- **A prompt version has two parts, and ratings span a minor bump** ([ADR-0038]). `v2` → `v2.1`
-  states the same task more conveniently — both new facts were already free through `get_board` and
-  `get_move_history` — so the 68 games played under `v2` keep counting. A major bump still means a
-  different task and still clears the board, as `v1` → `v2` did. Every game keeps its exact version
-  either way.
-
-### Fixed
-
 - **Two repairs for the games the above left behind.** `repair-transcripts` gained the mirror of
   its existing rule — an assistant row whose `tool_calls` nothing answered, which every provider
   refuses and which no resume can clear — so a game abandoned on one can be reopened.
@@ -199,47 +343,6 @@ file is only the record of *what shipped when*.
   would have rescued the turn never ran. The two wordings state their numbers in opposite orders,
   so both now use named groups — and a size refusal nothing can parse is logged rather than
   silently abstained on.
-
-
-### Added
-
-- **A turn streams as it happens** ([ADR-0035]). A turn is one transaction, so it published
-  everything at the end: ply 8 of `e601f9af` spent **632 seconds** across six provider rounds
-  (1.1s, 10.9s, 29s, 220s, **369s**, 2.8s) and delivered all fifteen of its events stamped the same
-  millisecond. Rounds are now announced as they finish, on a channel that carries no `seq`, is
-  never stored, and is superseded by the committed events — so the record is byte-identical whether
-  anyone was watching or not. Measured: the first frame lands a full second ahead of the commit on
-  a turn with two half-second rounds.
-- **A spectator arriving mid-turn is caught up** ([ADR-0035]). Frames are fire-and-forget, so
-  somebody opening a game nine minutes into a round got the committed backfill — everything up to
-  the *last* turn — and then a still board until this one committed. They were the one reader the
-  streaming never reached. The in-flight turn's frames are kept and replayed on connect.
-- **Reasoning streams token by token** ([ADR-0035], [ADR-0036]). LiteLLM's streaming path reads
-  `reasoning_content` and drops `reasoning`, so on some providers the thinking would never arrive —
-  and an absent reasoning field is indistinguishable from a model that did not reason, which is
-  what made this the one invariant-3 breach nothing downstream could flag. It *is* distinguishable
-  from a **billed** one: a response reporting `reasoning_tokens > 0` and carrying no reasoning text
-  is one where the text existed, was paid for, and was not collected. That endpoint goes back to
-  whole responses on the spot, so the cost of learning it is one call. On by default;
-  `LLM_STREAM=false` stops asking providers to stream at all.
-
-
-One model was described by two pages, and the numbers on them disagreed.
-
-### Changed
-
-- **A model has one page** ([ADR-0034]). `/models/{slug}` and `/leaderboard/{slug}?q=` both headed
-  a panel `W / D / L` — one over every game, one over the ratable ones — and neither said so, so
-  which pair a reader saw depended on whether they arrived from the leaderboard or from the
-  tournament table. The contestant is a block on the model page now, one per precision, carrying
-  its rating and the ratable games behind it (BENCH-02). The old URL redirects, `?q=fp8` becoming
-  `#c-fp8`.
-- **The games that did not count are listed with the reason** ([ADR-0034], BENCH-10). The
-  difference between the two figures, itemised and grouped, on the page that prints both. Two
-  W/D/L figures are honest only if a reader can see what separates them.
-
-### Fixed
-
 - **The two wall-clock latency tests are deleted** (NFR-01, NFR-02). They held an in-process p95
   against a fixed budget, so what they measured was the machine running them: a run with a **5.7 ms
   median** and a **329 ms p95** failed a pull request that changed no Python. It was the third time
@@ -276,10 +379,6 @@ One model was described by two pages, and the numbers on them disagreed.
   fragment arrives, so a model opening with a newline drew an empty bordered box that read as "the
   model wrote: (nothing)".
 - **A model page died on a payload missing a field** (UI-07). `Object.values(model.rated_games)`
-  throws when the API has not been redeployed alongside the web tier, and the whole page became
-  *"That did not load."* rather than degrading to the record it could still render. A rolling
-  deploy makes that window real every time. Both new fields are optional now and default to empty.
-- **A model page died on a payload missing a field** (UI-07). `Object.values(model.rated_games)`
   throws, and the page became *"That did not load."* rather than degrading to the record it could
   still render — which is what the whole page did whenever the API had not been redeployed
   alongside the web tier. A rolling deploy makes that window real every time, and the browser suite
@@ -298,9 +397,6 @@ One model was described by two pages, and the numbers on them disagreed.
   the aggregates per request without sharing a scan — the cost ADR-0032 had just removed from the
   leaderboard, reintroduced on a route nothing measured. It reads the stored run now, and a
   query-count test holds it there.
-
-### Fixed
-
 - **What compaction keeps is bounded by size, not message count** ([ADR-0033]). Measured on two
   real games under the same twelve-message cap: `10fc99f0` kept 12 messages totalling 606,376
   characters — about 210,000 tokens of a 256,000-token window — while `545dc41a` kept 11 totalling
@@ -320,19 +416,6 @@ One model was described by two pages, and the numbers on them disagreed.
   none of ~7,800. The figure was carried to the next turn and stopped the seat before it made a
   call. There is no honest recovery — no client-side count is trustworthy — so the game is
   abandoned and the endpoint is named. Nobody is forfeited (ADR-0019).
-
-### Changed
-
-- **`players.last_prompt_characters` is recorded beside `last_prompt_tokens`** ([ADR-0033]), both
-  counted at the same instant on the same transcript. Their quotient converts our exact character
-  counts into that endpoint's tokens, which is what lets a tail budget be expressed in the unit the
-  window is in. It sizes a retention policy, never a safety bound: whether a request can be sent is
-  still decided by the provider's own count alone (AGENT-19).
-
-Three games survived the ADR-0031 fixes and were traced to three separate pieces of arithmetic.
-
-### Fixed
-
 - **The reactive compaction rung compacts against the prompt, not the whole request**
   ([ADR-0032]). An endpoint's refusal reports a total that includes the `max_tokens` *we* asked it
   to reserve, and passing that on charged our own output request against the transcript a second
@@ -349,22 +432,6 @@ Three games survived the ADR-0031 fixes and were traced to three separate pieces
   compaction inside a failing turn is rolled back with it and the next attempt sends the same
   bytes. On a context-length rejection the worker now elides stale tool output in a session of its
   own and requeues once — trim-only, because folding needs the provider that just refused us.
-
-### Changed
-
-- **`FRAMING_TOKENS` is 4,096, not 256** ([ADR-0032]). One thousandth of a 256,000-token window is
-  a rounding error against a count taken on the provider's side; comparable agents hold back 4,096.
-- **An unmeasured call holds back the reserve rather than half the window** ([ADR-0032]). 25,600
-  against 256,000 where the old bound asked for 128,000. Half a window "always fits" for a game's
-  genuine first call and not for a resumed one carrying 227,440 tokens, which is how a request for
-  64,000 output reached an endpoint with 27,802 tokens of room.
-
-Two audits of the live `pool-free` event. The first found three rating problems; the second
-followed 17 abandoned pairings of 65 back to a turn loop that was refilling its own context faster
-than compaction could empty it.
-
-### Fixed
-
 - **A turn may no longer inflate its own context** ([ADR-0031]). A reply cut off by the endpoint
   before it reached a tool call is now elided from the *replayed* transcript — the message keeps
   its place, role and structure, and carries a placeholder instead of the fragment. Measured on
@@ -412,71 +479,6 @@ than compaction could empty it.
 - **A reasoning bubble is bounded.** Degenerate output — three thousand characters of multilingual
   noise and eighty consecutive newlines, from a model whose serving stack collapsed mid-game —
   rendered at full height and pushed the rest of the conversation out of the column.
-- **The event log never loses its ending.** `/games/{id}/events` takes rows from the front, which
-  replay needs, so a game longer than the cap dropped its tail. `a59a388e` already emits 1,093
-  events over 147 plies.
-
-### Changed
-
-- **`context_exceeded` is a harness ending, not a forfeit** ([ADR-0031]). While the agent had no
-  way to shrink its own history, filling the window was something the model did; now that it folds
-  its history when the window fills, reaching the wall says our fold did not keep up. It leaves
-  the rated set and becomes resumable, following `timeout` and `truncated`.
-
-
-- **A new contestant starts at 1500 ± 500, and a rating above ± 110 is marked provisional**
-  ([ADR-0028]). Both numbers are Lichess's, adopted verbatim rather than tuned. The wider prior
-  suits a field the matchmaker keeps refreshing — it pairs whoever is *least* known, so most games
-  are spent on models that have barely played, and Glickman's 350 is calibrated for the opposite
-  population. The mark is the deviation said in a word; today it applies to **every** contestant,
-  at ± 150 to ± 265 over two to nine games each, which is the honest thing for the page to say.
-  Provisional never reorders anything, and an *unrated* entrant is not marked provisional. Ratings
-  are recomputed from the games on every request, so this needs no migration. (BENCH-12)
-- **A rating deviation is capped at the prior it started from** ([ADR-0029]). `_decay` widened it
-  every idle rating period and nothing bounded it, so it could pass the deviation we give a model
-  nobody has ever seen — and there is no state of knowledge worse than that. Measured, the breach
-  needed about 2,270 idle daily periods (six years), so nothing was close to it; the cap is
-  Glickman's own rule and the leaderboard is meant to outlive its first year. Applied to the
-  deviation a period *starts* from, so games still shrink it and a long-idle model stays
-  measurable. (BENCH-12)
-- **A pool's standings are ranked by a rating computed over that pool's games** ([ADR-0027]), with
-  the deviation as the tiebreak; a closed event still ranks by score, Sonneborn-Berger and direct
-  encounter. A pool has no fixed schedule, so its entrants finish unequal numbers of games and a sum
-  of points partly measures how many they were handed — in `pool-free`, two models that had won
-  every game they played stood third and fourth behind one that had lost a game in eight. Points and
-  W/D/L stay on the page; they no longer decide the order. The rating is that pool's own, so a place
-  cannot move because of a game played elsewhere, and the eligibility rules are unchanged by the
-  scope. An entrant with no ratable game reads `unrated` and sorts last, never 1500. (BENCH-11)
-
-### Added
-
-- **The model catalogue now refreshes itself** (OPS-23). `refresh_catalogue.py` was written to be
-  scheduled — its own header says so — and nothing scheduled it: no cron container, no timer, no
-  workflow, no call from the API, the worker or the tournament runner. It ran when somebody
-  remembered the command. Prices set the spend caps *and* what a user is charged in credits
-  (ADR-0016) and endpoint rows are what the picker pins to, so every day nobody remembered was a
-  day of wrong caps, wrong prices and models the field could not play. A `catalogue` service now
-  runs it at start-up and every `CATALOGUE_INTERVAL_HOURS` (12); a failed pass is logged and the
-  loop waits, because a scheduled sweep that exits on a bad night is restarted straight back into
-  it. `--every HOURS` is on the script, so `make refresh-catalogue` and `./chessmark catalogue`
-  still run one pass and still fail loudly. It spends nothing — `/models` and `/endpoints` are
-  metadata, not inference.
-
-- **A tournament's schedule shows the latest ten matches and loads more on request.** A pool never
-  ends, so its schedule only grows — and it was rendered whole, several hundred linked rows in one
-  column, under the standings table that is the reason most people open the page. The order was
-  already newest-round-first, so the first page is the part worth seeing. Every pairing is already
-  on the page, so "load more" is a slice rather than a request: nothing to wait for and nothing to
-  fail. The count says `10 of 312` while there is more, and the button says how much is left.
-
-- **`tournament set <slug> --max-concurrent N`** changes a running event's concurrency without a
-  hand-written `UPDATE`. It was settable only at `create`, which is the one moment nobody knows the
-  right value — it depends on how many workers are up, how hot the free pools are that day, and how
-  long a turn is taking. Takes effect on the next tick; refuses zero, which is a pause that does not
-  say it is one. Omit the value to print the current setting. (OPS-22)
-
-### Fixed
-
 - **The reconciler reads the halt's scope instead of standing down for any halt** ([ADR-0030]).
   It asked `halt.active()` once and returned, which was right while a halt was global and wrong the
   moment it had one: under OpenRouter's daily free-model cap **no paid game could be rescued at
@@ -556,6 +558,8 @@ Ratings recompute from each game's termination, so historical truncations leave 
 deploy — no backfill and no migration. Run `./chessmark repair-forfeits` after deploying to clear
 flags the old code wrote.
 
+[ADR-0015]: docs/adr/0015-quantization-as-identity-and-pinned-endpoints.md
+[ADR-0019]: docs/adr/0019-harness-bounds-are-not-findings.md
 [ADR-0024]: docs/adr/0024-endpoint-output-ceilings-are-not-findings.md
 [ADR-0025]: docs/adr/0025-finishing-a-game-beats-starting-one.md
 [ADR-0026]: docs/adr/0026-a-repeated-question-gets-a-different-answer.md
@@ -576,4 +580,5 @@ flags the old code wrote.
 [ADR-0041]: docs/adr/0041-a-pool-balances-its-pairings.md
 [ADR-0042]: docs/adr/0042-the-notation-was-still-analysing-the-position.md
 [ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
+[0.2.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0
