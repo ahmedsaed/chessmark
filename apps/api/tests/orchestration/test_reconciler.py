@@ -531,3 +531,198 @@ async def test_a_lifted_halt_is_read_before_the_sweep_decides(
 
     assert report.unhalted
     assert report.resumed == [str(game.game.id)], "resumed on the same tick, not the next"
+
+
+# ============================================== a held game says what is holding it (prod, 15h)
+
+
+async def _halt_events(db: AsyncSession, game_id: Any) -> list[GameEvent]:
+    rows = await db.scalars(
+        sa.select(GameEvent)
+        .where(GameEvent.game_id == game_id, GameEvent.type == EventType.GAME_PAUSED)
+        .order_by(GameEvent.seq)
+    )
+    return [r for r in rows if "halt_source" in (r.payload or {})]
+
+
+async def test_a_game_held_behind_a_halt_says_so(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, redis: Any
+) -> None:
+    """**The reason on the page stopped being true and nothing replaced it.**
+
+    `_pause_for_halt` writes one notice per pause and returns early when the game is already
+    paused, so a game holding a *provider* pause when the allowance ran out was never told. In
+    production `9b4bced5` sat fifteen hours reading "rate-limited by Google AI Studio" — answered
+    within the hour — while the halt that was actually holding it appeared nowhere a reader could
+    look.
+    """
+    await _seat_models(db, game.game.id, "vendor/model:free")
+    await _paused_and_due(db, game.game.id)
+
+    halt = Halt(redis)
+    await halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
+
+    await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+
+    db.expunge_all()
+    held = await db.get(Game, game.game.id)
+    assert held is not None
+    assert held.pause_reason is not None
+    assert "allowance" in held.pause_reason, (
+        f"the page still reads {held.pause_reason!r}, which is not what it is waiting for"
+    )
+
+    events = await _halt_events(db, game.game.id)
+    assert len(events) == 1
+    assert events[0].payload["halt_scope"] == SCOPE_FREE
+    assert "Google AI Studio" in str(events[0].payload["previous_reason"]), (
+        "the provider pause was real and should not be erased by the halt that followed it"
+    )
+
+
+async def test_it_is_said_once_not_once_a_tick(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, redis: Any
+) -> None:
+    """The sweep runs on a timer. Without the stored reason as the flag this appends an event a
+    minute for as long as the halt stands — and a halt stands for up to a UTC day."""
+    await _seat_models(db, game.game.id, "vendor/model:free")
+    await _paused_and_due(db, game.game.id)
+
+    halt = Halt(redis)
+    await halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
+
+    for _ in range(4):
+        await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+
+    assert len(await _halt_events(db, game.game.id)) == 1
+
+
+async def test_being_held_does_not_defer_the_resume(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, redis: Any
+) -> None:
+    """**`resume_after` stays in the past, and that is the whole point.**
+
+    It is what keeps `find_resumable` handing this game back on every tick, which is what resumes
+    it the moment the halt lifts. Moving it to the halt's `until` would read better on the page and
+    stand the game down until then even if the credits arrived a minute later.
+    """
+    await _seat_models(db, game.game.id, "vendor/model:free")
+    await _paused_and_due(db, game.game.id)
+
+    halt = Halt(redis)
+    await halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
+    await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+
+    db.expunge_all()
+    assert [g.id for g in await find_resumable(db)] == [game.game.id], (
+        "the held game dropped out of the resumable set and would not come back on its own"
+    )
+
+    await halt.clear()
+    report = await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+
+    assert report.resumed == [str(game.game.id)]
+
+
+# ================================================ what the reconciler writes, spectators receive
+
+
+async def _subscribe(redis: Any, game_id: Any) -> Any:
+    from chessmark.orchestration.worker import EVENT_CHANNEL
+
+    pubsub = redis.pubsub()
+    await pubsub.subscribe(EVENT_CHANNEL.format(game_id=game_id))
+    return pubsub
+
+
+async def _drain(pubsub: Any, *, polls: int = 20) -> list[dict[str, Any]]:
+    """Everything on the channel right now.
+
+    Polled rather than read once: redis-py's async `get_message` returns `None` when nothing has
+    been read off the socket *yet*, which is not the same as nothing having been published — a
+    single call is a race that passes locally and fails under load.
+    """
+    import asyncio as _asyncio
+    import json as _json
+
+    out: list[dict[str, Any]] = []
+    quiet = 0
+    for _ in range(polls):
+        message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
+        if message is None:
+            quiet += 1
+            if out and quiet >= 3:
+                break
+            await _asyncio.sleep(0.05)
+            continue
+        quiet = 0
+        out.append(_json.loads(message["data"]))
+    return out
+
+
+async def test_a_resume_reaches_live_spectators(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, redis: Any
+) -> None:
+    """**The reconciler wrote events and published none of them.**
+
+    `worker._publish` was the only publisher, so a game the *reconciler* resumed had its
+    `game_resumed` committed to Postgres and sent to nobody. A spectator watching a game come back
+    from a rate limit saw nothing: the board sat under a "paused" notice that had stopped being
+    true minutes earlier, and only a reload fixed it. The event was never lost — it just never
+    travelled.
+    """
+    await _paused_and_due(db, game.game.id)
+    pubsub = await _subscribe(redis, game.game.id)
+    try:
+        report = await reconcile(sessionmaker, game.queue, redis=redis)
+        assert report.resumed == [str(game.game.id)]
+
+        delivered = await _drain(pubsub)
+    finally:
+        await pubsub.aclose()
+
+    assert [m["type"] for m in delivered] == ["game_resumed"], (
+        f"the resume was committed but {len(delivered)} events reached the stream"
+    )
+
+
+async def test_being_held_reaches_live_spectators(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, redis: Any
+) -> None:
+    """The same for the notice that says a halt is what it is now waiting for — otherwise the page
+    keeps the stale provider reason until someone reloads it."""
+    await _seat_models(db, game.game.id, "vendor/model:free")
+    await _paused_and_due(db, game.game.id)
+
+    halt = Halt(redis)
+    await halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
+
+    pubsub = await _subscribe(redis, game.game.id)
+    try:
+        await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+        delivered = await _drain(pubsub)
+    finally:
+        await pubsub.aclose()
+
+    assert [m["type"] for m in delivered] == ["game_paused"]
+    assert delivered[0]["payload"]["halt_source"]
+
+
+async def test_nothing_is_published_for_a_quiet_sweep(
+    db: AsyncSession, sessionmaker: Any, game: Fixture, redis: Any
+) -> None:
+    """A sweep that changes nothing must say nothing. A publisher that fires on every tick would
+    push a `game_paused` a minute at every open tab for as long as a halt stands."""
+    await _seat_models(db, game.game.id, "vendor/model:free")
+    await _paused_and_due(db, game.game.id)
+
+    halt = Halt(redis)
+    await halt.set("the free-model allowance for the day is spent (429)", scope=SCOPE_FREE)
+    await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+
+    pubsub = await _subscribe(redis, game.game.id)
+    try:
+        await reconcile(sessionmaker, game.queue, halt=halt, redis=redis)
+        assert await _drain(pubsub) == []
+    finally:
+        await pubsub.aclose()

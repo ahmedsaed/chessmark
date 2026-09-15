@@ -64,6 +64,30 @@ log = logging.getLogger(__name__)
 EVENT_CHANNEL = "chessmark:game:{game_id}"
 
 
+async def publish_events(redis: Any, game_id: uuid.UUID, events: list[GameEvent]) -> None:
+    """Fan out committed events for live spectators (ADR-0008).
+
+    **Module-level because the worker was not the only thing appending events**, and for a long
+    time it was the only thing publishing them. The reconciler resumes a paused game and writes
+    `game_resumed` straight to Postgres — so a spectator watching a game come back from a rate
+    limit saw nothing until they reloaded, and the board sat under a "paused" notice that had
+    stopped being true minutes earlier. The event was never lost; it simply never travelled.
+
+    Best-effort by design: Postgres already holds them, so a client that misses a message recovers
+    by replaying from `game_events`. A publish failure must never fail a transaction that has
+    already committed — which is also why every caller does this *after* the commit rather than
+    inside it. A subscriber must not be told about a state the database has not accepted.
+    """
+    if redis is None or not events:
+        return
+
+    channel = EVENT_CHANNEL.format(game_id=game_id)
+    for event in events:
+        payload = {"seq": event.seq, "type": str(event.type), "payload": event.payload}
+        with contextlib.suppress(Exception):
+            await redis.publish(channel, json.dumps(payload))
+
+
 class TurnOutcome(str):
     """Why the worker stopped handling a job. Used for logging and tests."""
 
@@ -1176,21 +1200,5 @@ class TurnWorker:
         )
 
     async def _publish(self, game_id: uuid.UUID, events: list[GameEvent]) -> None:
-        """Fan out committed events for live spectators (ADR-0008).
-
-        Best-effort by design: Postgres already holds them, so a client that misses a message
-        recovers by replaying from `game_events`. A publish failure must never fail a turn that
-        has already committed.
-        """
-        if self.redis is None or not events:
-            return
-
-        channel = EVENT_CHANNEL.format(game_id=game_id)
-        for event in events:
-            payload = {
-                "seq": event.seq,
-                "type": str(event.type),
-                "payload": event.payload,
-            }
-            with contextlib.suppress(Exception):
-                await self.redis.publish(channel, json.dumps(payload))
+        """Fan out committed events for live spectators (ADR-0008)."""
+        await publish_events(self.redis, game_id, events)
