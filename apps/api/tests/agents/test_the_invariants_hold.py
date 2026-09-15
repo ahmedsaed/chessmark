@@ -349,6 +349,23 @@ class RefusedError(Exception):
         )
 
 
+def moves_then_stops() -> object:
+    """A seat that plays its move and is then refused on the closing round.
+
+    A turn goes on past its move until the model stops (ADR-0037), so this is an ordinary shape and
+    not a corner: the ply is committed, and the provider dies before the model has finished talking.
+    """
+    served = {"calls": 0}
+
+    async def complete(**_kwargs: object) -> object:
+        served["calls"] += 1
+        if served["calls"] == 1:
+            return step(tool_call("make_move", move="e4"))
+        raise RefusedError
+
+    return complete
+
+
 class TestAnInterruptedTurnKeepsItsWork:
     """**A turn keeps the rounds it completed** (ADR-0045).
 
@@ -434,4 +451,29 @@ class TestAnInterruptedTurnKeepsItsWork:
         assert turns[0].llm_call_count > interrupted_rounds, (
             "the row counts only the last attempt — the rounds of both belong to the turn, and "
             "`max_tool_iterations` is meant to bound the turn rather than each attempt at it"
+        )
+
+    async def test_a_turn_that_already_moved_is_not_resumable(
+        self, db: AsyncSession, table: Table
+    ) -> None:
+        """**A move already played is not a failed turn.**
+
+        A turn goes on past its move until the model stops (ADR-0037), so a provider can die during
+        the *closing* round — after the ply is committed and after the game has moved on. Marking
+        that turn interrupted made it resumable, and it was resumed for a **later ply**: one row
+        holding two turn prompts and two moves, its `ply_number` overwritten by the second, and the
+        ply in between with no `turn_started` at all. Found by playing a game whose endpoint went
+        dark mid-turn, not by reading the code.
+        """
+        result = await play_turn(db, table, moves_then_stops(), colour=Colour.WHITE)
+
+        assert result.moved, "the move should have landed before the provider went away"
+
+        assert not result.keep_rounds, "a turn whose move is committed has nothing to come back for"
+
+        turns = list(
+            await db.scalars(sa.select(TurnRow).where(TurnRow.player_id == table.white.id))
+        )
+        assert [t.status for t in turns] != [TurnStatus.INTERRUPTED], (
+            "an interrupted turn carrying a ply can be resumed for a different one"
         )

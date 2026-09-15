@@ -1240,7 +1240,14 @@ class TurnWorker:
                 sa.select(Turn).where(Turn.player_id == player.id).order_by(Turn.id.desc()).limit(1)
             )
         ).first()
-        return last if last is not None and last.status is TurnStatus.INTERRUPTED else None
+        if last is None or last.status is not TurnStatus.INTERRUPTED:
+            return None
+
+        # **Never a turn that already produced a ply.** `INTERRUPTED` should not be able to carry
+        # one — a turn whose move is committed finishes rather than waiting — and this is the
+        # backstop, because the cost of being wrong is a turn row holding two plies and a ply with
+        # no `turn_started` of its own.
+        return last if last.ply_number is None else None
 
     async def _endpoint_served(self, model: str, provider: str | None) -> None:
         """An endpoint answered, so forget what it refused before.

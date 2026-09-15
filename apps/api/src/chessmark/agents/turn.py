@@ -559,15 +559,29 @@ class TurnRunner:
             #
             # The turn is marked FAILED and the referee is untouched. The orchestrator decides
             # what to do about it (retry the turn, or abandon the game as `aborted`) — Phase 5.
-            result.status = TurnStatus.FAILED
-            result.error = str(error)
-            result.outcome = None
-            result.rate_limit = error.rate_limit
-            result.request_rejected = error.request_rejected
-            # The one class whose next attempt sends the same bytes to the same endpoint and can
-            # expect a different answer — unless the endpoint rejected the request itself, which it
-            # will go on rejecting (ADR-0045).
-            result.keep_rounds = not error.request_rejected
+            if self._move_committed:
+                # **A move already played is not a failed turn.** A turn goes on past its move
+                # until the model stops (ADR-0037), so a provider can die during the *closing*
+                # round — after the ply is committed and after the game has moved on. There is
+                # nothing to come back for: the move stands, the rest of the turn was optional,
+                # and the next ply is somebody else's.
+                #
+                # Marking it interrupted made it resumable, and it was resumed — for a *later
+                # ply*. One turn row then held two turn prompts and two moves, its `ply_number`
+                # overwritten by the second, and the ply in between had no `turn_started` at all.
+                # Found by playing a game whose endpoint went dark mid-turn.
+                result.status = TurnStatus.COMPLETED
+                result.error = str(error)
+            else:
+                result.status = TurnStatus.FAILED
+                result.error = str(error)
+                result.outcome = None
+                result.rate_limit = error.rate_limit
+                result.request_rejected = error.request_rejected
+                # The one class whose next attempt sends the same bytes to the same endpoint and
+                # can expect a different answer — unless the endpoint rejected the request itself,
+                # which it will go on rejecting (ADR-0045).
+                result.keep_rounds = not error.request_rejected
         except compaction.NoRoomToAnswerError as error:
             # The transcript leaves no usable room for an answer, and compaction could not fix it.
             # **A harness stop, not a forfeit** (invariant 11, ADR-0019): the model did not play
