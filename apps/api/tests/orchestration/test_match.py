@@ -13,6 +13,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.routing import DEFAULT_QUANTIZATIONS
 from chessmark.db.enums import PlayerKind
 from chessmark.db.models import ModelRegistry, Player
 from chessmark.orchestration.match import Seat, create_match, registry_id_for
@@ -260,3 +261,42 @@ async def test_a_model_with_no_synced_endpoints_still_plays(db: AsyncSession) ->
     )
 
     assert not match.white.provider_routing.get("only")
+
+
+async def test_the_game_records_the_precision_its_seats_actually_ran_at(db: AsyncSession) -> None:
+    """Invariant 3: the record has to be true.
+
+    The game's blob was written before the seats resolved, so it carried the *request* — a default
+    policy of fp8-and-above — while `resolve_routing` pinned endpoints that serve 4-bit. In
+    production 15 seats across 14 games ran at `nvfp4` or `fp4` under a game record saying they
+    could not have. Nothing was mis-rated (a contestant is `(model, quantization)`), but a reader
+    asking the game what it ran under got the wrong answer.
+    """
+    await _with_endpoints(
+        db, "test/lowbit", [{"provider": "Cheap", "quantization": "fp4", "uptime": 99.0}]
+    )
+
+    match = await create_match(
+        db,
+        white=Seat(display_name="w", model="test/lowbit", quantization="fp4"),
+        black=Seat(display_name="b", model="test/lowbit", quantization="fp4"),
+    )
+
+    assert match.game.provider_routing is not None
+    assert match.game.provider_routing["quantizations"] == [], (
+        "the seats are pinned to one endpoint each, so the game is bound by no precision filter — "
+        f"it claims {match.game.provider_routing['quantizations']}"
+    )
+
+
+async def test_an_unresolved_seat_keeps_its_policy_on_the_game(db: AsyncSession) -> None:
+    """The other direction. A model with no endpoint rows is never pinned, so the requested filter
+    is still what binds it and the game must go on saying so."""
+    match = await create_match(
+        db,
+        white=Seat(display_name="w", model="scripted/white"),
+        black=Seat(display_name="b", model="scripted/black"),
+    )
+
+    assert match.game.provider_routing is not None
+    assert match.game.provider_routing["quantizations"] == list(DEFAULT_QUANTIZATIONS)
