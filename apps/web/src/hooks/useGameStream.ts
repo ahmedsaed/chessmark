@@ -20,7 +20,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { GameEvent, LiveFrame } from "@/lib/types";
+import { supersedesFrames } from "@/lib/turns";
+import type { EventType, GameEvent, LiveFrame } from "@/lib/types";
 
 export type StreamStatus = "connecting" | "live" | "reconnecting" | "closed";
 
@@ -33,17 +34,31 @@ interface Options {
   enabled?: boolean;
 }
 
-const EVENT_TYPES = [
-  "game_started",
-  "turn_started",
-  "thinking",
-  "tool_called",
-  "illegal_attempt",
-  "move_made",
-  "message_sent",
-  "draw_offered",
-  "game_ended",
-] as const;
+/**
+ * Every event type, because the server names each SSE frame after its type and a bare `onmessage`
+ * never fires for a named one: a type missing here is an event the browser receives and discards.
+ *
+ * **Keyed by the union, so leaving one out does not compile.** This was a hand-written list, and
+ * it was missing `output`, `compacted`, `game_paused` and `game_resumed` — four types added after
+ * it. A pause reached the page only on a refresh, which reads the log over HTTP, and the symptom
+ * ("the pause is not in the events until I reload") was investigated twice as a publishing
+ * problem: the events were being published, delivered, and thrown away three lines from here.
+ */
+const EVENT_TYPES = Object.keys({
+  game_started: true,
+  turn_started: true,
+  thinking: true,
+  output: true,
+  tool_called: true,
+  illegal_attempt: true,
+  move_made: true,
+  message_sent: true,
+  draw_offered: true,
+  compacted: true,
+  game_paused: true,
+  game_resumed: true,
+  game_ended: true,
+} satisfies Record<EventType, true>) as EventType[];
 
 export function useGameStream({ gameId, apiUrl, afterSeq, enabled = true }: Options) {
   const [events, setEvents] = useState<GameEvent[]>([]);
@@ -60,11 +75,9 @@ export function useGameStream({ gameId, apiUrl, afterSeq, enabled = true }: Opti
     seen.current.add(event.seq);
     cursor.current = Math.max(cursor.current, event.seq);
     setEvents((previous) => [...previous, event]);
-    /* **A committed event supersedes every frame that predicted it.** They describe the same
-       turn, so keeping both would draw each step twice — once provisionally and once for real.
-       `turn_started` is the boundary: it is the first thing a turn appends, so a turn's own
-       events never clear its own frames, and the next turn's arrival clears the last one's. */
-    if (event.type === "turn_started" || event.type === "move_made") setLive([]);
+    // A committed event supersedes the frames that predicted it — `supersedesFrames` is the rule,
+    // and it lives beside `withLiveTurn` because the two together decide what the panel draws.
+    if (supersedesFrames(event.type)) setLive([]);
   }, []);
 
   useEffect(() => {

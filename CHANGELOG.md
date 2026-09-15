@@ -15,6 +15,54 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-15
+
+**A provider that stops answering no longer destroys the work it interrupted.** One thread runs
+through this release: a refused call used to cost the whole turn, and everything downstream — the
+ladder, the record, the page — was built around that discard.
+
+### Changed
+
+- **A turn keeps the rounds it completed, and the retry continues it** ([ADR-0045]). A turn ran
+  inside one transaction and a provider failure raised out of it, so a turn refused on its third
+  call discarded the two that had been answered and *billed*. The retry then paid for them again;
+  in `f129b600` the rolled-back turns are the gaps in the id sequence — 7854-7856, 7859 — each a
+  fresh attempt redoing the board read the one before it had completed. A model that could not
+  finish a whole turn inside one provider window therefore never banked a step, and never moved.
+
+  The rollback was avoiding something real: a half-written turn can leave an assistant message
+  whose `tool_calls` nothing answered, and the transcript is append-only, so that seat is refused
+  for the rest of the game — the shape that corrupted 242 rows across 14 seats. But it was broader
+  than the hazard. A refusal comes out of `complete()`, which runs *before* the round's assistant
+  message is appended, so at that moment the transcript is already at a clean boundary.
+
+  Most of "continue" was free: the transcript is rebuilt by `SELECT ... ORDER BY seq`, so committed
+  rounds are simply there and the model carries on mid-conversation. What needed writing is what
+  must **not** repeat — the turn prompt and `turn_started` are per turn, not per attempt.
+
+  Which failures keep their rounds follows one rule: *commit when the next attempt sends the same
+  request again*. A rate limit, a timeout and a 5xx do; `NoRoomToAnswerError`,
+  `HarnessCeilingError`, `ProviderAccountingError` and `ProviderMangledError` still roll back,
+  because each needs the next request to be different and more rounds make that harder.
+
+  Per-turn bounds accumulate across attempts, and reaching one on a resumed turn is a harness stop
+  rather than a forfeit — a model must not be written off for a bound it reached because we could
+  not get served (invariant 11, [ADR-0019]).
+
+- **A pause is drawn where it happened.** Three changes that only make sense together, because the
+  first one moves the pause inside the turn:
+  - the **move divider closes its turn** instead of opening it. The chip is the move the turn
+    *produced*, so a reader meets the thinking, the tool calls, then the move. Above, it closed the
+    wrong section: a pause belonging to the *next* seat appeared under the previous seat's block,
+    which is how a deepseek rate limit read as GLM's problem;
+  - a pause **names the seat it is waiting on**. It carried none, deliberately — a pause belongs to
+    the harness rather than a contestant — and the result was the opposite of the intent, because
+    an unlabelled row attaches itself to the block above it and blames the wrong model;
+  - a pause **inside an open turn is a step of it**, below the step counter and in sequence, so
+    unrolling the steps shows what survived the interruption and what followed it. A run of
+    identical pauses folds into one row with a count; the resume is absorbed, because the steps
+    after it *are* the resumption.
+
 ### Fixed
 
 - **The cooldown ladder reset on a finished turn rather than an answered call** ([ADR-0044]). A
@@ -22,20 +70,60 @@ file is only the record of *what shipped when*.
   was refused on the move never reached the reset: 60s, 300s, 900s, to the hour cap, against an
   endpoint that had never gone away. The direction was the perverse part — the longer the game the
   less likely a turn completes, so the ladder was harshest on exactly the endpoint a long game most
-  needs. `LlmGateway.on_success` clears it per call, crediting the provider that *answered* rather
-  than the one the seat is pinned to.
+  needs. `LlmGateway.on_success` clears it per call.
+- **The endpoint credited for an answered call was the wrong one.** OpenRouter's `provider` field is
+  absent for several models — every call in `f129b600` came back `provider: None` — so the clear
+  landed on `model|*` while the refusal had put the strikes under `model|BaseTen`, and the ladder
+  went on climbing across turns that had plainly succeeded. The seat's pin is the answer when the
+  response has none: it is the endpoint the call was sent to.
+- **A move already played is not a failed turn** ([ADR-0045]). A turn goes on past its move until
+  the model stops ([ADR-0037]), so a provider can die during the *closing* round — after the ply is
+  committed. Keeping that turn's rounds made it resumable, and it was resumed for a **later ply**:
+  one row holding two turn prompts and two moves, its `ply_number` overwritten by the second, and
+  the ply in between with no `turn_started` at all. Found by playing a game whose endpoint went dark
+  mid-turn, not by reading the code.
 - **A game already paused when a halt began could not say so.** `_pause_for_halt` writes one notice
   per pause and returns early when the game is already paused, so a game holding a provider pause
-  when the free allowance ran out was never told: `9b4bced5` sat fifteen hours showing
-  "rate-limited by Google AI Studio", a reason that had stopped being true within the hour. It was
-  never stuck — the reconciler was correctly declining to resume it — but held and stranded look
-  identical from outside. Written once per halt, carrying the same `halt_source` key that keeps
-  those hours off the abandonment clock.
+  when the free allowance ran out was never told: `9b4bced5` sat fifteen hours showing "rate-limited
+  by Google AI Studio", a reason that had stopped being true within the hour. It was never stuck —
+  the reconciler was correctly declining to resume it — but held and stranded look identical from
+  outside.
 - **The reconciler published none of the events it wrote.** `worker._publish` was the only
   publisher, so a game the reconciler resumed had its `game_resumed` committed to Postgres and sent
   to nobody — a spectator watching a game come back from a rate limit saw the stale "paused" notice
-  until they reloaded. The publisher is shared now, and the sweep fans out what it appended after
-  the commit.
+  until they reloaded.
+- **A turn that talked after it moved was drawn as two.** A turn does not end at `make_move` — the
+  model is asked once more and answers ([ADR-0037]) — and what it does with that round is usually
+  `say`. A message carries no `turn_started`, so it fell through to the branch that exists for a
+  *person's* actions, which have none either, and opened a turn nobody had started: one turn under
+  two headers for the same seat, with its own move divider between the halves. A model's closing
+  round is the same provider call and stays in the turn; a person's message after their move still
+  opens a row of its own, because their turn really did end when they moved.
+- **An interrupted turn was drawn twice.** Keeping the rounds a turn completed made it a committed
+  row that has not moved ([ADR-0045]), and the panel appended the turn in flight beside every such
+  row — so a paused turn showed two headers for one seat, `0 steps · 1 pause` above the resumed
+  rounds. The turn in flight now merges into the row it is continuing: one turn, one header, the
+  live rounds beneath the recorded ones.
+- **A paused turn's frames outlived the pause.** Live frames are cleared by `turn_started`, and a
+  resumed turn appends no second one — so after the pause committed, the frames predicting the
+  rounds it had just recorded stayed on screen beside them. A pause clears them, and `liveTurn`
+  reads only the frames after the newest `turn` frame, which is the boundary the server already
+  uses to clear its own buffer.
+- **Four kinds of event never reached the browser.** The SSE frames are named after their event
+  type, so each type has to be registered explicitly, and the list was written by hand:
+  `game_paused`, `game_resumed`, `output` and `compacted` were all added after it. Every one was
+  published, delivered and discarded, which is why a pause appeared only on a reload — a symptom
+  investigated twice as a publishing problem. The list is keyed by the type union now, so the next
+  one that is missing does not compile.
+- **A live turn sorted first instead of last.** `liveTurn` gives the in-progress turn `seq: -1` so
+  its key cannot collide with a real one. Right for keys, wrong for order: a notice could never be
+  placed above it, so a pause sat *under* the THINKING block while live and jumped *above* that turn
+  on the next reload. Same events, two orders.
+- **CI could not run a job.** `setup-uv` was moved to `@v10`, which does not exist — the action
+  publishes a floating `v5` tag but only exact tags from v6 on, so every workflow failed at setup in
+  two seconds. Pinned to `v10.1.0`, which is what an action reference should be anyway. The browser
+  job also stops the servers it starts: `uv run` left running into post-cleanup made `uv cache
+  prune` block on the cache lock for exactly 300 seconds and fail a job whose tests had all passed.
 
 ## [0.2.0] — 2026-09-15
 
@@ -603,5 +691,7 @@ flags the old code wrote.
 [ADR-0042]: docs/adr/0042-the-notation-was-still-analysing-the-position.md
 [ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
 [ADR-0044]: docs/adr/0044-the-ladder-resets-on-an-answered-call.md
+[ADR-0045]: docs/adr/0045-a-turn-keeps-the-rounds-it-completed.md
+[0.3.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0

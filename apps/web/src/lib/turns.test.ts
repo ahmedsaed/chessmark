@@ -15,6 +15,8 @@ import {
   foldEvents,
   liveTurn,
   sameTurnContent,
+  supersedesFrames,
+  withLiveTurn,
 } from "@/lib/turns";
 import type { TimelineEntry } from "@/lib/turns";
 import type { EventType, GameEvent, LiveFrame, TurnView } from "@/lib/types";
@@ -1051,5 +1053,212 @@ describe("a resume that ends a between-turns pause keeps its row", () => {
     ];
 
     expect(foldEvents(events, []).notices.map((n) => n.kind)).toEqual(["paused", "resumed"]);
+  });
+});
+
+
+/**
+ * One interrupted turn is one turn, on screen as in the record.
+ *
+ * ADR-0045 made an interrupted turn a committed row that has not moved: it carries the rounds it
+ * completed and the pause that stopped it, and the retry continues *it* rather than starting
+ * another. The panel was still appending the live turn beside every row that had not moved, so a
+ * paused turn drew twice — `0 steps · 1 pause` under one header, the resumed rounds under a second
+ * — which reads as the harness having lost track of whose turn it is.
+ */
+describe("withLiveTurn", () => {
+  const started: LiveFrame = {
+    frame: "turn",
+    player_id: "w",
+    colour: "white",
+    ply: 1,
+    model: "m",
+  };
+  const reasoning: LiveFrame = {
+    frame: "block",
+    player_id: "w",
+    kind: "reasoning",
+    text: "hm",
+    tokens: 4,
+  };
+
+  function interrupted(): TurnView[] {
+    seq = 0;
+    return foldEvents(
+      [
+        event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+        event("game_paused", { reason: "rate-limited", resume_after: "12:00", colour: "white" }),
+      ],
+      [],
+    ).turns;
+  }
+
+  it("draws the retry inside the turn it is continuing, not beside it", () => {
+    const merged = withLiveTurn(interrupted(), [started, reasoning]);
+
+    expect(merged).toHaveLength(1);
+    expect(merged[0].blocks.map((b) => b.kind)).toEqual(["paused", "reasoning"]);
+    expect(merged[0].live).toBe(true);
+  });
+
+  it("keeps the committed identity, so the rows already drawn are not rebuilt", () => {
+    const committed = interrupted();
+
+    const merged = withLiveTurn(committed, [started, reasoning]);
+
+    expect(merged[0].key).toBe(committed[0].key);
+    expect(merged[0].seq).toBe(committed[0].seq);
+  });
+
+  it("drops the prediction once the turn has moved", () => {
+    /* The committed events carry the same steps with real sequence numbers; keeping both would
+       draw every step twice, once as a guess and once as the record. */
+    seq = 0;
+    const committed = foldEvents(turn(1, "white", "e4"), []).turns;
+
+    expect(withLiveTurn(committed, [started, reasoning])).toEqual(committed);
+  });
+
+  it("appends a turn whose events do not exist yet", () => {
+    // The ordinary case: a turn is one transaction, so until it ends the frames are all there is.
+    expect(withLiveTurn([], [started, reasoning])).toHaveLength(1);
+  });
+
+  it("ignores the frames of the attempt that was interrupted", () => {
+    /* A resumed turn appends no second `turn_started`, so the client's frame buffer is never
+       cleared by one — and those frames predicted rounds that are now committed. The second
+       `turn` frame is the boundary: the server deletes its buffer on one. */
+    const merged = withLiveTurn(interrupted(), [
+      started,
+      { frame: "block", player_id: "w", kind: "reasoning", text: "first attempt", tokens: 9 },
+      started,
+      reasoning,
+    ]);
+
+    expect(merged[0].blocks.map((b) => b.kind)).toEqual(["paused", "reasoning"]);
+    expect(merged[0].reasoning).toEqual(["hm"]);
+  });
+});
+
+
+/**
+ * The closing round belongs to the turn that moved.
+ *
+ * A turn does not end at `make_move` — the model is asked once more and answers (ADR-0037), and
+ * what it does with that round is usually `say`. A message carries no `turn_started`, so this fell
+ * through to the branch that exists for a *human's* actions and opened a turn nobody had started:
+ * one turn drawn as two headers for the same seat, with its move divider between them.
+ */
+describe("a turn that talks after it moves", () => {
+  it("keeps the closing round in the turn that moved", () => {
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("tool_called", { tool: "make_move", ok: true, args: { move: "e4" } }),
+      event("move_made", { ply: 1, colour: "white", san: "e4", player_id: "w" }),
+      event("message_sent", { colour: "white", player_id: "w", content: "your move" }),
+      event("thinking", { reasoning: "done", tokens: 26, player_id: "w" }),
+    ];
+
+    const { turns } = foldEvents(events, []);
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0].said).toEqual(["your move"]);
+    expect(turns[0].blocks.map((b) => b.kind)).toEqual(["tool", "said", "reasoning"]);
+  });
+
+  it("still opens a turn for a player who has none", () => {
+    /* The case the fallback exists for: a person's actions are appended by `human.py`, which
+       emits no `turn_started` because there is no provider call to bracket. */
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("move_made", { ply: 1, colour: "white", san: "e4", player_id: "w" }),
+      event("message_sent", { colour: "black", player_id: "b", content: "hi", human: true }),
+    ];
+
+    const { turns } = foldEvents(events, []);
+
+    expect(turns).toHaveLength(2);
+    expect(turns[1]).toMatchObject({ playerId: "b", human: true });
+  });
+});
+
+
+/**
+ * The panel, driven the way the stream drives it.
+ *
+ * **This is the test that was missing.** `foldEvents` was exercised on committed events and
+ * `liveTurn` on frames, each on its own and each correct; every bug the pause work shipped lived
+ * in the seam between them, which was four lines inside a component and therefore untested. Two
+ * headers for one seat was the symptom of all of them.
+ *
+ * The script below is one turn as a browser really receives it: frames for an attempt, the commit
+ * that interrupts it, frames for the retry, the commit that moves. The assertion is applied after
+ * *every* delivery, because "it recovered eventually" is what the page already did.
+ */
+describe("a paused turn, replayed the way the stream delivers it", () => {
+  type Delivery = GameEvent | LiveFrame;
+
+  /** What the panel would draw after each delivery: rows per ply, and whether anything repeats. */
+  function drawnAfterEach(delivered: Delivery[]): { rows: number; repeated: string[] }[] {
+    const events: GameEvent[] = [];
+    let live: LiveFrame[] = [];
+    const drawn: { rows: number; repeated: string[] }[] = [];
+
+    for (const item of delivered) {
+      if ("frame" in item) live = [...live, item];
+      else {
+        events.push(item);
+        // The hook's rule, read from the same place the hook reads it.
+        if (supersedesFrames(item.type)) live = [];
+      }
+      const rows = withLiveTurn(foldEvents(events, []).turns, live);
+      const texts = rows.flatMap((row) => row.reasoning);
+      drawn.push({
+        rows: Math.max(...rows.map((row) => rows.filter((r) => r.ply === row.ply).length), 0),
+        // A round predicted by a frame and then committed must appear once, not once each way.
+        repeated: texts.filter((text, at) => texts.indexOf(text) !== at),
+      });
+    }
+    return drawn;
+  }
+
+  it("never draws one turn — or one round — twice, at any point in the delivery", () => {
+    seq = 0;
+    const frame = (kind: "reasoning", text: string): LiveFrame => ({
+      frame: "block",
+      player_id: "w",
+      kind,
+      text,
+      tokens: 9,
+    });
+    const anchor: LiveFrame = {
+      frame: "turn",
+      player_id: "w",
+      colour: "white",
+      ply: 1,
+      model: "m",
+    };
+
+    const script: Delivery[] = [
+      // The attempt: announced by a frame, because `turn_started` is inside the transaction.
+      anchor,
+      frame("reasoning", "let me look"),
+      // It is refused. The rounds it completed commit, with the pause that stopped it.
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("thinking", { reasoning: "let me look", tokens: 9 }),
+      event("game_paused", { reason: "rate-limited", resume_after: "12:00", colour: "white" }),
+      // The retry continues the same turn: a new anchor, no second `turn_started`.
+      anchor,
+      frame("reasoning", "e4 then"),
+      event("game_resumed", { detail: "the wait is over" }),
+      event("thinking", { reasoning: "e4 then", tokens: 12 }),
+      event("move_made", { ply: 1, colour: "white", san: "e4", player_id: "w" }),
+      // And it talks on the way out, which is a round of the same turn (ADR-0037).
+      event("message_sent", { colour: "white", player_id: "w", content: "your move" }),
+    ];
+
+    expect(drawnAfterEach(script)).toEqual(script.map(() => ({ rows: 1, repeated: [] })));
   });
 });
