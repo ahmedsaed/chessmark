@@ -168,7 +168,6 @@ async def test_a_seat_pins_exactly_one_endpoint(db: AsyncSession) -> None:
         db,
         white=Seat(display_name="w", model="test/pinned"),
         black=Seat(display_name="b", model="test/pinned"),
-        is_ranked=True,
     )
 
     assert match.white.provider_routing["only"] == ["Solid"]
@@ -186,7 +185,6 @@ async def test_pinning_clears_the_precision_filter(db: AsyncSession) -> None:
         db,
         white=Seat(display_name="w", model="test/closed"),
         black=Seat(display_name="b", model="test/closed"),
-        is_ranked=True,
     )
 
     assert match.white.provider_routing["only"] == ["Vendor"]
@@ -231,7 +229,6 @@ async def test_a_seat_can_force_an_endpoint(db: AsyncSession) -> None:
         db,
         white=Seat(display_name="w", model="test/forced", provider="Suspect"),
         black=Seat(display_name="b", model="test/forced"),
-        is_ranked=True,
     )
 
     assert match.white.provider_routing["only"] == ["Suspect"]
@@ -303,100 +300,3 @@ async def test_an_unresolved_seat_keeps_its_policy_on_the_game(db: AsyncSession)
 
     assert match.game.provider_routing is not None
     assert match.game.provider_routing["quantizations"] == list(DEFAULT_QUANTIZATIONS)
-
-
-# ================================================= only a rated game is pinned (ADR-0044)
-
-
-async def test_an_unranked_seat_keeps_every_endpoint(db: AsyncSession) -> None:
-    """**A pin buys reproducibility and costs every other endpoint the model has.**
-
-    `deepseek-v4.1-flash` has eighteen. An exhibition game pinned to the one BaseTen was throttling
-    spent its life climbing the cooldown ladder — 60s, 300s, 900s — while seventeen others were
-    answering. A game nobody will rate gains nothing from the first and pays all of the second.
-    """
-    await _with_endpoints(
-        db,
-        "test/many",
-        [
-            {"provider": "Hot", "quantization": "fp8", "uptime": 99.9},
-            {"provider": "Spare", "quantization": "fp8", "uptime": 99.0},
-        ],
-    )
-
-    match = await create_match(
-        db,
-        white=Seat(display_name="w", model="test/many"),
-        black=Seat(display_name="b", model="test/many"),
-        is_ranked=False,
-    )
-
-    assert not match.white.provider_routing.get("only"), (
-        "an unranked seat was pinned to one endpoint and cannot route around it"
-    )
-    assert not match.black.provider_routing.get("only")
-
-
-async def test_an_unranked_seat_that_names_a_provider_still_gets_it(db: AsyncSession) -> None:
-    """An explicit provider is an instruction, not a policy — it is what tells a model's fault
-    apart from its host's, and that investigation is never a rated game."""
-    await _with_endpoints(
-        db,
-        "test/named",
-        [
-            {"provider": "Healthy", "quantization": "fp8", "uptime": 99.9},
-            {"provider": "Suspect", "quantization": "fp8", "uptime": 99.0},
-        ],
-    )
-
-    match = await create_match(
-        db,
-        white=Seat(display_name="w", model="test/named", provider="Suspect"),
-        black=Seat(display_name="b", model="test/named"),
-        is_ranked=False,
-    )
-
-    assert match.white.provider_routing["only"] == ["Suspect"]
-    assert not match.black.provider_routing.get("only")
-
-
-async def test_an_unranked_seat_that_asks_for_a_precision_is_pinned(db: AsyncSession) -> None:
-    """The precision lives on the endpoint, so honouring the request means pinning. Leaving the
-    router free would seat `model@fp8` for a caller who asked for `model@fp4` — different
-    contestants (ADR-0015), and the one thing an unpinned seat must still not do."""
-    await _with_endpoints(
-        db,
-        "test/precise",
-        [
-            {"provider": "Eight", "quantization": "fp8", "uptime": 99.9},
-            {"provider": "Four", "quantization": "fp4", "uptime": 70.0},
-        ],
-    )
-
-    match = await create_match(
-        db,
-        white=Seat(display_name="w", model="test/precise", quantization="fp4"),
-        black=Seat(display_name="b", model="test/precise"),
-        is_ranked=False,
-    )
-
-    assert match.white.provider_routing["only"] == ["Four"]
-    assert not match.black.provider_routing.get("only")
-
-
-async def test_an_unranked_seat_still_refuses_a_precision_nothing_serves(db: AsyncSession) -> None:
-    """Checked before the pin is, so going unpinned cannot turn a caller's mistake into a quietly
-    different contestant."""
-    from chessmark.agents.registry import NoEndpointError
-
-    await _with_endpoints(
-        db, "test/eightonly2", [{"provider": "Eight", "quantization": "fp8", "uptime": 99.0}]
-    )
-
-    with pytest.raises(NoEndpointError):
-        await create_match(
-            db,
-            white=Seat(display_name="w", model="test/eightonly2", quantization="fp4"),
-            black=Seat(display_name="b", model="test/eightonly2"),
-            is_ranked=False,
-        )

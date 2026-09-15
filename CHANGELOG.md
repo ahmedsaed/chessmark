@@ -17,13 +17,6 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
-- **A contended endpoint could end a game that had eighteen others to choose from**
-  ([ADR-0044]). Two correct mechanisms combining into a game that could not be played: ADR-0015
-  pins one endpoint per seat so a *rated* number is reproducible, and `resolve_routing` never asked
-  whether the game was rated — so an exhibition game was pinned to the one endpoint BaseTen was
-  throttling and spent its life climbing the cooldown ladder. Only a game that will be rated is
-  pinned now. An explicit provider or precision is still honoured either way, and a precision
-  nothing serves still refuses the match.
 - **The cooldown ladder reset on a finished turn rather than an answered call** ([ADR-0044]). A
   turn is many calls against a growing transcript, so an endpoint that answered the board read and
   was refused on the move never reached the reset: 60s, 300s, 900s, to the hour cap, against an
@@ -609,6 +602,6 @@ flags the old code wrote.
 [ADR-0041]: docs/adr/0041-a-pool-balances-its-pairings.md
 [ADR-0042]: docs/adr/0042-the-notation-was-still-analysing-the-position.md
 [ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
-[ADR-0044]: docs/adr/0044-a-contended-endpoint-should-not-end-a-game.md
+[ADR-0044]: docs/adr/0044-the-ladder-resets-on-an-answered-call.md
 [0.2.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0
