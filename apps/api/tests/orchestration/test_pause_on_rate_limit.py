@@ -681,3 +681,143 @@ class TestAProviderThatDoesNotAnswer:
         await make_worker(counting, cooldown=ProviderCooldown(redis)).handle(game.first_job)
 
         assert calls == 1, f"one attempt, then pause — not {calls}"
+
+
+async def _span(
+    db: AsyncSession,
+    game_id: Any,
+    *,
+    payload: dict[str, Any],
+    began_ago: dt.timedelta,
+    lasted: dt.timedelta,
+) -> None:
+    """Write a completed pause/resume span into the log, backdated.
+
+    The two events are appended and then dated, because `append_event` stamps `created_at` from the
+    server clock — which is correct everywhere except here, where the whole question is about
+    hours that have already gone by.
+    """
+    now = dt.datetime.now(dt.UTC)
+    paused = await append_event(db, game_id=game_id, type=EventType.GAME_PAUSED, payload=payload)
+    resumed = await append_event(
+        db,
+        game_id=game_id,
+        type=EventType.GAME_RESUMED,
+        payload={"detail": "the wait is over"},
+    )
+    await db.execute(
+        sa.update(GameEvent).where(GameEvent.id == paused.id).values(created_at=now - began_ago)
+    )
+    await db.execute(
+        sa.update(GameEvent)
+        .where(GameEvent.id == resumed.id)
+        .values(created_at=now - began_ago + lasted)
+    )
+
+
+class TestAHaltDoesNotSpendThePatience:
+    """**Our downtime is not the game's patience** (#40, ADR-0019).
+
+    `_pause_for_halt` correctly declines to *abandon* during a halt — a halt is ours, and writing
+    off a game over it would make a harness bound into a finding about a player. But skipping the
+    check never stopped the clock, so the hours we chose not to play were still charged, and the
+    game was judged on them the moment the halt lifted.
+
+    Not hypothetical arithmetic: the daily free-model allowance runs out most days and the halt
+    holds to UTC midnight, measured at ~8.3 hours — a third of `PAUSE_WINDOW`.
+    """
+
+    async def test_a_halt_is_not_charged_against_the_window(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """Thirty hours idle, eight of them halted: twenty-two of patience spent, so it lives."""
+        worker = make_worker(rate_limited, cooldown=ProviderCooldown(redis))
+
+        await _backdate_progress(db, game.game.id, PAUSE_WINDOW + dt.timedelta(hours=6))
+        await _span(
+            db,
+            game.game.id,
+            payload={"reason": "the harness is halted: free allowance", "halt_source": "free_tier"},
+            began_ago=dt.timedelta(hours=20),
+            lasted=dt.timedelta(hours=8),
+        )
+        await db.commit()
+
+        handled = await worker.handle(game.first_job)
+
+        assert handled.outcome == PAUSED, (
+            "a game 30h idle with 8h of that halted has spent 22h of a 24h window — abandoning it "
+            "charges the harness's own downtime to the player"
+        )
+
+    async def test_the_window_is_still_reachable_across_a_halt(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """The constraint the excuse must respect: a permanently dead endpoint still gets written
+        off. Forty hours idle less eight halted is thirty-two — past the window, so it dies."""
+        worker = make_worker(rate_limited, cooldown=ProviderCooldown(redis))
+
+        await _backdate_progress(db, game.game.id, PAUSE_WINDOW + dt.timedelta(hours=16))
+        await _span(
+            db,
+            game.game.id,
+            payload={"reason": "the harness is halted: free allowance", "halt_source": "free_tier"},
+            began_ago=dt.timedelta(hours=20),
+            lasted=dt.timedelta(hours=8),
+        )
+        await db.commit()
+
+        handled = await worker.handle(game.first_job)
+
+        assert handled.outcome == "aborted"
+
+    async def test_a_provider_pause_is_not_excused(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """**The two kinds of pause are told apart structurally, not by reading their prose.**
+
+        A halt pause carries `halt_source` and a provider pause carries `limit_source`; they are
+        disjoint by construction. The span below is the provider's — the thing the window exists to
+        measure — so excusing it would make the window unreachable by the exact mechanism ADR-0031
+        guards against: pause, auto-resume, pause, forever.
+        """
+        worker = make_worker(rate_limited, cooldown=ProviderCooldown(redis))
+
+        await _backdate_progress(db, game.game.id, PAUSE_WINDOW + dt.timedelta(hours=6))
+        await _span(
+            db,
+            game.game.id,
+            payload={"reason": "rate-limited", "limit_source": "upstream_provider_shared_pool"},
+            began_ago=dt.timedelta(hours=20),
+            lasted=dt.timedelta(hours=8),
+        )
+        await db.commit()
+
+        handled = await worker.handle(game.first_job)
+
+        assert handled.outcome == "aborted", (
+            "the provider's own pause was excused as if it were ours"
+        )
+
+    async def test_an_unfinished_halt_counts_up_to_now(
+        self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
+    ) -> None:
+        """A halt with no resume yet runs to now rather than counting for nothing — otherwise the
+        reconciler nudging a game mid-halt would judge it on hours it is still not being given."""
+        worker = make_worker(rate_limited, cooldown=ProviderCooldown(redis))
+
+        await _backdate_progress(db, game.game.id, PAUSE_WINDOW + dt.timedelta(hours=6))
+        paused = await append_event(
+            db,
+            game_id=game.game.id,
+            type=EventType.GAME_PAUSED,
+            payload={"reason": "the harness is halted", "halt_source": "operator"},
+        )
+        await db.execute(
+            sa.update(GameEvent)
+            .where(GameEvent.id == paused.id)
+            .values(created_at=dt.datetime.now(dt.UTC) - dt.timedelta(hours=8))
+        )
+        await db.commit()
+
+        assert (await worker.handle(game.first_job)).outcome == PAUSED

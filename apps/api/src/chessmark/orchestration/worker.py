@@ -660,7 +660,9 @@ class TurnWorker:
             window = HUMAN_PAUSE_WINDOW if human else PAUSE_WINDOW
             pauses = await self._pause_count(session, game.id)
             since = await self._last_progress_at(session, game)
-            waited = dt.datetime.now(dt.UTC) - since
+            # **Our own downtime is not the game's patience.** See `_halted_for`.
+            halted = await self._halted_for(session, game, since)
+            waited = dt.datetime.now(dt.UTC) - since - halted
 
             seconds = 0
             if limit.account:
@@ -691,7 +693,8 @@ class TurnWorker:
             #
             # Measured from the last move, so the window is wall-clock patience with a *moving*
             # game, and neither a function of how the cooldown ladder happens to be tuned nor of
-            # how long ago this game first met a busy provider.
+            # how long ago this game first met a busy provider — less whatever of it we spent
+            # halted, which was never the game's to spend (`_halted_for`).
             if waited >= window:
                 hours = waited.total_seconds() / 3600
                 log.error(
@@ -706,11 +709,18 @@ class TurnWorker:
                 # is true of a game that fought for 39 hours and of one reopened six hours ago
                 # carrying an old clock, and an operator deciding whether to reopen it again needs
                 # to tell those apart without reading the event log.
+                #
+                # The halt is named for the same reason: `hours` is now patience *spent*, not
+                # elapsed, so a game abandoned at "16.0h" on a 24-hour window looks like an
+                # arithmetic error until the eight hours we were down are on the same line.
+                excused = (
+                    f", excluding {halted.total_seconds() / 3600:.1f}h halted" if halted else ""
+                )
                 await self._abandon(
                     session,
                     game,
                     f"Abandoned after {hours:.1f}h without a move and {pauses} pauses, "
-                    f"counted from {since.isoformat(timespec='seconds')}: {reason}",
+                    f"counted from {since.isoformat(timespec='seconds')}{excused}: {reason}",
                 )
                 return HandledJob(ABORTED, game.id, job.expected_ply, result=result)
 
@@ -747,6 +757,10 @@ class TurnWorker:
                     "waited_seconds": int(waited.total_seconds()),
                     "last_progress_at": since.isoformat(),
                     "window_seconds": int(window.total_seconds()),
+                    # Stated rather than left implicit, because `waited_seconds` no longer equals
+                    # `now - last_progress_at` and a reader checking the arithmetic deserves the
+                    # missing term rather than a discrepancy.
+                    "halted_seconds": int(halted.total_seconds()),
                 },
             )
             before_seq = game.event_seq - 1
@@ -814,6 +828,61 @@ class TurnWorker:
         # clock as one that moved: the full window, and no more.
         at = max(filter(None, (at, reopened)), default=None) or game.started_at or game.created_at
         return at.replace(tzinfo=dt.UTC) if at.tzinfo is None else at
+
+    async def _halted_for(
+        self, session: AsyncSession, game: Game, since: dt.datetime
+    ) -> dt.timedelta:
+        """How much of the time since `since` this game spent halted — time it must not be charged.
+
+        **Skipping the abandonment check is not the same as stopping the clock**, and
+        `_pause_for_halt` only does the first. It is right not to abandon during a halt: a halt is
+        *ours* — an empty account, our allowance, an operator — and writing off a game over it
+        would be a harness bound becoming a finding about a player (ADR-0019). But the window went
+        on running underneath, so the hours we chose not to play were still spent, and the game was
+        judged on them the moment the halt lifted.
+
+        It is not a small share. The daily free-model allowance runs out most days and the halt
+        holds until UTC midnight — measured at ~8.3 hours, a third of `PAUSE_WINDOW`. A game
+        already 15 hours idle when a halt begins emerges at 23 and dies on its first provider
+        pause, abandoned for an outage that was ours.
+
+        **A halt pause is identified structurally, not by reading its prose.** `_pause_for_halt`
+        writes `halt_source` into the payload and `_pause` writes `limit_source`; the two are
+        disjoint by construction, so this asks whether the key is there. Matching on the `reason`
+        string would have tied the abandonment clock to the wording of a log line.
+
+        Spans are paired pause-to-resume in `seq` order — the log is gap-free and append-only
+        (ADR-0008), so it is the authority here and no accumulator column is needed. A halt still
+        open runs to now, which is the honest reading while it lasts and is also what makes this
+        safe to call from anywhere: a provider pause arriving mid-halt is ignored rather than
+        closing the span, because only a resume ends one.
+        """
+        rows = (
+            await session.execute(
+                sa.select(GameEvent.type, GameEvent.created_at, GameEvent.payload)
+                .where(
+                    GameEvent.game_id == game.id,
+                    GameEvent.created_at > since,
+                    GameEvent.type.in_((EventType.GAME_PAUSED, EventType.GAME_RESUMED)),
+                )
+                .order_by(GameEvent.seq)
+            )
+        ).all()
+
+        total = dt.timedelta()
+        started: dt.datetime | None = None
+        for event_type, created_at, payload in rows:
+            at = created_at.replace(tzinfo=dt.UTC) if created_at.tzinfo is None else created_at
+            if EventType(event_type) is EventType.GAME_PAUSED:
+                if started is None and "halt_source" in (payload or {}):
+                    started = at
+            elif started is not None:
+                total += at - started
+                started = None
+
+        if started is not None:
+            total += dt.datetime.now(dt.UTC) - started
+        return total
 
     async def _has_human_seat(self, session: AsyncSession, game_id: uuid.UUID) -> bool:
         seats = await session.scalars(sa.select(Player.kind).where(Player.game_id == game_id))
