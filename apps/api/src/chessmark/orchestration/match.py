@@ -101,8 +101,6 @@ async def create_match(
         prompt_version=PROMPT_VERSION,
         tool_schema_version=TOOL_SCHEMA_VERSION,
     )
-    game.provider_routing = routing.to_record()
-
     players: dict[Colour, Player] = {}
     for colour, seat in ((Colour.WHITE, white), (Colour.BLACK, black)):
         players[colour] = await add_player(
@@ -129,6 +127,32 @@ async def create_match(
                 provider=seat.provider,
             )
         ).to_record()
+
+    # **The game records what bound it, not what was asked for.**
+    #
+    # This was written before the seats resolved, so it could only carry the *request* — and
+    # `resolve_routing` then pins one endpoint and clears `quantizations`, because the endpoint is
+    # the constraint from that point on (ADR-0015). The game blob went on asserting a policy of
+    # 8-bit-and-above while the seats ran at 4-bit: across `pool-free`, 15 seats in 14 games ran at
+    # `nvfp4` or `fp4` under a record that said they could not.
+    #
+    # Nothing was mis-rated — a contestant is `(model, quantization)`, so `model@nvfp4` is its own
+    # row — but invariant 3 is about a record a reader can trust, and this one was untrue.
+    #
+    # Written after the loop, from the seats. An empty list is meaningful and not the same as an
+    # absent one: `from_record` reads it as *deliberately cleared*, which is exactly what a pinned
+    # seat is.
+    bound = [
+        quantization
+        for player in players.values()
+        for quantization in (player.provider_routing or {}).get("quantizations", [])
+    ]
+    game.provider_routing = {
+        # Order is kept as it was requested, not sorted: `quantizations` is a preference list to
+        # OpenRouter, and re-ordering it would make the record describe a different policy again.
+        **routing.to_record(),
+        "quantizations": [q for q in routing.quantizations if q in set(bound)],
+    }
 
     match = Match(game=game, white=players[Colour.WHITE], black=players[Colour.BLACK])
 
