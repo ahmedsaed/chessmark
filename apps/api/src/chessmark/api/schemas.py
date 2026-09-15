@@ -943,6 +943,13 @@ class StandingOut(Schema):
     byes: int
     score: float
     sonneborn_berger: float
+    #: Whether the field would still admit this entrant today.
+    #:
+    #: A pool keeps a departed model's record — its games are real results and its rating is real —
+    #: but it stops giving it pairings, and a reader looking at a row that will never gain another
+    #: game deserves to be told which kind of row it is. `pool-free` seats 19 while the free tier
+    #: serves 16.
+    in_field: bool = True
     #: Glicko-2 over this event's games alone, and `None` for a closed event.
     #:
     #: A pool has no fixed schedule, so its entrants play unequal numbers of games and a sum of

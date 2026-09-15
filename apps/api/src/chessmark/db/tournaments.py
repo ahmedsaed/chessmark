@@ -272,6 +272,23 @@ def filter_from_json(stored: dict[str, Any]) -> FieldFilter:
     )
 
 
+async def in_field(session: AsyncSession, tournament: Tournament, field: FieldFilter) -> set[str]:
+    """Which seated entrants the field would still admit today.
+
+    A pool re-resolves its field every tick to seat newcomers, and deliberately does **not**
+    withdraw a model that has left — its games are real results and its rating is real, and
+    dropping it because an endpoint went quiet would rewrite history (`admit_new_entrants`).
+
+    But "keep its record" and "keep giving it games" are different instructions, and the pool was
+    reading the second. `pool-free` seats 19 while the free tier serves 16: `minimax-m2.7`,
+    `minimax-m3` and `glm-5.2` are gone from OpenRouter's free catalogue and were still being
+    handed pairings — which the balance policy *prioritises*, because they have the fewest games
+    (ADR-0041). Three delisted models were taking the pool's scarcest resource ahead of models that
+    can actually play.
+    """
+    return {entrant.key for entrant in await resolve_field(session, field)}
+
+
 async def entrants_of(session: AsyncSession, tournament_id: uuid.UUID) -> list[Entrant]:
     rows = await session.scalars(
         sa.select(TournamentEntrant)

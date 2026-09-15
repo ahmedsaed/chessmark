@@ -591,8 +591,24 @@ async def _schedule_pool(
     if resting:
         log.info("pool %s skipping %d resting entrants", tournament.slug, len(resting))
 
+    # **Seated is not the same as playable.** A pool keeps a departed model's record and its
+    # rating; it must not keep handing it games. Narrowed here rather than in `matchmake`, which
+    # would then need to know what a catalogue is — and rather than in `unavailable`, which means
+    # "resting, back in a minute" and is read that way by everything downstream.
+    playable = await repo.in_field(
+        session, tournament, repo.filter_from_json(tournament.field_filter)
+    )
+    pairable = [e for e in entrants if e.key in playable] if playable else entrants
+    if len(pairable) < len(entrants):
+        log.info(
+            "pool %s: %d of %d entrants are no longer in the field and will not be paired",
+            tournament.slug,
+            len(entrants) - len(pairable),
+            len(entrants),
+        )
+
     games = matchmake(
-        entrants,
+        pairable,
         await repo.results_so_far(session, tournament.id, era=era),
         await _form(session, tournament),
         count=room,
