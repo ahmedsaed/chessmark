@@ -247,6 +247,11 @@ async def get_tournament(
     names = {row.key: row.display_name for row in entrant_rows}
 
     entrants = await repo.entrants_of(session, tournament.id)
+    # Which of them the field would still admit. A pool never withdraws a model that has left the
+    # catalogue, so the table has to say which rows are closed.
+    playable = await repo.in_field(
+        session, tournament, repo.filter_from_json(tournament.field_filter)
+    )
     eras = await repo.eras_of(session, tournament.id)
     showing = await _shown_era(session, tournament, era)
     results = await repo.results_so_far(session, tournament.id, era=showing)
@@ -303,6 +308,7 @@ async def get_tournament(
                 key=s.key,
                 display_name=names.get(s.key, s.key),
                 seed=s.entrant.seed,
+                in_field=not playable or s.key in playable,
                 played=s.played,
                 wins=s.wins,
                 draws=s.draws,

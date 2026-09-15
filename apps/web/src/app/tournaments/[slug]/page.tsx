@@ -286,11 +286,22 @@ function Standings({ rows }: { rows: Standing[] }) {
         {rows.map((row) => (
           <li
             key={row.key}
+            /* **A row that will never gain another game does not look like one still competing.**
+               A pool keeps a departed model's record — the games are real and the rating is real —
+               and stops pairing it, so the table has to show which kind of row this is. Dimmed
+               rather than hidden or struck through: the result stands, it is simply finished. */
+            title={
+              row.in_field
+                ? undefined
+                : "No longer in this field — its games and rating stand, but it will not be paired again"
+            }
             className={`tabular grid ${
               rated
                 ? "grid-cols-[2rem_1fr_5.5rem_3rem_4.5rem]"
                 : "grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem]"
-            } items-center gap-2 bg-surface px-3 py-2 font-mono text-xs`}
+            } items-center gap-2 bg-surface px-3 py-2 font-mono text-xs ${
+              row.in_field ? "" : "opacity-50"
+            }`}
           >
             <span className={row.place === 1 ? "text-accent" : "text-ink-faint"}>{row.place}</span>
             <Link
@@ -298,6 +309,11 @@ function Standings({ rows }: { rows: Standing[] }) {
               className="min-w-0 truncate text-ink transition-colors hover:text-accent"
             >
               {row.key.split("/").slice(1).join("/") || row.key}
+              {!row.in_field && (
+                <span aria-hidden className="ml-1.5 text-[9px] text-ink-faint">
+                  ·  left the field
+                </span>
+              )}
             </Link>
             {rated && (
               <span className="text-right text-ink">

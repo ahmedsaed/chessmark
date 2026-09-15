@@ -13,11 +13,12 @@ a pool's table and the leaderboard could disagree about what counts.
 from __future__ import annotations
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from chessmark.bench.ratable import era
 from chessmark.db import tournaments as repo
-from chessmark.db.models import TournamentGame
+from chessmark.db.models import ModelRegistry, Tournament, TournamentGame
 from chessmark.orchestration.tournament import advance
 from chessmark.tournament import FieldFilter, Format, Pairing, TournamentConfig
 from tests.tournament.test_runner import abandon_all_in_flight, make_tournament
@@ -222,3 +223,90 @@ class TestTheErasAnEventHasPlayed:
         )
 
         assert await repo.eras_of(db, tournament_id) == []
+
+
+async def departs(db: AsyncSession) -> str:
+    """Take one seeded model out of the field, the way the catalogue takes one out: disabled.
+
+    `seed_models` never deletes — a model that disappears from OpenRouter is disabled and its games
+    stay readable — so this is the real shape of leaving, not a contrived one.
+    """
+    model = await db.scalar(
+        sa.select(ModelRegistry).where(ModelRegistry.openrouter_id == "vendor/model-1")
+    )
+    assert model is not None
+    model.enabled = False
+    await db.commit()
+    return model.openrouter_id
+
+
+class TestAnEntrantThatLeftTheField:
+    """**Keeping a record and handing out games are different instructions.**
+
+    A pool re-resolves its field every tick to seat newcomers and deliberately never withdraws a
+    model that has left — its games are real results and its rating is real, and dropping it because
+    an endpoint went quiet would rewrite history (`admit_new_entrants`). The pool was reading that
+    as "so keep pairing it".
+
+    `pool-free` seated 19 while the free tier served 16: `minimax-m2.7`, `minimax-m3` and `glm-5.2`
+    were gone from OpenRouter's free catalogue and still being handed games — which the balance
+    policy *prioritises*, because they have the fewest (ADR-0041). Three delisted models were taking
+    the pool's scarcest resource ahead of models that could actually play.
+    """
+
+    async def test_a_departed_entrant_is_not_paired(
+        self, db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+    ) -> None:
+        tournament_id, _ = await make_tournament(
+            db,
+            models=4,
+            config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+        )
+        gone = await departs(db)
+
+        for _ in range(3):
+            await advance(sessionmaker, queue, tournament_id=tournament_id)
+            db.expire_all()
+            await abandon_all_in_flight(db, tournament_id)
+
+        paired = {
+            key
+            for row in await repo.attempted(db, tournament_id)
+            for key in (row.white, row.black)
+            if key
+        }
+        assert gone not in paired, (
+            "a model the field would no longer admit was handed a game — and the balance policy "
+            "puts it first, because it has the fewest"
+        )
+
+    async def test_its_record_is_kept(self, db: AsyncSession) -> None:
+        """The other half, and the reason this is not a withdrawal: the games it already played are
+        real results, and its row stays on the table."""
+        tournament_id, _ = await make_tournament(
+            db,
+            models=4,
+            config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+        )
+        gone = await departs(db)
+
+        seated = {e.key for e in await repo.entrants_of(db, tournament_id)}
+        assert gone in seated, "still seated — this is not a withdrawal"
+
+    async def test_the_table_can_tell_which_rows_are_closed(self, db: AsyncSession) -> None:
+        """A reader looking at a row that will never gain another game deserves to be told."""
+        tournament_id, _ = await make_tournament(
+            db,
+            models=4,
+            config=TournamentConfig(format=Format.POOL, max_concurrent=1, field=FieldFilter()),
+        )
+        tournament = await db.get(Tournament, tournament_id)
+        assert tournament is not None
+        gone = await departs(db)
+
+        playable = await repo.in_field(
+            db, tournament, repo.filter_from_json(tournament.field_filter)
+        )
+
+        assert gone not in playable
+        assert len(playable) == 3, playable

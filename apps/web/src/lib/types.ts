@@ -446,6 +446,14 @@ export interface Standing {
   score: number;
   sonneborn_berger: number;
   /**
+   * Whether the field would still admit this entrant today.
+   *
+   * A pool keeps a departed model's record — its games are real results and its rating is real —
+   * and stops giving it pairings. A row that will never gain another game should not look like one
+   * still competing: `pool-free` seats 19 while the free tier serves 16.
+   */
+  in_field: boolean;
+  /**
    * Glicko-2 over this event's games alone, and `null` for a closed event.
    *
    * A pool has no fixed schedule, so its entrants play unequal numbers of games and a sum of
