@@ -56,30 +56,29 @@ export function StatsRail({
 
   return (
     <aside aria-label="Game statistics" className="flex min-w-0 flex-col gap-2.5">
-      {/* **Two rows, four facts.** Each used to have a line of its own, which cost 110px of a rail
-          that has 616 to spend at 1366x768 — and the four are two pairs anyway: where the game is,
-          and what kind of game it is. Nothing was dropped to fit; they were paired. */}
-      <div className="flex flex-col gap-1.5 border border-line bg-surface-2 p-2.5">
+      <div className="flex flex-col gap-1.5 border border-line bg-surface-2 p-3">
+        <Row label="Move" value={String(Math.ceil((activePly ?? game.ply_count) / 2) || 1)} />
         <Row
-          label="Move"
-          value={`${Math.ceil((activePly ?? game.ply_count) / 2) || 1} · ${
-            activePly === undefined ? game.ply_count : `${activePly}/${game.ply_count}`
-          } plies`}
+          label="Plies"
+          value={
+            activePly === undefined
+              ? String(game.ply_count)
+              : `${activePly} / ${game.ply_count}`
+          }
         />
+        <Row label="Status" value={game.status} />
         {/* A game with a person in it can never be ranked — a person is not a contestant — so the
             row would read "no" for the whole game and tell the player nothing they did not choose.
             Whether chat is on is still worth stating, because they chose that too. */}
-        <Row
-          label="Status"
-          value={`${game.status} · ${
-            hasHuman
-              ? `talk ${game.trash_talk_enabled ? "on" : "off"}`
-              : game.is_ranked
-                ? "ranked"
-                : `unranked · talk ${game.trash_talk_enabled ? "on" : "off"}`
-          }`}
-          muted
-        />
+        {hasHuman ? (
+          <Row label="Talk" value={game.trash_talk_enabled ? "on" : "off"} muted />
+        ) : (
+          <Row
+            label="Ranked"
+            value={game.is_ranked ? "yes" : `no · talk ${game.trash_talk_enabled ? "on" : "off"}`}
+            muted
+          />
+        )}
       </div>
 
       {white && (
@@ -97,13 +96,12 @@ export function StatsRail({
         />
       )}
 
-      {/* The heading was the tallest thing in here and said the least — "Spend" over a row reading
-          "Total $0.000" is the same word twice. Three facts, one line, no heading. */}
-      <dl className="grid grid-cols-3 gap-2 border border-line bg-surface-2 p-2.5">
-        <Cell label="Spend" value={usd(game.total_cost_usd)} />
-        <Cell label="Cap" value={game.max_usd ? usd(game.max_usd) : "none"} />
-        <Cell label="Tokens" value={game.total_tokens.toLocaleString()} />
-      </dl>
+      <div className="flex flex-col gap-1.5 border border-line bg-surface-2 p-3">
+        <Label>Spend</Label>
+        <Row label="Total" value={usd(game.total_cost_usd)} />
+        <Row label="Cap" value={game.max_usd ? usd(game.max_usd) : "none"} muted />
+        <Row label="Tokens" value={game.total_tokens.toLocaleString()} muted />
+      </div>
 
       {event && <EventCard event={event} />}
     </aside>
@@ -136,65 +134,63 @@ function EventCard({ event }: { event: GameTournament }) {
   const byRating = ranked_by === "rating";
 
   return (
-    <div className="flex flex-col gap-1.5 border border-line bg-surface-2 p-2.5">
-      <div className="flex min-w-0 items-baseline gap-2">
-        <Link
-          href={`/tournaments/${tournament.slug}`}
-          className="truncate font-mono text-[11px] text-accent hover:underline"
-        >
-          {tournament.name}
-        </Link>
+    <div className="flex flex-col gap-2 border border-line bg-surface-2 p-3">
+      <Label>Event</Label>
+
+      <Link
+        href={`/tournaments/${tournament.slug}`}
+        className="truncate font-mono text-xs text-accent hover:underline"
+      >
+        {tournament.name}
+      </Link>
+
+      <p className="font-mono text-[9.5px] text-ink-faint">
         <span
-          className="ml-auto flex-none cursor-help font-mono text-[8.5px] text-ink-faint"
-          title={[
+          title={
             tournament.format === "pool"
-              ? `Round ${tournament.round_number}: a pool numbers one round per game, so this is the Nth pairing it scheduled.`
-              : `Round ${tournament.round_number} of ${entrants} entrants.`,
-            tournament.era
-              ? `Era ${tournament.era} is the prompt and tool-schema majors this game was played under — results are comparable within an era, not across one.`
-              : "",
-            `${byRating ? "Rating" : "Score"} and place are this era's table as it stands now, not as it stood when this game was played.`,
-          ]
-            .filter(Boolean)
-            .join(" ")}
+              ? "a pool numbers one round per game, so this is the Nth pairing it scheduled"
+              : undefined
+          }
         >
-          r{tournament.round_number}
-          {tournament.era ? ` · ${tournament.era}` : ""}
+          round {tournament.round_number}
         </span>
+        {tournament.era && (
+          <>
+            {" · "}
+            <span title="the prompt and tool-schema majors this game was played under — results are comparable within an era, not across one">
+              era {tournament.era}
+            </span>
+          </>
+        )}
+        {" · "}
+        {entrants} entrants
+      </p>
+
+      <div className="flex flex-col gap-px border border-line-soft bg-line-soft">
+        {seats.map((seat) => (
+          <SeatRow key={seat.colour} seat={seat} byRating={byRating} entrants={entrants} />
+        ))}
       </div>
 
-      {/* **The columns are headed.** They were not, and a line ending "#1/8  1" leaves the reader
-          to guess what the last number is — the one thing the event ranks on. Two words of 8px
-          type buy that back for twelve pixels. */}
-      <dl className="grid grid-cols-[auto_1fr_auto_auto] items-baseline gap-x-2.5 gap-y-0.5 font-mono text-[10px]">
-        <dt className="col-span-2" />
-        <dt className="text-right text-[7.5px] uppercase tracking-[0.1em] text-ink-faint">place</dt>
-        <dt className="text-right text-[7.5px] uppercase tracking-[0.1em] text-ink-faint">
-          {byRating ? "rating" : "score"}
-        </dt>
-        {seats.map((seat) => (
-          <SeatLine key={seat.colour} seat={seat} byRating={byRating} entrants={entrants} />
-        ))}
-      </dl>
+      <p className="font-mono text-[8.5px] leading-relaxed text-ink-faint">
+        {byRating ? "Rating" : "Score"} and place in this {tournament.era ? "era" : "event"}, as
+        they stand now — not as they stood when this game was played.
+      </p>
     </div>
   );
 }
 
 /**
- * One seat's line: swatch, name, place, and the number the event is ranked on.
+ * One seat's line in the Event card.
  *
- * **One line, not a card.** It was a name row over a three-column stat grid, which read beautifully
- * and cost 271px — in a rail that has 616 at 1366x768 and four other blocks to fit. The facts are
- * all still here; they are on one line instead of three.
+ * Built like a `PlayerCard` rather than a table row so the two read as a pair: the same colour
+ * swatch, the same name treatment, the same stat grid underneath. A reader scanning down the rail
+ * meets each model twice and should recognise it the second time.
  *
- * The record and the "as they stand now" caveat moved into `title` attributes. Both are things a
- * reader wants *once*, when they first wonder what the numbers mean — not on every game page for
- * the rest of the rail's life.
- *
- * A seat with no `place` is one the table does not carry: a human, or a model seated outside the
- * field. It keeps its line and says so, because an absent row would read as a rendering fault.
+ * A seat with no `place` is a seat the table does not carry — a human, or a model seated outside
+ * the field. It keeps its row and says so, because an absent row would read as a rendering fault.
  */
-function SeatLine({
+function SeatRow({
   seat,
   byRating,
   entrants,
@@ -203,59 +199,52 @@ function SeatLine({
   byRating: boolean;
   entrants: number;
 }) {
-  const rank =
-    byRating && seat.rating !== null
-      ? `${Math.round(seat.rating)}${seat.rating_provisional ? "?" : ""}`
-      : byRating
-        ? "unrated"
-        : String(seat.score);
-
   return (
-    <>
-      <dt className="flex min-w-0 items-center gap-1.5">
+    <div className="flex flex-col gap-1.5 bg-surface px-2 py-2">
+      <div className="flex min-w-0 items-center gap-2">
         <i
           aria-hidden
           className={`block h-2 w-2 flex-none border border-line ${
             seat.colour === "white" ? "bg-piece-white" : "bg-piece-black"
           }`}
         />
-      </dt>
-      <dd className="min-w-0 truncate text-ink-dim" title={seat.display_name}>
-        {seat.display_name}
+        <b className="truncate font-mono text-[10.5px] font-normal text-ink">
+          {seat.display_name}
+        </b>
         {!seat.in_field && (
           <span
-            className="ml-1 cursor-help text-ink-faint"
             title="no longer in this event's field — it keeps its record but gets no new pairings"
+            className="ml-auto flex-none cursor-help font-mono text-[8.5px] uppercase tracking-wider text-ink-faint"
           >
-            · left
+            left
           </span>
         )}
-      </dd>
+      </div>
+
       {seat.place === null ? (
-        <dd className="col-span-2 text-right text-ink-faint">not entered</dd>
+        <p className="font-mono text-[9.5px] text-ink-faint">not an entrant in this event</p>
       ) : (
-        <>
-          <dd
-            className="tabular text-right text-ink-faint"
-            title={`${seat.wins}W ${seat.draws}D ${seat.losses}L over ${seat.played} games in this era`}
-          >
-            #{seat.place}/{entrants}
-          </dd>
-          <dd
-            className="tabular text-right text-ink"
+        <dl className="grid grid-cols-3 gap-2">
+          <Cell label="Place" value={`${seat.place} / ${entrants}`} />
+          <Cell
+            label={byRating ? "Rating" : "Score"}
+            value={
+              byRating
+                ? seat.rating === null
+                  ? "unrated"
+                  : `${Math.round(seat.rating)}${seat.rating_provisional ? "?" : ""}`
+                : String(seat.score)
+            }
             title={
               byRating && seat.rating_provisional
                 ? "still too few games for this rating to be read as a placing"
-                : byRating
-                  ? "Glicko-2 over this event's games in this era"
-                  : "points in this era"
+                : undefined
             }
-          >
-            {rank}
-          </dd>
-        </>
+          />
+          <Cell label="Record" value={`${seat.wins}-${seat.draws}-${seat.losses}`} />
+        </dl>
       )}
-    </>
+    </div>
   );
 }
 
@@ -281,7 +270,7 @@ function PlayerCard({
     <div
       /* `relative` and `overflow-hidden` for the ribbon below, which is positioned against this
          card and clipped by its corner. */
-      className={`relative flex flex-col gap-1.5 overflow-hidden border p-2.5 ${
+      className={`relative flex flex-col gap-2 overflow-hidden border p-3 ${
         won
           ? "border-accent bg-surface-3"
           : active
@@ -331,23 +320,13 @@ function PlayerCard({
           </span>
         )}
       </div>
-      <p className="truncate font-mono text-[9px] leading-tight text-ink-faint">
+      <p className="truncate font-mono text-[9.5px] text-ink-faint">
         {player.model ?? player.kind}
       </p>
 
       <Endpoint player={player} />
 
-      {/* **One row, not two.** Four stats in a 2x2 grid cost twice the height for the same four
-          numbers, and the rail has 616px at 1366x768 to fit two of these cards, the status, the
-          spend and the event.
-          The column count follows the stat count for the same reason: `Compacted` appears only
-          when it has happened, and a fifth stat in a four-column grid wraps — turning the one case
-          where a seat has *more* to say into the one that costs another row on both cards. */}
-      <dl
-        className={`grid gap-px border border-line-soft bg-line-soft ${
-          player.compactions > 0 ? "grid-cols-5" : "grid-cols-4"
-        }`}
-      >
+      <dl className="grid grid-cols-2 gap-px border border-line-soft bg-line-soft">
         <Stat label="Tokens" value={(player.prompt_tokens + player.completion_tokens).toLocaleString()} />
         <Stat label="Cached" value={cacheRate(player)} />
         <Stat label="Cost" value={usd(player.total_cost_usd)} />
@@ -424,11 +403,11 @@ function Stat({
 }) {
   const colour = tone === "bad" ? "text-bad" : tone === "good" ? "text-good" : "text-ink";
   return (
-    <div className="min-w-0 bg-surface px-1.5 py-1">
-      <dt className="truncate font-mono text-[8px] uppercase tracking-[0.08em] text-ink-faint">
+    <div className="bg-surface px-2 py-1.5">
+      <dt className="font-mono text-[8.5px] uppercase tracking-[0.12em] text-ink-faint">
         {label}
       </dt>
-      <dd className={`tabular truncate font-mono text-[11px] ${colour}`}>{value}</dd>
+      <dd className={`tabular mt-0.5 font-mono text-xs ${colour}`}>{value}</dd>
     </div>
   );
 }
@@ -454,3 +433,10 @@ function Row({
   );
 }
 
+function Label({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-ink-faint">
+      {children}
+    </p>
+  );
+}
