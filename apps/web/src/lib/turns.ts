@@ -484,12 +484,18 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
          on the page to say why, which is what it did. */
       case "game_paused": {
         if (current) current.live = false;
+        const pausedColour = asString(payload.colour);
         paused = {
           key: `paused-${event.seq}`,
           seq: event.seq,
           kind: "paused",
           text: asString(payload.reason) || "paused by the harness",
           resumeAfter: asString(payload.resume_after) || null,
+          // The seat whose endpoint we are waiting on. A halt names none, and neither does a
+          // pause written before this was recorded — both render as they always did.
+          ...(pausedColour === "white" || pausedColour === "black"
+            ? { seat: { colour: pausedColour, model: asString(payload.model) || null } }
+            : {}),
         };
         notices.push(paused);
         break;
@@ -547,36 +553,12 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
 
 
 /**
- * Turns and notices in one list, ordered by `seq`.
+ * One row of the stream.
  *
- * **A live turn sorts last, not first.** `liveTurn` gives the in-progress turn `seq: -1` so its
- * key cannot collide with a real one — correct for keys, wrong for order, because -1 sorts before
- * everything. A notice could never be placed before it, so a pause landed *under* the THINKING
- * block while the game was live and jumped *above* that turn on the next reload, once the turn had
- * a real `seq`. Same events, two orders, and the reader is left wondering which one lied.
- *
- * The live turn is by definition the newest thing in the stream, so it is treated as sorting after
- * everything. A pause then reads the same before and after a refresh, and the turn in progress
- * stays at the bottom where a reader looks for it.
+ * A turn carries the waits that led to it — see `buildTimeline`.
  */
-export function buildTimeline(turns: TurnView[], notices: StreamNotice[]): TimelineEntry[] {
-  const entries: TimelineEntry[] = turns.map((turn) => ({ kind: "turn", turn }));
-
-  for (const notice of notices) {
-    const at = entries.findIndex(
-      (entry) => entry.kind === "turn" && (entry.turn.seq < 0 || entry.turn.seq > notice.seq),
-    );
-    const item: TimelineEntry = { kind: "notice", notice };
-    if (at === -1) entries.push(item);
-    else entries.splice(at, 0, item);
-  }
-
-  return collapseNoticeRuns(entries);
-}
-
-/** One row of the stream: a turn, or a notice about the harness. */
 export type TimelineEntry =
-  | { kind: "turn"; turn: TurnView }
+  | { kind: "turn"; turn: TurnView; waits: StreamNotice[] }
   | { kind: "notice"; notice: StreamNotice };
 
 /**
@@ -592,61 +574,102 @@ export type TimelineEntry =
  * different problems. A rate limit followed by a halt must never read as one thing that happened
  * nine times.
  *
- * **Only an adjacent run folds.** A pause before a move and a pause after it are separated by the
- * turn between them, which breaks the run — so the panel still reads in order and a fold can never
- * hide play. The `resumed` rows *inside* a run are absorbed, because "it came back and was refused
- * again" is what the count already says; a `resumed` that ends a run survives, because then it
- * really did come back and that is the last thing that happened.
+ * The resumes *inside* a run are absorbed, because "it came back and was refused again" is what the
+ * count already says; one that ends a run survives, because then it really did come back and that
+ * is the last thing that happened.
+ *
+ * Takes a plain list rather than the timeline: a run is never interrupted by a turn, because
+ * `buildTimeline` has already grouped these, so the rule "a turn breaks the run" is a property of
+ * the input instead of a condition in the loop.
  */
-export function collapseNoticeRuns(entries: TimelineEntry[]): TimelineEntry[] {
-  const out: TimelineEntry[] = [];
+export function foldPauses(notices: StreamNotice[]): StreamNotice[] {
+  const out: StreamNotice[] = [];
 
-  for (let i = 0; i < entries.length; i++) {
-    const entry = entries[i];
-    if (entry.kind !== "notice" || entry.notice.kind !== "paused") {
-      out.push(entry);
+  for (let i = 0; i < notices.length; i++) {
+    const first = notices[i];
+    if (first.kind !== "paused") {
+      out.push(first);
       continue;
     }
 
-    const text = entry.notice.text;
-    let last = entry.notice;
+    let last = first;
     let count = 1;
     let j = i + 1;
+    while (j < notices.length) {
+      const next = notices[j];
+      const after = notices[j + 1];
+      const sameAgain = (n: StreamNotice | undefined) =>
+        n !== undefined && n.kind === "paused" && n.text === first.text;
 
-    // Walk forward while the run continues: a resume, then the same pause again.
-    while (j < entries.length) {
-      const next = entries[j];
-      if (next.kind !== "notice") break;
-      if (next.notice.kind === "resumed") {
-        const after = entries[j + 1];
-        const continues =
-          after !== undefined &&
-          after.kind === "notice" &&
-          after.notice.kind === "paused" &&
-          after.notice.text === text;
-        if (!continues) break;
-        last = after.notice;
+      if (next.kind === "resumed" && sameAgain(after)) {
+        last = after!;
         count += 1;
         j += 2;
-        continue;
-      }
-      if (next.notice.kind === "paused" && next.notice.text === text) {
-        last = next.notice;
+      } else if (sameAgain(next)) {
+        last = next;
         count += 1;
         j += 1;
-        continue;
-      }
-      break;
+      } else break;
     }
 
-    // The *last* pause of the run is the one shown: its `resumeAfter` is the wait a reader is
-    // actually in, and the earlier ones have already elapsed.
-    out.push({
-      kind: "notice",
-      notice: count > 1 ? { ...last, key: entry.notice.key, count } : entry.notice,
-    });
+    // The *last* pause of the run is shown: its `resumeAfter` is the wait a reader is actually in,
+    // and the earlier ones have already elapsed.
+    out.push(count > 1 ? { ...last, key: first.key, count } : first);
     i = j - 1;
   }
 
+  return out;
+}
+
+/**
+ * Turns and the waits that led to them, in one list.
+ *
+ * **A section is one seat\'s waits plus its turn, and the model name heads the whole of it.** That
+ * is the thing this used to reconstruct rather than build: notices were spliced in by `seq`, runs
+ * were folded in a second pass, and a third walked *backwards* from each turn to work out whether
+ * the header above had already named this seat — which is how the header came out twice the first
+ * time, because a run ends with a seatless `resumed` and the scan stopped there.
+ *
+ * A pause is written for the seat that could not play, and the attempt it belongs to is rolled back
+ * whole — so there is no turn row for it, and the waits simply belong to the turn that eventually
+ * succeeds. Saying so here means the header is rendered once because there is one section, not
+ * because a lookback agreed there should be.
+ *
+ * A wait with no turn after it — the game is still paused — stays a row of its own and carries its
+ * own seat marker. So does anything seatless: a halt, a compaction, the ending.
+ *
+ * **A live turn sorts last.** `liveTurn` gives it `seq: -1` so its key cannot collide with a real
+ * turn\'s; that is right for keys and wrong for order, and it once left a pause below the THINKING
+ * block while live and above it after a reload. It is by definition the newest thing in the stream.
+ */
+export function buildTimeline(turns: TurnView[], notices: StreamNotice[]): TimelineEntry[] {
+  const out: TimelineEntry[] = [];
+  const queue = [...notices].sort((a, b) => a.seq - b.seq);
+  let pending: StreamNotice[] = [];
+
+  const flush = () => {
+    for (const notice of foldPauses(pending)) out.push({ kind: "notice", notice });
+    pending = [];
+  };
+
+  for (const turn of turns) {
+    while (queue.length > 0 && (turn.seq < 0 || queue[0].seq < turn.seq)) {
+      pending.push(queue.shift()!);
+    }
+
+    // Whose waits these are. The first seated notice speaks for the run: a halt in the middle of
+    // one names nobody, and must not make the run look like somebody else\'s.
+    const seated = pending.find((notice) => notice.seat);
+    if (seated && seated.seat!.colour === turn.colour) {
+      out.push({ kind: "turn", turn, waits: foldPauses(pending) });
+      pending = [];
+    } else {
+      flush();
+      out.push({ kind: "turn", turn, waits: [] });
+    }
+  }
+
+  pending.push(...queue);
+  flush();
   return out;
 }
