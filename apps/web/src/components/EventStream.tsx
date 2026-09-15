@@ -294,12 +294,19 @@ function Disclosure({
  * each reasoning block, which now carries its own, and a single total told a reader nothing about
  * which of six blocks was the long one.
  */
+/** How many of a turn's blocks are the model's own work. A pause is not a step it took. */
+function stepCount(turn: TurnView): number {
+  return turn.blocks.filter((block) => block.kind !== "paused").length;
+}
+
 function stepSummary(turn: TurnView): string | undefined {
   const parts: string[] = [];
   if (turn.tools.length > 0) {
     parts.push(`${turn.tools.length} tool${turn.tools.length === 1 ? "" : "s"}`);
   }
   if (turn.illegal.length > 0) parts.push(`${turn.illegal.length} illegal`);
+  const pauses = turn.blocks.filter((block) => block.kind === "paused").length;
+  if (pauses > 0) parts.push(`${pauses} pause${pauses === 1 ? "" : "s"}`);
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
@@ -617,7 +624,7 @@ const Turn = memo(function Turn({
                  reasoning — each reasoning block now closes on its own, which solves that without
                  taking the order away. */
               <Disclosure
-                label={`${turn.blocks.length} step${turn.blocks.length === 1 ? "" : "s"}`}
+                label={`${stepCount(turn)} step${stepCount(turn) === 1 ? "" : "s"}`}
                 hint={stepSummary(turn)}
                 tone={turn.illegal.length > 0 ? "bad" : undefined}
                 open={open}
@@ -793,6 +800,30 @@ function Block({
         >
           {block.text}
         </p>
+      );
+
+    case "paused":
+      /* **Full width, and in the sequence.** The turn stopped here and came back, so the steps
+         above it are the work that survived the interruption and the ones below are what followed
+         it — an order the panel could not show while an interrupted turn was thrown away.
+         Drawn like the standalone notice rather than like a step, because it is still the harness
+         rather than the model: a rate limit is not something a contestant did. */
+      return (
+        <div
+          role="status"
+          className="w-full border border-bad-deep bg-surface px-3 py-2 font-mono text-[10px] leading-relaxed text-bad"
+        >
+          <span className="uppercase tracking-[0.1em]">paused</span>
+          {block.count > 1 && (
+            <span className="ml-1.5 border border-current px-1 py-px text-[9px]">
+              ×{block.count}
+            </span>
+          )}
+          <span className="text-ink-dim"> · {block.text}</span>
+          {block.resumeAfter && (
+            <span className="text-ink-faint"> · retrying {relativeTime(block.resumeAfter)}</span>
+          )}
+        </div>
       );
   }
 }

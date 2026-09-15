@@ -484,19 +484,54 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
          on the page to say why, which is what it did. */
       case "game_paused": {
         if (current) current.live = false;
+        const reason = asString(payload.reason) || "paused by the harness";
+        const resumeAfter = asString(payload.resume_after) || null;
         const pausedColour = asString(payload.colour);
+
+        /* The game is paused whichever way the row is drawn: this is what the board says about
+           itself, and it is cleared by the resume below. */
         paused = {
           key: `paused-${event.seq}`,
           seq: event.seq,
           kind: "paused",
-          text: asString(payload.reason) || "paused by the harness",
-          resumeAfter: asString(payload.resume_after) || null,
+          text: reason,
+          resumeAfter,
           // The seat whose endpoint we are waiting on. A halt names none, and neither does a
-          // pause written before this was recorded — both render as they always did.
+          // pause written before this was recorded — both render as they always did. Only a
+          // standalone row uses it: inside a turn, the turn's own header already names the seat.
           ...(pausedColour === "white" || pausedColour === "black"
             ? { seat: { colour: pausedColour, model: asString(payload.model) || null } }
             : {}),
         };
+
+        /* **Inside the turn when one is still open** (ADR-0045). A turn interrupted by a provider
+           keeps the rounds it completed, so a pause genuinely falls between two of its steps — and
+           the step list is the only place that can show which work survived the interruption and
+           which followed it.
+           `san === null` is what "still open" means: a turn that has played its move is finished,
+           and a pause after it belongs to whatever comes next rather than to the turn that has
+           already moved. `current` is not cleared on a move, so without this every between-turns
+           pause would be filed under the turn above it — which is the bug this whole change is
+           about, reintroduced from the other direction. */
+        if (current && current.san === null) {
+          const last = current.blocks.at(-1);
+          if (last?.kind === "paused" && last.text === reason) {
+            // A provider that keeps refusing produces pause, resume, pause, resume. One row with
+            // the count, carrying the wait the reader is actually in.
+            last.count += 1;
+            last.resumeAfter = resumeAfter;
+          } else {
+            current.blocks.push({
+              kind: "paused",
+              seq: event.seq,
+              text: reason,
+              resumeAfter,
+              count: 1,
+            });
+          }
+          break;
+        }
+
         notices.push(paused);
         break;
       }
@@ -509,13 +544,23 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
            A game that ends again appends another `game_ended` after this, which sets it back. */
         paused = null;
         ended = null;
-        notices.push({
-          key: `resumed-${event.seq}`,
-          seq: event.seq,
-          kind: "resumed",
-          text: asString(payload.detail) || "resumed",
-          resumeAfter: null,
-        });
+
+        /* **Swallowed when the pause it ends is a step of an open turn.** The steps that follow it
+           *are* the resumption — the model carried on and moved — so a row saying so is a second
+           telling of something already on the screen, and it cannot even be drawn in the right
+           place: the notice is ordered against whole turns, so it landed after the move the resume
+           made possible. A resume that ends a pause between turns still gets its row, because
+           there is nothing else there to say the game came back. */
+        const openPause = current?.san === null && current.blocks.at(-1)?.kind === "paused";
+        if (!openPause) {
+          notices.push({
+            key: `resumed-${event.seq}`,
+            seq: event.seq,
+            kind: "resumed",
+            text: asString(payload.detail) || "resumed",
+            resumeAfter: null,
+          });
+        }
         break;
       }
 
