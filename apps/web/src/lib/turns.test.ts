@@ -10,6 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  buildTimeline,
   collapseNoticeRuns,
   compactionText,
   foldEvents,
@@ -17,7 +18,7 @@ import {
   sameTurnContent,
 } from "@/lib/turns";
 import type { TimelineEntry } from "@/lib/turns";
-import type { EventType, GameEvent, LiveFrame } from "@/lib/types";
+import type { EventType, GameEvent, LiveFrame, TurnView } from "@/lib/types";
 
 let seq = 0;
 function event(type: EventType, payload: Record<string, unknown> = {}): GameEvent {
@@ -940,5 +941,53 @@ describe("a run of identical pauses folds into one row", () => {
 
     expect(folded).toHaveLength(1);
     expect(folded[0].kind === "notice" && folded[0].notice.count).toBeUndefined();
+  });
+});
+
+describe("a live turn sorts last", () => {
+  const notice = (seq: number) => ({
+    key: `p-${seq}`,
+    seq,
+    kind: "paused" as const,
+    text: "rate-limited",
+    resumeAfter: null,
+  });
+  const committed = (seq: number): TurnView => ({ ...liveTurnAt(1), seq, key: `t-${seq}` });
+  function liveTurnAt(ply: number): TurnView {
+    return liveTurn([
+      { frame: "turn", player_id: "w", colour: "white", ply, model: "m" },
+      { frame: "token", player_id: "w", kind: "reasoning", text: "thinking" },
+    ])!;
+  }
+
+  it("puts a pause above the turn in progress, as a reload does", () => {
+    // `liveTurn` uses seq -1 so its key cannot collide with a real turn's. That is right for keys
+    // and wrong for order: -1 sorts before everything, so a notice could never be placed above the
+    // live turn — the pause sat *under* THINKING while live and jumped *above* that turn on the
+    // next reload, once it had a real seq. Same events, two orders.
+    const rows = buildTimeline([committed(10), liveTurnAt(2)], [notice(12)]);
+
+    expect(rows.map((r) => (r.kind === "notice" ? "notice" : `turn:${r.turn.seq}`))).toEqual([
+      "turn:10",
+      "notice",
+      "turn:-1",
+    ]);
+  });
+
+  it("orders the same once that turn is committed", () => {
+    const live = buildTimeline([committed(10), liveTurnAt(2)], [notice(12)]);
+    const reloaded = buildTimeline([committed(10), committed(14)], [notice(12)]);
+
+    expect(live.map((r) => r.kind)).toEqual(reloaded.map((r) => r.kind));
+  });
+
+  it("still orders committed turns by seq", () => {
+    const rows = buildTimeline([committed(10), committed(20)], [notice(15)]);
+
+    expect(rows.map((r) => (r.kind === "notice" ? "notice" : `turn:${r.turn.seq}`))).toEqual([
+      "turn:10",
+      "notice",
+      "turn:20",
+    ]);
   });
 });

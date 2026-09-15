@@ -546,6 +546,34 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
 }
 
 
+/**
+ * Turns and notices in one list, ordered by `seq`.
+ *
+ * **A live turn sorts last, not first.** `liveTurn` gives the in-progress turn `seq: -1` so its
+ * key cannot collide with a real one — correct for keys, wrong for order, because -1 sorts before
+ * everything. A notice could never be placed before it, so a pause landed *under* the THINKING
+ * block while the game was live and jumped *above* that turn on the next reload, once the turn had
+ * a real `seq`. Same events, two orders, and the reader is left wondering which one lied.
+ *
+ * The live turn is by definition the newest thing in the stream, so it is treated as sorting after
+ * everything. A pause then reads the same before and after a refresh, and the turn in progress
+ * stays at the bottom where a reader looks for it.
+ */
+export function buildTimeline(turns: TurnView[], notices: StreamNotice[]): TimelineEntry[] {
+  const entries: TimelineEntry[] = turns.map((turn) => ({ kind: "turn", turn }));
+
+  for (const notice of notices) {
+    const at = entries.findIndex(
+      (entry) => entry.kind === "turn" && (entry.turn.seq < 0 || entry.turn.seq > notice.seq),
+    );
+    const item: TimelineEntry = { kind: "notice", notice };
+    if (at === -1) entries.push(item);
+    else entries.splice(at, 0, item);
+  }
+
+  return collapseNoticeRuns(entries);
+}
+
 /** One row of the stream: a turn, or a notice about the harness. */
 export type TimelineEntry =
   | { kind: "turn"; turn: TurnView }

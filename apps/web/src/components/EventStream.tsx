@@ -45,7 +45,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { collapseNoticeRuns, sameTurnContent } from "@/lib/turns";
+import { buildTimeline, sameTurnContent } from "@/lib/turns";
 import type { Player, StreamNotice, ToolCallView, TurnBlock, TurnView } from "@/lib/types";
 
 type Filter = "all" | "moves-talk" | "talk" | "moves";
@@ -148,21 +148,10 @@ export function EventStream({
   /* Turns and notices in one list, ordered by `seq`. Built here rather than by the caller so the
      filters keep working: "talk" hides turns and must hide the notices between them too, or the
      panel would show a rate limit with no play around it to give it a place. */
-  const timeline = useMemo(() => {
-    const entries: ({ kind: "turn"; turn: TurnView } | { kind: "notice"; notice: StreamNotice })[] =
-      visible.map((turn) => ({ kind: "turn" as const, turn }));
-    if (filter === "all") {
-      for (const notice of notices) {
-        const at = entries.findIndex(
-          (entry) => entry.kind === "turn" && entry.turn.seq > notice.seq,
-        );
-        const item = { kind: "notice" as const, notice };
-        if (at === -1) entries.push(item);
-        else entries.splice(at, 0, item);
-      }
-    }
-    return collapseNoticeRuns(entries);
-  }, [visible, notices, filter]);
+  const timeline = useMemo(
+    () => buildTimeline(visible, filter === "all" ? notices : []),
+    [visible, notices, filter],
+  );
 
   /**
    * Whether one section of one turn is open.
