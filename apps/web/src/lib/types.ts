@@ -239,7 +239,27 @@ export type TurnBlock =
   | { kind: "output"; seq: number; text: string }
   | { kind: "tool"; seq: number; call: ToolCallView }
   | { kind: "illegal"; seq: number; move: string; detail: string; attempt: number }
-  | { kind: "said"; seq: number; text: string };
+  | { kind: "said"; seq: number; text: string }
+  /**
+   * The turn stopped here and came back — a rate limit, a halt, our own ceiling.
+   *
+   * **A step of the turn, because that is where it happens** (ADR-0045). The turn used to be
+   * discarded when a provider stopped answering, so its pause could only ever appear *between*
+   * turns; the rounds are kept now, so the log reads turn started, some steps, paused, resumed,
+   * more steps, move. A pause rendered anywhere but in that sequence puts the model's own work on
+   * the wrong side of the interruption that split it.
+   *
+   * `count` folds a run of identical pauses: a provider that keeps refusing produces pause,
+   * resume, pause, resume for as long as it keeps refusing, and the reader needs the number rather
+   * than the repetition.
+   */
+  | {
+      kind: "paused";
+      seq: number;
+      text: string;
+      resumeAfter: string | null;
+      count: number;
+    };
 
 /**
  * What a turn is doing, before it is a fact (ADR-0035).

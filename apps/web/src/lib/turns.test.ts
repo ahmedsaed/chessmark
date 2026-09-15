@@ -991,3 +991,86 @@ describe("a live turn sorts last", () => {
     ]);
   });
 });
+
+describe("a pause inside a turn is a step of it", () => {
+  it("lands between the steps it interrupted", () => {
+    // ADR-0045: an interrupted turn keeps the rounds it completed, so the pause genuinely falls
+    // between two of its steps. Verified against a real local game — every one of its nine pauses
+    // arrived between `turn_started` and `move_made`.
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("tool_called", { tool: "get_board", ok: true, args: {}, result: {} }),
+      event("game_paused", { reason: "rate-limited by BaseTen", resume_after: "12:00" }),
+      event("game_resumed", { detail: "the wait is over" }),
+      event("tool_called", { tool: "make_move", ok: true, args: { move: "e4" }, result: {} }),
+      event("move_made", { ply: 1, colour: "white", san: "e4" }),
+    ];
+
+    const { turns, notices } = foldEvents(events, []);
+
+    expect(turns[0].blocks.map((b) => b.kind)).toEqual(["tool", "paused", "tool"]);
+    // No `resumed` row: the steps after the pause *are* the resumption, and a notice saying so is
+    // ordered against whole turns — it landed after the move it made possible.
+    expect(notices).toEqual([]);
+  });
+
+  it("folds a run of identical pauses into one step", () => {
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("game_paused", { reason: "rate-limited", resume_after: "12:00" }),
+      event("game_resumed", {}),
+      event("game_paused", { reason: "rate-limited", resume_after: "12:30" }),
+      event("move_made", { ply: 1, colour: "white", san: "e4" }),
+    ];
+
+    const [turn] = foldEvents(events, []).turns;
+    const [block] = turn.blocks;
+
+    expect(turn.blocks).toHaveLength(1);
+    expect(block.kind === "paused" && block.count).toBe(2);
+    expect(block.kind === "paused" && block.resumeAfter).toBe("12:30");
+  });
+
+  it("keeps a pause after the move out of the turn that already moved", () => {
+    // `current` is not cleared on a move, so without the `san` check every between-turns pause
+    // would be filed under the turn above it — the bug this change exists to fix, from the other
+    // direction.
+    seq = 0;
+    const events = [...turn(1, "white", "e4"), event("game_paused", { reason: "rate-limited" })];
+
+    const { turns, notices } = foldEvents(events, []);
+
+    expect(turns[0].blocks.some((b) => b.kind === "paused")).toBe(false);
+    expect(notices.map((n) => n.kind)).toEqual(["paused"]);
+  });
+
+  it("still reports the game as paused either way", () => {
+    seq = 0;
+    const inTurn = foldEvents(
+      [
+        event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+        event("game_paused", { reason: "rate-limited", resume_after: "12:00" }),
+      ],
+      [],
+    );
+
+    expect(inTurn.paused?.resumeAfter).toBe("12:00");
+  });
+});
+
+
+describe("a resume that ends a between-turns pause keeps its row", () => {
+  it("says the game came back, because nothing else there does", () => {
+    seq = 0;
+    const events = [
+      ...turn(1, "white", "e4"),
+      event("game_paused", { reason: "rate-limited" }),
+      event("game_resumed", { detail: "the wait is over" }),
+      ...turn(2, "black", "e5"),
+    ];
+
+    expect(foldEvents(events, []).notices.map((n) => n.kind)).toEqual(["paused", "resumed"]);
+  });
+});
