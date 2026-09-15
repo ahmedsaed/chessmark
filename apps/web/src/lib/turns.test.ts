@@ -991,3 +991,42 @@ describe("a live turn sorts last", () => {
     ]);
   });
 });
+
+describe("a pause names the seat it is waiting on", () => {
+  it("carries the colour and model off the payload", () => {
+    // The failed attempt is rolled back whole, so there is no turn block for it. Without a seat
+    // marker the row attaches to the turn above — a deepseek rate limit sat under GLM's move and
+    // read as GLM's problem.
+    seq = 0;
+    const { notices } = foldEvents(
+      [
+        event("game_paused", {
+          reason: "deepseek/deepseek-v4.1-flash rate-limited by BaseTen",
+          colour: "white",
+          model: "deepseek/deepseek-v4.1-flash",
+        }),
+      ],
+      [],
+    );
+
+    expect(notices[0].seat).toEqual({
+      colour: "white",
+      model: "deepseek/deepseek-v4.1-flash",
+    });
+  });
+
+  it("names no seat for a halt, which belongs to no player", () => {
+    seq = 0;
+    const { notices } = foldEvents(
+      [
+        event("game_paused", {
+          reason: "the harness is halted: the free-model allowance for the day is spent (429)",
+          halt_source: "free_tier",
+        }),
+      ],
+      [],
+    );
+
+    expect(notices[0].seat).toBeUndefined();
+  });
+});

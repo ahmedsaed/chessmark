@@ -331,6 +331,15 @@ export interface StreamNotice {
    * the one thing that mattered, which is that it had been refused eight times.
    */
   count?: number;
+  /**
+   * Which seat was waiting, when the notice is about one.
+   *
+   * **A pause is drawn full width because it belongs to the harness rather than to a contestant**
+   * — and with nothing naming the seat, the row simply attached itself to the turn above it. A
+   * deepseek rate limit sat under GLM's move and read as GLM's problem. Saying whose endpoint we
+   * are waiting on is not the same as blaming that model for it.
+   */
+  seat?: { colour: "white" | "black"; model: string | null };
 }
 
 /** A turn as `/games/{id}/turns` returns it. Replay needs the id to fetch raw payloads. */

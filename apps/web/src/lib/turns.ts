@@ -484,12 +484,18 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
          on the page to say why, which is what it did. */
       case "game_paused": {
         if (current) current.live = false;
+        const pausedColour = asString(payload.colour);
         paused = {
           key: `paused-${event.seq}`,
           seq: event.seq,
           kind: "paused",
           text: asString(payload.reason) || "paused by the harness",
           resumeAfter: asString(payload.resume_after) || null,
+          // The seat whose endpoint we are waiting on. A halt names none, and neither does a
+          // pause written before this was recorded — both render as they always did.
+          ...(pausedColour === "white" || pausedColour === "black"
+            ? { seat: { colour: pausedColour, model: asString(payload.model) || null } }
+            : {}),
         };
         notices.push(paused);
         break;
