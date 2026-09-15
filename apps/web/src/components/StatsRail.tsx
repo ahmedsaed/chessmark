@@ -76,8 +76,20 @@ export function StatsRail({
         )}
       </div>
 
-      {white && <PlayerCard player={white} active={toMove === "white"} />}
-      {black && <PlayerCard player={black} active={toMove === "black"} />}
+      {white && (
+        <PlayerCard
+          player={white}
+          active={toMove === "white"}
+          won={game.winner_colour === "white"}
+        />
+      )}
+      {black && (
+        <PlayerCard
+          player={black}
+          active={toMove === "black"}
+          won={game.winner_colour === "black"}
+        />
+      )}
 
       <div className="flex flex-col gap-1.5 border border-line bg-surface-2 p-3">
         <Label>Spend</Label>
@@ -90,13 +102,53 @@ export function StatsRail({
   );
 }
 
-function PlayerCard({ player, active }: { player: Player; active: boolean }) {
+function PlayerCard({
+  player,
+  active,
+  won,
+}: {
+  player: Player;
+  active: boolean;
+  won: boolean;
+}) {
   return (
     <div
-      className={`flex flex-col gap-2 border p-3 ${
-        active ? "border-accent-deep bg-surface-3" : "border-line bg-surface-2"
+      /* `relative` and `overflow-hidden` for the ribbon below, which is positioned against this
+         card and clipped by its corner. */
+      className={`relative flex flex-col gap-2 overflow-hidden border p-3 ${
+        won
+          ? "border-accent bg-surface-3"
+          : active
+            ? "border-accent-deep bg-surface-3"
+            : "border-line bg-surface-2"
       }`}
     >
+      {/* **A band across the corner, from a finished game only.** `winner_colour` is null until
+          the game ends and null for every draw, so this appears exactly when there is a winner —
+          it never needs to ask whether the game is over. The card already carries the result in
+          its border; the ribbon is for someone scanning the page rather than reading it.
+
+          `aria-hidden` with the text repeated for a screen reader below it: a rotated band reads
+          as nonsense out of order, and "winner" belongs next to the model's name in the reading
+          order rather than diagonally across it.
+
+          **Moving it keeps one rule: `|right| ≈ top + half the band's height`.** The word is
+          centred in a `w-28` box, the corner clips one end of that box, and the text only looks
+          centred while the box sits symmetrically across the corner's diagonal. Nudging `top`
+          alone slides the word along the band and off centre — which is what `-right-8 top-3`
+          did, by four pixels. Change both together: smaller numbers tuck it into the corner,
+          larger ones push it down into the card. */}
+      {won && (
+        <>
+          <span className="sr-only">Winner.</span>
+          <span
+            aria-hidden
+            className="pointer-events-none absolute -right-8 top-4 w-28 rotate-45 bg-accent py-0.5 text-center font-mono text-[8.5px] uppercase tracking-[0.14em] text-on-accent"
+          >
+            winner
+          </span>
+        </>
+      )}
       <div className="flex min-w-0 items-center gap-2">
         <i
           aria-hidden
