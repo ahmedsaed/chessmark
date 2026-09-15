@@ -8,8 +8,9 @@ Chessmark is two things at once:
    maintain state across dozens of turns, reason about consequences, and never emit an invalid
    action. Chessmark measures how well they do it — legality, strength, cost, latency, and
    consistency — with everything recorded.
-2. **A show.** Models trash-talk each other mid-game. Reasoning streams live next to the board.
-   You can sit down and play them yourself.
+2. **A show.** Reasoning streams live next to the board, move by move, as the model produces it.
+   You can sit down and play one yourself. Models can trash-talk — though not in a ranked game,
+   where a fixed configuration is what makes the result mean anything.
 
 Every token, tool call, reasoning trace, and taunt is persisted and replayable.
 
@@ -17,17 +18,49 @@ Every token, tool call, reasoning trace, and taunt is persisted and replayable.
 
 ## Status
 
-🚧 **In development.** The engine, the API, the site, ratings and human-vs-model play are
-built; deployment is not. See [ROADMAP.md](docs/ROADMAP.md) for what is done and what is next.
+**Live and playing.** Models are paired continuously in an open pool, games stream as they happen,
+and the leaderboard is built from them. The engine, the API, the site, ratings, tournaments,
+human-vs-model play and deployment are all built and running.
+
+What is not: **moderation** (Phase 11 — so conversation between models is off in ranked games),
+**Stockfish analysis** (Phase 14 — no per-ply evaluation, and no engine anchoring the rating
+scale), and **scheduled tournaments**, which are started by hand. [ROADMAP.md](docs/ROADMAP.md)
+carries the phase list and, more usefully, its *Known gaps*.
 
 | Document | What it covers |
 | --- | --- |
 | [VISION.md](docs/VISION.md) | What Chessmark is, who it's for, what success looks like |
 | [REQUIREMENTS.md](docs/REQUIREMENTS.md) | Functional + non-functional requirements |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data model, agent loop |
-| [ROADMAP.md](docs/ROADMAP.md) | Phased delivery plan with exit criteria |
-| [adr/](docs/adr/) | Architecture Decision Records |
+| [ROADMAP.md](docs/ROADMAP.md) | Phased delivery plan, exit criteria, and the known gaps |
+| [TOURNAMENTS.md](docs/TOURNAMENTS.md) | Formats, fields, pools, eras, settling |
+| [PROVIDERS.md](docs/PROVIDERS.md) | OpenRouter reality, the catalogue, the free tier |
+| [TESTING.md](docs/TESTING.md) | The three suites and the rules they hold to |
+| [FRONTEND.md](docs/FRONTEND.md) | Next.js, the design system, the event stream |
+| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Containers, `./chessmark`, CD, backups |
+| [CHANGELOG.md](CHANGELOG.md) | What shipped, and when |
+| [adr/](docs/adr/) | Every decision, why it was made, and what we live with |
 | [LICENSE](LICENSE) | Source-available: read it and contribute; do not run or sell it |
+
+### How a result becomes a rating
+
+Worth knowing before reading the leaderboard, because most of the interesting decisions are
+exclusions:
+
+- **A ranked game runs one fixed, versioned configuration** — a recorded prompt version and tool
+  schema version, no personas, no chat. A game played under an older version measured a different
+  task and is excluded rather than quietly mixed in
+  ([ADR-0038](docs/adr/0038-a-prompt-version-has-two-parts.md)).
+- **A harness bound is never a finding about a player.** Our ceilings, our budget, our provider's
+  outage — those fail a turn, they do not forfeit a model
+  ([ADR-0019](docs/adr/0019-harness-bounds-are-not-findings.md)). A forfeit for illegal moves or
+  for never calling a tool *does* count: that is the benchmark's whole subject.
+- **A rule that decides a game is stated in the prompt.** A model cannot be scored against a
+  condition it was never told about
+  ([ADR-0020](docs/adr/0020-claimable-draws.md)).
+- **A pool carries eras.** It never ends, so a change to the prompt or the tools opens a new era
+  inside it rather than replacing it, and the table shows the era being played
+  ([ADR-0043](docs/adr/0043-a-pool-carries-its-eras.md)).
 
 ---
 
@@ -36,13 +69,13 @@ built; deployment is not. See [ROADMAP.md](docs/ROADMAP.md) for what is done and
 | Layer | Choice |
 | --- | --- |
 | Backend | Python 3.12, FastAPI, SQLAlchemy 2, Alembic, `uv` |
-| Frontend | Next.js (App Router), TypeScript, Tailwind |
+| Frontend | Next.js 16 (App Router), TypeScript, Tailwind |
 | Database | PostgreSQL 16 |
 | Queue / cache | Redis |
 | LLM routing | OpenRouter via LiteLLM |
 | Auth | Clerk |
 | Chess rules | `python-chess` |
-| Engine analysis | Stockfish (deferred phase) |
+| Engine analysis | Stockfish — **not built yet** (Phase 14) |
 | Live updates | Server-Sent Events |
 
 ---
@@ -55,7 +88,8 @@ chessmark/
 │   ├── api/          # FastAPI backend + agent runtime
 │   └── web/          # Next.js frontend
 ├── docs/             # Vision, requirements, architecture, roadmap, ADRs
-├── scripts/          # Dev + ops scripts
+├── scripts/          # Anything run by hand, including anything that spends money
+├── chessmark         # The server CLI — every command runs in a container
 └── docker-compose.yml
 ```
 
@@ -73,6 +107,9 @@ make api                   # :8010
 make web                   # :3010, in a second shell
 make worker                # play model turns, in a third
 ```
+
+Nothing plays on its own until a game exists: `make play ARGS="--scripted"` runs a complete game
+with no key and no network, and `make tournament ARGS="field --free"` shows who would enter a pool.
 
 Ports are **3010 / 8010 / 5433 / 6380**, deliberately not the defaults, so Chessmark can run
 alongside other projects ([ADR-0012](docs/adr/0012-nonstandard-local-ports.md)).
@@ -99,7 +136,8 @@ endpoint rows has no contestants and is filtered out of every picker. If the mod
 short, it is almost always `refresh-endpoints` that has not been run.
 
 Two kinds of model are **never registered**, because a model that cannot play should not be
-offered — of ~419 models on OpenRouter, ~289 qualify:
+offered. Production currently carries **266 playable models, 16 of them free** — the free number is
+the one that matters day to day, since the open pool draws from it:
 
 - **Without tool calling.** The runtime acts solely through tools (AGENT-01).
 - **`:batch` variants.** Half price, and served *asynchronously* — a job submitted and collected
@@ -121,11 +159,22 @@ wrote it defaulted to free models only. Pricing backs the spend caps in
 
 | Command | What |
 | --- | --- |
-| `make check` | Lint, typecheck, and the full test suite |
+| `make check` | Lint, typecheck, and the full test suite — the gate |
 | `make play ARGS="--scripted"` | Play a complete game with no API key |
+| `make dev-pull` | Replace the local database with production's, then run this branch's migrations |
+| `make tournament ARGS="…"` | Fields, pools, standings — `field --free`, `create`, `standings` |
 | `make psql` / `make redis` | Datastore shells |
 | `make migration m="..."` | Generate a migration |
 | `make drift` | Fail if models and migrations disagree |
+| `make backup ARGS=--verify` | Dump, restore into a scratch database, compare, drop it |
+
+`make dev-pull` is the one worth knowing about. It brings production's rows onto your machine and
+runs your branch's migrations against them, so a change meets real data before production does —
+emails and Clerk ids are scrubbed on the way in
+([DEPLOYMENT.md](docs/DEPLOYMENT.md#testing-against-productions-data)).
+
+On a server there is no toolchain: `./chessmark` runs everything in containers, and
+`./chessmark help` lists it.
 
 ## Contributing
 
