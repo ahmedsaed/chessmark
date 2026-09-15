@@ -143,15 +143,39 @@ export function listGamesByModel(slug: string, limit = 50): Promise<GameSummary[
   return getOrEmpty<GameSummary>(`/games?${query}`);
 }
 
+/** Rows per request. The server caps `limit` at 5000; this leaves room under it. */
+const EVENT_PAGE = 2000;
+
+/** A ceiling on the number of requests, so a bug upstream cannot loop forever. */
+const EVENT_PAGES = 20;
+
 /**
- * The whole event log for a game.
+ * The whole event log for a game, following the cursor to the end.
  *
  * The conversation panel is built from events, so a spectator arriving mid-game needs the history
  * or the panel sits empty until the next turn. Live and replay read the same rows (ADR-0008),
  * which is exactly what makes seeding it this way safe.
+ *
+ * **It has to be the whole log, not a page of it.** Replay rebuilds the board by walking moves
+ * from ply 0, so a missing row is a wrong position and not merely a short list. This asked for
+ * 5000 rows in one request and took whatever came back; a 147-ply game already writes 1,093
+ * events, and a reasoning-heavy one near the 300-ply cap crosses the cap. `seq` of the last row
+ * is the cursor, and a short page is the end.
  */
-export function listEvents(id: string, limit = 5000): Promise<GameEvent[]> {
-  return getOrEmpty<GameEvent>(`/games/${id}/events?limit=${limit}`);
+export async function listEvents(id: string): Promise<GameEvent[]> {
+  const all: GameEvent[] = [];
+  let after = 0;
+
+  for (let page = 0; page < EVENT_PAGES; page++) {
+    const batch = await getOrEmpty<GameEvent>(
+      `/games/${id}/events?after_seq=${after}&limit=${EVENT_PAGE}`,
+    );
+    all.push(...batch);
+    if (batch.length < EVENT_PAGE) break;
+    after = batch[batch.length - 1].seq;
+  }
+
+  return all;
 }
 
 /**
