@@ -99,6 +99,34 @@ export interface GameDetail extends GameSummary {
   tournament: TournamentRef | null;
 }
 
+/** Where one seat of a game stands in the event that scheduled it. */
+export interface SeatStanding {
+  colour: "white" | "black";
+  /** Null when this seat is not an entrant — a human, or a model seated outside the field. */
+  key: string | null;
+  display_name: string;
+  /** Null for a seat with no row in the table. */
+  place: number | null;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  score: number;
+  /** Glicko-2 over this event's games alone; null for a closed event — see `ranked_by`. */
+  rating: number | null;
+  rating_provisional: boolean;
+  in_field: boolean;
+}
+
+/** A game's event, and where its two seats stand in it. Fetched separately from the game. */
+export interface GameTournament {
+  tournament: TournamentRef;
+  /** `"rating"` for a pool, `"score"` for a closed event (ADR-0027). */
+  ranked_by: "rating" | "score";
+  entrants: number;
+  seats: SeatStanding[];
+}
+
 /** Which event a game was played for — enough to say so and to link there. */
 export interface TournamentRef {
   slug: string;

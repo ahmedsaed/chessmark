@@ -18,13 +18,14 @@ import { LiveGame } from "@/components/LiveGame";
 import { PlayableGame } from "@/components/PlayableGame";
 import { clerkEnabled } from "@/components/AuthProvider";
 import { openDrawOffer } from "@/lib/draw";
-import type { GameDetail, GameEvent } from "@/lib/types";
+import type { GameDetail, GameEvent, GameTournament } from "@/lib/types";
 
 export function GameView(props: {
   game: GameDetail;
   apiUrl: string;
   initialEvents: GameEvent[];
   actions?: React.ReactNode;
+  event?: GameTournament | null;
 }) {
   const hasHumanSeat = props.game.players.some((player) => player.kind === "human");
   if (!clerkEnabled || !hasHumanSeat) {
@@ -38,6 +39,7 @@ function Resolved(props: {
   apiUrl: string;
   initialEvents: GameEvent[];
   actions?: React.ReactNode;
+  event?: GameTournament | null;
 }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [seat, setSeat] = useState<"white" | "black" | null>(null);

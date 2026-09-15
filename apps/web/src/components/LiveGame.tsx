@@ -24,7 +24,7 @@ import { captures } from "@/lib/captures";
 import { useGameDetail } from "@/hooks/useGameDetail";
 import { useGameStream } from "@/hooks/useGameStream";
 import { foldEvents, liveTurn } from "@/lib/turns";
-import type { Colour, GameDetail, GameEvent } from "@/lib/types";
+import type { Colour, GameDetail, GameEvent, GameTournament } from "@/lib/types";
 
 const TERMINAL = new Set(["finished", "aborted"]);
 
@@ -33,6 +33,7 @@ export function LiveGame({
   apiUrl,
   initialEvents,
   actions,
+  event,
   seat,
   onMove,
   controls,
@@ -42,6 +43,7 @@ export function LiveGame({
   initialEvents: GameEvent[];
   /** Copy-link and PGN. They ride the status row rather than a bar of their own (UI feedback). */
   actions?: React.ReactNode;
+  event?: GameTournament | null;
   /**
    * The colour the viewer is playing, when they hold a seat (HUMAN-01). Absent for spectators,
    * which is what keeps this component usable for the model-vs-model case it was built for.
@@ -218,7 +220,7 @@ export function LiveGame({
             reason someone opened the page, and burying it under the full stats rail means
             scrolling past telemetry to reach the fight (ADR-0013). */}
         <div className="order-3 min-w-0 overflow-y-auto lg:order-none">
-          <StatsRail game={game} toMove={toMove} />
+          <StatsRail game={game} toMove={toMove} event={event} />
         </div>
 
         <div className="order-1 flex min-h-0 min-w-0 flex-col gap-2 lg:order-none">

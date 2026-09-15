@@ -11,6 +11,7 @@ import type {
   GameDetail,
   GameEvent,
   GameResult,
+  GameTournament,
   GameStatus,
   GameSummary,
   ModelDetail,
@@ -176,6 +177,17 @@ export async function listEvents(id: string): Promise<GameEvent[]> {
   }
 
   return all;
+}
+
+/**
+ * The event a game was played for, and where its two seats stand in it.
+ *
+ * Its own request because it is six queries against `GET /games/{id}`'s one, and the game is on
+ * the critical path of every replay and every live view. Null for a game nobody scheduled, which
+ * is most of them — `GameDetail.tournament` is the cheap flag that says whether to ask at all.
+ */
+export function getGameTournament(id: string): Promise<GameTournament | null> {
+  return getOrNull<GameTournament>(`/games/${id}/event`);
 }
 
 /**

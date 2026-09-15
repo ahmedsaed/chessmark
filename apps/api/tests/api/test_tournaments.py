@@ -348,7 +348,14 @@ class TestTheNumbersMatchTheTable:
 # ========================================================= a game says which event it belongs to
 
 
-async def _seat_a_tournament_game(db: AsyncSession, tournament_id, *, era: str | None = "v3+v4"):
+async def _seat_a_tournament_game(
+    db: AsyncSession,
+    tournament_id,
+    *,
+    era: str | None = "v3+v4",
+    white: str = "scripted/white",
+    black: str | None = "scripted/black",
+):
     """Create a real game and record it as an event pairing, the way the runner would."""
     from chessmark.orchestration.match import Seat, create_match
 
@@ -362,13 +369,95 @@ async def _seat_a_tournament_game(db: AsyncSession, tournament_id, *, era: str |
             tournament_id=tournament_id,
             era=era,
             round_number=217,
-            white_key="scripted/white",
-            black_key="scripted/black",
+            white_key=white,
+            black_key=black,
             game_id=match.game.id,
         )
     )
     await db.commit()
     return match.game.id
+
+
+async def test_the_event_card_places_both_seats(client: AsyncClient, db: AsyncSession) -> None:
+    """The card is a two-row slice of the standings table, so the rows have to be *these* two
+    seats — matched by the pairing's entrant keys rather than guessed from a model slug."""
+    tournament_id, entrants = await make_event(db)
+    keys = [e.key for e in entrants]
+    game_id = await _seat_a_tournament_game(db, tournament_id, white=keys[0], black=keys[1])
+
+    body = (await client.get(f"/games/{game_id}/event")).json()
+
+    assert body["tournament"]["slug"] == "test-cup"
+    assert body["ranked_by"] == "score", "a round robin is ranked by points, not rating (ADR-0027)"
+    assert body["entrants"] == 4
+    assert [seat["colour"] for seat in body["seats"]] == ["white", "black"]
+    assert [seat["key"] for seat in body["seats"]] == [keys[0], keys[1]]
+    assert all(seat["place"] is not None for seat in body["seats"])
+
+
+async def test_a_seat_outside_the_field_keeps_its_row(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """A human, or a model seated outside the field. The row stays and says so — dropping it would
+    leave a one-row card that reads as a rendering fault rather than as the truth."""
+    tournament_id, entrants = await make_event(db)
+    keys = [e.key for e in entrants]
+    game_id = await _seat_a_tournament_game(
+        db, tournament_id, white=keys[0], black="somebody/not-entered"
+    )
+
+    seats = (await client.get(f"/games/{game_id}/event")).json()["seats"]
+
+    assert seats[0]["place"] is not None
+    assert seats[1]["place"] is None and seats[1]["display_name"]
+
+
+async def test_a_game_outside_any_event_has_no_card(client: AsyncClient, db: AsyncSession) -> None:
+    from chessmark.orchestration.match import Seat, create_match
+
+    match = await create_match(
+        db,
+        white=Seat(display_name="w", model="scripted/white"),
+        black=Seat(display_name="b", model="scripted/black"),
+    )
+    await db.commit()
+
+    assert (await client.get(f"/games/{match.game.id}/event")).status_code == 404
+
+
+async def test_the_card_reads_the_games_own_era(client: AsyncClient, db: AsyncSession) -> None:
+    """**Not today's table** (ADR-0043). A pool carries its task changes inside itself, so a table
+    built from every era at once would rank these two models partly on games played under a
+    different prompt with a different tool surface — the comparison eras exist to prevent.
+
+    Here the game belongs to an era with no results at all, so both seats read nought played. Were
+    the endpoint pooling every era, the other era's game would show up in these rows.
+    """
+    tournament_id, entrants = await make_event(db)
+    keys = [e.key for e in entrants]
+
+    # A settled pairing in one era...
+    db.add(
+        TournamentGame(
+            tournament_id=tournament_id,
+            era="v1+v1",
+            round_number=1,
+            white_key=keys[0],
+            black_key=keys[1],
+            white_score=1.0,
+        )
+    )
+    await db.commit()
+    # ...and the game we are asking about, in another.
+    game_id = await _seat_a_tournament_game(
+        db, tournament_id, white=keys[0], black=keys[1], era="v3+v4"
+    )
+
+    seats = (await client.get(f"/games/{game_id}/event")).json()["seats"]
+
+    assert [seat["played"] for seat in seats] == [0, 0], (
+        "a result from era v1+v1 is being counted into a v3+v4 card"
+    )
 
 
 async def test_a_tournament_game_names_its_event(client: AsyncClient, db: AsyncSession) -> None:

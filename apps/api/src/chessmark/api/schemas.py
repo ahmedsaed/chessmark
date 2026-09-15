@@ -414,6 +414,53 @@ class TournamentRef(Schema):
     era: str | None
 
 
+class SeatStanding(Schema):
+    """Where one seat of a game stands in the event that scheduled it.
+
+    Keyed from the *pairing*, not guessed from the player's model slug: the pairing row holds the
+    entrant keys it was written with, so a pool that pins precision (`model@fp8`) matches without
+    this having to know how a key is spelled.
+    """
+
+    colour: str
+    #: Null when this seat is not an entrant — a human, or a model seated outside the field.
+    key: str | None
+    display_name: str
+    #: Null for a seat with no row in the table.
+    place: int | None
+    played: int
+    wins: int
+    draws: int
+    losses: int
+    score: float
+    #: Glicko-2 over this event's games alone, and null for a closed event — see `ranked_by`.
+    rating: float | None
+    rating_provisional: bool
+    #: Whether the field would still admit this entrant today (ADR-0042).
+    in_field: bool
+
+
+class GameTournamentOut(Schema):
+    """A game's event, and where its two seats stand in it.
+
+    Separate from `GameDetail` because it is six queries against that endpoint's one, and a game
+    page is on the critical path of every replay and every live view. The page fetches it alongside
+    the event log rather than inside the game.
+
+    **Scoped to the game's own era.** A table built from every era at once would rank this game's
+    two models on games played under a different prompt and a different tool surface, which is the
+    comparison ADR-0043 exists to prevent.
+    """
+
+    tournament: TournamentRef
+    #: `"rating"` for a pool, `"score"` for a closed event (ADR-0027). The format decides, because
+    #: it is the format that decides whether a sum of points means anything: a round robin gives
+    #: everybody the same schedule and a pool gives nobody one.
+    ranked_by: str
+    entrants: int
+    seats: list[SeatStanding] = Field(default_factory=list)
+
+
 class GameDetail(GameSummary):
     start_fen: str
     current_fen: str
