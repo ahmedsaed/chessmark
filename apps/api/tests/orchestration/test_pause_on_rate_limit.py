@@ -94,6 +94,13 @@ async def _backdate_progress(db: AsyncSession, game_id: Any, by: dt.timedelta) -
     )
 
 
+async def _reloaded(db: AsyncSession, game_id: Any) -> Game:
+    db.expunge_all()
+    game = await db.get(Game, game_id)
+    assert game is not None
+    return game
+
+
 async def _events(db: AsyncSession, game_id: Any, type_: EventType) -> list[GameEvent]:
     rows = await db.scalars(
         sa.select(GameEvent).where(GameEvent.game_id == game_id, GameEvent.type == type_)
@@ -166,20 +173,31 @@ class TestOnePause:
         # *new* job was added, which is exactly what the old path did five times over.
         assert await game.queue.depth() == before
 
-    async def test_the_transcript_is_untouched(
+    async def test_the_turn_prompt_is_not_repeated(
         self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any
     ) -> None:
-        """So resuming is indistinguishable from a first try. The turn is rolled back whole, which
-        also means its `turn_started` never reaches the log — the reason a pause notice belongs to
-        no turn."""
+        """**The property that replaced "the transcript is untouched"** (ADR-0045).
+
+        The turn used to be discarded whole, so resuming was indistinguishable from a first try.
+        Its rounds are kept now — which is the point — and the hazard the rollback was avoiding
+        becomes a rule instead: the transcript is append-only, so a second turn prompt would leave
+        the model reading *"It is your move. Ply 1"* twice with its own dead exchange between them.
+
+        Three refusals, and it must still appear exactly once.
+        """
         from chessmark.agents import transcript
 
-        before = await transcript.build_messages(db, game.white.id)
-
-        await make_worker(rate_limited, cooldown=ProviderCooldown(redis)).handle(game.first_job)
+        worker = make_worker(rate_limited, cooldown=ProviderCooldown(redis))
+        for _ in range(3):
+            await worker.handle(game.first_job)
+            await resume(db, await _reloaded(db, game.game.id))
+            await db.commit()
 
         db.expunge_all()
-        assert await transcript.build_messages(db, game.white.id) == before
+        messages = await transcript.build_messages(db, game.white.id)
+        prompts = [m for m in messages if m["role"] == "user" and "your move" in str(m["content"])]
+
+        assert len(prompts) == 1, f"the turn prompt was appended {len(prompts)} times"
 
     async def test_a_paused_game_does_no_work(
         self, db: AsyncSession, game: Fixture, make_worker: Any, redis: Any

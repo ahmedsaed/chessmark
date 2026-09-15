@@ -312,22 +312,34 @@ async def test_a_provider_failure_requeues_the_same_ply(
     assert requeued[0].job.attempt == 2
 
 
-async def test_a_provider_failure_leaves_the_transcript_untouched(
+async def test_a_provider_failure_keeps_the_turn_it_interrupted(
     db: AsyncSession, game: Fixture, make_worker
 ) -> None:
-    """The reason the turn rolls back: a committed failed turn would append a second turn prompt,
-    so the model would see 'It is your move' twice with a dead exchange between them."""
-    from chessmark.agents import transcript
+    """**What replaced "the transcript is untouched"** (ADR-0045).
 
-    before = await transcript.build_messages(db, game.white.id)
+    The turn used to be discarded whole, which threw away the calls it had already made and paid
+    for. It is kept now, marked `INTERRUPTED`, and the retry continues it — so the transcript grows
+    by this turn's prompt rather than staying at the system message.
+
+    The hazard the rollback avoided is still avoided, by a narrower rule: nothing is committed that
+    leaves an assistant message whose `tool_calls` have no results, and the prompt is appended once
+    per turn rather than once per attempt. `test_the_turn_prompt_is_not_repeated` holds that half.
+    """
+    from chessmark.agents import transcript
+    from chessmark.db.enums import TurnStatus
+    from chessmark.db.models import Turn
 
     await make_worker(unavailable).handle(game.first_job)
 
     db.expunge_all()
     after = await transcript.build_messages(db, game.white.id)
+    assert [m["role"] for m in after] == ["system", "user"], (
+        "the turn prompt should survive the failure, so the retry continues rather than restarts"
+    )
 
-    assert after == before
-    assert len(after) == 1, "only the system prompt should exist"
+    turns = list(await db.scalars(sa.select(Turn).where(Turn.player_id == game.white.id)))
+    assert [t.status for t in turns] == [TurnStatus.INTERRUPTED]
+    assert turns[0].ply_number is None, "an interrupted turn produced no move"
 
 
 async def test_repeated_provider_failure_abandons_rather_than_forfeits(

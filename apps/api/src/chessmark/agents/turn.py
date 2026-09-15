@@ -261,6 +261,39 @@ class TurnLimits:
     """
 
 
+@dataclass(frozen=True, slots=True)
+class _Carried:
+    """What an interrupted attempt already spent, carried into the one that continues it.
+
+    Kept apart from `TurnResult` on purpose: the result is what *this* attempt did, and the spend
+    it reports has to stay that way or the interrupted attempt's cost is recorded twice — it was
+    already committed and counted when its rounds were kept (ADR-0045). These are added back only
+    where the question is about the whole turn: the row's totals, and the bounds.
+    """
+
+    llm_calls: int = 0
+    tool_calls: int = 0
+    illegal_attempts: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    reasoning_tokens: int = 0
+    cached_tokens: int = 0
+    cost_usd: Decimal = Decimal(0)
+
+    @classmethod
+    def of(cls, turn: Turn) -> _Carried:
+        return cls(
+            llm_calls=turn.llm_call_count,
+            tool_calls=turn.tool_call_count,
+            illegal_attempts=turn.illegal_attempts,
+            prompt_tokens=turn.prompt_tokens,
+            completion_tokens=turn.completion_tokens,
+            reasoning_tokens=turn.reasoning_tokens,
+            cached_tokens=turn.cached_tokens,
+            cost_usd=turn.cost_usd,
+        )
+
+
 @dataclass(slots=True)
 class TurnResult:
     turn_id: int
@@ -286,6 +319,15 @@ class TurnResult:
     rate_limit: RateLimit | None = None
     #: The provider rejected the request itself. Requeueing it cannot help.
     request_rejected: bool = False
+
+    #: Whether the rounds this turn completed should survive the failure (ADR-0045).
+    #:
+    #: **The rule is whether the next attempt sends the same request again.** A provider that
+    #: stopped answering will serve the identical request later, so the rounds before it are work
+    #: that need not be paid for twice. A transcript with no room to answer, a broken token count
+    #: or a mangled tool call all need the *next* request to be different, and keeping more rounds
+    #: makes that harder rather than easier — those still roll back whole.
+    keep_rounds: bool = False
 
     #: How the game should describe giving up, when "the provider rejected the request" would be
     #: untrue. An endpoint that miscounts its own prompt answered us perfectly well and then filed a
@@ -368,6 +410,7 @@ class TurnRunner:
         )
         self._tools = tool_schemas(trash_talk_enabled=game.trash_talk_enabled)
         self._llm_sequence = 0
+        self._carried = _Carried()
         self._tool_sequence = 0
         self._nudges = 0
         #: Rounds spent since the move was committed. See `TurnLimits.max_closing_rounds`.
@@ -411,29 +454,56 @@ class TurnRunner:
 
     # ------------------------------------------------------------------ entry point
 
-    async def run(self) -> TurnResult:
-        turn = Turn(
-            game_id=self.game.id,
-            player_id=self.player.id,
-            status=TurnStatus.RUNNING,
-        )
-        self.session.add(turn)
-        await self.session.flush()
+    async def run(self, resuming: Turn | None = None) -> TurnResult:
+        """Play one turn, or carry on with one a provider interrupted (ADR-0045).
+
+        `resuming` is an `INTERRUPTED` turn: its rounds are already in the transcript, and the
+        model is mid-conversation. Three things follow, and each is a way of *not* repeating
+        something that has already happened.
+        """
+        turn = resuming
+        if turn is None:
+            turn = Turn(
+                game_id=self.game.id,
+                player_id=self.player.id,
+                status=TurnStatus.RUNNING,
+            )
+            self.session.add(turn)
+            await self.session.flush()
+        else:
+            turn.status = TurnStatus.RUNNING
+
+        # What the interrupted attempt already spent. Added back in `_finalise` so the row counts
+        # the *turn* rather than the last attempt at it — and so the bounds below are about the
+        # turn too, which is what stops a seat getting a fresh twenty rounds per refusal.
+        carried = _Carried.of(turn) if resuming is not None else _Carried()
+        self._carried = carried
+        # Both sequences carry too, not just the counters they feed: `llm_calls` and `tool_calls`
+        # are each unique on `(turn_id, sequence)`, so an attempt that restarted either at 1 would
+        # collide with the rows the interrupted attempt already wrote.
+        self._llm_sequence = carried.llm_calls
+        self._tool_sequence = carried.tool_calls
+        self.state.tool_calls = carried.tool_calls
+        self.state.illegal_attempts = carried.illegal_attempts
 
         result = TurnResult(turn_id=turn.id, status=TurnStatus.RUNNING)
         started = time.perf_counter()
 
-        await append_event(
-            self.session,
-            game_id=self.game.id,
-            type=EventType.TURN_STARTED,
-            payload={
-                "player_id": str(self.player.id),
-                "colour": self.colour.value,
-                "ply": self.referee.ply + 1,
-                "model": self.model,
-            },
-        )
+        # **One `turn_started` per turn, not per attempt.** The first one is committed and still in
+        # the log; a second would read as the seat having two turns at one ply, and every consumer
+        # of the log counts them.
+        if resuming is None:
+            await append_event(
+                self.session,
+                game_id=self.game.id,
+                type=EventType.TURN_STARTED,
+                payload={
+                    "player_id": str(self.player.id),
+                    "colour": self.colour.value,
+                    "ply": self.referee.ply + 1,
+                    "model": self.model,
+                },
+            )
 
         # Announced now, because the event above will not reach anyone until this turn's
         # transaction commits — which is after every round has run, and therefore after the
@@ -455,21 +525,27 @@ class TurnRunner:
         offered_by = await open_draw_offer(self.session, game=self.game)
         self.dispatcher.draw_offered = offered_by is not None and offered_by != self.player.id
 
-        await transcript.append_message(
-            self.session,
-            player_id=self.player.id,
-            game_id=self.game.id,
-            turn_id=turn.id,
-            role="user",
-            # The same board `get_move_history` reads, so the prompt and the tool can never
-            # disagree about what was just played.
-            content=prompts.turn_prompt(
-                colour=self.colour,
-                ply=self.referee.ply + 1,
-                last_move=next(reversed(self.referee.board.history_san()), None),
-                draw_offered=self.dispatcher.draw_offered,
-            ),
-        )
+        # **Appended once per turn, not once per attempt.** The transcript is append-only, so a
+        # second copy would leave the model reading "It is your move. Ply 7" twice with its own
+        # dead exchange between them — the reason this whole turn used to be discarded. Resuming,
+        # the prompt is already there and so is the model's half-finished answer to it: sending the
+        # transcript as it stands *is* the continuation.
+        if resuming is None:
+            await transcript.append_message(
+                self.session,
+                player_id=self.player.id,
+                game_id=self.game.id,
+                turn_id=turn.id,
+                role="user",
+                # The same board `get_move_history` reads, so the prompt and the tool can never
+                # disagree about what was just played.
+                content=prompts.turn_prompt(
+                    colour=self.colour,
+                    ply=self.referee.ply + 1,
+                    last_move=next(reversed(self.referee.board.history_san()), None),
+                    draw_offered=self.dispatcher.draw_offered,
+                ),
+            )
 
         try:
             await self._loop(turn, result)
@@ -483,11 +559,29 @@ class TurnRunner:
             #
             # The turn is marked FAILED and the referee is untouched. The orchestrator decides
             # what to do about it (retry the turn, or abandon the game as `aborted`) — Phase 5.
-            result.status = TurnStatus.FAILED
-            result.error = str(error)
-            result.outcome = None
-            result.rate_limit = error.rate_limit
-            result.request_rejected = error.request_rejected
+            if self._move_committed:
+                # **A move already played is not a failed turn.** A turn goes on past its move
+                # until the model stops (ADR-0037), so a provider can die during the *closing*
+                # round — after the ply is committed and after the game has moved on. There is
+                # nothing to come back for: the move stands, the rest of the turn was optional,
+                # and the next ply is somebody else's.
+                #
+                # Marking it interrupted made it resumable, and it was resumed — for a *later
+                # ply*. One turn row then held two turn prompts and two moves, its `ply_number`
+                # overwritten by the second, and the ply in between had no `turn_started` at all.
+                # Found by playing a game whose endpoint went dark mid-turn.
+                result.status = TurnStatus.COMPLETED
+                result.error = str(error)
+            else:
+                result.status = TurnStatus.FAILED
+                result.error = str(error)
+                result.outcome = None
+                result.rate_limit = error.rate_limit
+                result.request_rejected = error.request_rejected
+                # The one class whose next attempt sends the same bytes to the same endpoint and
+                # can expect a different answer — unless the endpoint rejected the request itself,
+                # which it will go on rejecting (ADR-0045).
+                result.keep_rounds = not error.request_rejected
         except compaction.NoRoomToAnswerError as error:
             # The transcript leaves no usable room for an answer, and compaction could not fix it.
             # **A harness stop, not a forfeit** (invariant 11, ADR-0019): the model did not play
@@ -890,7 +984,10 @@ class TurnRunner:
     async def _loop(self, turn: Turn, result: TurnResult) -> None:
         await self._discard_impossible_measurement()
 
-        for iteration in range(self.limits.max_tool_iterations):
+        # Counted from what the turn has already spent, not from zero: without this a seat would
+        # get a fresh twenty rounds for every refusal, and `max_tool_iterations` would bound the
+        # attempt rather than the turn it is meant to bound (ADR-0045).
+        for iteration in range(self._carried.llm_calls, self.limits.max_tool_iterations):
             self._iteration = iteration
             if self._over_budget(result):
                 return
@@ -1112,7 +1209,20 @@ class TurnRunner:
             result.status = TurnStatus.COMPLETED
             return
 
-        # Ran out of iterations without moving.
+        # **Ran out of iterations without moving — but whose fault is that.** On a turn nobody
+        # interrupted it is the model looping, and the forfeit is the finding. On a *resumed* one
+        # some of those rounds were spent before a provider stopped answering, and a model must not
+        # be written off for a bound it reached because we could not get served: that is a harness
+        # bound becoming a finding about a player (invariant 11, ADR-0019, ADR-0045).
+        if self._carried.llm_calls > 0:
+            result.status = TurnStatus.FAILED
+            result.error = (
+                f"{self.colour.value.capitalize()} reached {self.limits.max_tool_iterations} tool "
+                "rounds across attempts, having been interrupted part-way."
+            )
+            result.outcome = None
+            return
+
         result.status = TurnStatus.FORFEITED
         result.outcome = self._forfeit(
             Termination.ERROR_FORFEIT,
@@ -1589,15 +1699,27 @@ class TurnRunner:
         if result.status is TurnStatus.RUNNING:
             result.status = TurnStatus.COMPLETED if result.moved else TurnStatus.FAILED
 
-        turn.status = result.status
+        # The row is the whole turn; `result` is this attempt. The counters are cumulative because
+        # the loop was seeded with them; the money and the tokens are not, and must be added rather
+        # than replaced — see `_Carried`.
+        carried = self._carried
+        # **The row says which kind of failure this was; the result says what to do about it.**
+        # `FAILED` and `INTERRUPTED` are the same outcome for the orchestrator — pause and come
+        # back — and different facts about the record: one turn produced nothing and the other
+        # holds real calls, real tool results and real spend that the next attempt builds on.
+        turn.status = (
+            TurnStatus.INTERRUPTED
+            if result.status is TurnStatus.FAILED and result.keep_rounds
+            else result.status
+        )
         turn.illegal_attempts = result.illegal_attempts
         turn.tool_call_count = result.tool_calls
         turn.llm_call_count = result.llm_calls
-        turn.prompt_tokens = result.prompt_tokens
-        turn.completion_tokens = result.completion_tokens
-        turn.reasoning_tokens = result.reasoning_tokens
-        turn.cached_tokens = result.cached_tokens
-        turn.cost_usd = result.cost_usd
+        turn.prompt_tokens = carried.prompt_tokens + result.prompt_tokens
+        turn.completion_tokens = carried.completion_tokens + result.completion_tokens
+        turn.reasoning_tokens = carried.reasoning_tokens + result.reasoning_tokens
+        turn.cached_tokens = carried.cached_tokens + result.cached_tokens
+        turn.cost_usd = carried.cost_usd + result.cost_usd
         turn.latency_ms = result.latency_ms
         turn.error = result.error
         turn.ended_at = sa.func.now()

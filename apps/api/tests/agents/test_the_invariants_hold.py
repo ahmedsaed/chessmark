@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.scripted import prose, scripted, step, tool_call
 from chessmark.agents.turn import TurnLimits
+from chessmark.db.enums import TurnStatus
 from chessmark.db.models import GameEvent, LlmCall, Player, TranscriptMessage
 from chessmark.db.models import Turn as TurnRow
 from chessmark.game import Colour
@@ -316,3 +317,163 @@ class TestTheBoundsDoNotCorruptWhatTheyStop:
         )
 
         assert await dangling_tool_calls(db, table.white.id) == []
+
+
+# ================================================ a turn a provider interrupted (ADR-0045)
+
+
+def answers_then_stops(rounds: int) -> object:
+    """A seat that completes `rounds` rounds and is then refused — a contended endpoint.
+
+    The shape ADR-0045 is about, and the one that used to leave nothing behind: every round here is
+    a real call with a real payload and real spend, and all of it was discarded.
+    """
+    served = {"calls": 0}
+
+    async def complete(**_kwargs: object) -> object:
+        served["calls"] += 1
+        if served["calls"] <= rounds:
+            return step(tool_call("get_board"))
+        raise RefusedError
+
+    return complete
+
+
+class RefusedError(Exception):
+    status_code = 429
+
+    def __init__(self) -> None:
+        super().__init__(
+            'litellm.RateLimitError: OpenrouterException - {"error":{"message":"Provider returned '
+            'error","code":429,"metadata":{"limit_source":"upstream_provider_shared_pool"}}}'
+        )
+
+
+def moves_then_stops() -> object:
+    """A seat that plays its move and is then refused on the closing round.
+
+    A turn goes on past its move until the model stops (ADR-0037), so this is an ordinary shape and
+    not a corner: the ply is committed, and the provider dies before the model has finished talking.
+    """
+    served = {"calls": 0}
+
+    async def complete(**_kwargs: object) -> object:
+        served["calls"] += 1
+        if served["calls"] == 1:
+            return step(tool_call("make_move", move="e4"))
+        raise RefusedError
+
+    return complete
+
+
+class TestAnInterruptedTurnKeepsItsWork:
+    """**A turn keeps the rounds it completed** (ADR-0045).
+
+    The turn was one transaction and a provider failure raised out of it, so a turn refused on its
+    third call discarded the two that had been answered and billed. The retry then paid for them
+    again — in production `f129b600` that is the gaps in the turn ids, 7854-7856 and 7859, each a
+    fresh attempt redoing the board read the attempt before it had completed.
+    """
+
+    async def test_the_calls_that_were_answered_are_recorded(
+        self, db: AsyncSession, table: Table
+    ) -> None:
+        """Invariant 3. They happened, they were billed, and they had payloads."""
+        result = await play_turn(db, table, answers_then_stops(2), colour=Colour.WHITE)
+        assert result.keep_rounds, "a refusal between rounds should keep what came before it"
+
+        calls = list(await db.scalars(sa.select(LlmCall).where(LlmCall.game_id == table.game.id)))
+        assert len(calls) == 2, f"{len(calls)} of 2 answered calls survived the failure"
+        assert all(call.request and call.response for call in calls), "a call kept no payload"
+
+    async def test_the_turn_is_interrupted_rather_than_failed(
+        self, db: AsyncSession, table: Table
+    ) -> None:
+        """`FAILED` and `INTERRUPTED` are the same instruction to the orchestrator and different
+        facts about the record: one produced nothing, the other holds work the next attempt uses."""
+        result = await play_turn(db, table, answers_then_stops(2), colour=Colour.WHITE)
+        assert result.keep_rounds, "a refusal between rounds should keep what came before it"
+
+        turns = list(
+            await db.scalars(sa.select(TurnRow).where(TurnRow.player_id == table.white.id))
+        )
+        assert [t.status for t in turns] == [TurnStatus.INTERRUPTED]
+        assert turns[0].ply_number is None
+        assert turns[0].llm_call_count == 2
+
+    async def test_the_transcript_it_leaves_is_sendable(
+        self, db: AsyncSession, table: Table
+    ) -> None:
+        """**The invariant that replaced "roll the turn back".**
+
+        The rollback existed because a half-written turn can leave an assistant message whose
+        `tool_calls` nothing answered — append-only, so that seat is refused for the rest of the
+        game, and it corrupted 242 rows before a strict endpoint noticed. Keeping the rounds is
+        only safe while this holds, and the refusal lands *between* rounds, never inside one.
+        """
+        result = await play_turn(db, table, answers_then_stops(2), colour=Colour.WHITE)
+        assert result.keep_rounds, "a refusal between rounds should keep what came before it"
+
+        assert await dangling_tool_calls(db, table.white.id) == []
+        assert await unsendable_rows(db, table.white.id) == []
+
+    async def test_the_next_attempt_continues_instead_of_starting_over(
+        self, db: AsyncSession, table: Table
+    ) -> None:
+        """The whole point. The retry must not re-ask what was already answered, and must not
+        append a second turn prompt — the model would read "It is your move" twice with its own
+        dead exchange between them."""
+        result = await play_turn(db, table, answers_then_stops(2), colour=Colour.WHITE)
+        assert result.keep_rounds, "a refusal between rounds should keep what came before it"
+        interrupted_rounds = result.llm_calls
+
+        await play_turn(
+            db, table, scripted(step(tool_call("make_move", move="e4"))), colour=Colour.WHITE
+        )
+
+        rows = list(
+            await db.scalars(
+                sa.select(TranscriptMessage)
+                .where(TranscriptMessage.player_id == table.white.id)
+                .order_by(TranscriptMessage.seq)
+            )
+        )
+        prompts = [r for r in rows if r.role == "user" and "your move" in (r.content or "")]
+        assert len(prompts) == 1, f"the turn prompt was appended {len(prompts)} times"
+
+        turns = list(
+            await db.scalars(
+                sa.select(TurnRow).where(TurnRow.player_id == table.white.id).order_by(TurnRow.id)
+            )
+        )
+        assert len(turns) == 1, "the retry opened a second turn instead of continuing the first"
+        assert turns[0].status is TurnStatus.COMPLETED
+        assert turns[0].llm_call_count > interrupted_rounds, (
+            "the row counts only the last attempt — the rounds of both belong to the turn, and "
+            "`max_tool_iterations` is meant to bound the turn rather than each attempt at it"
+        )
+
+    async def test_a_turn_that_already_moved_is_not_resumable(
+        self, db: AsyncSession, table: Table
+    ) -> None:
+        """**A move already played is not a failed turn.**
+
+        A turn goes on past its move until the model stops (ADR-0037), so a provider can die during
+        the *closing* round — after the ply is committed and after the game has moved on. Marking
+        that turn interrupted made it resumable, and it was resumed for a **later ply**: one row
+        holding two turn prompts and two moves, its `ply_number` overwritten by the second, and the
+        ply in between with no `turn_started` at all. Found by playing a game whose endpoint went
+        dark mid-turn, not by reading the code.
+        """
+        result = await play_turn(db, table, moves_then_stops(), colour=Colour.WHITE)
+
+        assert result.moved, "the move should have landed before the provider went away"
+
+        assert not result.keep_rounds, "a turn whose move is committed has nothing to come back for"
+
+        turns = list(
+            await db.scalars(sa.select(TurnRow).where(TurnRow.player_id == table.white.id))
+        )
+        assert [t.status for t in turns] != [TurnStatus.INTERRUPTED], (
+            "an interrupted turn carrying a ply can be resumed for a different one"
+        )

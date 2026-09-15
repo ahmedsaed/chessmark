@@ -43,7 +43,7 @@ from chessmark.core.cooldown import ProviderCooldown, resume_at
 from chessmark.core.credits import fetch_balance
 from chessmark.core.halt import SCOPE_FREE, SOURCE_CREDITS, SOURCE_FREE_TIER, Halt, HaltState
 from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
-from chessmark.db.models import Game, GameEvent, ModelRegistry, Player
+from chessmark.db.models import Game, GameEvent, ModelRegistry, Player, Turn
 from chessmark.db.quotas import record_spend
 from chessmark.db.repositories import (
     GameInFlightError,
@@ -337,6 +337,10 @@ class TurnWorker:
             return await self._retry_or_abandon(job, failure.result)
 
     async def _advance(self, job: AdvanceTurn) -> HandledJob:
+        #: Set when the turn kept its rounds and still has to pause. Raised after the commit, so
+        #: the pause is routed by the same handler as a rolled-back one (ADR-0045).
+        interrupted: TurnResult | None = None
+
         async with self.sessionmaker() as session, session.begin():
             # **Claimed, not merely read.** The row lock is what makes one worker the owner of this
             # ply; everything below it — the idempotency check included — assumes nobody else is
@@ -439,16 +443,27 @@ class TurnWorker:
                 live=self.live,
             )
             before_seq = game.event_seq
-            result = await runner.run()
+            result = await runner.run(await self._interrupted_turn(session, player))
 
             # Roll this turn's spend into the day's counters. Both are best-effort relative to the
             # turn: the money is already spent, so a failure to record must not undo the game.
             await self._record_spend(session, game, result)
 
-            # A provider failure is ours, not the model's (AGENT-09). Raising discards the whole
-            # turn so the retry starts from an untouched transcript.
+            # A provider failure is ours, not the model's (AGENT-09).
             if result.status is TurnStatus.FAILED and result.outcome is None:
-                raise ProviderFailureError(result)
+                if not result.keep_rounds:
+                    # Raising discards the whole turn, so the retry starts from an untouched
+                    # transcript. Right when the next attempt has to send something *different* —
+                    # a transcript with no room to answer only gets worse for keeping more of it.
+                    raise ProviderFailureError(result)
+
+                # **Kept** (ADR-0045). The provider stopped answering, and it will serve the same
+                # request later — so the rounds before it are work that must not be paid for
+                # twice, calls that really happened and have payloads, and spend that belongs in
+                # both ledgers. The failure is raised after the commit instead, so the pause is
+                # routed exactly as before.
+                interrupted = result
+                await session.flush()
 
             # The cooldown is cleared by `_endpoint_served`, per answered call, rather than here.
             # A turn is many calls against a growing transcript, so "it finished a turn" is a much
@@ -460,8 +475,12 @@ class TurnWorker:
 
             events = await load_events(session, game.id, after_seq=before_seq)
 
-        # Committed. Only now is it safe to tell anyone about it.
+        # Committed. Only now is it safe to tell anyone about it — including the rounds an
+        # interrupted turn kept, which is what stops a spectator's steps vanishing on reload.
         await self._publish(job.game_id, events)
+
+        if interrupted is not None:
+            raise ProviderFailureError(interrupted)
 
         # Enqueue the next turn only if a *model* is to play it. Handing the queue a job for a
         # human's move produces a job the worker can only answer with `awaiting_human`, and it
@@ -1202,6 +1221,33 @@ class TurnWorker:
                 "total_cost_usd": str(game.total_cost_usd),
             },
         )
+
+    async def _interrupted_turn(self, session: AsyncSession, player: Player) -> Turn | None:
+        """The turn this seat was part-way through when a provider stopped answering (ADR-0045).
+
+        **The seat\'s last turn, and only if it is still open.** A turn that produced a move is
+        `COMPLETED` and carries its `ply_number`; one that forfeited is `FORFEITED`. Only an
+        interrupted one is unfinished, and there can be at most one — the next attempt either
+        finishes it or interrupts it again, and both write the same row.
+
+        Asked of the *last* turn rather than "any interrupted turn" on purpose: a game abandoned
+        mid-turn and reopened days later has moved on, and continuing a transcript from before the
+        reopening would answer a position that is no longer on the board. If anything has happened
+        for this seat since, the interrupted turn is history.
+        """
+        last = (
+            await session.scalars(
+                sa.select(Turn).where(Turn.player_id == player.id).order_by(Turn.id.desc()).limit(1)
+            )
+        ).first()
+        if last is None or last.status is not TurnStatus.INTERRUPTED:
+            return None
+
+        # **Never a turn that already produced a ply.** `INTERRUPTED` should not be able to carry
+        # one — a turn whose move is committed finishes rather than waiting — and this is the
+        # backstop, because the cost of being wrong is a turn row holding two plies and a ply with
+        # no `turn_started` of its own.
+        return last if last.ply_number is None else None
 
     async def _endpoint_served(self, model: str, provider: str | None) -> None:
         """An endpoint answered, so forget what it refused before.
