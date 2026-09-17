@@ -123,62 +123,73 @@ export function Scrubber({
 
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      {/* Wraps rather than overflowing. A row of `flex-none` controls has an intrinsic minimum
-          width, and in a grid column that minimum is enough to push the whole page sideways —
-          which is exactly what it did before this. */}
-      <div className="flex flex-wrap items-center gap-1.5">
-        <Control label="Start" hint="Home" onClick={() => step(-Infinity)} disabled={ply === 0}>
-          ⏮
-        </Control>
-        <Control label="Previous ply" hint="←" onClick={() => step(-1)} disabled={ply === 0}>
-          ◀
-        </Control>
+      {/* **Two rows on a phone, one from `sm` up.** At 44px the five transport buttons fill the
+          width on their own, so the speeds wrapped to a line of their own — and `ml-auto` then
+          pinned them to the right of an otherwise empty row. Splitting the groups says what the
+          wrap was trying to say, and centring them makes the second row look deliberate instead of
+          like something that fell off the first.
+          The groups still wrap internally rather than overflowing: a row of `flex-none` controls
+          has an intrinsic minimum width, and in a grid column that minimum is enough to push the
+          whole page sideways — which is exactly what it did before this. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-1.5">
+        <div className="flex flex-none flex-wrap items-center justify-center gap-1.5">
+          <Control label="Start" hint="Home" onClick={() => step(-Infinity)} disabled={ply === 0}>
+            ⏮
+          </Control>
+          <Control label="Previous ply" hint="←" onClick={() => step(-1)} disabled={ply === 0}>
+            ◀
+          </Control>
 
-        <button
-          type="button"
-          onClick={() => onPlayingChange(!playing)}
-          disabled={total === 0}
-          aria-label={playing ? "Pause" : "Play"}
-          title={`${playing ? "Pause" : "Play"} (space)`}
-          className="flex h-11 w-14 flex-none items-center justify-center border border-accent-deep bg-accent text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40 sm:h-7 sm:w-9"
-        >
-          <span aria-hidden className="text-[11px] leading-none">
-            {playing ? "❚❚" : "▶"}
+          <button
+            type="button"
+            onClick={() => onPlayingChange(!playing)}
+            disabled={total === 0}
+            aria-label={playing ? "Pause" : "Play"}
+            title={`${playing ? "Pause" : "Play"} (space)`}
+            className="flex h-11 w-14 flex-none items-center justify-center border border-accent-deep bg-accent text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40 sm:h-7 sm:w-9"
+          >
+            <span aria-hidden className="text-[11px] leading-none">
+              {playing ? "❚❚" : "▶"}
+            </span>
+          </button>
+
+          <Control label="Next ply" hint="→" onClick={() => step(1)} disabled={ply >= total}>
+            ▶
+          </Control>
+          <Control label="End" hint="End" onClick={() => step(Infinity)} disabled={ply >= total}>
+            ⏭
+          </Control>
+        </div>
+
+        {/* `ml-auto` on the speeds wins over `justify-center` on `sm` — an auto margin takes the free
+            space before justification sees it — so the desktop row is the one it always was. */}
+        <div className="flex min-w-0 flex-1 flex-wrap items-center justify-center gap-2 sm:gap-1.5">
+          <span className="tabular flex-none font-mono text-[11px] text-ink-dim sm:ml-1">
+            {ply}
+            <span className="text-ink-faint">/{total}</span>
           </span>
-        </button>
+          <span className="tabular flex-none font-mono text-[10px] text-ink-faint">
+            {moveNumber > 0 ? `move ${moveNumber}` : "start"}
+          </span>
 
-        <Control label="Next ply" hint="→" onClick={() => step(1)} disabled={ply >= total}>
-          ▶
-        </Control>
-        <Control label="End" hint="End" onClick={() => step(Infinity)} disabled={ply >= total}>
-          ⏭
-        </Control>
-
-        <span className="tabular ml-1 flex-none font-mono text-[11px] text-ink-dim">
-          {ply}
-          <span className="text-ink-faint">/{total}</span>
-        </span>
-        <span className="tabular flex-none font-mono text-[10px] text-ink-faint">
-          {moveNumber > 0 ? `move ${moveNumber}` : "start"}
-        </span>
-
-        <span className="ml-auto flex flex-none items-center gap-0.5">
-          {SPEEDS.map((option, index) => (
-            <button
-              key={option.label}
-              type="button"
-              onClick={() => onSpeedChange(index)}
-              aria-pressed={speed === index}
-              className={`border px-2.5 py-2 font-mono text-[10px] transition-colors sm:px-1.5 sm:py-0.5 sm:text-[9px] ${
-                speed === index
-                  ? "border-accent text-accent"
-                  : "border-line text-ink-faint hover:text-ink-dim"
-              }`}
-            >
-              {option.label}
-            </button>
-          ))}
-        </span>
+          <span className="flex flex-none items-center gap-0.5 sm:ml-auto">
+            {SPEEDS.map((option, index) => (
+              <button
+                key={option.label}
+                type="button"
+                onClick={() => onSpeedChange(index)}
+                aria-pressed={speed === index}
+                className={`border px-2.5 py-2 font-mono text-[10px] transition-colors sm:px-1.5 sm:py-0.5 sm:text-[9px] ${
+                  speed === index
+                    ? "border-accent text-accent"
+                    : "border-line text-ink-faint hover:text-ink-dim"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </span>
+        </div>
       </div>
 
       <label className="flex items-center gap-2">

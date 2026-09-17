@@ -54,7 +54,13 @@ export function GameLayout({
       {header}
 
       <div className="grid grid-cols-1 gap-4 lg:h-[calc(100dvh-9.5rem)] lg:grid-cols-[minmax(0,1fr)_min(calc(100dvh-12rem),52vw)_minmax(0,1fr)]">
-        <div className="order-1 flex min-h-0 min-w-0 flex-col gap-2 lg:order-none">{board}</div>
+        {/* **The `lg:order-*` values are the desktop layout, not decoration.** Stacked, the order
+            is board, tabs, conversation, stats; side by side it is stats, board, conversation,
+            because the middle column is the `min()`-sized one and the board is what it is sized
+            for. Writing `lg:order-none` here instead put the board in a 323px rail and gave the
+            conversation the 708px centre — three columns, correctly aligned, and the wrong thing
+            in each. */}
+        <div className="order-1 flex min-h-0 min-w-0 flex-col gap-2 lg:order-2">{board}</div>
 
         {/* Below the board, above both panels, and gone entirely at `lg` where both are visible
             at once and a tab would be a control that changes nothing. */}
@@ -77,7 +83,7 @@ export function GameLayout({
             already scrolls inside itself; it only ever needed to be told how tall it is. `svh`
             rather than `vh` because a phone's URL bar makes `vh` taller than the screen. */}
         <div
-          className={`order-3 h-[58svh] min-h-0 min-w-0 flex-col lg:order-none lg:flex lg:h-auto ${
+          className={`order-3 h-[58svh] min-h-0 min-w-0 flex-col lg:order-3 lg:flex lg:h-auto ${
             tab === "events" ? "flex" : "hidden"
           }`}
         >
@@ -85,7 +91,7 @@ export function GameLayout({
         </div>
 
         <div
-          className={`order-4 min-h-0 min-w-0 overflow-y-auto lg:order-none lg:block ${
+          className={`order-4 min-h-0 min-w-0 overflow-y-auto lg:order-1 lg:block ${
             tab === "info" ? "block" : "hidden"
           }`}
         >

@@ -37,6 +37,11 @@ file is only the record of *what shipped when*.
     sideways. The leaderboard was an 820px table in a 333px scroller, so a phone showed `#` and
     `Contestant` and the rating — the reason the page exists — was behind a swipe nothing
     announced. The pool's standings gave the model column 37px for the same reason; it gets 173px.
+  - **The replay transport is two rows on a phone** — the five controls, then the move count and
+    the speeds, centred. At 44px the controls fill the width on their own, so the speeds wrapped to
+    a line of their own and `ml-auto` pinned them to the right of an otherwise empty row. The
+    game header had the same bug: its actions wrapped and were pinned right, leaving a gap the
+    width of the page beside two buttons. `ml-auto` now waits for a row to push against.
   - **The replay transport is 44px under a thumb**, 28px under a cursor, and the type scale has an
     11px floor below `sm` — one rule in `globals.css` rather than 139 arbitrary values in markup.
 

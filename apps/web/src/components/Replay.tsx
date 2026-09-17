@@ -205,7 +205,11 @@ function Header({
       {/* Wrapped rather than rendered bare. `actions` is built in a Server Component and crosses
           the RSC boundary into this client one, which lands it in the children array without a
           key — React warns. A wrapper gives it a single-child slot instead of a list position. */}
-      {actions && <span className="ml-auto flex items-center">{actions}</span>}
+      {/* **`ml-auto` only once there is a row to push against.** On a phone `actions` wraps to a
+          line of its own, and an auto margin then pinned it to the right of an empty one — a gap
+          the width of the page beside two buttons, which reads as a layout failure rather than
+          alignment. Flush left below `sm`, with the rest of the header. */}
+      {actions && <span className="flex items-center sm:ml-auto">{actions}</span>}
     </div>
   );
 }
