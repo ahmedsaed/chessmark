@@ -15,6 +15,33 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Added
+
+- **A social card for every page** (UI-06). Seven routes had **no `og:image` at all** —
+  `/leaderboard`, `/models`, `/about`, `/methodology`, `/play` and both tournament routes unfurled
+  as bare text links anywhere they were shared.
+
+  `pageMetadata` did it. Metadata keys are inherited wholesale, so setting `openGraph` replaces the
+  parent's whole block — including the `images` that `app/opengraph-image.tsx` injects through the
+  file convention. The helper written to stop every page sharing the root's card deleted the card
+  instead. `/sign-in` is what identified the mechanism: it sets no metadata, replaced nothing, and
+  was the only page besides `/` that kept an image.
+
+  The new cards show the page rather than the site: the leaderboard's is the top five with their
+  ratings, a tournament's is its table and what the event cost, a model's is its rating, its record
+  and a position from one of its own ranked games — a board only when there is a real game behind
+  it, because a card about one player showing a board is read as *that player's* game.
+
+  Three constraints found by hitting them, all now in [FRONTEND.md](docs/FRONTEND.md): a card
+  cannot live inside a catch-all segment, so the model's is a Route Handler at `/og/model/<slug>`;
+  a config redirect runs before routing and `/leaderboard/:slug → /models/:slug` was serving the
+  *models* card for the leaderboard, 200 and valid PNG and the wrong picture; and the two cards
+  that already existed had drifted onto different palettes.
+
+  Cards revalidate on one shared clock rather than rendering per request. `site.spec.ts` asserts
+  every public route has exactly one `og:image` and that each renders **without following a
+  redirect** — following one lands on a perfectly good card and proves nothing.
+
 ## [0.4.0] — 2026-09-17
 
 **The site works on a phone, and a ceiling we imposed stopped counting as a result.** Five commits
@@ -24,6 +51,17 @@ only ever opened on a desk, the other because the number it was wrong about agre
 beside it everywhere except one column.
 
 ### Changed
+
+- **The small end of the type scale is named** (UI-11). 190 arbitrary values — `text-[10px]` and
+  five siblings — across 32 files and six sizes, three of them within a pixel of each other. Now
+  four steps named for what they are for: `text-label`, `text-meta`, `text-data`, `text-chat`.
+  `8.5px` and `9.5px` are gone; a half-pixel does not survive rasterisation, and keeping them meant
+  three names for one step.
+
+  It had already cost something. The phone floor below was written as `[class*="text-[10px]"]`,
+  matching on class *names*, because there was no token to redefine. That hack is gone — Tailwind v4
+  compiles `text-meta` to `font-size: var(--text-meta)`, so the floor is four redefinitions in one
+  media query and no call site had to be touched for it. No arbitrary font size remains in `src/`.
 
 - **The site is usable at phone width** (UI-11). Seven pages measured at 390px; the failures had one
   shape — a flex row splitting a width that does not exist — and none of them was visible from a
