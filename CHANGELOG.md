@@ -15,6 +15,29 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Added
+
+- **An account menu in the header, and a profile worth visiting** (UI-09, HUMAN-03). The header
+  showed a bare `profile` link: neither who held the session nor a way out of it. It is now a
+  picture, a name and a menu with the two things a person wants — the profile, and signing out.
+
+  Built from `useUser` and `useClerk`, not from `<UserButton />`. A prebuilt Clerk component
+  anywhere puts 285 KiB of `@clerk/ui` on every route, so the menu being ours is what keeps
+  `/about` free of it. The balance appears exactly once at any width: the header chip above `sm`,
+  the menu below it, because discovering your allowance by being refused is a bad way to learn it
+  (ADR-0016) and twice on one screen reads as two numbers.
+
+  `/profile` gained a record and every game behind it, in the shapes the model page already uses —
+  a person holding a seat is a player, and the page describing one should not be a different kind
+  of page. The record counts **decided games only**: a game the harness stopped is not a draw and
+  not a loss (invariant 11), so it is counted apart rather than folded into either, and the four
+  columns are asserted to add up to the total. No new endpoint — `/games/mine` already returned
+  every field the arithmetic needs, and a second place to compute W/D/L is a second answer.
+
+  **It re-introduces a trap that had been deleted.** The account control is a collapsed disclosure
+  that sorts first in the document on every signed-in page, so a selector written against the first
+  `aria-expanded="false"` finds it and not the turn it meant. `docs/TESTING.md` carries it again.
+
 ### Fixed
 
 - **Nobody could create an account through our sign-up form.** The Clerk instance requires a

@@ -143,7 +143,7 @@ the shell, and the shell is what CI runs.
 database behind `head` fails there — `relation "tournaments" does not exist`, reported as a setup
 error rather than a test failure. `make migrate` first if you have just changed branches.
 
-### Five traps
+### Six traps
 
 1. **A message's content is not always a string.** By the time it reaches the provider, the
    prompt-caching path may have wrapped it into `[{"type": "text", ...}]` so a `cache_control` marker
@@ -163,6 +163,12 @@ error rather than a test failure. `make migrate` first if you have just changed 
    `STORAGE_STATE` restores the same client cookie, so a test that signs out revokes the session
    every later test is still using. `account.spec.ts` creates and deletes a throwaway identity for
    exactly this reason.
+6. **The first `aria-expanded="false"` on a signed-in page is the account menu**, not a turn. It is
+   the header's account control, it sorts first in the document, and clicking it opens a menu over
+   the page so every later click fails on an element it has covered. This trap was recorded, then
+   deleted when the header briefly became a plain link, and is back because the menu is. Scope fold
+   selectors to what they are about — `getByTestId("turn")`, never the first disclosure on the
+   page — and address the menu itself by its accessible name.
 
 ---
 

@@ -8,10 +8,14 @@
  * route. `useUser` and `useClerk` are hooks, not components, and cost nothing beyond the core.
  *
  * **What it deliberately does not do.** Clerk's own profile manages emails, passwords, connected
- * accounts, sessions and MFA. This manages a display name and signs you out, because those are the
- * two things this site needs, and re-implementing account recovery is how people get locked out.
- * Anything else stays with the provider that is good at it: a person who needs to change their
- * email does it wherever they signed in.
+ * accounts, sessions and MFA. This manages a display name, and shows what you have played and what
+ * it cost — because those are the things this site knows and Clerk does not. Re-implementing
+ * account recovery is how people get locked out, so anything else stays with the provider that is
+ * good at it: a person who needs to change their email does it wherever they signed in.
+ *
+ * The record and the game list are the same shapes a model page uses, over the same `GameCard`.
+ * A person holding a seat is a player here, and the page that describes one should not be a
+ * different kind of page depending on whether it is a person or a model.
  *
  * The allowance comes from *our* API, not from Clerk — credits are a Chessmark concept
  * (ADR-0016), granted by an administrator and spent to start a game.
@@ -23,7 +27,13 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { clerkEnabled } from "@/components/AuthProvider";
-import type { Me } from "@/lib/types";
+import { GameCard } from "@/components/GameCard";
+import { listMyGames } from "@/lib/api";
+import { orderMyGames, recordOf } from "@/lib/mine";
+import type { Me, MyGameSummary } from "@/lib/types";
+
+/** The server's ceiling on `/games/mine`. This page is a history, so it asks for all of it. */
+const EVERY_GAME = 200;
 
 export function ProfileView({ apiUrl }: { apiUrl: string }) {
   /* Clerk absent is the local and CI configuration, and this page has nothing to say without it.
@@ -41,6 +51,10 @@ function Profile({ apiUrl }: { apiUrl: string }) {
   const router = useRouter();
 
   const [me, setMe] = useState<Me | null>(null);
+  /* `null` is *not loaded or failed*, `[]` is *loaded and you have never played*. They render
+     differently on purpose: an empty history invites you to start a game, and a failed read must
+     not pretend to be one. The same distinction `reportFailure` exists for on the server. */
+  const [games, setGames] = useState<MyGameSummary[] | null>(null);
   /* `null` means "not edited yet", so the field shows whatever Clerk currently holds without an
      effect writing state on every render of the user object. */
   const [draft, setDraft] = useState<string | null>(null);
@@ -64,6 +78,17 @@ function Profile({ apiUrl }: { apiUrl: string }) {
       } catch {
         /* The allowance is worth showing and not worth an error state — the API refuses on its own
            when the balance is spent, which is the only moment it actually matters. */
+      }
+
+      /* A second request rather than one, and not a new endpoint. `/games/mine` already returns
+         every field the record needs, so W/D/L is arithmetic over a list the page was going to
+         fetch anyway — an endpoint that returned the same numbers would be a second place for them
+         to be computed, and the two would disagree the first time either changed. */
+      try {
+        const mine = await listMyGames(await getToken(), EVERY_GAME);
+        if (!cancelled) setGames(mine);
+      } catch {
+        // Left as `null`, which renders as "could not be loaded" rather than as "none".
       }
     })();
 
@@ -183,6 +208,8 @@ function Profile({ apiUrl }: { apiUrl: string }) {
         </dl>
       </section>
 
+      <Played games={games} />
+
       <section className="mt-12 border-t border-line-soft pt-8">
         <button
           type="button"
@@ -216,6 +243,110 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="flex flex-col gap-1">
       <dd className="tabular font-mono text-2xl text-ink">{value}</dd>
       <dt className="font-mono text-label uppercase tracking-[0.12em] text-ink-faint">{label}</dt>
+    </div>
+  );
+}
+
+/**
+ * Your record, and every game behind it.
+ *
+ * **The record counts decided games and says so**, which is the distinction the model page had to
+ * learn the hard way: it printed two different W/D/L figures over two different sets of games and
+ * named neither, so which one a reader saw depended on how they arrived. A game the harness
+ * stopped — a budget, a ply cap, a provider we could not reach — is not a draw and not a loss
+ * (invariant 11), so it is counted apart rather than folded into either.
+ */
+function Played({ games }: { games: MyGameSummary[] | null }) {
+  if (games === null) {
+    return (
+      <section className="mt-12">
+        <Heading>Games</Heading>
+        <p className="mt-3 border border-bad-deep bg-surface px-4 py-3 text-sm text-bad">
+          Your games could not be loaded. This is a failed request, not an empty history — reload
+          to try again.
+        </p>
+      </section>
+    );
+  }
+
+  if (games.length === 0) {
+    return (
+      <section className="mt-12">
+        <Heading>Games</Heading>
+        <p className="mt-3 text-sm text-ink-dim">
+          You have not played yet.{" "}
+          <Link className="text-accent hover:underline" href="/play">
+            Sit down against a model
+          </Link>{" "}
+          — watching needs no account, but playing spends a credit.
+        </p>
+      </section>
+    );
+  }
+
+  const record = recordOf(games);
+  const ordered = orderMyGames(games);
+
+  return (
+    <>
+      <section className="mt-12">
+        {/* Named just "Record". It said *decided games only* over a panel whose first cell counts
+            every game, which is the same contradiction the model page had to remove when it
+            printed two W/D/L figures and named neither. */}
+        <Heading>Record</Heading>
+        <p className="mt-2 text-sm text-ink-dim">
+          Games that reached a result. A game we stopped ourselves — a budget, a ply cap, a
+          provider that would not answer — is counted apart: it ended the game, and it says nothing
+          about how either side played.
+        </p>
+
+        <dl className="mt-4 grid grid-cols-2 gap-px border border-line-soft bg-line-soft sm:grid-cols-4">
+          <Fact label="Played" value={String(games.length)} />
+          <Fact
+            label="W / D / L"
+            value={`${record.wins} / ${record.draws} / ${record.losses}`}
+            note={`of ${record.decided} decided`}
+          />
+          <Fact
+            label="In progress"
+            value={String(record.unfinished)}
+            note={record.unfinished > 0 ? "running or paused" : undefined}
+          />
+          <Fact
+            label="No result"
+            value={String(record.undecided)}
+            note={record.undecided > 0 ? "stopped by the harness" : undefined}
+          />
+        </dl>
+      </section>
+
+      <section className="mt-12">
+        <Heading>Your games</Heading>
+        <p className="mt-2 text-sm text-ink-dim">
+          Waiting on you first, then what is still running, then what is finished.
+        </p>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {ordered.map((game) => (
+            <GameCard
+              key={game.id}
+              game={game}
+              seat={game.your_colour}
+              yourTurn={game.your_turn}
+            />
+          ))}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function Fact({ label, value, note }: { label: string; value: string; note?: string }) {
+  return (
+    <div className="bg-surface px-3 py-2.5">
+      <dt className="font-mono text-label uppercase tracking-[0.14em] text-ink-faint">{label}</dt>
+      <dd className="tabular mt-1 font-mono text-sm text-ink">{value}</dd>
+      {note && <p className="tabular mt-0.5 font-mono text-label text-ink-faint">{note}</p>}
     </div>
   );
 }

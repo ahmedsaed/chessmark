@@ -42,6 +42,18 @@ const enrolment = `e2e-${randomUUID()}`;
 
 const DISPLAY_NAME = `e2e-${Date.now()}`;
 
+/**
+ * The header's account control.
+ *
+ * Addressed by its accessible name rather than by `aria-expanded`: this is now the **first**
+ * collapsed disclosure in the document on every signed-in page, which is exactly the trap
+ * `docs/TESTING.md` records — a selector written against the first one finds this and not the turn
+ * it meant.
+ */
+function accountMenu(page: Page) {
+  return page.getByRole("button", { name: /account menu/i });
+}
+
 test.describe.configure({ mode: "serial" });
 
 test.describe("an account, from creation to signing out", () => {
@@ -103,7 +115,8 @@ test.describe("an account, from creation to signing out", () => {
 
     // `finalize({ navigate })` lands on `/play` — the default `safeRedirect` answer.
     await page.waitForURL(/\/play/);
-    await expect(page.getByRole("link", { name: "Your profile" })).toBeVisible();
+    // The header's account control is the signed-in signal now; it replaced the `profile` link.
+    await expect(accountMenu(page)).toBeVisible();
 
     userId = await page.evaluate(() => {
       const clerk = (window as unknown as { Clerk?: { user?: { id?: string } } }).Clerk;
@@ -125,6 +138,56 @@ test.describe("an account, from creation to signing out", () => {
        two apart. */
     const credits = page.locator("dl div", { has: page.getByText("credits", { exact: true }) });
     await expect(credits.locator("dd")).toHaveText("0");
+
+    /* **An empty history, said as one.** `null` and `[]` render differently on purpose: a failed
+       read must not look like a person who has never played. This account was created seconds
+       ago, so the empty branch is the deterministic one here — the populated branch is asserted
+       by `play.spec.ts`, which creates the games it then counts. */
+    await expect(page.getByText("You have not played yet.")).toBeVisible();
+    await expect(page.getByText(/could not be loaded/)).toHaveCount(0);
+  });
+
+  test("the header says who you are signed in as", async () => {
+    await page.goto("/play");
+
+    /* The name, not just a picture. The control replaced a bare `profile` link that showed neither
+       who held the session nor a way out — on a shared machine, "am I still signed in as them" had
+       no answer on the page. */
+    const menu = accountMenu(page);
+    await expect(menu).toBeVisible();
+    await expect(menu).toHaveAttribute("aria-expanded", "false");
+    await expect(menu).toContainText(DISPLAY_NAME);
+  });
+
+  test("the account menu opens, offers the two things it offers, and closes on Escape", async () => {
+    await page.goto("/play");
+
+    const menu = accountMenu(page);
+    await menu.click();
+    await expect(menu).toHaveAttribute("aria-expanded", "true");
+
+    const panel = page.getByRole("menu", { name: "Account" });
+    await expect(panel.getByRole("menuitem", { name: "Profile" })).toBeVisible();
+    await expect(panel.getByRole("menuitem", { name: "Sign out" })).toBeVisible();
+
+    /* Escape closes it *and* hands focus back. A menu that closes while leaving focus on the
+       document body returns a keyboard user to the top of the page, which is worse than the menu
+       staying open. */
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    await expect(menu).toBeFocused();
+  });
+
+  test("the menu reaches the profile", async () => {
+    await page.goto("/play");
+
+    await accountMenu(page).click();
+    await page.getByRole("menuitem", { name: "Profile" }).click();
+
+    await page.waitForURL(/\/profile/);
+    // And it closed behind itself — a menu still hanging over the page it just opened reads as a
+    // page that did not respond.
+    await expect(page.getByRole("menu", { name: "Account" })).toBeHidden();
   });
 
   test("a display name is saved, and is still there after a reload", async () => {
@@ -141,9 +204,13 @@ test.describe("an account, from creation to signing out", () => {
     await expect(page.getByLabel("Display name")).toHaveValue(DISPLAY_NAME);
   });
 
-  test("signing out returns the whole site to its signed-out state", async () => {
-    await page.goto("/profile");
-    await page.getByRole("button", { name: "Sign out" }).click();
+  test("signing out from the header menu returns the whole site to its signed-out state", async () => {
+    /* Through the menu rather than the profile page's own button: this is the control on every
+       page, and it is the one a person reaches for. The profile page keeps a button too — it is
+       the page *about* the account — and that one is asserted by its own presence above. */
+    await page.goto("/play");
+    await accountMenu(page).click();
+    await page.getByRole("menuitem", { name: "Sign out" }).click();
 
     // `signOut(() => router.push("/"))` — the callback is the navigation, so landing here is the
     // sign-out having completed rather than a race with it.
