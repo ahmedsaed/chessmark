@@ -3,6 +3,11 @@
  *
  * In Next.js 16 `fetch` is **not** cached by default, so nothing here needs `no-store` — a live
  * game page reads fresh data on every request without asking.
+ *
+ * **`cache` is the one opt-in, and only the social cards use it.** Uncached reads are also what
+ * makes a route *dynamic*, and a dynamic route ignores its own `revalidate` — so the cards were
+ * re-rendering a board and a Satori layout on **every unfurl**, which is exactly what the
+ * revalidate was added to prevent. Nothing a person waits on caches; a picture of a page does.
  */
 
 import { originFromEnv } from "@/lib/env";
@@ -61,10 +66,16 @@ export class ApiError extends Error {
   }
 }
 
-async function get<T>(path: string): Promise<T> {
+/** Seconds a read may be reused for. Omitted everywhere a person is looking at the answer. */
+export interface ReadOptions {
+  cache?: number;
+}
+
+async function get<T>(path: string, options?: ReadOptions): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(TIMEOUT_MS),
+    ...(options?.cache === undefined ? {} : { next: { revalidate: options.cache } }),
   });
 
   if (!response.ok) {
@@ -83,9 +94,9 @@ async function get<T>(path: string): Promise<T> {
  */
 const ABSENT = new Set([404, 422]);
 
-async function getOrNull<T>(path: string): Promise<T | null> {
+async function getOrNull<T>(path: string, options?: ReadOptions): Promise<T | null> {
   try {
-    return await get<T>(path);
+    return await get<T>(path, options);
   } catch (error) {
     if (error instanceof ApiError && ABSENT.has(error.status)) return null;
     throw error;
@@ -109,32 +120,36 @@ function reportFailure(path: string, cause: unknown): void {
  * Never throws. The lobby should still render if the API is briefly unreachable — an empty
  * section is a better failure than a blank page.
  */
-async function getOrEmpty<T>(path: string): Promise<T[]> {
+async function getOrEmpty<T>(path: string, options?: ReadOptions): Promise<T[]> {
   try {
-    return await get<T[]>(path);
+    return await get<T[]>(path, options);
   } catch (error) {
     reportFailure(path, error);
     return [];
   }
 }
 
-export function listGames(status?: string, limit = 20): Promise<GameSummary[]> {
+export function listGames(
+  status?: string,
+  limit = 20,
+  options?: ReadOptions,
+): Promise<GameSummary[]> {
   const query = new URLSearchParams({ limit: String(limit) });
   if (status) query.set("status", status);
-  return getOrEmpty<GameSummary>(`/games?${query}`);
+  return getOrEmpty<GameSummary>(`/games?${query}`, options);
 }
 
-export function getGame(id: string): Promise<GameDetail | null> {
-  return getOrNull<GameDetail>(`/games/${id}`);
+export function getGame(id: string, options?: ReadOptions): Promise<GameDetail | null> {
+  return getOrNull<GameDetail>(`/games/${id}`, options);
 }
 
-export function listModels(freeOnly = false): Promise<ModelInfo[]> {
-  return getOrEmpty<ModelInfo>(`/models?free_only=${freeOnly}`);
+export function listModels(freeOnly = false, options?: ReadOptions): Promise<ModelInfo[]> {
+  return getOrEmpty<ModelInfo>(`/models?free_only=${freeOnly}`, options);
 }
 
 /** One model with its aggregates, or null for a slug nothing answers to. */
-export function getModel(slug: string): Promise<ModelDetail | null> {
-  return getOrNull<ModelDetail>(`/models/${slug}`);
+export function getModel(slug: string, options?: ReadOptions): Promise<ModelDetail | null> {
+  return getOrNull<ModelDetail>(`/models/${slug}`, options);
 }
 
 /** Every game a model has played, either seat (Phase 20). */
@@ -209,9 +224,9 @@ export async function getBenchSummary(): Promise<BenchSummary> {
   }
 }
 
-export async function getLeaderboard(): Promise<Leaderboard> {
+export async function getLeaderboard(options?: ReadOptions): Promise<Leaderboard> {
   try {
-    return await get<Leaderboard>("/leaderboard");
+    return await get<Leaderboard>("/leaderboard", options);
   } catch (error) {
     reportFailure("/leaderboard", error);
     return {
@@ -225,17 +240,21 @@ export async function getLeaderboard(): Promise<Leaderboard> {
 }
 
 /** Recent tournaments, newest first. Never throws: an empty list is the honest state. */
-export function listTournaments(limit = 20): Promise<TournamentSummary[]> {
-  return getOrEmpty<TournamentSummary>(`/tournaments?limit=${limit}`);
+export function listTournaments(
+  limit = 20,
+  options?: ReadOptions,
+): Promise<TournamentSummary[]> {
+  return getOrEmpty<TournamentSummary>(`/tournaments?limit=${limit}`, options);
 }
 
 /** One tournament with its table, pairings and games, or null for an unknown slug. */
 export function getTournament(
   slug: string,
   era?: string,
+  options?: ReadOptions,
 ): Promise<TournamentDetail | null> {
   const query = era ? `?era=${encodeURIComponent(era)}` : "";
-  return getOrNull<TournamentDetail>(`/tournaments/${slug}${query}`);
+  return getOrNull<TournamentDetail>(`/tournaments/${slug}${query}`, options);
 }
 
 /** The PGN download URL. Handed to the browser as a link so the file arrives with its filename. */

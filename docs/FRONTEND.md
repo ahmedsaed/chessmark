@@ -17,7 +17,29 @@ The system is settled: [ADR-0013](adr/0013-design-system.md). Tokens live in
 always read a token. Dark only; there is no light theme.
 
 The live game layout is **stats left, board centre, event stream right**, with finished turns folded
-and the live turn expanded.
+and the live turn expanded. `GameLayout` owns that arrangement and the phone one below it.
+
+**The small end of the type scale is named, and no component sets a size in pixels.** Four steps,
+named for what they are for, so choosing one is a question with an answer:
+
+| | | |
+| --- | --- | --- |
+| `text-label` | 9px | uppercase, tracked section headings and badges |
+| `text-meta` | 10px | secondary supporting text — ids, timestamps, captions, hints |
+| `text-data` | 11px | dense mono figures — ratings, counts, token totals, nameplates |
+| `text-chat` | 13px | what a player said, in a bubble |
+
+They replaced **190 arbitrary values** (`text-[10px]`) spread over six sizes — 8.5, 9, 9.5, 10, 11
+and 13px, three of them within a pixel of each other. That is not a scale, it is a set of one-off
+decisions, and it had a measurable cost: the phone floor below was written as an attribute-substring
+selector matching on class *names*, because there was no token to redefine. `8.5` and `9.5` are
+gone; a half-pixel does not survive rasterisation, and keeping them meant three names for one step.
+
+**The phone floor is the scale, redefined.** Below `sm` the three smallest steps are all 11px —
+comfortable on a monitor at arm's length is marginal on a phone at reading distance, and those steps
+are most of what a phone reader is given. Tailwind v4 compiles `text-meta` to
+`font-size: var(--text-meta)`, so this is four lines in a media query rather than an override per
+utility, and `layout.spec.ts` asserts nothing visible renders below 11px at 390px.
 
 **The container sets the line length; a paragraph does not set its own.** There are two page widths
 and the choice between them is the decision:
@@ -176,6 +198,30 @@ value verbatim. That cuts both ways and is the thing to know before editing any 
   `/games/[id]`, `/models/[...slug]` and `/tournaments/[slug]` build theirs from the *record's*
   id rather than the URL — a model is reachable under more than one spelling of its slug, and an
   era is a view of one event (ADR-0043), not a page of its own.
+
+**A page either colocates an `opengraph-image` or names one.** The same inheritance rule bit a
+second time and harder: setting `openGraph` replaces the parent's *whole* block, including the
+`images` the root's `opengraph-image.tsx` injects — so `pageMetadata`, written to stop every page
+sharing the root's card, shipped seven routes with **no card at all**. `/sign-in` is the control
+that identified it: it sets no metadata, so it replaced nothing, and it was the only page besides
+`/` that kept its image. A file in the *same* segment outranks the page's `openGraph`; an inherited
+one does not. `site.spec.ts` asserts every public route has exactly one `og:image`, which is the
+only thing making the "or names one" half safe.
+
+**A card cannot live inside a catch-all segment.** Next.js refuses
+`models/[...slug]/opengraph-image.tsx` — *"catch all segment must be the last segment modifying the
+path"* — because the image is served below a segment that has already claimed everything below it.
+That card is a Route Handler at `/og/model/<slug>` instead, named from `generateMetadata`.
+
+**A config redirect runs before routing, so it can swallow a card.** `/leaderboard/:slug →
+/models/:slug`, written for the old contestant URLs, matched `/leaderboard/opengraph-image` and
+served the *models* card for the leaderboard — 200, valid PNG, wrong picture. The redirect excludes
+the route name now, and the test fetches each card with redirects disabled, because following one
+lands on a perfectly good card and proves nothing.
+
+**Cards are revalidated, not rendered per request.** Every card reads live data, and an unfurl is
+not traffic anybody is waiting on: `REVALIDATE_SECONDS` in `lib/og/theme.ts` is the one clock they
+all share. A card is a picture *of* a page, so it can afford to be staler than the page is.
 
 **`themeColor` lives in a `viewport` export**, not in `metadata` — Next.js 16 errors on it there.
 

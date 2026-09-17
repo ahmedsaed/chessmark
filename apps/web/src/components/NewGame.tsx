@@ -97,7 +97,7 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
 
   return (
     <section className="flex flex-col gap-3 border border-line bg-surface-2 p-4">
-      <h2 className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
+      <h2 className="font-mono text-meta uppercase tracking-[0.16em] text-ink-faint">
         Start a game · {playable.length} playable models
       </h2>
 
@@ -113,7 +113,7 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           quantization={whiteQuant}
           onQuantizationChange={setWhiteQuant}
         />
-        <span className="self-center text-center font-mono text-[11px] text-ink-faint">vs</span>
+        <span className="self-center text-center font-mono text-data text-ink-faint">vs</span>
         <ModelPicker
           label="Black"
           value={black}
@@ -136,7 +136,7 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           type="button"
           onClick={start}
           disabled={!ready}
-          className="self-end border border-accent-deep bg-accent px-4 py-2 font-mono text-[11px] uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40"
+          className="self-end border border-accent-deep bg-accent px-4 py-2 font-mono text-data uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40"
         >
           {busy ? "starting…" : "play"}
         </button>

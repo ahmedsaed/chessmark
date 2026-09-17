@@ -182,7 +182,7 @@ export default async function MethodologyPage() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mt-10 border-t border-line pt-6">
-      <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[0.16em] text-accent">
+      <h2 className="mb-3 font-mono text-meta uppercase tracking-[0.16em] text-accent">
         {title}
       </h2>
       <div className="flex flex-col gap-3 text-sm leading-relaxed text-ink-dim">{children}</div>
@@ -192,7 +192,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function Code({ children }: { children: React.ReactNode }) {
   return (
-    <code className="border border-line-soft bg-surface-2 px-1 py-px font-mono text-[12px] text-ink">
+    <code className="border border-line-soft bg-surface-2 px-1 py-px font-mono text-xs text-ink">
       {children}
     </code>
   );

@@ -49,6 +49,34 @@ describe("pageMetadata", () => {
     expect(leaderboard.twitter.title).toBe("Leaderboard — Chessmark");
   });
 
+  /**
+   * **The bug the helper above introduced while fixing the one above that.** Setting `openGraph`
+   * replaces the parent's whole block, and the root's `opengraph-image.tsx` injects its card
+   * *through* that block — so every page using this helper shipped with no `og:image` at all.
+   * Seven routes unfurled as bare text for months. `/sign-in` sets no metadata and kept its card,
+   * which is what identified the mechanism.
+   */
+  it("keeps a social card instead of inheriting none", () => {
+    expect(leaderboard.openGraph.images).toEqual([
+      { url: `${siteUrl}/opengraph-image`, width: 1200, height: 630 },
+    ]);
+    expect(leaderboard.twitter.images).toEqual([`${siteUrl}/opengraph-image`]);
+  });
+
+  /* A route that colocates an `opengraph-image` has the better card and the file outranks this
+     anyway; naming both would put two `og:image` tags on one page and let the unfurler choose. */
+  it("stands aside for a route that draws its own", () => {
+    const own = pageMetadata({
+      title: "Leaderboard",
+      description: "Glicko-2 ratings.",
+      path: "/leaderboard",
+      hasOwnImage: true,
+    });
+
+    expect(own.openGraph.images).toBeUndefined();
+    expect(own.twitter.images).toBeUndefined();
+  });
+
   it("points the canonical at the page itself, never at the site root", () => {
     expect(leaderboard.alternates.canonical).toBe("/leaderboard");
   });

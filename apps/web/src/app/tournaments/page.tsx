@@ -12,6 +12,8 @@ export const metadata: Metadata = pageMetadata({
   description:
     "Automated events: round robins and Swiss, run unattended against a budget.",
   path: "/tournaments",
+  // `tournaments/opengraph-image.tsx` names the running event.
+  hasOwnImage: true,
 });
 
 export default async function TournamentsPage() {
@@ -41,11 +43,11 @@ export default async function TournamentsPage() {
                 <div className="flex flex-wrap items-baseline gap-3">
                   <span className="font-serif text-lg text-ink">{tournament.name}</span>
                   <StatusChip status={tournament.status} />
-                  <span className="tabular ml-auto font-mono text-[10px] text-ink-faint">
+                  <span className="tabular ml-auto font-mono text-meta text-ink-faint">
                     {tournament.stats.played} / {tournament.stats.pairings} played
                   </span>
                 </div>
-                <p className="font-mono text-[10.5px] text-ink-faint">
+                <p className="font-mono text-meta text-ink-faint">
                   {tournament.field_description} · {tournament.entrant_count} entrants ·{" "}
                   {formatLabel(tournament)}
                 </p>
@@ -76,7 +78,7 @@ export function StatusChip({ status }: { status: string }) {
 
   return (
     <span
-      className={`border px-1.5 py-px font-mono text-[9px] uppercase tracking-[0.14em] ${tone}`}
+      className={`border px-1.5 py-px font-mono text-label uppercase tracking-[0.14em] ${tone}`}
     >
       {status}
     </span>

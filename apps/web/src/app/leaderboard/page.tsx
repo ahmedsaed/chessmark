@@ -12,6 +12,8 @@ export const metadata: Metadata = pageMetadata({
   description:
     "Glicko-2 ratings for language models playing chess, with illegal-move rates and every excluded game listed.",
   path: "/leaderboard",
+  // `leaderboard/opengraph-image.tsx` draws the ranking itself.
+  hasOwnImage: true,
 });
 
 function usd(value: string): string {
@@ -31,7 +33,7 @@ export default async function LeaderboardPage() {
           Glicko-2 over ranked games. A contestant is a model <em>at a precision</em> — the same
           weights served at 4-bit and at 8-bit are different entrants and are ranked apart.
         </p>
-        <p className="tabular font-mono text-[11px] text-ink-faint">
+        <p className="tabular font-mono text-data text-ink-faint">
           {board.games_counted} game{board.games_counted === 1 ? "" : "s"} counted ·{" "}
           {board.excluded.length} excluded · prompt {board.prompt_version ?? "—"}
         </p>
@@ -74,7 +76,7 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
           where the table really is 820px. */}
       <table className="w-full table-fixed border-collapse text-left sm:table-auto sm:min-w-[820px]">
         <thead>
-          <tr className="border-b border-line bg-surface-3 font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-faint">
+          <tr className="border-b border-line bg-surface-3 font-mono text-label uppercase tracking-[0.12em] text-ink-faint">
             <th className="w-7 px-2 py-2 font-normal sm:w-auto sm:px-3">#</th>
             <th className="px-2 py-2 font-normal sm:px-3">Contestant</th>
             <th className="w-24 px-2 py-2 text-right font-normal sm:w-auto sm:px-3" title="Glicko-2 rating and deviation">
@@ -98,7 +100,7 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
               key={`${row.model_id}-${row.quantization}`}
               className="border-b border-line-soft last:border-0 hover:bg-surface-2"
             >
-              <td className="tabular px-2 py-2.5 font-mono text-[11px] text-ink-faint sm:px-3">
+              <td className="tabular px-2 py-2.5 font-mono text-data text-ink-faint sm:px-3">
                 {index + 1}
               </td>
               <td className="min-w-0 px-2 py-2.5 sm:px-3">
@@ -109,7 +111,7 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
                 >
                   {row.model_slug}
                 </Link>
-                <span className="mt-0.5 inline-block border border-good/40 px-1 py-px font-mono text-[8.5px] uppercase tracking-wider text-good sm:ml-1.5 sm:mt-0">
+                <span className="mt-0.5 inline-block border border-good/40 px-1 py-px font-mono text-label uppercase tracking-wider text-good sm:ml-1.5 sm:mt-0">
                   {row.quantization}
                 </span>
               </td>
@@ -183,7 +185,7 @@ function Excluded({ excluded, counted }: { excluded: { game_id: string; reason: 
 
   return (
     <section className="mt-10">
-      <h2 className="mb-3 font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
+      <h2 className="mb-3 font-mono text-meta uppercase tracking-[0.16em] text-ink-faint">
         Excluded · {excluded.length} of {excluded.length + counted} finished games
       </h2>
       <ul className="flex flex-col gap-1.5">
@@ -198,13 +200,13 @@ function Excluded({ excluded, counted }: { excluded: { game_id: string; reason: 
                   <Link
                     key={id}
                     href={`/games/${id}`}
-                    className="font-mono text-[10px] text-ink-faint underline-offset-4 hover:text-accent hover:underline"
+                    className="font-mono text-meta text-ink-faint underline-offset-4 hover:text-accent hover:underline"
                   >
                     {id.slice(0, 8)}
                   </Link>
                 ))}
                 {ids.length > 4 && (
-                  <span className="font-mono text-[10px] text-ink-faint">
+                  <span className="font-mono text-meta text-ink-faint">
                     +{ids.length - 4} more
                   </span>
                 )}

@@ -86,7 +86,7 @@ export function StatsRail({
             Round and era ride the tooltip. Era is what says which results this one is comparable
             to (ADR-0043), so it earns a mention — not a line of its own. */}
         {game.tournament && (
-          <div className="flex justify-between gap-2 font-mono text-[11px] text-ink-dim">
+          <div className="flex justify-between gap-2 font-mono text-data text-ink-dim">
             <span>Event</span>
             <Link
               href={`/tournaments/${game.tournament.slug}`}
@@ -170,7 +170,7 @@ function PlayerCard({
           <span className="sr-only">Winner.</span>
           <span
             aria-hidden
-            className="pointer-events-none absolute -right-8 top-4 w-28 rotate-45 bg-accent py-0.5 text-center font-mono text-[8.5px] uppercase tracking-[0.14em] text-on-accent"
+            className="pointer-events-none absolute -right-8 top-4 w-28 rotate-45 bg-accent py-0.5 text-center font-mono text-label uppercase tracking-[0.14em] text-on-accent"
           >
             winner
           </span>
@@ -187,12 +187,12 @@ function PlayerCard({
           {player.display_name}
         </b>
         {active && (
-          <span className="ml-auto flex-none border border-accent-deep px-1.5 py-px font-mono text-[8.5px] uppercase tracking-[0.12em] text-accent">
+          <span className="ml-auto flex-none border border-accent-deep px-1.5 py-px font-mono text-label uppercase tracking-[0.12em] text-accent">
             to move
           </span>
         )}
       </div>
-      <p className="truncate font-mono text-[9.5px] text-ink-faint">
+      <p className="truncate font-mono text-label text-ink-faint">
         {player.model ?? player.kind}
       </p>
 
@@ -239,14 +239,14 @@ function Endpoint({ player }: { player: Player }) {
       {player.quantization && (
         <span
           title="the precision this seat played at — its own leaderboard entry"
-          className="border border-good/40 px-1 py-px font-mono text-[8.5px] uppercase tracking-wider text-good"
+          className="border border-good/40 px-1 py-px font-mono text-label uppercase tracking-wider text-good"
         >
           {player.quantization}
         </span>
       )}
 
       <span
-        className="font-mono text-[8.5px] text-ink-faint"
+        className="font-mono text-label text-ink-faint"
         title={pinned ? "endpoint pinned before the game started" : "endpoint that served this seat"}
       >
         {used.length > 0 ? used.join(" + ") : pinned}
@@ -255,7 +255,7 @@ function Endpoint({ player }: { player: Player }) {
       {drifted && (
         <span
           title={`Pinned to ${pinned ?? "nothing"} but served by ${used.join(", ")}. This result mixes endpoints and is not reproducible.`}
-          className="border border-bad-deep px-1 py-px font-mono text-[8.5px] uppercase tracking-wider text-bad"
+          className="border border-bad-deep px-1 py-px font-mono text-label uppercase tracking-wider text-bad"
         >
           mixed endpoints
         </span>
@@ -276,7 +276,7 @@ function Stat({
   const colour = tone === "bad" ? "text-bad" : tone === "good" ? "text-good" : "text-ink";
   return (
     <div className="bg-surface px-2 py-1.5">
-      <dt className="font-mono text-[8.5px] uppercase tracking-[0.12em] text-ink-faint">
+      <dt className="font-mono text-label uppercase tracking-[0.12em] text-ink-faint">
         {label}
       </dt>
       <dd className={`tabular mt-0.5 font-mono text-xs ${colour}`}>{value}</dd>
@@ -296,7 +296,7 @@ function Row({
   title?: string;
 }) {
   return (
-    <div className="tabular flex justify-between gap-2 font-mono text-[11px] text-ink-dim">
+    <div className="tabular flex justify-between gap-2 font-mono text-data text-ink-dim">
       <span title={title} className={title ? "cursor-help" : undefined}>
         {label}
       </span>
@@ -307,7 +307,7 @@ function Row({
 
 function Label({ children }: { children: React.ReactNode }) {
   return (
-    <p className="font-mono text-[9.5px] uppercase tracking-[0.16em] text-ink-faint">
+    <p className="font-mono text-label uppercase tracking-[0.16em] text-ink-faint">
       {children}
     </p>
   );

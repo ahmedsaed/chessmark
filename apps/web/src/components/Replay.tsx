@@ -191,13 +191,13 @@ function Header({
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <span className="border border-good px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-good">
+      <span className="border border-good px-2 py-0.5 font-mono text-meta uppercase tracking-[0.14em] text-good">
         {game.result} · {game.termination ?? "—"}
       </span>
-      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-machine">
+      <span className="font-mono text-meta uppercase tracking-[0.14em] text-machine">
         replay
       </span>
-      <span className="font-mono text-[10px] text-ink-faint">game {game.id.slice(0, 8)}</span>
+      <span className="font-mono text-meta text-ink-faint">game {game.id.slice(0, 8)}</span>
       {/* The detail is the ending's explanation, so it appears only once the ending is on screen. */}
       {ended?.detail && ply >= total && (
         <span className="text-xs text-ink-dim">{ended.detail}</span>

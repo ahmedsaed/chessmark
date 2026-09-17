@@ -127,7 +127,7 @@ function Controls({
     <div className="flex flex-none flex-col gap-2">
       {drawOffered && (
         <div className="flex flex-wrap items-center gap-2 border border-machine-dim bg-surface-2 px-3 py-2">
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-machine">
+          <span className="font-mono text-meta uppercase tracking-[0.14em] text-machine">
             Draw offered
           </span>
           <button type="button" disabled={busy} onClick={() => onAnswerDraw(true)} className={ACCEPT}>
@@ -177,7 +177,7 @@ function Controls({
             onChange={(event) => setMessage(event.target.value)}
             maxLength={500}
             placeholder="Say something to your opponent…"
-            className="min-w-0 flex-1 border border-line bg-surface px-2 py-1 font-mono text-[11px] text-ink placeholder:text-ink-faint focus:border-accent-dim focus:outline-none"
+            className="min-w-0 flex-1 border border-line bg-surface px-2 py-1 font-mono text-data text-ink placeholder:text-ink-faint focus:border-accent-dim focus:outline-none"
           />
           <button type="submit" disabled={busy || !message.trim()} className={PLAIN}>
             send
@@ -185,14 +185,14 @@ function Controls({
         </form>
       )}
 
-      {error && <p className="font-mono text-[10px] text-bad">{error}</p>}
+      {error && <p className="font-mono text-meta text-bad">{error}</p>}
     </div>
   );
 }
 
 const PLAIN =
-  "border border-line bg-surface px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink disabled:opacity-40";
+  "border border-line bg-surface px-2 py-1 font-mono text-meta uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink disabled:opacity-40";
 const ACCEPT =
-  "border border-accent-deep bg-accent px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40";
+  "border border-accent-deep bg-accent px-2 py-1 font-mono text-meta uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40";
 const DANGER =
-  "border border-bad bg-bad-deep px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink transition-colors hover:bg-bad disabled:opacity-40";
+  "border border-bad bg-bad-deep px-2 py-1 font-mono text-meta uppercase tracking-[0.1em] text-ink transition-colors hover:bg-bad disabled:opacity-40";

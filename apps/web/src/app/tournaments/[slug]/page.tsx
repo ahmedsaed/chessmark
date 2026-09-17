@@ -45,7 +45,7 @@ export async function generateMetadata({ params }: PageProps<"/tournaments/[slug
 function EraMenu({ tournament, slug }: { tournament: TournamentDetail; slug: string }) {
   if (tournament.eras.length < 2) {
     return tournament.era ? (
-      <span className="border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">
+      <span className="border border-line px-1.5 py-px font-mono text-label uppercase tracking-[0.14em] text-ink-faint">
         {tournament.era}
       </span>
     ) : null;
@@ -53,7 +53,7 @@ function EraMenu({ tournament, slug }: { tournament: TournamentDetail; slug: str
 
   return (
     <details className="group relative">
-      <summary className="flex cursor-pointer list-none items-center gap-1 border border-line px-1.5 py-px font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint transition-colors hover:border-accent hover:text-accent [&::-webkit-details-marker]:hidden">
+      <summary className="flex cursor-pointer list-none items-center gap-1 border border-line px-1.5 py-px font-mono text-label uppercase tracking-[0.14em] text-ink-faint transition-colors hover:border-accent hover:text-accent [&::-webkit-details-marker]:hidden">
         {tournament.era ?? "all eras"}
         <span aria-hidden className="transition-transform group-open:rotate-180">
           ▾
@@ -65,7 +65,7 @@ function EraMenu({ tournament, slug }: { tournament: TournamentDetail; slug: str
             <Link
               href={`/tournaments/${slug}?era=${encodeURIComponent(name)}`}
               aria-current={name === tournament.era ? "page" : undefined}
-              className={`block whitespace-nowrap px-2.5 py-1 font-mono text-[10px] ${
+              className={`block whitespace-nowrap px-2.5 py-1 font-mono text-meta ${
                 name === tournament.era
                   ? "text-accent"
                   : "text-ink-faint transition-colors hover:text-accent"
@@ -93,7 +93,7 @@ export default async function TournamentPage({
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       <Link
         href="/tournaments"
-        className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-accent"
+        className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-accent"
       >
         ← All tournaments
       </Link>
@@ -111,7 +111,7 @@ export default async function TournamentPage({
 
       <Progress tournament={tournament} />
       {tournament.format === "swiss" && tournament.status !== "finished" && (
-        <p className="mt-3 font-mono text-[10.5px] leading-relaxed text-ink-faint">
+        <p className="mt-3 font-mono text-meta leading-relaxed text-ink-faint">
           Swiss pairs on the standings, so only the current round exists — round{" "}
           {currentRound(tournament)} of {tournament.rounds}. The next is written once this one
           finishes, which is also why a crash cannot desynchronise it.
@@ -173,7 +173,7 @@ function Progress({ tournament }: { tournament: TournamentDetail }) {
           />
         ))}
       </div>
-      <p className="tabular mt-2 flex flex-wrap gap-x-4 font-mono text-[10px] text-ink-faint">
+      <p className="tabular mt-2 flex flex-wrap gap-x-4 font-mono text-meta text-ink-faint">
         {segments.map((segment) => (
           <span key={segment.label}>
             {segment.count} {segment.label}
@@ -241,7 +241,7 @@ function Standings({ rows }: { rows: Standing[] }) {
   return (
     <section>
       <div className="mb-4 flex items-baseline gap-3">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+        <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
           Standings
         </h2>
         <span className="h-px flex-1 bg-line-soft" aria-hidden />
@@ -258,7 +258,7 @@ function Standings({ rows }: { rows: Standing[] }) {
             rated
               ? "grid-cols-[2rem_1fr_5.5rem] sm:grid-cols-[2rem_1fr_5.5rem_3rem_4.5rem]"
               : "grid-cols-[2rem_1fr_3rem] sm:grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem]"
-          } items-center gap-2 bg-surface-2 px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.12em] text-ink-faint`}
+          } items-center gap-2 bg-surface-2 px-3 py-1.5 font-mono text-label uppercase tracking-[0.12em] text-ink-faint`}
         >
           <span>#</span>
           <span>Model</span>
@@ -315,7 +315,7 @@ function Standings({ rows }: { rows: Standing[] }) {
             >
               {row.key.split("/").slice(1).join("/") || row.key}
               {!row.in_field && (
-                <span aria-hidden className="ml-1.5 text-[9px] text-ink-faint">
+                <span aria-hidden className="ml-1.5 text-label text-ink-faint">
                   ·  left the field
                 </span>
               )}
@@ -325,7 +325,7 @@ function Standings({ rows }: { rows: Standing[] }) {
                 {row.rating === null ? (
                   /* Not 1500. An unrated model is not an average one, and printing a number here
                      would make exactly the claim the deviation exists to avoid. */
-                  <span className="text-[10px] text-ink-faint">unrated</span>
+                  <span className="text-meta text-ink-faint">unrated</span>
                 ) : (
                   <>
                     {Math.round(row.rating)}
@@ -342,7 +342,7 @@ function Standings({ rows }: { rows: Standing[] }) {
                     {row.rating_deviation !== null && (
                       /* The deviation is not decoration: it is what stops a two-game rating being
                          read as a two-hundred-game one. */
-                      <span className="ml-1 hidden text-[10px] text-ink-faint sm:inline">
+                      <span className="ml-1 hidden text-meta text-ink-faint sm:inline">
                         ± {Math.round(row.rating_deviation)}
                       </span>
                     )}
@@ -351,15 +351,15 @@ function Standings({ rows }: { rows: Standing[] }) {
               </span>
             )}
             <span
-              className={`hidden text-right sm:block ${rated ? "text-[10px] text-ink-faint" : "text-ink"}`}
+              className={`hidden text-right sm:block ${rated ? "text-meta text-ink-faint" : "text-ink"}`}
             >
               {row.score.toFixed(1)}
             </span>
-            <span className="hidden text-right text-[10px] text-ink-faint sm:block">
+            <span className="hidden text-right text-meta text-ink-faint sm:block">
               {row.wins}/{row.draws}/{row.losses}
             </span>
             {!rated && (
-              <span className="hidden text-right text-[10px] text-ink-faint sm:block">
+              <span className="hidden text-right text-meta text-ink-faint sm:block">
                 {row.sonneborn_berger.toFixed(1)}
               </span>
             )}
@@ -389,9 +389,9 @@ function Fact({
   const colour = tone === "bad" ? "text-bad" : tone === "good" ? "text-good" : "text-ink";
   return (
     <div className="bg-surface px-3 py-2.5">
-      <dt className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">{label}</dt>
+      <dt className="font-mono text-label uppercase tracking-[0.14em] text-ink-faint">{label}</dt>
       <dd className={`tabular mt-1 font-mono text-sm ${colour}`}>{value}</dd>
-      {note && <p className="tabular mt-0.5 font-mono text-[9.5px] text-ink-faint">{note}</p>}
+      {note && <p className="tabular mt-0.5 font-mono text-label text-ink-faint">{note}</p>}
     </div>
   );
 }

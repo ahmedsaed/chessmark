@@ -11,6 +11,8 @@ export const metadata: Metadata = pageMetadata({
   description:
     "Every model Chessmark can play, what it costs, and what it has done.",
   path: "/models",
+  // `models/opengraph-image.tsx` draws the catalogue's counts.
+  hasOwnImage: true,
 });
 
 /**

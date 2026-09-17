@@ -54,7 +54,7 @@ export function NewGameSection({ apiUrl, models }: { apiUrl: string; models: Mod
             <SignInButton mode="modal">
               <button
                 type="button"
-                className="border border-accent-deep bg-accent px-3 py-1.5 font-mono text-[11px] uppercase tracking-[0.14em] text-on-accent transition-colors hover:bg-accent-dim"
+                className="border border-accent-deep bg-accent px-3 py-1.5 font-mono text-data uppercase tracking-[0.14em] text-on-accent transition-colors hover:bg-accent-dim"
               >
                 Sign in to play
               </button>
@@ -79,7 +79,7 @@ function Chooser({ apiUrl, models }: { apiUrl: string; models: ModelInfo[] }) {
             role="tab"
             aria-selected={mode === option.id}
             onClick={() => setMode(option.id)}
-            className={`flex-1 px-4 py-2 font-mono text-[11px] uppercase tracking-[0.14em] transition-colors ${
+            className={`flex-1 px-4 py-2 font-mono text-data uppercase tracking-[0.14em] transition-colors ${
               mode === option.id
                 ? "bg-surface-2 text-ink"
                 : "bg-surface text-ink-faint hover:text-ink-dim"

@@ -180,7 +180,15 @@ bundle-secrets: ## Assert no API key reached the built client bundle (AUTH-07)
 	cd $(WEB) && pnpm build
 	python3 scripts/check_bundle_secrets.py
 
-check: lint typecheck test ## Run every check
+build-web: ## Production build of the frontend — the only thing that checks segment config
+	cd $(WEB) && pnpm build
+
+# **`build-web` is in here because `tsc` does not see everything CI does.** A route segment export
+# must be statically analysable, and `export const revalidate = REVALIDATE_SECONDS` typechecks,
+# lints and runs in dev before failing `next build` with "Invalid segment configuration export
+# detected". Three CI jobs went red on a branch where `make check` was green, which makes the gate
+# a liar in the one direction that matters.
+check: lint typecheck test build-web ## Run every check
 
 clean: ## Remove build artifacts and caches
 	rm -rf $(WEB)/.next $(API)/.pytest_cache $(API)/.ruff_cache $(API)/.mypy_cache

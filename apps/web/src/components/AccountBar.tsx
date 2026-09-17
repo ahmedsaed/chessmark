@@ -78,7 +78,7 @@ function Bar({ apiUrl }: { apiUrl: string }) {
         <SignInButton mode="modal">
           <button
             type="button"
-            className="whitespace-nowrap border border-line bg-surface px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink"
+            className="whitespace-nowrap border border-line bg-surface px-2 py-1 font-mono text-meta uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink"
           >
             sign in
           </button>
@@ -86,7 +86,7 @@ function Bar({ apiUrl }: { apiUrl: string }) {
         <SignUpButton mode="modal">
           <button
             type="button"
-            className="whitespace-nowrap border border-accent-deep bg-accent px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim"
+            className="whitespace-nowrap border border-accent-deep bg-accent px-2 py-1 font-mono text-meta uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim"
           >
             sign up
           </button>
@@ -98,7 +98,7 @@ function Bar({ apiUrl }: { apiUrl: string }) {
             cannot appear — which is why signing out needs no cleanup here. */}
         {me && (
           <span
-            className="tabular font-mono text-[10px] text-ink-faint"
+            className="tabular font-mono text-meta text-ink-faint"
             title={
               me.credit_balance === 0
                 ? "No credits. An administrator grants them."

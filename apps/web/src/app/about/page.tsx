@@ -127,7 +127,7 @@ export default async function AboutPage() {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mt-12">
-      <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">{title}</h2>
+      <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">{title}</h2>
       <div className="mt-4 flex flex-col gap-4 leading-relaxed text-ink-dim">{children}</div>
     </section>
   );

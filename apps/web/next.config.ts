@@ -22,17 +22,28 @@ const nextConfig: NextConfig = {
    *
    * The slug is one segment, not two: it is published percent-encoded (`vendor%2Fmodel`) because
    * an OpenRouter id contains a slash.
+   *
+   * **`opengraph-image` is excluded, and the reason is the sentence above.** A config redirect runs
+   * before routing, so `/leaderboard/:slug` matched `/leaderboard/opengraph-image` and served the
+   * *models* card for the leaderboard — a redirect written for contestant URLs quietly claiming a
+   * sibling route added two years later. It is invisible from the page, which still carries the
+   * right `og:image` URL; only fetching that URL without following redirects shows it, which is
+   * what `site.spec.ts` now does.
    */
   async redirects() {
+    // Anything the App Router owns under this segment. A name here is a route that must survive
+    // the redirect below, not a slug it should rewrite.
+    const notARoute = "((?!opengraph-image$).*)";
+
     return [
       {
-        source: "/leaderboard/:slug",
+        source: `/leaderboard/:slug${notARoute}`,
         has: [{ type: "query", key: "q", value: "(?<precision>.*)" }],
         destination: "/models/:slug#c-:precision",
         permanent: true,
       },
       {
-        source: "/leaderboard/:slug",
+        source: `/leaderboard/:slug${notARoute}`,
         destination: "/models/:slug",
         permanent: true,
       },
