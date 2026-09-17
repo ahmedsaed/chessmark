@@ -49,6 +49,42 @@ from chessmark.orchestration import AdvanceTurn, TurnQueue  # noqa: E402
 _UNCLAIMED = frozenset({Termination.THREEFOLD_REPETITION, Termination.FIFTY_MOVE_RULE})
 
 
+async def _unsettle_pairing(session: Any, game: Any) -> str | None:
+    """Drop the verdict this game's tournament pairing still holds. Returns what it was, or None.
+
+    **Both halves of it, and that is the whole point.** A pairing carries either an
+    `abandoned_reason` or a `white_score`, and a resumed game must shed whichever it has: the
+    verdict being reopened is exactly the one written there.
+
+    Clearing only the abandonment was the first version of this, and it left a worse bug than it
+    fixed. `white_score` means "this pairing is decided" — the column's own comment says *null
+    while the game is unplayed or in flight* — so four resumed games ran for up to 89 plies while
+    the schedule showed them as **played**, with the score of the forfeit that had just been
+    overturned, and the event reported `live: 0` with four boards moving. The homepage, reading the
+    games directly, disagreed with the tournament page, which is how it was noticed.
+
+    Extracted from `main` so it can be tested. Inline, it was the one correction a resume makes
+    that no test could reach — `_clear_stale_forfeits` beside it has three, and this had none while
+    being the half that had already regressed once.
+    """
+    pairing = await session.scalar(
+        sa.select(TournamentGame).where(TournamentGame.game_id == game.id)
+    )
+    if pairing is None:
+        return None
+    if pairing.abandoned_reason is None and pairing.white_score is None:
+        return None
+
+    was = "abandoned" if pairing.abandoned_reason else f"scored {pairing.white_score}"
+    pairing.abandoned_reason = None
+    pairing.white_score = None
+    # `ended_at` is the third column and is as stale as the other two. A pairing with no score and
+    # an end time reads as finished-but-unscored, which is what an abandonment looks like.
+    pairing.ended_at = None
+    await session.flush()
+    return was
+
+
 async def _clear_stale_forfeits(session: Any, game: Any, previous: Any) -> int:
     """Drop the seat's `forfeited` flag when the ending that wrote it is being reopened.
 
@@ -324,27 +360,8 @@ async def main() -> int:
             previous = game.termination
             game.status = GameStatus.RUNNING
 
-            # **The pairing has to be un-settled too, and both halves of it.** A pairing carries
-            # either an `abandoned_reason` or a `white_score`, and a resumed game must shed
-            # whichever it has: the verdict being reopened is exactly the one written there.
-            #
-            # Clearing only the abandonment was the first version of this, and it left a worse bug
-            # than it fixed. `white_score` means "this pairing is decided" — the column's own
-            # comment says *null while the game is unplayed or in flight* — so four resumed games
-            # ran for up to 89 plies while the schedule showed them as **played**, with the score
-            # of the forfeit that had just been overturned, and the event reported `live: 0` with
-            # four games moving. The homepage, reading the games directly, disagreed with the
-            # tournament page, which is how it was noticed.
-            pairing = await session.scalar(
-                sa.select(TournamentGame).where(TournamentGame.game_id == game.id)
-            )
-            if pairing is not None and (
-                pairing.abandoned_reason is not None or pairing.white_score is not None
-            ):
-                was = "abandoned" if pairing.abandoned_reason else f"scored {pairing.white_score}"
-                pairing.abandoned_reason = None
-                pairing.white_score = None
-                pairing.ended_at = None
+            was = await _unsettle_pairing(session, game)
+            if was is not None:
                 print(f"re-opened its tournament pairing (was {was}) so it can settle again")
             game.result = GameResult.ONGOING
             game.termination = None
