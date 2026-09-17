@@ -20,10 +20,28 @@
  */
 
 import { clerkMiddleware } from "@clerk/nextjs/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 const clerkEnabled = Boolean(process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY);
 
-export default clerkEnabled ? clerkMiddleware() : () => undefined;
+/**
+ * The path, forwarded to the server layout as a header.
+ *
+ * A layout cannot see the pathname — it renders above the segment that knows it — and the root
+ * layout is where the decision to mount Clerk has to be made, because that is where the provider
+ * is. `headers()` is the documented way across, and this is the only thing that sets it.
+ */
+export const PATHNAME_HEADER = "x-chessmark-pathname";
+
+function withPathname(request: NextRequest): NextResponse {
+  const headers = new Headers(request.headers);
+  headers.set(PATHNAME_HEADER, request.nextUrl.pathname);
+  return NextResponse.next({ request: { headers } });
+}
+
+export default clerkEnabled
+  ? clerkMiddleware((_auth, request) => withPathname(request))
+  : withPathname;
 
 export const config = {
   matcher: [

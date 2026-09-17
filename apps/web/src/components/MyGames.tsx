@@ -22,8 +22,16 @@ import { listMyGames } from "@/lib/api";
 import { orderMyGames, waitingOnYou } from "@/lib/mine";
 import type { MyGameSummary } from "@/lib/types";
 
-export function MyGames({ heading = "Your games" }: { heading?: string }) {
-  if (!clerkEnabled) return null;
+export function MyGames({ heading = "Your games", signedIn }: { heading?: string; signedIn: boolean }) {
+  /**
+   * **`useAuth` throws without `ClerkProvider`, and the provider is now conditional.**
+   *
+   * The root layout mounts Clerk only for a session or an identity route, so a signed-out reader
+   * has no provider — and a hook call here is not a wrong answer, it is a **500 on a public page**.
+   * The cookie the layout already read is passed down instead, so the hook below is reached only
+   * where the provider exists by construction.
+   */
+  if (!clerkEnabled || !signedIn) return null;
   return <Resolved heading={heading} />;
 }
 

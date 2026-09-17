@@ -180,11 +180,12 @@ bundle-secrets: ## Assert no API key reached the built client bundle (AUTH-07)
 	cd $(WEB) && pnpm build
 	python3 scripts/check_bundle_secrets.py
 
-lighthouse: ## Lighthouse budgets against a production build (NFR-12)
-	@# Built and served without Clerk, which is what CI measures and what the config explains:
-	@# a development Clerk tenant is 370 KiB, a 1.8s handshake and a console error, none of it ours.
-	cd $(WEB) && NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY= CLERK_SECRET_KEY= pnpm build
-	cd $(WEB) && NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY= CLERK_SECRET_KEY= pnpm lighthouse
+lighthouse: ## Lighthouse budgets over the whole public site (NFR-12)
+	@# Built and measured **with** whatever Clerk configuration this machine has. It used to clear
+	@# the keys, because a dev tenant was 55% of the page; owning the auth screens removed the
+	@# reason to look away. `lhci` starts and stops the server itself.
+	cd $(WEB) && pnpm build
+	cd $(WEB) && pnpm lighthouse
 
 build-web: ## Production build of the frontend — the only thing that checks segment config
 	cd $(WEB) && pnpm build

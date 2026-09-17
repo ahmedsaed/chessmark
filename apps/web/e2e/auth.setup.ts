@@ -27,13 +27,19 @@ setup("sign in", async ({ page }) => {
 
   await clerkSetup();
 
-  await page.goto("/");
+  /* **`/sign-in`, not `/`.** `clerk.signIn` drives `window.Clerk`, and the root layout mounts the
+     provider only for a session or an identity route — so on `/` there is no `window.Clerk` to
+     drive and this waits sixty seconds for one. Signing in on the sign-in page is also what a
+     person does; the previous `/` worked only because Clerk used to load on every route. */
+  await page.goto("/sign-in");
   await clerk.signIn({ page, signInParams: { strategy: "email_code", identifier: E2E_EMAIL } });
 
   await page.goto("/play");
   // The account bar renders only once Clerk has loaded a session, and it is what calls `/me` —
   // which is what provisions the user row the credit grant below needs.
-  await expect(page.getByRole("button", { name: /sign in/i })).toHaveCount(0);
+  /* A link now, not a button: the header's modal trigger became a plain link when the prebuilt
+     Clerk components went. */
+  await expect(page.getByRole("link", { name: /^sign in$/i })).toHaveCount(0);
 
   // Now that the row exists, top the balance up. New users deliberately get none (AUTH-11), so
   // without this the suite could not start a game.

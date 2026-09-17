@@ -274,3 +274,43 @@ test("a missing record still renders a card rather than a broken image", async (
     expect(response.headers()["content-type"]).toContain("image/png");
   }
 });
+
+// ====================================================================== the Clerk UI bundle
+
+/**
+ * **`@clerk/ui` must never be fetched** (NFR-12).
+ *
+ * One prebuilt Clerk component anywhere — a `<SignIn />`, a `<UserButton />`, a
+ * `SignInButton mode="modal"` — puts **285 KiB** on *every* route, `/about` and `/leaderboard`
+ * included. That is what `prefetchUI={false}` turns off and what owning `AuthForm` and
+ * `ProfileView` paid for, and it is re-broken silently by adding one import.
+ *
+ * Asserted on the network rather than by grepping the source, because the failure is a *request*:
+ * a component could arrive through a dependency and no import of ours would show it.
+ *
+ * Skipped loudly without Clerk — with no publishable key `AuthProvider` renders nothing, so the
+ * bundle is trivially absent and the test would pass while proving nothing. Same bargain the
+ * signed-in project strikes.
+ */
+test("the Clerk UI bundle is never requested", async ({ page }) => {
+  await page.goto("/sign-in");
+
+  const configured = await page.evaluate(() =>
+    Boolean(document.querySelector('script[src*="clerk"]')),
+  );
+  test.skip(!configured, "Clerk is not configured here — nothing to load, nothing to prove");
+
+  const ui: string[] = [];
+  page.on("request", (request) => {
+    const url = request.url();
+    // `@clerk/ui` ships as `ui.browser.js`, `ui-common_*`, `vendors_ui_*`, `framework_ui_*`.
+    if (/clerk/.test(url) && /\bui[._-]|vendors_ui|framework_ui/.test(url)) ui.push(url);
+  });
+
+  for (const path of ["/", "/leaderboard", "/sign-in", "/sign-up", "/profile"]) {
+    await page.goto(path);
+    await page.waitForLoadState("networkidle");
+  }
+
+  expect(ui, "a prebuilt Clerk component is loading @clerk/ui site-wide").toEqual([]);
+});

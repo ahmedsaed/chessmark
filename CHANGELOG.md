@@ -17,6 +17,55 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **Our own sign-in, sign-up and profile** — and `/profile` is a page the site did not have. Clerk's
+  `<UserButton />` knew nothing about credits, spend or games, which are the three things a person
+  comes to an account page to check.
+
+### Changed
+
+- **Clerk's prebuilt UI is gone, and with it 285 KiB from every route.** `@clerk/ui` was loading on
+  `/about` and `/leaderboard` — pages where nobody signs in — because *one* prebuilt component
+  anywhere forces it site-wide. `prefetchUI` is documented as `false` *"for custom UIs using Control
+  Components"*, and that parenthesis is load-bearing: it throws with no lazy fallback if any
+  prebuilt component renders, so it was never a flag to flip. It is the reward for owning the
+  screens.
+
+  Clerk: **372 KiB → 87 KiB**. The page: **619 KiB → 337 KiB**. What still renders from Clerk is
+  control components only — `Show` and `AuthenticateWithRedirectCallback`, both explicitly
+  supported. Adding a prebuilt component re-breaks it silently and site-wide, so the browser suite
+  asserts `@clerk/ui` is never requested, and that assertion was verified to fail when the flag is
+  removed.
+
+  Scope is Google and an emailed code, which is what the instance enables. Every other branch Clerk
+  supports surfaces as an error a person can read rather than being half-implemented — hand-rolled
+  auth fails by locking somebody out, so the flows that are not covered say so.
+
+- **Clerk is not loaded at all for a signed-out reader.** The provider mounts only when Clerk's own
+  `__client_uat` cookie shows a session or the route is about identity — neither of which needs
+  Clerk to read. A signed-out visitor to `/leaderboard` now downloads **3 KiB** of Clerk instead of
+  87, and the page is **258 KiB** where it was 619 before any of this.
+
+  The header draws its signed-out bar from that cookie rather than a hook, and `/play`,
+  `/games/[id]` and the landing page take the same flag as a prop. That last part is not optional:
+  `useAuth` *throws* without a provider, so a component that asks a hook what a cookie already
+  answered is a **500 on a public page** — which is exactly what the first attempt shipped, caught
+  by the browser suite.
+
+- **`--color-bad` failed WCAG AA too** — 4.25:1 on `surface-2`, 3.76:1 on `surface-3`. It is the
+  colour of "abandoned", "paused" and an illegal-move count, so it only surfaced once the budgets
+  ran against a database that had those states. `#d8836d` clears 4.5:1 everywhere.
+
+- **The Lighthouse suite measures the whole public site, with Clerk** (NFR-12). Twelve routes
+  instead of four, including a real game and a real tournament from the browser suite's fixtures.
+  It used to build with the Clerk keys cleared because a dev tenant was 55% of the page; owning the
+  auth screens removed the reason to look away.
+
+  Widening it found two things on the first run: an audit asserted that no longer exists in this
+  Lighthouse version, and `/sign-in` scoring 0.63 on SEO — which is `robots.txt` working, so the
+  auth pages now carry a per-URL exemption rather than the audit being switched off everywhere.
+
+### Added
+
 - **Lighthouse budgets run in CI** (NFR-12). The ROADMAP gap said "no Lighthouse in this
   environment"; that was stale — Chrome is installed and it runs. So it was run, and Phase 7's
   unverified exit criterion turned out to be **failing on both halves**: performance 87 and
