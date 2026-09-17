@@ -221,6 +221,33 @@ jobs:
         working-directory: apps/web
         run: pnpm exec playwright test --project=public --project=mobile
 
+      # **Lighthouse reuses this job's database, API and seeded fixtures** rather than standing up
+      # a second copy of all three. The web server is stopped first because `lhci` starts and stops
+      # its own — `next start` reads `.next` once at boot, so a suite that measures whichever
+      # server happens to be listening occasionally measures a build nobody made.
+      #
+      # No Clerk keys exist in CI, which is exactly the site this measures: a development Clerk
+      # tenant is 370 KiB, a 1.8 s handshake and a console error, none of it ours. See
+      # `lighthouserc.cjs` for what is asserted and what is deliberately only recorded.
+      - name: Stop the web server before Lighthouse
+        run: |
+          pkill -f 'next-server' || true
+          pkill -f 'next start' || true
+          sleep 2
+
+      - name: Lighthouse budgets
+        working-directory: apps/web
+        run: pnpm lighthouse
+
+      # Kept whatever the outcome: the timing metrics are recorded rather than asserted, so the
+      # report is the only place a trend in LCP is visible at all.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lighthouse-reports
+          path: apps/web/.lighthouseci
+          retention-days: 14
+
       # **Stop what the job started.** `&` leaves both servers running when the last step finishes,
       # and the post-steps then run inside a job that still has an API holding the uv cache. That
       # is not theoretical: `setup-uv`'s cleanup prunes the cache, `uv cache prune` blocked on the

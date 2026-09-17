@@ -181,6 +181,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | NFR-07 | Backend test coverage on `game/` and `agents/` | > 85% |
 | NFR-10 | Frontend logic in `lib/` covered by unit tests | > 85% |
 | NFR-11 | An automated browser suite covers the paths a person actually takes: start a game, move, resign, reload mid-game, and read a replay | exists and runs in CI |
+| NFR-12 | Lighthouse budgets run in CI on a production build. Accessibility, best practices and SEO are **asserted**; the performance score and every timing metric are **recorded only** — a wall-clock assertion on a shared runner teaches people to rerun CI, which is how the last two were lost | asserted ≥ 90, timings reported |
 | NFR-08 | A partial outage must never corrupt a stored game record | zero tolerance |
 | NFR-09 | Time from `git push` to deployed | < 10 min |
 

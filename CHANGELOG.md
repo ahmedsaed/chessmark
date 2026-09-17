@@ -17,6 +17,48 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **Lighthouse budgets run in CI** (NFR-12). The ROADMAP gap said "no Lighthouse in this
+  environment"; that was stale — Chrome is installed and it runs. So it was run, and Phase 7's
+  unverified exit criterion turned out to be **failing on both halves**: performance 87 and
+  accessibility 88 against a target of 90.
+
+  **What the suite refuses to assert is the design.** This repository has already deleted two
+  wall-clock tests, and ROADMAP says why: a timing assertion that fails on a busy machine and
+  passes on a quiet one teaches people to rerun CI, and the next real regression is rerun away with
+  it. A Lighthouse performance score is that assertion wearing a different hat. So accessibility,
+  best practices, SEO, contrast, accessible names, tap targets and page weight are **asserted** —
+  all DOM and network facts, identical on a loaded machine — while the performance score and every
+  timing metric are **recorded and uploaded, never gated**.
+
+  It measures a build with **no Clerk**, deliberately: a development tenant is 370 KiB, 55% of the
+  page, plus a 1.8 s handshake and a console error, and best practices measured 100 on production
+  against 74 locally for reasons entirely outside this repository.
+
+### Fixed
+
+- **A board nobody can move is one image, not sixty-four unlabelled buttons** (UI-09).
+  `react-chessboard` gives every square an interactive role whether or not anything is wired to it,
+  so the landing page — a spectator's board and four replay thumbnails — handed axe **92 controls
+  with no accessible name and 72 tap targets of 15×15px**. That was the entire accessibility
+  deficit that was not contrast. A non-interactive board is now a single `role="img"` with a label
+  saying whose move it is, `inert` so nothing inside is focusable, and `pointer-events: none`
+  because a target that does nothing should not be a target.
+
+- **`--color-ink-faint` failed WCAG AA, which UI-09 says we meet.** `#756b5b` measured 3.54:1 on
+  `ground` and **2.67:1 on `surface-3`** where normal text needs 4.5:1 — and it is the colour of
+  most of the site's secondary text, 39 failing nodes on a single page. `#a09684` is the lightest
+  value that clears 4.5:1 on every surface, so it buys compliance for the smallest change in how
+  the site looks and stays clearly separate from `--color-ink-dim`.
+
+  Measured after both: **performance 99, accessibility 100, best practices 100, SEO 100.**
+
+- **`make check` now runs the production build.** A route segment config export must be statically
+  analysable, and `export const revalidate = SOME_CONSTANT` typechecks, lints and runs in dev
+  before failing `next build`. Three CI jobs went red on a branch where `make check` was green,
+  which makes the gate a liar in the one direction that matters.
+
+### Added
+
 - **A social card for every page** (UI-06). Seven routes had **no `og:image` at all** —
   `/leaderboard`, `/models`, `/about`, `/methodology`, `/play` and both tournament routes unfurled
   as bare text links anywhere they were shared.

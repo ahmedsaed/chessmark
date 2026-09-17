@@ -203,7 +203,47 @@ export function Board({
        board renders pieces as SVG with no notion of the position they came from, so without it a
        test can count pieces but never tell one position from another with the same material. */
     <div className="w-full [&_*]:!font-sans" data-fen={fen}>
-      <Chessboard options={options} />
+      {interactive ? (
+        <Chessboard options={options} />
+      ) : (
+        /**
+         * **A board nobody can move is one image, not sixty-four unlabelled buttons** (UI-09).
+         *
+         * `react-chessboard` gives every square an interactive role whether or not anything is
+         * wired to it, so a page with a spectator's board and four replay thumbnails handed axe
+         * **92 controls with no accessible name and 72 tap targets of 15×15px** — the entire
+         * accessibility deficit on the landing page, from boards that cannot be interacted with at
+         * all. It is also why `pointer-events` goes: a target that does nothing should not be a
+         * target, and the thumbnails sit inside a link that *is* the click.
+         *
+         * The label rather than `aria-hidden`: a position is real content. Hiding it would trade
+         * sixty-four wrong answers for none at all, and a reader who cannot see the board should
+         * still be told there is one and whose move it is.
+         */
+        <div role="img" aria-label={describe(fen)}>
+          {/* `inert` as well as `aria-hidden`: the library leaves focusable elements inside, and
+              `aria-hidden` over something focusable is itself an axe failure (`aria-hidden-focus`)
+              — it hides a control from a screen reader while leaving it in the tab order. `inert`
+              takes it out of both. */}
+          <div aria-hidden inert className="pointer-events-none">
+            <Chessboard options={options} />
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+/**
+ * A board in a few words, for a reader who cannot see it.
+ *
+ * Deliberately short. The pages that show a board show the players, the result and the move list
+ * beside it, so the useful thing here is *that this is a board and whose turn it is* — not an
+ * enumeration of thirty-two squares that no one would listen to.
+ */
+function describe(fen: string): string {
+  const side = fen.split(" ")[1];
+  if (side === "w") return "Chess board, white to move";
+  if (side === "b") return "Chess board, black to move";
+  return "Chess board";
 }
