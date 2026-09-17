@@ -31,3 +31,54 @@ function band(game: MyGameSummary): number {
 export function waitingOnYou(games: MyGameSummary[]): number {
   return games.filter((game) => game.your_turn).length;
 }
+
+/** Your record over the games that reached a result. */
+export interface Record {
+  /** Games with a result — the denominator of W/D/L, and not the length of the list. */
+  decided: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  /** Running, paused or pending. Counted apart rather than filed as a draw. */
+  unfinished: number;
+  /** Ended with no result: aborted, or a harness stop. Not a finding about anyone. */
+  undecided: number;
+}
+
+/**
+ * W / D / L from the caller's own side of each game.
+ *
+ * **Three buckets, not two.** A game that is still running and a game the harness stopped are
+ * both "not a win and not a loss", and rolling either into draws would inflate a record with
+ * games nobody played to an end — the same distinction `bench/ratable.py` makes on the server and
+ * the model page makes in its *Played, did not count* section (invariant 11: our ceilings are not
+ * findings about a player).
+ *
+ * Reads `result` rather than `winner_colour`, because a draw has no winner and the two would
+ * otherwise disagree about `1/2-1/2`.
+ */
+export function recordOf(games: MyGameSummary[]): Record {
+  const record: Record = { decided: 0, wins: 0, draws: 0, losses: 0, unfinished: 0, undecided: 0 };
+
+  for (const game of games) {
+    if (game.status !== "finished") {
+      // `aborted` is over but undecided; everything else that is not finished is still going.
+      if (game.status === "aborted") record.undecided += 1;
+      else record.unfinished += 1;
+      continue;
+    }
+    if (game.result === "*") {
+      // Finished with no result is a harness stop — a budget, a ply cap, a provider we could not
+      // reach. It ended the game; it says nothing about how the person played.
+      record.undecided += 1;
+      continue;
+    }
+
+    record.decided += 1;
+    if (game.result === "1/2-1/2") record.draws += 1;
+    else if (game.result === (game.your_colour === "white" ? "1-0" : "0-1")) record.wins += 1;
+    else record.losses += 1;
+  }
+
+  return record;
+}

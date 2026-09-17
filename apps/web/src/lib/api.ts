@@ -336,8 +336,17 @@ export function createHumanGame(
  * Read from the browser rather than during server rendering, like everything else here: the
  * answer depends on who is asking, and the token belongs to the browser session.
  */
-export async function listMyGames(token: string | null): Promise<MyGameSummary[]> {
-  const response = await fetch(`${API_URL}/games/mine`, {
+export async function listMyGames(
+  token: string | null,
+  /**
+   * How many to ask for. The lobby wants the handful you are mid-way through; `/profile` is your
+   * whole history and asks for the server's maximum. Left at the server's own default when
+   * omitted, so a caller that does not care does not have to choose.
+   */
+  limit?: number,
+): Promise<MyGameSummary[]> {
+  const query = limit ? `?limit=${limit}` : "";
+  const response = await fetch(`${API_URL}/games/mine${query}`, {
     headers: {
       accept: "application/json",
       ...(token ? { authorization: `Bearer ${token}` } : {}),

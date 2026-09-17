@@ -188,3 +188,44 @@ test("resigning ends the game, and the link becomes the replay", async ({ page }
   await page.goto(url);
   await expect(page.getByRole("slider", { name: "Ply" })).toBeVisible();
 });
+
+test("a game you finished is counted on your profile, and reachable from it", async ({ page }) => {
+  /**
+   * The populated half of the profile (HUMAN-03). `account.spec.ts` asserts the empty state on an
+   * account created seconds earlier; this one creates the game it then counts, so neither depends
+   * on what a previous run happened to leave in the database.
+   *
+   * **The arithmetic is the assertion, not the numbers.** Played is every game; W/D/L counts only
+   * the decided ones, and a harness stop is counted apart from both (invariant 11). A panel whose
+   * columns do not add up to its own total is the failure worth catching, and it is one a fixed
+   * expected number would not see.
+   */
+  const url = await sitDown(page);
+
+  await page.getByRole("button", { name: "resign", exact: true }).click();
+  await page.getByRole("button", { name: "confirm resign" }).click();
+  await expect(page.getByText(/0-1|resignation/i).first()).toBeVisible();
+
+  await page.goto("/profile");
+
+  const cell = (label: string) =>
+    page.locator("dl div", { has: page.getByText(label, { exact: true }) }).locator("dd");
+
+  await expect(cell("Played")).not.toHaveText("0");
+
+  const played = Number(await cell("Played").innerText());
+  const [wins, draws, losses] = (await cell("W / D / L").innerText())
+    .split("/")
+    .map((part) => Number(part.trim()));
+  const running = Number(await cell("In progress").innerText());
+  const undecided = Number(await cell("No result").innerText());
+
+  expect(wins + draws + losses + running + undecided).toBe(played);
+  // The game just resigned is a loss, so the decided column cannot be empty.
+  expect(wins + draws + losses).toBeGreaterThan(0);
+
+  // And the history is a way back to the board, not a tally. The card links to the game.
+  await expect(page.getByRole("link", { name: /Chessmark/ }).first()).toBeVisible();
+  await page.goto(url);
+  await expect(page.getByRole("slider", { name: "Ply" })).toBeVisible();
+});

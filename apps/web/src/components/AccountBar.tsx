@@ -18,6 +18,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
+import { AccountMenu } from "@/components/AccountMenu";
 import { clerkEnabled } from "@/components/AuthProvider";
 import type { Me } from "@/lib/types";
 
@@ -144,7 +145,10 @@ function Bar({ apiUrl }: { apiUrl: string }) {
             cannot appear — which is why signing out needs no cleanup here. */}
         {me && (
           <span
-            className="tabular font-mono text-meta text-ink-faint"
+            /* Hidden on a phone, where the header is already four items wide and the menu repeats
+               it. Visible everywhere else: the number decides whether you can start a game, and
+               one click away is worse than in front of you. */
+            className="tabular hidden font-mono text-meta text-ink-faint sm:inline"
             title={
               me.credit_balance === 0
                 ? "No credits. An administrator grants them."
@@ -156,15 +160,10 @@ function Bar({ apiUrl }: { apiUrl: string }) {
           </span>
         )}
         {/* Was `<UserButton />`, whose menu offered account management this site does not use and
-            knew nothing about credits. `/profile` is ours, in our type, and says the three things a
-            person comes to check. */}
-        <Link
-          href="/profile"
-          aria-label="Your profile"
-          className="whitespace-nowrap border border-line bg-surface px-2 py-1 font-mono text-meta uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink"
-        >
-          profile
-        </Link>
+            knew nothing about credits, and then a bare `profile` link that showed neither who you
+            were signed in as nor a way out. `AccountMenu` is ours, built from hooks rather than
+            from a prebuilt component, so it costs nothing on the routes nobody signs in on. */}
+        <AccountMenu me={me} />
       </Show>
     </span>
   );
