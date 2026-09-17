@@ -61,7 +61,13 @@
   /* --- type --- */
   --color-ink: #efe8da;
   --color-ink-dim: #a99e8b;
-  --color-ink-faint: #756b5b;
+  /* **#756b5b failed WCAG AA and UI-09 says we meet it.** It measured 3.54:1 on `ground` and
+     2.67:1 on `surface-3` where normal text needs 4.5:1, and it is the colour of *most* of the
+     site's secondary text — 39 failing nodes on one page, and the whole of the accessibility
+     deficit that was not the chess board. `#a09684` is the lightest value that clears 4.5:1 on
+     every surface (worst case 4.79:1, on `surface-3`), so it buys the compliance for the smallest
+     change in how the site looks, and stays clearly separate from `--color-ink-dim` above it. */
+  --color-ink-faint: #a09684;
 
   /* --- semantic roles --- */
   --color-accent: #dca84b;

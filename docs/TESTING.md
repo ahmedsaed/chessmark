@@ -47,6 +47,7 @@ Playwright, in `apps/web/e2e/`. Two projects, because the flows differ in what t
 | `public` | `make test-e2e` — **and CI** | a running stack, nothing else |
 | `mobile` | `make test-e2e` / `make test-e2e-mobile` — **and CI** | a running stack, nothing else |
 | `signed-in` | `make test-e2e-all` | a real Clerk development instance |
+| Lighthouse | `make lighthouse` — **and CI** | a running API; it starts its own web server |
 
 Reading is open to everyone (AUTH-02), so the lobby, the catalogue, a model page and a whole replay
 assert with no identity at all.
@@ -151,6 +152,36 @@ error rather than a test failure. `make migrate` first if you have just changed 
    prefetch counts as a request the page did not make.
 
 ---
+
+## Lighthouse budgets
+
+`make lighthouse`, and CI runs it beside the browser suite. `apps/web/lighthouserc.cjs` holds the
+config and the reasoning; the short version is **what it refuses to assert**.
+
+This project has already deleted two wall-clock tests for the reason that matters here — a timing
+assertion that fails on a busy machine and passes on a quiet one teaches people to rerun CI, and
+the next real regression is rerun away with it. **A Lighthouse performance score is that assertion
+wearing a different hat**: LCP on a shared runner moves by seconds between runs of identical code.
+
+So the suite splits, and the split is the design:
+
+| | |
+| --- | --- |
+| **Asserted** | accessibility, best practices, SEO; contrast, accessible names, tap targets, heading order; page weight and unused JavaScript. All of them audit the DOM or the network, and give the same answer on a loaded machine as an idle one |
+| **Recorded only** | the performance score, LCP, FCP, TTI, Speed Index, server response. Uploaded as a CI artifact on every run so a trend is visible — never a reason a merge is blocked |
+
+Three things worth knowing before changing any of it:
+
+* **It measures a build with no Clerk, on purpose.** A development Clerk tenant is 370 KiB — 55% of
+  the page — plus a 1.8 s handshake redirect and a blocked telemetry call Lighthouse counts as a
+  console error. Best practices measured **100 on production and 74 against a local dev tenant**,
+  for reasons entirely outside this repository. CI has no keys, so it gets this for free; the make
+  target clears them so a developer measures the same site CI does.
+* **`lhci` starts and stops its own server.** `next start` reads `.next` once at boot, so rebuilding
+  while it runs leaves it serving yesterday's HTML with today's stylesheet. Measuring that produced
+  eight failures on a tree that passes cleanly.
+* **Every threshold is the measured value, not a round number.** A budget above the current figure
+  permits a regression; one below it is red on arrival. They only ever tighten.
 
 ## Coverage
 

@@ -174,6 +174,17 @@ it.
   check, and it said nothing. If the real answer needs another read, another helper or another
   half-hour, do that; if it genuinely cannot be done now, say so plainly and put it in ROADMAP's
   *Known gaps* rather than leaving something that merely looks finished.
+- **Frontend work is measured before it is called done.** `make lighthouse` builds and scores four
+  pages against the budgets in `lighthouserc.cjs`; run it for anything that touches markup, styles,
+  a dependency or a route, and read the numbers rather than the exit code. It is the only check
+  that sees what a *visitor* gets — `make check` never renders a page, and every accessibility
+  failure this project has shipped passed lint, types and tests on the way out. A contrast token
+  below AA, a control that loses its label, a dependency that doubles the bundle: all invisible to
+  everything else, all caught here in ninety seconds.
+
+  The timing metrics in the report are **not** a gate and must not be treated as one — see
+  [TESTING.md](docs/TESTING.md#lighthouse-budgets) for why that is deliberate. Read them for
+  direction, act on the asserted audits.
 - **Green is not evidence on its own.** Before believing a passing suite, break the thing on purpose
   and watch it go red. When output is cached, generated or rendered somewhere else, confirm you are
   looking at *this* build: a byte-identical result across three different source states means the

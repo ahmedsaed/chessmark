@@ -57,3 +57,6 @@ logs/
 
 # Database dumps. Local operational state, and they contain real data.
 /backups/
+
+# Lighthouse CI writes its reports here; they are artifacts of a run, not of the repo.
+.lighthouseci/
