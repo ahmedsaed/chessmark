@@ -13,7 +13,8 @@
  * Playing yourself is the first tab because it is the thing a visitor cannot do anywhere else.
  */
 
-import { Show, SignInButton } from "@clerk/nextjs";
+import { Show } from "@clerk/nextjs";
+import Link from "next/link";
 import { useState } from "react";
 
 import { clerkEnabled } from "@/components/AuthProvider";
@@ -51,14 +52,15 @@ export function NewGameSection({ apiUrl, models }: { apiUrl: string; models: Mod
             a game you play yourself included: the machine seat still calls a provider every turn.
           </p>
           <div className="mt-4">
-            <SignInButton mode="modal">
-              <button
-                type="button"
-                className="border border-accent-deep bg-accent px-3 py-1.5 font-mono text-data uppercase tracking-[0.14em] text-on-accent transition-colors hover:bg-accent-dim"
-              >
-                Sign in to play
-              </button>
-            </SignInButton>
+            {/* A link rather than Clerk's modal: the modal is a prebuilt component, and one of
+                those on any route loads `@clerk/ui` on all of them. `?redirect=` brings you back
+                here afterwards, which the modal did for free and a page has to be told. */}
+            <Link
+              href="/sign-in?redirect=/play"
+              className="inline-flex border border-accent-deep bg-accent px-3 py-1.5 font-mono text-data uppercase tracking-[0.14em] text-on-accent transition-colors hover:bg-accent-dim"
+            >
+              Sign in to play
+            </Link>
           </div>
         </div>
       </Show>

@@ -19,6 +19,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <ClerkProvider
+      /**
+       * **No prebuilt Clerk UI on this site, so none of it is fetched.**
+       *
+       * `prefetchUI` is documented as `false` — *"Skip prefetching the UI (for custom UIs using
+       * Control Components)"* — and that parenthesis is load-bearing: it throws *"Clerk was not
+       * loaded with Ui components"* with no lazy fallback if any prebuilt component renders. It is
+       * not a flag that can be flipped on a site using `<SignIn />`; it is the reward for owning
+       * those screens, which `AuthForm` and `ProfileView` now do.
+       *
+       * Worth **285 KiB on every route** — `@clerk/ui` was loading on `/about` and `/leaderboard`,
+       * where nobody signs in. Clerk drops from 372 KiB to 87 KiB and the page from 619 to 334.
+       *
+       * What still renders from Clerk is control components only: `Show` and
+       * `AuthenticateWithRedirectCallback`. Both are explicitly supported here. Adding a prebuilt
+       * component anywhere re-breaks this, silently and site-wide — which is why the browser suite
+       * asserts the UI bundle is never requested.
+       */
+      prefetchUI={false}
       appearance={{
         variables: {
           colorBackground: "#16130f",

@@ -172,11 +172,16 @@ So the suite splits, and the split is the design:
 
 Three things worth knowing before changing any of it:
 
-* **It measures a build with no Clerk, on purpose.** A development Clerk tenant is 370 KiB — 55% of
-  the page — plus a 1.8 s handshake redirect and a blocked telemetry call Lighthouse counts as a
-  console error. Best practices measured **100 on production and 74 against a local dev tenant**,
-  for reasons entirely outside this repository. CI has no keys, so it gets this for free; the make
-  target clears them so a developer measures the same site CI does.
+* **It measures the whole public site, with Clerk.** Twelve routes, including a real game and a
+  real tournament taken from the browser suite's fixtures. It used to measure four routes with the
+  Clerk keys cleared, because a development tenant was 55% of the page; owning the auth screens
+  removed the reason to look away, and widening it found two things in the first run — an audit
+  asserted that no longer exists, and `/sign-in` scoring 0.63 on SEO because `robots.txt`
+  deliberately keeps it out of the index.
+* **`categories:best-practices` is a warning, not a gate,** and only because a *development* Clerk
+  tenant fails three audits that production passes: its cookies, its unreachable telemetry endpoint,
+  and the issues its dev mode logs. Production measures 100. The best-practice audits that are ours
+  are asserted individually, so nothing we control is unguarded.
 * **`lhci` starts and stops its own server.** `next start` reads `.next` once at boot, so rebuilding
   while it runs leaves it serving yesterday's HTML with today's stylesheet. Measuring that produced
   eight failures on a tree that passes cleanly.
