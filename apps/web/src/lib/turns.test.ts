@@ -1014,6 +1014,66 @@ describe("a pause inside a turn is a step of it", () => {
     expect(block.kind === "paused" && block.resumeAfter).toBe("12:30");
   });
 
+  it("folds identical pauses that have real work between them", () => {
+    /* The production shape, and the one the adjacent-run test above cannot see. A provider that
+       keeps timing out does not pause twice in a row: the model *retries* between refusals, so the
+       turn reads reason, pause, reason, pause, reason, pause. Matching only `blocks.at(-1)` finds a
+       `reasoning` block there and starts a new row every time — `57e8a7bc` drew three byte-identical
+       "Nvidia did not answer in time" rows in one turn, which is exactly the run `foldPauses`
+       already collapses between turns.
+
+       The row stays where the wait *started* and carries the latest `resumeAfter`, matching
+       `foldPauses`'s `{ ...last, key: first.key }`: the count is the summary, and the reasoning
+       that happened between refusals keeps its own place below it. */
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("thinking", { reasoning: "first try", tokens: 10 }),
+      event("game_paused", { reason: "Nvidia did not answer in time", resume_after: "12:00" }),
+      event("game_resumed", {}),
+      event("thinking", { reasoning: "second try", tokens: 10 }),
+      event("game_paused", { reason: "Nvidia did not answer in time", resume_after: "12:30" }),
+      event("game_resumed", {}),
+      event("thinking", { reasoning: "third try", tokens: 10 }),
+      event("game_paused", { reason: "Nvidia did not answer in time", resume_after: "13:00" }),
+      event("move_made", { ply: 1, colour: "white", san: "e4" }),
+    ];
+
+    const [turn] = foldEvents(events, []).turns;
+    const pauses = turn.blocks.filter((b) => b.kind === "paused");
+
+    expect(pauses).toHaveLength(1);
+    expect(pauses[0].kind === "paused" && pauses[0].count).toBe(3);
+    expect(pauses[0].kind === "paused" && pauses[0].resumeAfter).toBe("13:00");
+    // The work between the refusals is real and keeps its own rows, below the wait that began.
+    expect(turn.blocks.map((b) => b.kind)).toEqual([
+      "reasoning",
+      "paused",
+      "reasoning",
+      "reasoning",
+    ]);
+  });
+
+  it("keeps two different pauses apart even across a retry", () => {
+    /* The other half of the rule, and the reason this is not just "collapse every pause". A rate
+       limit followed by a halt is two different problems, and one row saying it happened twice
+       would describe neither. */
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("game_paused", { reason: "rate-limited by Nvidia", resume_after: "12:00" }),
+      event("thinking", { reasoning: "retrying", tokens: 10 }),
+      event("game_paused", { reason: "the harness is halted", resume_after: "13:00" }),
+      event("move_made", { ply: 1, colour: "white", san: "e4" }),
+    ];
+
+    const [turn] = foldEvents(events, []).turns;
+    const pauses = turn.blocks.filter((b) => b.kind === "paused");
+
+    expect(pauses).toHaveLength(2);
+    expect(pauses.every((p) => p.kind === "paused" && p.count === 1)).toBe(true);
+  });
+
   it("keeps a pause after the move out of the turn that already moved", () => {
     // `current` is not cleared on a move, so without the `san` check every between-turns pause
     // would be filed under the turn above it — the bug this change exists to fix, from the other

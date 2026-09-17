@@ -15,6 +15,36 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A harness ceiling is no longer scored as a pairing result** (invariant 11, [ADR-0019]).
+  `db/tournaments.settle` said in its own docstring that a game the harness stopped "is marked
+  abandoned rather than scored", and then asked a question that could not answer it: it read
+  `GameStatus.ABORTED`, which only `ABANDONED` produces. A `ply_cap`, a `budget_exceeded` or an
+  `adjudication` ends a game `FINISHED` carrying a real `GameResult`, so all three fell through to
+  `_SCORES` and were scored like any other draw.
+
+  `pool-free` round 175 is what it cost. `ling-3.0-flash-sante` reached
+  `8/6P1/1k5P/5K2/5p2/8/8/8 w` — a pawn on g7, `g8=Q` on the move, the black king on b6 — and the
+  300-ply cap drew it. `bench/ratable.py` excluded the game from the rating, correctly and
+  invisibly, while the pool's table handed both models half a point: the page showed `0.5` beside
+  `unrated`, and `lfm-2.5-2.6b` carried half a point our own ceiling had given it.
+
+  `settle` now asks `HARNESS_TERMINATIONS` rather than keeping a fourth list of its own. That set
+  was already the answer and nothing linked it — `test_classification.py` exists because three sets
+  classifying terminations had drifted apart once, and this was the fourth, one module away and
+  unchecked. It is also what makes the ply cap legitimate at all: the cap is **not** stated in the
+  system prompt, so under invariant 12 it may never decide a scored game.
+
+- **Identical pauses inside one turn fold into one row** (UI-10, [ADR-0045]). A run of pauses has
+  folded between turns since `50cd042`, and moving a pause inside the turn it interrupted brought
+  the run back where nothing was folding it: `foldEvents` matched only `blocks.at(-1)`, and inside a
+  turn the model *retries* between refusals, so what sits between two pauses is a `reasoning` block
+  rather than nothing. `57e8a7bc` drew three byte-identical "Nvidia did not answer in time" rows in
+  one turn. The fold now finds the run's row wherever it is, keeps it where the wait began, and
+  takes the newest `resumeAfter` — `foldPauses`'s `{ ...last, key: first.key }` said the other way
+  round. Matching on the pause text is unchanged, so a rate limit followed by a halt stays two rows.
+
 ## [0.3.0] — 2026-09-15
 
 **A provider that stops answering no longer destroys the work it interrupted.** One thread runs
