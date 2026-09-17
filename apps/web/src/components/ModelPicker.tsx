@@ -54,7 +54,7 @@ export function ModelPicker({
 
   return (
     <div className="flex min-w-0 flex-col gap-1">
-      <span id={labelId} className="font-mono text-[9px] uppercase tracking-[0.12em] text-ink-faint">
+      <span id={labelId} className="font-mono text-label uppercase tracking-[0.12em] text-ink-faint">
         {label}
       </span>
 
@@ -77,7 +77,7 @@ export function ModelPicker({
                 onClick={() => onQuantizationChange(option.quantization)}
                 aria-pressed={active}
                 title={`${option.provider}, uptime ${option.uptime_1d?.toFixed(1) ?? "?"}% — a separate entrant`}
-                className={`border px-1.5 py-px font-mono text-[9px] uppercase tracking-wider transition-colors ${
+                className={`border px-1.5 py-px font-mono text-label uppercase tracking-wider transition-colors ${
                   active
                     ? "border-accent bg-accent text-on-accent"
                     : "border-line text-ink-faint hover:text-ink-dim"
@@ -91,7 +91,7 @@ export function ModelPicker({
       )}
 
       {chosen && entrant && (
-        <span className="tabular font-mono text-[9.5px] text-ink-faint">
+        <span className="tabular font-mono text-label text-ink-faint">
           in {usdPerMillion(chosen.prompt_usd_per_token)} · out{" "}
           {usdPerMillion(chosen.completion_usd_per_token)} ·{" "}
           <span className="text-good">{entrant.provider}</span>
@@ -182,7 +182,7 @@ function Dropdown({
           {chosen ? chosen.openrouter_id : "choose a model…"}
         </span>
         {chosen && <CreditBadge credits={chosen.credit_cost} />}
-        <span aria-hidden className="flex-none text-[9px] text-ink-faint">
+        <span aria-hidden className="flex-none text-label text-ink-faint">
           {open ? "▲" : "▼"}
         </span>
       </button>
@@ -204,7 +204,7 @@ function Dropdown({
               aria-label="Search models"
               className="w-full border border-line bg-surface px-2 py-1.5 font-mono text-xs text-ink placeholder:text-ink-faint focus:border-accent-dim focus:outline-none"
             />
-            <p className="tabular mt-1.5 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+            <p className="tabular mt-1.5 font-mono text-label uppercase tracking-[0.1em] text-ink-faint">
               {total} model{total === 1 ? "" : "s"} · {groups.length} provider
               {groups.length === 1 ? "" : "s"}
             </p>
@@ -212,7 +212,7 @@ function Dropdown({
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             {groups.length === 0 && (
-              <p className="p-3 font-mono text-[11px] text-ink-faint">
+              <p className="p-3 font-mono text-data text-ink-faint">
                 Nothing matches “{query.trim()}”.
               </p>
             )}
@@ -230,13 +230,13 @@ function Dropdown({
                       return next;
                     })
                   }
-                  className="flex w-full items-center gap-2 px-2 py-1.5 text-left font-mono text-[11px] transition-colors hover:bg-surface-3"
+                  className="flex w-full items-center gap-2 px-2 py-1.5 text-left font-mono text-data transition-colors hover:bg-surface-3"
                 >
-                  <span aria-hidden className="w-2 flex-none text-[9px] text-machine">
+                  <span aria-hidden className="w-2 flex-none text-label text-machine">
                     {isExpanded(group.provider) ? "▾" : "▸"}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-ink">{group.provider}</span>
-                  <span className="tabular flex-none text-[9.5px] text-ink-faint">
+                  <span className="tabular flex-none text-label text-ink-faint">
                     {group.models.length}
                   </span>
                   {/* The cheapest price decides whether opening a provider is worth it. */}
@@ -254,7 +254,7 @@ function Dropdown({
                             role="option"
                             aria-selected={selected}
                             onClick={() => pick(model.openrouter_id)}
-                            className={`flex w-full items-center gap-2 py-1.5 pl-6 pr-2 text-left font-mono text-[11px] transition-colors ${
+                            className={`flex w-full items-center gap-2 py-1.5 pl-6 pr-2 text-left font-mono text-data transition-colors ${
                               selected
                                 ? "bg-accent-deep/40 text-ink"
                                 : "text-ink-dim hover:bg-surface-3 hover:text-ink"
@@ -264,7 +264,7 @@ function Dropdown({
                               {model.openrouter_id.split("/").slice(1).join("/") ||
                                 model.openrouter_id}
                             </span>
-                            <span className="tabular hidden flex-none text-[9px] text-ink-faint sm:inline">
+                            <span className="tabular hidden flex-none text-label text-ink-faint sm:inline">
                               {usdPerMillion(model.prompt_usd_per_token)}
                             </span>
                             <CreditBadge credits={model.credit_cost} />
@@ -302,7 +302,7 @@ export function CreditBadge({ credits, muted = false }: { credits: number; muted
   return (
     <span
       title={`${credits} credit${credits === 1 ? "" : "s"} to start a game against this model`}
-      className={`tabular flex-none border px-1 py-px font-mono text-[9px] uppercase tracking-wider ${tone} ${
+      className={`tabular flex-none border px-1 py-px font-mono text-label uppercase tracking-wider ${tone} ${
         muted ? "opacity-70" : ""
       }`}
     >

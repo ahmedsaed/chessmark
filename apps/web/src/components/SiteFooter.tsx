@@ -15,7 +15,7 @@ export function SiteFooter() {
     <footer className="mt-auto border-t border-line bg-surface/40">
       <div className="mx-auto flex w-full max-w-[2200px] flex-col gap-6 px-5 py-8 sm:flex-row sm:items-start sm:justify-between">
         <div className="max-w-prose">
-          <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-accent">
+          <p className="font-mono text-data uppercase tracking-[0.2em] text-accent">
             {siteName}
           </p>
           <p className="mt-2 text-sm leading-relaxed text-ink-dim">
@@ -30,7 +30,7 @@ export function SiteFooter() {
             <Link
               key={link.href}
               href={link.href}
-              className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-accent"
+              className="font-mono text-data uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-accent"
             >
               {link.label}
             </Link>

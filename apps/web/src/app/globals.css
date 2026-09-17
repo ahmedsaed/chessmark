@@ -32,6 +32,32 @@
   --color-line: #3a3227;
   --color-line-soft: #2c2619;
 
+  /* --- the small end of the type scale ------------------------------------------------------
+   *
+   * Named steps, because the alternative was 190 arbitrary values (`text-meta`) spread over six
+   * sizes — 8.5, 9, 9.5, 10, 11 and 13px — and three of those were within a pixel of each other.
+   * That is not a scale, it is a set of one-off decisions, and the cost was exact: the phone floor
+   * below had to be written as an attribute-substring hack because there was no token to redefine,
+   * and "secondary labels are 11px on a phone" would otherwise have to live in 190 places.
+   *
+   * The names say what a step is *for*, so choosing one is a question with an answer:
+   *
+   *   label  uppercase, tracked section headings and badges
+   *   meta   secondary supporting text — ids, timestamps, captions, hints
+   *   data   dense mono figures — ratings, counts, token totals, nameplates
+   *   chat   what a player said, in a bubble
+   *
+   * `8.5` and `9.5` are gone. A half-pixel distinction does not survive rasterisation, nobody could
+   * have told you which was which, and keeping them would have meant three names for one step.
+   *
+   * Tailwind emits `font-size: var(--text-label)`, so the phone floor at the foot of this file is
+   * four redefinitions rather than a selector that matches on class names.
+   */
+  --text-label: 9px;
+  --text-meta: 10px;
+  --text-data: 11px;
+  --text-chat: 13px;
+
   /* --- type --- */
   --color-ink: #efe8da;
   --color-ink-dim: #a99e8b;
@@ -211,28 +237,21 @@ input[type="checkbox"]:disabled {
   outline-offset: 2px;
 }
 
-/* --- the small end of the type scale, on a phone ---------------------------------------------
+/* --- the small end of the type scale, on a phone ----------------------------------------------
  *
- * The site's secondary labels run 8.5px to 10px — section headings, badges, `copy link`, `game
- * 1ddfea84`, the leaderboard's column heads. That is comfortable on a monitor at arm's length and
- * marginal on a phone at reading distance, and it is most of what a phone reader is given.
+ * The site's secondary labels run 9px to 11px. That is comfortable on a monitor at arm's length
+ * and marginal on a phone at reading distance, and it is most of what a phone reader is given.
  *
- * One rule rather than 139 of them. The sizes are arbitrary values in markup (`text-[10px]`), so
- * there is no named scale to redefine — and rewriting every call site would put the same decision
- * in 139 places, where the next person changing one would not find the other 138. The floor lives
- * here, with its reason, and lifting it is one edit.
- *
- * Unlayered on purpose: Tailwind's utilities sit in `@layer utilities`, and anything outside a
- * layer beats everything inside one, so this wins at `< sm` without `!important`. A deliberate
- * larger size at a breakpoint (`sm:text-[9px]`) is unaffected — it only applies from `sm` up,
- * which is exactly where this stops.
+ * Four redefinitions, not four overrides: Tailwind v4 compiles `text-meta` to
+ * `font-size: var(--text-meta)`, so changing the variable changes every use of it without touching
+ * a single utility or call site. This block used to match `[class*="text-meta"]` because there
+ * was no variable to change — the hack was a symptom of the missing scale, and it went with it.
  */
 @media (width < 40rem) {
-  [class*="text-[8.5px]"],
-  [class*="text-[9px]"],
-  [class*="text-[9.5px]"],
-  [class*="text-[10px]"] {
-    font-size: 11px;
+  :root {
+    --text-label: 11px;
+    --text-meta: 11px;
+    --text-data: 11px;
   }
 }
 

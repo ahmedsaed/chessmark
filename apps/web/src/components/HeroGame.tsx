@@ -123,11 +123,11 @@ export function HeroGame({ game, apiUrl }: { game: GameDetail; apiUrl: string })
       <div className="order-3 flex min-w-0 flex-col gap-5 lg:col-start-2 lg:row-start-2">
         <div className="border border-line bg-surface-2">
           <div className="flex items-center justify-between gap-3 border-b border-line-soft px-4 py-2.5">
-            <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+            <span className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
               {running ? "Live now" : stopped ? "Paused" : "Most recent"}
             </span>
             {running ? (
-              <span className="inline-flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-bad">
+              <span className="inline-flex items-center gap-1.5 font-mono text-label uppercase tracking-[0.14em] text-bad">
                 <i aria-hidden className="block h-1.5 w-1.5 animate-pulse rounded-full bg-bad" />
                 ply {moves.length}
               </span>
@@ -136,14 +136,14 @@ export function HeroGame({ game, apiUrl }: { game: GameDetail; apiUrl: string })
                  a provider's limit source is not front-page copy, but it should be one hover away
                  rather than only on the game page. */
               <span
-                className="inline-flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint"
+                className="inline-flex items-center gap-1.5 font-mono text-label uppercase tracking-[0.14em] text-ink-faint"
                 title={paused?.text ?? game.pause_reason ?? undefined}
               >
                 <i aria-hidden className="block h-1.5 w-1.5 rounded-full bg-ink-faint" />
                 ply {moves.length}
               </span>
             ) : (
-              <span className="tabular font-mono text-[11px] text-accent">{game.result}</span>
+              <span className="tabular font-mono text-data text-accent">{game.result}</span>
             )}
           </div>
 
@@ -153,7 +153,7 @@ export function HeroGame({ game, apiUrl }: { game: GameDetail; apiUrl: string })
           </div>
 
           {moves.length > 0 && (
-            <p className="tabular border-t border-line-soft px-4 py-2.5 font-mono text-[11px] leading-relaxed text-ink-dim">
+            <p className="tabular border-t border-line-soft px-4 py-2.5 font-mono text-data leading-relaxed text-ink-dim">
               {tailMoves(moves)}
             </p>
           )}
@@ -162,13 +162,13 @@ export function HeroGame({ game, apiUrl }: { game: GameDetail; apiUrl: string })
         <div className="flex flex-wrap items-center gap-3">
           <Link
             href={`/games/${game.id}`}
-            className="border border-accent-deep bg-accent px-4 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-on-accent transition-colors hover:bg-accent-dim"
+            className="border border-accent-deep bg-accent px-4 py-2 font-mono text-data uppercase tracking-[0.14em] text-on-accent transition-colors hover:bg-accent-dim"
           >
             {running ? "Watch live →" : stopped ? "Watch it →" : "Replay it →"}
           </Link>
           <Link
             href="/leaderboard"
-            className="border border-line bg-surface px-4 py-2 font-mono text-[11px] uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-accent-dim hover:text-ink"
+            className="border border-line bg-surface px-4 py-2 font-mono text-data uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-accent-dim hover:text-ink"
           >
             Leaderboard
           </Link>
@@ -197,7 +197,7 @@ function Seat({
       />
       <span className="truncate font-mono text-xs text-ink">{name}</span>
       {toMove && (
-        <span className="flex-none font-mono text-[9px] uppercase tracking-[0.14em] text-machine">
+        <span className="flex-none font-mono text-label uppercase tracking-[0.14em] text-machine">
           thinking…
         </span>
       )}

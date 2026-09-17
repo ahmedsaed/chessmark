@@ -48,7 +48,7 @@ export function PlayerBar({
        Done with `order` and a zero-height `basis-full` break rather than a nested row, because the
        desktop order is name, captures, advantage, label and a wrapper around the first and last of
        those cannot produce it. The break is the only thing that moves. */
-    <div className="flex flex-none flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] sm:flex-nowrap">
+    <div className="flex flex-none flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-data sm:flex-nowrap">
       <i
         aria-hidden
         className={`order-1 block h-2.5 w-2.5 flex-none border border-line ${
@@ -65,7 +65,7 @@ export function PlayerBar({
 
       {advantage > 0 && (
         <span
-          className="tabular order-3 flex-none text-[10px] text-good sm:order-4"
+          className="tabular order-3 flex-none text-meta text-good sm:order-4"
           title="material advantage"
         >
           +{advantage}

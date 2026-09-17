@@ -60,11 +60,11 @@ function Resolved({ heading }: { heading: string }) {
   return (
     <section className="mt-14 first:mt-0">
       <div className="mb-4 flex items-baseline gap-3">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+        <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
           {heading}
         </h2>
         <span className="h-px flex-1 bg-line-soft" aria-hidden />
-        <span className="tabular font-mono text-[10px] text-ink-faint">
+        <span className="tabular font-mono text-meta text-ink-faint">
           {waiting > 0 ? `${waiting} waiting on you` : `${games.length} game${games.length === 1 ? "" : "s"}`}
         </span>
       </div>

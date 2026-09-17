@@ -100,7 +100,7 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       <Link
         href="/models"
-        className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-accent"
+        className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-accent"
       >
         ← All models
       </Link>
@@ -172,7 +172,7 @@ function Record({ model }: { model: ModelDetail }) {
 
   return (
     <section className="mt-10">
-      <h2 className="mb-1 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+      <h2 className="mb-1 font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
         Record · every game, ranked or not
       </h2>
       {/* Named here because the rating below counts fewer games, and a page that prints two
@@ -237,7 +237,7 @@ function Contestants({
   return (
     <section className="mt-12">
       <div className="mb-4 flex items-baseline gap-3">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+        <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
           Contestants
         </h2>
         <span className="h-px flex-1 bg-line-soft" aria-hidden />
@@ -302,16 +302,16 @@ function ContestantBlock({
   return (
     <div id={`c-${contestant.quantization}`} className="scroll-mt-6 border border-line-soft">
       <div className="flex flex-wrap items-center gap-3 border-b border-line-soft bg-surface-2 px-3 py-2.5 font-mono text-xs">
-        <span className="border border-good/40 px-1.5 py-px text-[9px] uppercase tracking-wider text-good">
+        <span className="border border-good/40 px-1.5 py-px text-label uppercase tracking-wider text-good">
           {contestant.quantization}
         </span>
         <span className="text-ink">{contestant.provider}</span>
         {contestant.uptime_1d !== null && (
-          <span className="tabular text-[10px] text-ink-faint">
+          <span className="tabular text-meta text-ink-faint">
             {contestant.uptime_1d.toFixed(1)}% uptime
           </span>
         )}
-        <span className="ml-auto text-[10px] text-ink-faint">
+        <span className="ml-auto text-meta text-ink-faint">
           {contestant.endpoint_count} endpoint
           {contestant.endpoint_count === 1 ? "" : "s"}
           {contestant.endpoint_count === 1 && " — an outage takes it with them"}
@@ -351,7 +351,7 @@ function ContestantBlock({
         <div className="p-3">
           {/* Every published number reaches the games that produced it, or the ranking is asking
               to be taken on faith (BENCH-02). */}
-          <h3 className="mb-3 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+          <h3 className="mb-3 font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">
             {games.length} rated game{games.length === 1 ? "" : "s"}
           </h3>
           <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -393,11 +393,11 @@ function NotCounted({
   return (
     <section className="mt-12">
       <div className="mb-4 flex items-baseline gap-3">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+        <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
           Played, did not count
         </h2>
         <span className="h-px flex-1 bg-line-soft" aria-hidden />
-        <span className="tabular font-mono text-[10px] text-ink-faint">{total}</span>
+        <span className="tabular font-mono text-meta text-ink-faint">{total}</span>
       </div>
 
       <p className="mb-5 text-sm leading-relaxed text-ink-dim">
@@ -410,7 +410,7 @@ function NotCounted({
       <div className="flex flex-col gap-6">
         {[...byReason].map(([reason, group]) => (
           <div key={reason}>
-            <h3 className="mb-3 font-mono text-[11px] leading-relaxed text-ink-dim">
+            <h3 className="mb-3 font-mono text-data leading-relaxed text-ink-dim">
               {reason} <span className="text-ink-faint">· {group.length}</span>
             </h3>
             <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
@@ -432,11 +432,11 @@ function Unfinished({ games }: { games: GameSummary[] }) {
   return (
     <section className="mt-12">
       <div className="mb-4 flex items-baseline gap-3">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+        <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
           In progress
         </h2>
         <span className="h-px flex-1 bg-line-soft" aria-hidden />
-        <span className="tabular font-mono text-[10px] text-ink-faint">{games.length}</span>
+        <span className="tabular font-mono text-meta text-ink-faint">{games.length}</span>
       </div>
       <ul className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {games.map((game) => (
@@ -461,9 +461,9 @@ function Fact({
   const colour = tone === "bad" ? "text-bad" : tone === "good" ? "text-good" : "text-ink";
   return (
     <div className="bg-surface px-3 py-2.5">
-      <dt className="font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">{label}</dt>
+      <dt className="font-mono text-label uppercase tracking-[0.14em] text-ink-faint">{label}</dt>
       <dd className={`tabular mt-1 font-mono text-sm ${colour}`}>{value}</dd>
-      {note && <p className="tabular mt-0.5 font-mono text-[9.5px] text-ink-faint">{note}</p>}
+      {note && <p className="tabular mt-0.5 font-mono text-label text-ink-faint">{note}</p>}
     </div>
   );
 }

@@ -48,30 +48,30 @@ export function GameCard({
           </span>
 
           {yourTurn ? (
-            <span className="flex-none border border-accent-deep bg-accent px-1.5 py-px font-mono text-[9px] uppercase tracking-[0.14em] text-on-accent">
+            <span className="flex-none border border-accent-deep bg-accent px-1.5 py-px font-mono text-label uppercase tracking-[0.14em] text-on-accent">
               your move
             </span>
           ) : paused ? (
             <span
-              className="inline-flex flex-none items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint"
+              className="inline-flex flex-none items-center gap-1.5 font-mono text-label uppercase tracking-[0.14em] text-ink-faint"
               title={game.pause_reason ?? undefined}
             >
               <i aria-hidden className="block h-1.5 w-1.5 rounded-full bg-ink-faint" />
               paused
             </span>
           ) : running ? (
-            <span className="inline-flex flex-none items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.14em] text-bad">
+            <span className="inline-flex flex-none items-center gap-1.5 font-mono text-label uppercase tracking-[0.14em] text-bad">
               <i aria-hidden className="block h-1.5 w-1.5 animate-pulse rounded-full bg-bad" />
               live
             </span>
           ) : (
-            <span className="tabular flex-none font-mono text-[11px] text-accent">
+            <span className="tabular flex-none font-mono text-data text-accent">
               {game.result}
             </span>
           )}
         </div>
 
-        <p className="tabular font-mono text-[10px] text-ink-faint">
+        <p className="tabular font-mono text-meta text-ink-faint">
           {seat ? `you play ${seat} · ` : ""}
           {game.ply_count} plies
           {game.termination ? ` · ${game.termination}` : ""}

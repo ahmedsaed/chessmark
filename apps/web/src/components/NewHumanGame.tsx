@@ -76,7 +76,7 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
 
   return (
     <section className="flex flex-col gap-4 border border-line bg-surface-2 p-4">
-      <h2 className="font-mono text-[10px] uppercase tracking-[0.16em] text-ink-faint">
+      <h2 className="font-mono text-meta uppercase tracking-[0.16em] text-ink-faint">
         Play a model · {playable.length} available
       </h2>
 
@@ -104,7 +104,7 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
         >
           <span
             id="you-play-label"
-            className="font-mono text-[9px] uppercase tracking-[0.12em] text-ink-faint"
+            className="font-mono text-label uppercase tracking-[0.12em] text-ink-faint"
           >
             You play
           </span>
@@ -152,7 +152,7 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
           type="button"
           onClick={start}
           disabled={!opponent || busy}
-          className="border border-accent-deep bg-accent px-4 py-2 font-mono text-[11px] uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40"
+          className="border border-accent-deep bg-accent px-4 py-2 font-mono text-data uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40"
         >
           {busy ? "seating…" : "sit down"}
         </button>
@@ -161,7 +161,7 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
             <CreditBadge credits={price} />
           </span>
         )}
-        <p className="font-mono text-[10px] text-ink-faint">
+        <p className="font-mono text-meta text-ink-faint">
           Never ranked — a person is not a contestant. No clock; an idle game expires after two
           hours.
         </p>

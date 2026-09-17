@@ -30,13 +30,13 @@ export function Schedule({
   return (
     <section>
       <div className="mb-4 flex items-baseline gap-3">
-        <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+        <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
           Schedule
         </h2>
         <span className="h-px flex-1 bg-line-soft" aria-hidden />
         {/* Both numbers, because one alone lies by omission: "10" hides how long the event is and
             "312" describes a list the reader cannot see. */}
-        <span className="tabular font-mono text-[10px] text-ink-faint">
+        <span className="tabular font-mono text-meta text-ink-faint">
           {remaining > 0 ? `${shown} of ${pairings.length}` : pairings.length}
         </span>
       </div>
@@ -54,7 +54,7 @@ export function Schedule({
       <div className="flex flex-col gap-4">
         {rounds.map(({ round, pairings: games }) => (
           <div key={round}>
-            <p className="mb-1 font-mono text-[9px] uppercase tracking-[0.14em] text-ink-faint">
+            <p className="mb-1 font-mono text-label uppercase tracking-[0.14em] text-ink-faint">
               Round {round}
             </p>
             <ul className="flex flex-col gap-px border border-line-soft bg-line-soft">
@@ -70,7 +70,7 @@ export function Schedule({
         <button
           type="button"
           onClick={() => setVisible((seen) => seen + SCHEDULE_PAGE)}
-          className="mt-3 w-full border border-line-soft bg-surface px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint transition-colors hover:border-accent hover:text-accent"
+          className="mt-3 w-full border border-line-soft bg-surface px-3 py-2 font-mono text-meta uppercase tracking-[0.14em] text-ink-faint transition-colors hover:border-accent hover:text-accent"
         >
           {/* The count is the point. "Load more" alone gives no sense of whether one more press
               finishes the list or forty do. */}
@@ -108,14 +108,14 @@ function Pairing({
        Grid on a phone so the names stack under one dot with the score beside both — a crosstable
        row, which is the thing this is — and `sm:flex` hands the original row straight back, at
        which point every placement class below is inert. */
-    <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 bg-surface px-3 py-2 font-mono text-[11px] sm:flex">
+    <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 bg-surface px-3 py-2 font-mono text-data sm:flex">
       <span className="row-span-2 self-center sm:row-auto">
         <StateDot state={pairing.state} />
       </span>
       <span className="min-w-0 truncate text-ink-dim sm:flex-1" title={names[pairing.white_key]}>
         {short(pairing.white_key)}
       </span>
-      <span className="tabular row-span-2 self-center text-[10px] text-ink sm:row-auto sm:flex-none">
+      <span className="tabular row-span-2 self-center text-meta text-ink sm:row-auto sm:flex-none">
         {score ?? (pairing.state === "abandoned" ? "—" : "vs")}
       </span>
       <span
@@ -202,7 +202,7 @@ function StateLegend() {
       {order.map((state) => (
         <li key={state} className="flex items-center gap-1.5">
           <i aria-hidden className={`block h-1.5 w-1.5 flex-none ${PAIRING_TONE[state]}`} />
-          <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+          <span className="font-mono text-label uppercase tracking-[0.1em] text-ink-faint">
             {state}
           </span>
         </li>

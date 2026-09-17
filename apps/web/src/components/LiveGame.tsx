@@ -295,7 +295,7 @@ function PromotionPicker({
       onKeyDown={(event) => event.key === "Escape" && onCancel()}
     >
       <div className="border border-line bg-surface-2 p-5">
-        <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+        <p className="mb-3 font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
           Promote to
         </p>
         <div className="flex gap-2">
@@ -310,7 +310,7 @@ function PromotionPicker({
               <span aria-hidden className="text-3xl leading-none text-ink">
                 {piece.glyph}
               </span>
-              <span className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint">
+              <span className="font-mono text-label uppercase tracking-[0.1em] text-ink-faint">
                 {piece.label}
               </span>
             </button>
@@ -319,7 +319,7 @@ function PromotionPicker({
         <button
           type="button"
           onClick={onCancel}
-          className="mt-3 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint hover:text-ink-dim"
+          className="mt-3 font-mono text-meta uppercase tracking-[0.1em] text-ink-faint hover:text-ink-dim"
         >
           cancel
         </button>
@@ -356,7 +356,7 @@ function Header({
   return (
     <div className="flex flex-wrap items-center gap-3">
       {finished ? (
-        <span className="border border-good px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.14em] text-good">
+        <span className="border border-good px-2 py-0.5 font-mono text-meta uppercase tracking-[0.14em] text-good">
           {outcome?.result || game.result}
           {(outcome?.termination || game.termination) &&
             ` · ${outcome?.termination || game.termination}`}
@@ -366,14 +366,14 @@ function Header({
            "live" over a board that has stopped moving is the thing this whole change exists to
            stop. The reason travels with it: a stopped game with no explanation reads as broken. */
         <span
-          className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-bad"
+          className="inline-flex items-center gap-1.5 font-mono text-meta uppercase tracking-[0.14em] text-bad"
           title={game.pause_reason ?? undefined}
         >
           <i aria-hidden className="block h-1.5 w-1.5 rounded-full bg-bad" />
           paused
         </span>
       ) : (
-        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-bad">
+        <span className="inline-flex items-center gap-1.5 font-mono text-meta uppercase tracking-[0.14em] text-bad">
           <i
             aria-hidden
             className={`block h-1.5 w-1.5 rounded-full bg-bad ${
@@ -385,10 +385,10 @@ function Header({
       )}
 
       {/* Plies move as the game does, so this is the readout that shows it is still going. */}
-      <span className="tabular font-mono text-[10px] text-ink-faint">
+      <span className="tabular font-mono text-meta text-ink-faint">
         {game.ply_count} plies
       </span>
-      <span className="font-mono text-[10px] text-ink-faint">game {game.id.slice(0, 8)}</span>
+      <span className="font-mono text-meta text-ink-faint">game {game.id.slice(0, 8)}</span>
       {(outcome?.detail || game.termination_detail) && (
         <span className="text-xs text-ink-dim">
           {outcome?.detail || game.termination_detail}

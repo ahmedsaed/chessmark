@@ -121,7 +121,7 @@ function TabButton({
       onClick={onClick}
       /* `min-h-11` is the touch target, not the look: the rest of the site's controls are 25-28px
          tall, which is comfortable with a cursor and a guess with a thumb. */
-      className={`flex min-h-11 flex-1 items-center justify-center font-mono text-[11px] uppercase tracking-[0.14em] transition-colors ${
+      className={`flex min-h-11 flex-1 items-center justify-center font-mono text-data uppercase tracking-[0.14em] transition-colors ${
         active ? "bg-surface-2 text-ink" : "bg-surface text-ink-faint hover:text-ink-dim"
       }`}
     >

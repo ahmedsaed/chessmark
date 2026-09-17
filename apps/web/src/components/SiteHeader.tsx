@@ -108,7 +108,7 @@ function NavLink({
     <Link
       href={link.href}
       aria-current={active ? "page" : undefined}
-      className={`font-mono text-[11px] uppercase tracking-[0.14em] transition-colors ${
+      className={`font-mono text-data uppercase tracking-[0.14em] transition-colors ${
         stacked ? "border-b border-line-soft px-5 py-3" : "px-2.5 py-1"
       } ${active ? "text-ink" : "text-ink-faint hover:text-ink-dim"}`}
     >

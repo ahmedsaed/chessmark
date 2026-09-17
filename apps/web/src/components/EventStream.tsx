@@ -192,7 +192,7 @@ export function EventStream({
             onClick={() => setFilter(id)}
             aria-pressed={filter === id}
             title={title}
-            className={`font-mono text-[10px] uppercase tracking-[0.1em] border px-2 py-1 transition-colors ${
+            className={`font-mono text-meta uppercase tracking-[0.1em] border px-2 py-1 transition-colors ${
               filter === id
                 ? "border-accent bg-accent text-on-accent"
                 : "border-line bg-surface text-ink-faint hover:text-ink-dim"
@@ -273,7 +273,7 @@ function Disclosure({
       type="button"
       onClick={onToggle}
       aria-expanded={open}
-      className={`inline-flex items-center gap-1.5 border bg-surface px-2 py-1 font-mono text-[10px] transition-colors hover:text-ink-dim ${
+      className={`inline-flex items-center gap-1.5 border bg-surface px-2 py-1 font-mono text-meta transition-colors hover:text-ink-dim ${
         open ? "border-machine-dim text-ink-dim" : "border-line text-ink-faint"
       }`}
     >
@@ -418,7 +418,7 @@ function Bubble({
         <button
           type="button"
           onClick={() => setOpen((shown) => !shown)}
-          className="font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint transition-colors hover:text-accent"
+          className="font-mono text-label uppercase tracking-[0.1em] text-ink-faint transition-colors hover:text-accent"
         >
           {open ? "show less" : "show all"}
         </button>
@@ -455,7 +455,7 @@ function Notice({ notice, bare = false }: { notice: StreamNotice; bare?: boolean
     <div className="flex flex-col gap-1">
       {seat && (
         <div
-          className={`flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint ${
+          className={`flex items-center gap-1.5 font-mono text-label uppercase tracking-[0.1em] text-ink-faint ${
             seat.colour === "white" ? "" : "flex-row-reverse"
           }`}
         >
@@ -468,12 +468,12 @@ function Notice({ notice, bare = false }: { notice: StreamNotice; bare?: boolean
           {seat.model ?? seat.colour}
         </div>
       )}
-      <div role="status" className={`border px-3 py-2 font-mono text-[11px] leading-relaxed ${tone}`}>
+      <div role="status" className={`border px-3 py-2 font-mono text-data leading-relaxed ${tone}`}>
       <span className="uppercase tracking-[0.1em]">{NOTICE_LABEL[notice.kind]}</span>
       {/* The count is the fact a folded run exists to state: not that it paused, but that it
           paused this many times for the same reason. */}
       {notice.count && notice.count > 1 && (
-        <span className="ml-1.5 border border-current px-1 py-px text-[9px]">
+        <span className="ml-1.5 border border-current px-1 py-px text-label">
           ×{notice.count}
         </span>
       )}
@@ -602,7 +602,7 @@ const Turn = memo(function Turn({
     <div className="flex flex-col gap-2" data-testid="turn">
       <div className={`flex flex-col gap-1.5 ${align}`}>
         <div
-          className={`flex items-center gap-1.5 font-mono text-[9px] uppercase tracking-[0.1em] text-ink-faint ${
+          className={`flex items-center gap-1.5 font-mono text-label uppercase tracking-[0.1em] text-ink-faint ${
             isWhite ? "" : "flex-row-reverse"
           }`}
         >
@@ -638,7 +638,7 @@ const Turn = memo(function Turn({
             {turn.reasoning.length === 0 && turn.withheldReasoning > 0 && (
               <span
                 title="Reasoning is withheld while you are playing this game — it is published when the game ends"
-                className="inline-flex items-center gap-1.5 border border-line bg-surface px-2 py-1 font-mono text-[10px] text-ink-faint"
+                className="inline-flex items-center gap-1.5 border border-line bg-surface px-2 py-1 font-mono text-meta text-ink-faint"
               >
                 <span aria-hidden className="text-machine">
                   ·
@@ -655,7 +655,7 @@ const Turn = memo(function Turn({
               <button
                 type="button"
                 onClick={() => onInspect(turn)}
-                className="inline-flex items-center border border-machine-deep bg-surface px-2 py-1 font-mono text-[9px] uppercase tracking-[0.1em] text-machine transition-colors hover:border-machine hover:text-ink-dim"
+                className="inline-flex items-center border border-machine-deep bg-surface px-2 py-1 font-mono text-label uppercase tracking-[0.1em] text-machine transition-colors hover:border-machine hover:text-ink-dim"
               >
                 raw
               </button>
@@ -705,7 +705,7 @@ const Turn = memo(function Turn({
           turn.said.map((message, index) => (
             <p
               key={`${turn.key}-s${index}`}
-              className={`max-w-[94%] rounded-[13px] px-3 py-2 text-[13px] font-medium leading-snug text-on-accent ${
+              className={`max-w-[94%] rounded-[13px] px-3 py-2 text-chat font-medium leading-snug text-on-accent ${
                 isWhite ? "rounded-bl-[3px] bg-accent" : "rounded-br-[3px] bg-machine"
               }`}
             >
@@ -722,7 +722,7 @@ const Turn = memo(function Turn({
       {turn.san && (
         <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
           <span className="h-px bg-line" />
-          <span className="tabular border border-accent-deep bg-surface px-2 py-0.5 font-mono text-[11px] text-accent">
+          <span className="tabular border border-accent-deep bg-surface px-2 py-0.5 font-mono text-data text-accent">
             {moveLabel(turn.ply, turn.san)}
           </span>
           <span className="h-px bg-line" />
@@ -773,7 +773,7 @@ function Block({
         <Bubble
           title="model output"
           text={block.text}
-          className={`border-accent-deep text-[13px] text-ink ${edge}`}
+          className={`border-accent-deep text-chat text-ink ${edge}`}
         />
       );
 
@@ -785,7 +785,7 @@ function Block({
          `make_move`, and what makes it readable is the reasoning on either side of it — the try
          before, the correction after. */
       return (
-        <p className="max-w-[94%] border border-bad-deep bg-surface px-2 py-1 font-mono text-[10px] leading-relaxed text-bad">
+        <p className="max-w-[94%] border border-bad-deep bg-surface px-2 py-1 font-mono text-meta leading-relaxed text-bad">
           {block.move} → illegal · attempt {block.attempt}
           {block.detail && <span className="block text-ink-faint">{block.detail}</span>}
         </p>
@@ -794,7 +794,7 @@ function Block({
     case "said":
       return (
         <p
-          className={`max-w-[94%] rounded-[13px] px-3 py-2 text-[13px] font-medium leading-snug text-on-accent ${
+          className={`max-w-[94%] rounded-[13px] px-3 py-2 text-chat font-medium leading-snug text-on-accent ${
             align === "left" ? "rounded-bl-[3px] bg-accent" : "rounded-br-[3px] bg-machine"
           }`}
         >
@@ -811,11 +811,11 @@ function Block({
       return (
         <div
           role="status"
-          className="w-full border border-bad-deep bg-surface px-3 py-2 font-mono text-[10px] leading-relaxed text-bad"
+          className="w-full border border-bad-deep bg-surface px-3 py-2 font-mono text-meta leading-relaxed text-bad"
         >
           <span className="uppercase tracking-[0.1em]">paused</span>
           {block.count > 1 && (
-            <span className="ml-1.5 border border-current px-1 py-px text-[9px]">
+            <span className="ml-1.5 border border-current px-1 py-px text-label">
               ×{block.count}
             </span>
           )}
@@ -895,7 +895,7 @@ function Tool({ tool, align }: { tool: ToolCallView; align: "left" | "right" }) 
         onClick={() => hasResult && setOpen(!open)}
         aria-expanded={hasResult ? open : undefined}
         disabled={!hasResult}
-        className={`inline-flex items-center gap-1.5 border bg-surface px-2 py-1 text-left font-mono text-[10px] transition-colors ${
+        className={`inline-flex items-center gap-1.5 border bg-surface px-2 py-1 text-left font-mono text-meta transition-colors ${
           tool.ok
             ? "border-machine-deep text-machine hover:border-machine"
             : "border-bad-deep text-bad"
@@ -912,7 +912,7 @@ function Tool({ tool, align }: { tool: ToolCallView; align: "left" | "right" }) 
       </button>
 
       {open && tool.result && (
-        <pre className="max-h-56 overflow-auto border border-line bg-surface p-2 font-mono text-[10px] leading-relaxed text-ink-dim">
+        <pre className="max-h-56 overflow-auto border border-line bg-surface p-2 font-mono text-meta leading-relaxed text-ink-dim">
           {JSON.stringify(tool.result, null, 2)}
         </pre>
       )}

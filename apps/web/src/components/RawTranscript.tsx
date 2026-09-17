@@ -82,15 +82,15 @@ export function RawTranscript({
         className="flex max-h-full w-full max-w-[900px] flex-col border border-line bg-surface-2 outline-none"
       >
         <div className="flex flex-none items-center gap-3 border-b border-line bg-surface-3 px-4 py-2.5">
-          <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-accent">
+          <span className="font-mono text-data uppercase tracking-[0.12em] text-accent">
             Raw transcript
           </span>
-          <span className="truncate font-mono text-[11px] text-ink-dim">{label}</span>
+          <span className="truncate font-mono text-data text-ink-dim">{label}</span>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="ml-auto flex-none border border-line px-2 py-0.5 font-mono text-[10px] text-ink-faint transition-colors hover:text-ink"
+            className="ml-auto flex-none border border-line px-2 py-0.5 font-mono text-meta text-ink-faint transition-colors hover:text-ink"
           >
             esc
           </button>
@@ -125,20 +125,20 @@ function Call({ call }: { call: RawCall }) {
   return (
     <section className="flex flex-col gap-2">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line-soft pb-1.5">
-        <span className="font-mono text-[11px] text-ink">call {call.sequence}</span>
-        <span className="font-mono text-[10px] text-ink-faint">{call.model_slug}</span>
+        <span className="font-mono text-data text-ink">call {call.sequence}</span>
+        <span className="font-mono text-meta text-ink-faint">{call.model_slug}</span>
         {call.provider && (
-          <span className="border border-good/40 px-1 py-px font-mono text-[9px] uppercase tracking-wider text-good">
+          <span className="border border-good/40 px-1 py-px font-mono text-label uppercase tracking-wider text-good">
             {call.provider}
           </span>
         )}
         {call.error && (
-          <span className="font-mono text-[10px] text-bad">error: {call.error}</span>
+          <span className="font-mono text-meta text-bad">error: {call.error}</span>
         )}
       </header>
 
       {/* The numbers and the payload that produced them, side by side — the point of LOG-07. */}
-      <dl className="tabular grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[10px] text-ink-faint sm:grid-cols-4">
+      <dl className="tabular grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-meta text-ink-faint sm:grid-cols-4">
         <Stat label="prompt" value={call.prompt_tokens.toLocaleString()} />
         <Stat label="cached" value={call.cached_tokens.toLocaleString()} />
         <Stat label="output" value={call.completion_tokens.toLocaleString()} />
@@ -174,7 +174,7 @@ function Payload({ title, value }: { title: string; value: unknown }) {
           type="button"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
-          className="flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint transition-colors hover:text-ink-dim"
+          className="flex items-center gap-1.5 font-mono text-meta uppercase tracking-[0.1em] text-ink-faint transition-colors hover:text-ink-dim"
         >
           <span aria-hidden className="text-machine">
             {open ? "▾" : "▸"}
@@ -185,14 +185,14 @@ function Payload({ title, value }: { title: string; value: unknown }) {
         <button
           type="button"
           onClick={() => navigator.clipboard?.writeText(text)}
-          className="border border-line px-1.5 py-px font-mono text-[9px] text-ink-faint transition-colors hover:text-ink"
+          className="border border-line px-1.5 py-px font-mono text-label text-ink-faint transition-colors hover:text-ink"
         >
           copy
         </button>
       </div>
 
       {open && (
-        <pre className="max-h-[340px] overflow-auto border border-line bg-surface p-2.5 font-mono text-[10.5px] leading-relaxed text-ink-dim">
+        <pre className="max-h-[340px] overflow-auto border border-line bg-surface p-2.5 font-mono text-meta leading-relaxed text-ink-dim">
           {text}
         </pre>
       )}

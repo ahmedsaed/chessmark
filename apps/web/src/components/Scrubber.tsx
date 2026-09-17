@@ -148,7 +148,7 @@ export function Scrubber({
             title={`${playing ? "Pause" : "Play"} (space)`}
             className="flex h-11 w-14 flex-none items-center justify-center border border-accent-deep bg-accent text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40 sm:h-7 sm:w-9"
           >
-            <span aria-hidden className="text-[11px] leading-none">
+            <span aria-hidden className="text-data leading-none">
               {playing ? "❚❚" : "▶"}
             </span>
           </button>
@@ -164,11 +164,11 @@ export function Scrubber({
         {/* `ml-auto` on the speeds wins over `justify-center` on `sm` — an auto margin takes the free
             space before justification sees it — so the desktop row is the one it always was. */}
         <div className="flex min-w-0 flex-1 flex-wrap items-center justify-center gap-2 sm:gap-1.5">
-          <span className="tabular flex-none font-mono text-[11px] text-ink-dim sm:ml-1">
+          <span className="tabular flex-none font-mono text-data text-ink-dim sm:ml-1">
             {ply}
             <span className="text-ink-faint">/{total}</span>
           </span>
-          <span className="tabular flex-none font-mono text-[10px] text-ink-faint">
+          <span className="tabular flex-none font-mono text-meta text-ink-faint">
             {moveNumber > 0 ? `move ${moveNumber}` : "start"}
           </span>
 
@@ -179,7 +179,7 @@ export function Scrubber({
                 type="button"
                 onClick={() => onSpeedChange(index)}
                 aria-pressed={speed === index}
-                className={`border px-2.5 py-2 font-mono text-[10px] transition-colors sm:px-1.5 sm:py-0.5 sm:text-[9px] ${
+                className={`border px-2.5 py-2 font-mono text-meta transition-colors sm:px-1.5 sm:py-0.5 sm:text-label ${
                   speed === index
                     ? "border-accent text-accent"
                     : "border-line text-ink-faint hover:text-ink-dim"
@@ -242,7 +242,7 @@ function Control({
          most. The desktop size is unchanged — this only grows where there is no pointer. */
       className="flex h-11 w-11 flex-none items-center justify-center border border-line bg-surface text-ink-dim transition-colors hover:border-accent-dim hover:text-ink disabled:opacity-30 disabled:hover:border-line sm:h-7 sm:w-7"
     >
-      <span aria-hidden className="text-[10px] leading-none">
+      <span aria-hidden className="text-meta leading-none">
         {children}
       </span>
     </button>

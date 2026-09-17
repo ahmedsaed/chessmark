@@ -47,7 +47,7 @@ export function ModelTable({ models }: { models: ModelInfo[] }) {
           aria-label="Search models"
           className="min-w-0 flex-1 border border-line bg-surface px-3 py-2 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-accent-dim focus:outline-none"
         />
-        <span className="tabular flex-none font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+        <span className="tabular flex-none font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">
           {shown} of {models.length}
         </span>
       </div>
@@ -61,11 +61,11 @@ export function ModelTable({ models }: { models: ModelInfo[] }) {
       {groups.map((group) => (
         <section key={group.provider}>
           <div className="mb-2 flex items-baseline gap-3">
-            <h2 className="font-mono text-[10px] uppercase tracking-[0.18em] text-ink-faint">
+            <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
               {group.provider}
             </h2>
             <span className="h-px flex-1 bg-line-soft" aria-hidden />
-            <span className="tabular font-mono text-[10px] text-ink-faint">
+            <span className="tabular font-mono text-meta text-ink-faint">
               {group.models.length}
             </span>
           </div>
@@ -84,19 +84,19 @@ export function ModelTable({ models }: { models: ModelInfo[] }) {
                   {/* UI-07: cost, context window, reasoning support — the three facts that decide
                       whether a model is worth playing, and whether it can finish. */}
                   <span
-                    className="tabular hidden font-mono text-[10px] text-ink-faint sm:block"
+                    className="tabular hidden font-mono text-meta text-ink-faint sm:block"
                     title="input / output per million tokens"
                   >
                     {usdPerMillion(model.prompt_usd_per_token)} /{" "}
                     {usdPerMillion(model.completion_usd_per_token)}
                   </span>
                   <span
-                    className="tabular hidden font-mono text-[10px] text-ink-faint sm:block"
+                    className="tabular hidden font-mono text-meta text-ink-faint sm:block"
                     title="context window — the transcript grows ~1.8k tokens a ply"
                   >
                     {context(model.context_length)}
                   </span>
-                  <span className="hidden font-mono text-[10px] sm:block">
+                  <span className="hidden font-mono text-meta sm:block">
                     {model.supports_reasoning ? (
                       <span className="text-machine" title="exposes reasoning">
                         reasons
