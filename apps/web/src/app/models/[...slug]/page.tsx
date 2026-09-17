@@ -5,6 +5,7 @@ import { GameCard } from "@/components/GameCard";
 import { CreditBadge } from "@/components/ModelPicker";
 import { getModel, listGamesByModel } from "@/lib/api";
 import { modelSlugFromSegments } from "@/lib/models";
+import { siteUrl } from "@/lib/site";
 import type {
   Contestant,
   ExcludedGame,
@@ -45,12 +46,24 @@ export async function generateMetadata({ params }: PageProps<"/models/[...slug]"
   /* The canonical is built from the **registry's** id, not from the URL segments. A model is
      reachable under more than one spelling of its slug, and without this each spelling is a
      separate page to a crawler with the ranking split between them. */
+  /* **The card is named, not colocated.** `opengraph-image.tsx` is illegal inside a catch-all
+     segment, so this model's card is a Route Handler at `/og/model/<slug>` and nothing wires it up
+     automatically — setting `openGraph` here would otherwise leave the page with no image at all,
+     which is exactly how seven other routes lost theirs. Built from the registry's id for the same
+     reason the canonical is: one card per model, not one per spelling of its slug. */
+  const card = `${siteUrl}/og/model/${model.openrouter_id}`;
+
   return {
     title,
     description,
     alternates: { canonical: `/models/${model.openrouter_id}` },
-    openGraph: { title: `${title} — Chessmark`, description, type: "profile" },
-    twitter: { title: `${title} — Chessmark`, description },
+    openGraph: {
+      title: `${title} — Chessmark`,
+      description,
+      type: "profile",
+      images: [{ url: card, width: 1200, height: 630, alt: `${title} on Chessmark` }],
+    },
+    twitter: { title: `${title} — Chessmark`, description, images: [card] },
   };
 }
 

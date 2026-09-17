@@ -177,6 +177,30 @@ value verbatim. That cuts both ways and is the thing to know before editing any 
   id rather than the URL — a model is reachable under more than one spelling of its slug, and an
   era is a view of one event (ADR-0043), not a page of its own.
 
+**A page either colocates an `opengraph-image` or names one.** The same inheritance rule bit a
+second time and harder: setting `openGraph` replaces the parent's *whole* block, including the
+`images` the root's `opengraph-image.tsx` injects — so `pageMetadata`, written to stop every page
+sharing the root's card, shipped seven routes with **no card at all**. `/sign-in` is the control
+that identified it: it sets no metadata, so it replaced nothing, and it was the only page besides
+`/` that kept its image. A file in the *same* segment outranks the page's `openGraph`; an inherited
+one does not. `site.spec.ts` asserts every public route has exactly one `og:image`, which is the
+only thing making the "or names one" half safe.
+
+**A card cannot live inside a catch-all segment.** Next.js refuses
+`models/[...slug]/opengraph-image.tsx` — *"catch all segment must be the last segment modifying the
+path"* — because the image is served below a segment that has already claimed everything below it.
+That card is a Route Handler at `/og/model/<slug>` instead, named from `generateMetadata`.
+
+**A config redirect runs before routing, so it can swallow a card.** `/leaderboard/:slug →
+/models/:slug`, written for the old contestant URLs, matched `/leaderboard/opengraph-image` and
+served the *models* card for the leaderboard — 200, valid PNG, wrong picture. The redirect excludes
+the route name now, and the test fetches each card with redirects disabled, because following one
+lands on a perfectly good card and proves nothing.
+
+**Cards are revalidated, not rendered per request.** Every card reads live data, and an unfurl is
+not traffic anybody is waiting on: `REVALIDATE_SECONDS` in `lib/og/theme.ts` is the one clock they
+all share. A card is a picture *of* a page, so it can afford to be staler than the page is.
+
 **`themeColor` lives in a `viewport` export**, not in `metadata` — Next.js 16 errors on it there.
 
 **The icons are the header's `Mark`**, the 3×3 checker, in the header's own board colours and in

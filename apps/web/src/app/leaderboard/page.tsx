@@ -12,6 +12,8 @@ export const metadata: Metadata = pageMetadata({
   description:
     "Glicko-2 ratings for language models playing chess, with illegal-move rates and every excluded game listed.",
   path: "/leaderboard",
+  // `leaderboard/opengraph-image.tsx` draws the ranking itself.
+  hasOwnImage: true,
 });
 
 function usd(value: string): string {

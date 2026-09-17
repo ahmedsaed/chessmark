@@ -1,0 +1,238 @@
+/**
+ * The furniture every social card shares: the frame, the wordmark, and the few text shapes.
+ *
+ * A card exists to say *which site this is* before anyone clicks, so the parts that identify the
+ * site should be identical on all of them and the parts that identify the page should be the only
+ * thing that differs. Writing the wordmark into each card by hand is how two of them ended up with
+ * different letter-spacing and different accents.
+ *
+ * **Every element carries `display: flex`.** Satori has no block layout: an element without it
+ * either disappears or throws, and a `<div>` with two children and no display is the single most
+ * common way to get a blank card. The primitives here are as much about not forgetting that as
+ * about not repeating the padding.
+ */
+
+import { COLOUR } from "@/lib/og/theme";
+
+/**
+ * The outer frame. `children` are laid out left to right — a card is a picture beside a caption.
+ *
+ * `padding` is deliberately generous: an unfurler crops to its own aspect ratio, and every client
+ * crops differently, so anything closer to the edge than this is something somebody will not see.
+ */
+export function Card({ children, gap = 56 }: { children: React.ReactNode; gap?: number }) {
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap,
+        padding: "0 68px",
+        background: COLOUR.ground,
+        color: COLOUR.ink,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A card with nothing to put beside the words.
+ *
+ * A model that has never played has no position of its own to show, and `Card` + `Panel` left the
+ * text in the left third of a 1200px image with the rest empty — which reads as a card that failed
+ * to load rather than one with less to say. Centred, and with the type a size up, the same content
+ * fills the frame.
+ */
+export function CentredCard({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "0 90px",
+        background: COLOUR.ground,
+        color: COLOUR.ink,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** The side of the card that carries words. */
+export function Panel({ children, gap = 0 }: { children: React.ReactNode; gap?: number }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, gap, minWidth: 0 }}>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * `CHESSMARK`, and optionally what part of it this is.
+ *
+ * The section label sits beside the wordmark rather than under the title, because a reader scanning
+ * a timeline gets one glance: "CHESSMARK · LEADERBOARD" answers *what am I looking at* in that
+ * glance, and a title alone does not.
+ */
+export function Wordmark({ section }: { section?: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 14, fontSize: 21 }}>
+      <div style={{ display: "flex", letterSpacing: 8, color: COLOUR.accent }}>CHESSMARK</div>
+      {section && (
+        <>
+          <div style={{ display: "flex", color: COLOUR.inkFaint }}>·</div>
+          <div style={{ display: "flex", letterSpacing: 5, color: COLOUR.inkFaint }}>
+            {section.toUpperCase()}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The card's headline. One line, clipped — a card is not a place to read a long name. */
+export function Title({ children, size = 52 }: { children: React.ReactNode; size?: number }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        marginTop: 20,
+        fontSize: size,
+        lineHeight: 1.12,
+        // Satori honours neither `text-overflow` nor `-webkit-line-clamp`, so the guard against a
+        // 60-character model name pushing the stats off the card is the height, not an ellipsis.
+        maxHeight: size * 2.3,
+        overflow: "hidden",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function Subtitle({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{ display: "flex", marginTop: 18, fontSize: 24, color: COLOUR.inkDim }}>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A row of figures along the foot of the card.
+ *
+ * Each is a value over a label, because that is how the site's own stat blocks read and a card
+ * that reads differently from the page it links to is a small lie about where the link goes.
+ */
+export function Stats({ items }: { items: { value: string; label: string; tone?: string }[] }) {
+  return (
+    <div style={{ display: "flex", marginTop: 32, gap: 40 }}>
+      {items.map((item) => (
+        <div key={item.label} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", fontSize: 34, color: item.tone ?? COLOUR.ink }}>
+            {item.value}
+          </div>
+          <div style={{ display: "flex", fontSize: 17, letterSpacing: 2, color: COLOUR.inkFaint }}>
+            {item.label.toUpperCase()}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * A ranked list — the leaderboard's rows, or a pool's table.
+ *
+ * Fixed-width columns rather than a table: Satori has no table layout, and a flex row whose cells
+ * size to their content produces ragged numbers down the card. The rank column is narrow, the name
+ * takes what is left, and the figure is right-aligned by giving it a width and `justifyContent`.
+ */
+export function Standings({
+  rows,
+  highlightFirst = true,
+}: {
+  rows: { place: number; name: string; figure: string; muted?: boolean }[];
+  highlightFirst?: boolean;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", marginTop: 26, gap: 10 }}>
+      {rows.map((row) => {
+        const leader = highlightFirst && row.place === 1;
+        return (
+          <div
+            key={`${row.place}-${row.name}`}
+            style={{ display: "flex", alignItems: "center", gap: 18, fontSize: 27 }}
+          >
+            <div
+              style={{
+                display: "flex",
+                width: 34,
+                justifyContent: "flex-end",
+                color: leader ? COLOUR.accent : COLOUR.inkFaint,
+              }}
+            >
+              {row.place}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                flex: 1,
+                minWidth: 0,
+                overflow: "hidden",
+                color: row.muted ? COLOUR.inkDim : COLOUR.ink,
+              }}
+            >
+              {row.name}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                color: leader ? COLOUR.accent : COLOUR.inkDim,
+              }}
+            >
+              {row.figure}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * The fallback every card falls back to.
+ *
+ * A card whose record has gone — a deleted game, a model that left the catalogue, a mistyped slug
+ * — must still be a picture. An unfurler that gets a 404 for the image shows the link with a
+ * broken-image box, which looks like the site is down rather than like the page is missing.
+ */
+export function Missing({ what }: { what: string }) {
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 20,
+        background: COLOUR.ground,
+      }}
+    >
+      <Wordmark />
+      <div style={{ display: "flex", fontSize: 38, color: COLOUR.inkDim }}>{what}</div>
+    </div>
+  );
+}

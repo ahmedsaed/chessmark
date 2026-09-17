@@ -86,8 +86,34 @@ export const staticRoutes: StaticRoute[] = [
  * produced the same card, word for word, as sharing the site root. The canonical is per-page for
  * the same reason, and must never move to the layout: inherited, it would mark the whole site a
  * duplicate of `/`.
+ *
+ * **And "inherited wholesale" is why this then shipped pages with no card at all.** Setting
+ * `openGraph` here *replaces* the parent's whole block, including the `images` that
+ * `app/opengraph-image.tsx` injects through the file convention — so the fix for "every page
+ * shares the root card" turned into "seven pages have no card". Eight months of `/leaderboard`,
+ * `/models`, `/about`, `/methodology`, `/play` and both tournament routes unfurling as bare text.
+ *
+ * `/sign-in` is what proves the mechanism: it sets no metadata, so it never replaced anything, and
+ * it is the only page other than `/` that kept the card.
+ *
+ * `/games/[id]` kept its own because a file **in the same segment** outranks the page's
+ * `openGraph` object, which an inherited one does not. So the rule is: a route either colocates an
+ * `opengraph-image`, or it names the root's here. Naming it costs one line and means a new page
+ * cannot be published cardless by forgetting one.
  */
-export function pageMetadata(page: { title: string; description: string; path: string }) {
+export function pageMetadata(page: {
+  title: string;
+  description: string;
+  path: string;
+  /**
+   * Set by a route that colocates its own `opengraph-image`, so this does not also point at the
+   * root's — the file wins either way, and listing both would put two `og:image` tags on the page
+   * and let the unfurler choose.
+   */
+  hasOwnImage?: boolean;
+}) {
+  const card = `${siteUrl}/opengraph-image`;
+
   return {
     title: page.title,
     description: page.description,
@@ -96,7 +122,12 @@ export function pageMetadata(page: { title: string; description: string; path: s
       title: `${page.title} — ${siteName}`,
       description: page.description,
       url: `${siteUrl}${page.path === "/" ? "" : page.path}`,
+      ...(page.hasOwnImage ? {} : { images: [{ url: card, width: 1200, height: 630 }] }),
     },
-    twitter: { title: `${page.title} — ${siteName}`, description: page.description },
+    twitter: {
+      title: `${page.title} — ${siteName}`,
+      description: page.description,
+      ...(page.hasOwnImage ? {} : { images: [card] }),
+    },
   };
 }

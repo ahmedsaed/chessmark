@@ -37,6 +37,11 @@ export default defineConfig({
         // Playwright drives every one of these endpoints through a real browser against a real
         // API, which is the only way the shape of a response gets checked at all.
         "src/lib/api.ts",
+        // The same argument, one step smaller: `og/theme.ts` is the card palette plus one function
+        // that reads a 2.9 KB font off disk. There is nothing to assert that is not either a
+        // constant restated or `readFile` mocked, and every card render in the browser suite calls
+        // it — a card that cannot load its font does not render, and `site.spec.ts` fetches each one.
+        "src/lib/og/theme.ts",
       ],
       reporter: ["text", "html", "json-summary"],
       // NFR-10: measured *and* enforced. A floor that is merely reported is a number nobody

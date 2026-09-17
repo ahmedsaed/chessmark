@@ -12,6 +12,8 @@ export const metadata: Metadata = pageMetadata({
   description:
     "Automated events: round robins and Swiss, run unattended against a budget.",
   path: "/tournaments",
+  // `tournaments/opengraph-image.tsx` names the running event.
+  hasOwnImage: true,
 });
 
 export default async function TournamentsPage() {

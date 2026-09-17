@@ -178,3 +178,99 @@ for (const [what, path] of [
     expect(response?.status()).toBe(404);
   });
 }
+
+// ====================================================================== social cards
+
+/**
+ * Every public page carries a social card (UI-06).
+ *
+ * **This is the assertion that was missing, and the bug it would have caught was total.** Metadata
+ * keys are inherited wholesale, so `pageMetadata` setting an `openGraph` block replaced the root's
+ * — including the `images` the file convention injects — and seven routes shipped with no
+ * `og:image` at all. Sharing `/leaderboard` anywhere produced a bare link. Nothing in a browser
+ * looks wrong, nothing in the build warns, and the only place it shows is somebody else's timeline.
+ *
+ * Asserted for every route at once, so a page added without a card fails here rather than being
+ * discovered in a screenshot months later.
+ */
+test("every public page has a social card", async ({ page }) => {
+  const { replayGame, tournament } = fixtures();
+  const paths = [
+    "/",
+    "/leaderboard",
+    "/models",
+    "/play",
+    "/tournaments",
+    "/about",
+    "/methodology",
+    `/games/${replayGame}`,
+    ...(tournament ? [`/tournaments/${tournament}`] : []),
+  ];
+
+  for (const path of paths) {
+    await page.goto(path);
+
+    const image = page.locator('meta[property="og:image"]');
+    // Exactly one: a page that names the root's card *and* colocates its own would emit two and
+    // leave the choice to whichever unfurler read it.
+    await expect(image, `${path} should have one og:image`).toHaveCount(1);
+
+    const url = await image.getAttribute("content");
+    expect(url, `${path}'s og:image should be absolute`).toMatch(/^https?:\/\//);
+  }
+});
+
+/**
+ * And the card is a real image, not a 404 or an error page with an image content type.
+ *
+ * A generated card reads live data, so it can fail in ways the page it belongs to does not — an
+ * API timeout inside `ImageResponse` is a broken-image box next to a link that works. Fetched
+ * rather than rendered: what an unfurler does is exactly this request.
+ */
+test("every social card renders", async ({ page, request }) => {
+  const { replayGame, tournament } = fixtures();
+  const paths = [
+    "/",
+    "/leaderboard",
+    "/models",
+    "/tournaments",
+    `/games/${replayGame}`,
+    ...(tournament ? [`/tournaments/${tournament}`] : []),
+  ];
+
+  for (const path of paths) {
+    await page.goto(path);
+    const url = await page.locator('meta[property="og:image"]').getAttribute("content");
+
+    /* **Not followed.** A redirect that lands on *a* valid card passes a naive check and is still
+       wrong: `/leaderboard/:slug → /models/:slug` runs before routing and served the models card
+       for the leaderboard, 200 and several hundred KB of perfectly good PNG. The card a page names
+       has to be the card that page's URL returns. */
+    const response = await request.get(url!, { maxRedirects: 0 });
+
+    expect(response.status(), `${path}'s card should render, not redirect`).toBe(200);
+    expect(response.headers()["content-type"]).toContain("image/png");
+    // A blank 1200×630 PNG is a couple of hundred bytes; anything real is far larger. This is the
+    // cheapest way to tell "it drew something" from "it drew nothing and returned cleanly".
+    expect((await response.body()).byteLength).toBeGreaterThan(5_000);
+  }
+});
+
+/**
+ * A card for a record that does not exist is still a card.
+ *
+ * `notFound()` is right for the page and wrong for its image: an unfurler that gets a 404 for the
+ * image draws a broken-image box, which reads as "this site is broken" rather than "that page is
+ * gone". Each card falls back to a plain titled image instead.
+ */
+test("a missing record still renders a card rather than a broken image", async ({ request }) => {
+  for (const path of [
+    "/og/model/nobody/nothing",
+    "/tournaments/never-happened/opengraph-image",
+  ]) {
+    const response = await request.get(path);
+
+    expect(response.status(), `${path} should render`).toBe(200);
+    expect(response.headers()["content-type"]).toContain("image/png");
+  }
+});
