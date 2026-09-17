@@ -28,9 +28,16 @@ export default async function Image() {
     (
       <Card board={<Board fen={fen} square={54} />}>
         <Wordmark />
-        <Title size={44}>{siteTagline}</Title>
+        {/* Three lines, because the tagline is a sentence and a sentence that stops halfway is worse
+            than no tagline at all. It read "Language models play chess. Everything is" on the most
+            shared URL the site has. */}
+        <Title size={44} lines={3}>
+          {siteTagline}
+        </Title>
+        {/* Not "…is recorded" — the tagline above already ends on that word, and the two lines
+            landed one under the other. */}
         <Subtitle>
-          Agents move through tools. Every request, reasoning trace and taunt is recorded.
+          Agents move through tools. Every request, reasoning trace and taunt is replayable.
         </Subtitle>
 
         <Stats

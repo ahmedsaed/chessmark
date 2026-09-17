@@ -125,22 +125,49 @@ export function Wordmark({ section }: { section?: string }) {
   );
 }
 
-/** The card's headline. One line, clipped — a card is not a place to read a long name. */
-export function Title({ children, size = 52 }: { children: React.ReactNode; size?: number }) {
+const LINE_HEIGHT = 1.12;
+
+/**
+ * The card's headline.
+ *
+ * **`lines` is a budget the text is cut to, not a height it is clipped at.** The first version set
+ * `maxHeight` and `overflow: hidden` and let anything taller disappear, which is silent by
+ * construction: the site's own card read *"Language models play chess. Everything is"* — the
+ * tagline stopping mid-sentence, on the most-shared URL there is, looking entirely deliberate.
+ *
+ * A headline that does not fit should say so with `...`, or be given the room. Both are decisions;
+ * a clipped sentence is neither.
+ *
+ * The budget is in characters because that is what `clip` can work in, and it is approximate on
+ * purpose — glyph widths vary, the estimate is deliberately conservative, and the `maxHeight`
+ * stays as a backstop so a bad estimate costs a truncated line rather than a card with its stats
+ * pushed off the bottom.
+ */
+export function Title({
+  children,
+  size = 52,
+  lines = 2,
+}: {
+  children: React.ReactNode;
+  size?: number;
+  /** How many lines the headline may use. Give it enough for the words you mean to show. */
+  lines?: number;
+}) {
+  // ~0.52em per glyph across this face at these sizes; measured against the rendered cards.
+  const perLine = Math.floor((CARD.width - 68 * 2 - 56 - 436) / (size * 0.52));
+
   return (
     <div
       style={{
         display: "flex",
         marginTop: 20,
         fontSize: size,
-        lineHeight: 1.12,
-        // Satori honours neither `text-overflow` nor `-webkit-line-clamp`, so the guard against a
-        // 60-character model name pushing the stats off the card is the height, not an ellipsis.
-        maxHeight: size * 2.3,
+        lineHeight: LINE_HEIGHT,
+        maxHeight: Math.ceil(size * LINE_HEIGHT * lines) + 4,
         overflow: "hidden",
       }}
     >
-      {children}
+      {typeof children === "string" ? clip(children, perLine * lines) : children}
     </div>
   );
 }
