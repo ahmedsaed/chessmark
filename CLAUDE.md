@@ -167,6 +167,13 @@ it.
   real data, not only the fixture — a name, a rating and a slug in this project are all longer in
   production than in the seed, and short test data hides exactly the bugs that width causes. Then
   write the assertion that would have caught what you saw.
+- **No cutting corners.** The shortcut that "works" is the one nobody revisits, and it ships as the
+  finished thing. A placeholder that renders is not a feature: four social cards drew the *opening
+  position* beside real standings — thirty-two pieces on their starting squares, on a site whose
+  whole pitch is that these models are playing right now. It looked deliberate, it passed every
+  check, and it said nothing. If the real answer needs another read, another helper or another
+  half-hour, do that; if it genuinely cannot be done now, say so plainly and put it in ROADMAP's
+  *Known gaps* rather than leaving something that merely looks finished.
 - **Green is not evidence on its own.** Before believing a passing suite, break the thing on purpose
   and watch it go red. When output is cached, generated or rendered somewhere else, confirm you are
   looking at *this* build: a byte-identical result across three different source states means the

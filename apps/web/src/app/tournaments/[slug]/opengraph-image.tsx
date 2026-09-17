@@ -10,9 +10,9 @@ import { ImageResponse } from "next/og";
 
 import { getTournament } from "@/lib/api";
 import { Board } from "@/lib/og/board";
-import { START_PLACEMENT } from "@/lib/og/fen";
+import { featuredFen } from "@/lib/og/featured";
 import { Card, Missing, Standings, Stats, Title, Wordmark } from "@/lib/og/shell";
-import { CARD, CONTENT_TYPE, COLOUR, pieceFont, REVALIDATE_SECONDS } from "@/lib/og/theme";
+import { CARD, CONTENT_TYPE, COLOUR, REVALIDATE_SECONDS } from "@/lib/og/theme";
 
 export const alt = "A Chessmark tournament";
 export const size = CARD;
@@ -21,19 +21,22 @@ export const revalidate = REVALIDATE_SECONDS;
 
 export default async function Image({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const [tournament, fonts] = await Promise.all([getTournament(slug), pieceFont()]);
+  const tournament = await getTournament(slug);
 
   if (!tournament) {
-    return new ImageResponse(<Missing what="No such tournament" />, { ...size, fonts });
+    return new ImageResponse(<Missing what="No such tournament" />, size);
   }
 
+  /* This event's own live game, or its most recent — the schedule is already on the payload, so
+     the board costs one read rather than a list. */
+  const fen = await featuredFen(tournament.games);
   const ranked = tournament.standings.some((row) => row.rating !== null);
   const top = tournament.standings.slice(0, 5);
   const { stats } = tournament;
 
   return new ImageResponse(
     (
-      <Card board={<Board fen={START_PLACEMENT} square={54} />}>
+      <Card board={<Board fen={fen} square={54} />}>
           <Wordmark section={tournament.status} />
           <Title size={46}>{tournament.name}</Title>
 
@@ -68,6 +71,6 @@ export default async function Image({ params }: { params: Promise<{ slug: string
           />
       </Card>
     ),
-    { ...size, fonts },
+    size,
   );
 }

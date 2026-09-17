@@ -21,8 +21,8 @@ describe("ranks", () => {
     expect(shape(START_PLACEMENT)).toEqual([8, 8, 8, 8, 8, 8, 8, 8]);
     // a8 is a black rook, a1 a white one: rank 8 is drawn first, and the colours are what say
     // which end of the board a reader is looking at.
-    expect(board[0][0]).toEqual({ glyph: "♜", white: false });
-    expect(board[7][0]).toEqual({ glyph: "♜", white: true });
+    expect(board[0][0]).toEqual({ piece: "r", white: false });
+    expect(board[7][0]).toEqual({ piece: "r", white: true });
     expect(board[3].every((square) => square === null)).toBe(true);
   });
 
@@ -34,17 +34,17 @@ describe("ranks", () => {
   it("expands digits into empty squares", () => {
     const [rank] = ranks("4k3/8/8/8/8/8/8/8");
 
-    expect(rank.filter((square) => square !== null)).toEqual([{ glyph: "♚", white: false }]);
+    expect(rank.filter((square) => square !== null)).toEqual([{ piece: "k", white: false }]);
     expect(rank).toHaveLength(8);
   });
 
-  it("separates the two colours by case, not by glyph", () => {
-    /* Both sides are drawn with the filled glyphs and told apart by `color`. The outline set is
-       what a "white" piece nominally is, and a white outline on a light square is invisible. */
+  it("separates the two colours by case", () => {
+    /* The case of the FEN letter is the only thing that says which side a piece belongs to, and
+       it is what picks `wQ` or `bQ` out of the site's own piece set. */
     const [rank] = ranks("Qq6/8/8/8/8/8/8/8");
 
-    expect(rank[0]).toEqual({ glyph: "♛", white: true });
-    expect(rank[1]).toEqual({ glyph: "♛", white: false });
+    expect(rank[0]).toEqual({ piece: "q", white: true });
+    expect(rank[1]).toEqual({ piece: "q", white: false });
   });
 
   it("pads a short rank rather than drawing a ragged board", () => {

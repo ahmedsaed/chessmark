@@ -42,6 +42,11 @@ export default defineConfig({
         // constant restated or `readFile` mocked, and every card render in the browser suite calls
         // it — a card that cannot load its font does not render, and `site.spec.ts` fetches each one.
         "src/lib/og/theme.ts",
+        // Vendored artwork. `og/pieces.ts` is twelve SVG strings extracted from the package the
+        // site already renders — data with no branch in it, and asserting a path's `d` attribute
+        // would only restate the file. Whether the pieces *draw* is a picture, and the browser
+        // suite fetches every card.
+        "src/lib/og/pieces.ts",
       ],
       reporter: ["text", "html", "json-summary"],
       // NFR-10: measured *and* enforced. A floor that is merely reported is a number nobody

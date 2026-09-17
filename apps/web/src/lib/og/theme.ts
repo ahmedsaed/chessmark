@@ -16,9 +16,6 @@
  * must agree instead.
  */
 
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-
 /** Every card is 1200×630 — the size every unfurler crops to. */
 export const CARD = { width: 1200, height: 630 } as const;
 export const CONTENT_TYPE = "image/png";
@@ -62,18 +59,3 @@ export const COLOUR = {
   pieceWhite: "#f5efe2",
   pieceBlack: "#14110c",
 } as const;
-
-/**
- * The vendored six-glyph face, loaded per render.
- *
- * `ImageResponse` keeps its own default face for text, so this list adds the pieces rather than
- * replacing anything — passing it does not leave the labels as tofu, which is the obvious worry
- * and was worth checking against a real card before relying on it.
- *
- * Read from disk on each invocation. The file is 2.9 KB and the route is cached by
- * `REVALIDATE_SECONDS`, so a module-level cache would save a read that is already rare.
- */
-export async function pieceFont() {
-  const data = await readFile(join(process.cwd(), "assets/chess-pieces.ttf"));
-  return [{ name: "ChessPieces", data, style: "normal" as const, weight: 400 as const }];
-}

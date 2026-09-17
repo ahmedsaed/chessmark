@@ -11,11 +11,11 @@
 
 import { ImageResponse } from "next/og";
 
-import { getLeaderboard } from "@/lib/api";
+import { listGames, getLeaderboard } from "@/lib/api";
 import { Board } from "@/lib/og/board";
-import { START_PLACEMENT } from "@/lib/og/fen";
+import { featuredFen } from "@/lib/og/featured";
 import { Card, Standings, Stats, Title, Wordmark } from "@/lib/og/shell";
-import { CARD, CONTENT_TYPE, COLOUR, pieceFont, REVALIDATE_SECONDS } from "@/lib/og/theme";
+import { CARD, CONTENT_TYPE, COLOUR, REVALIDATE_SECONDS } from "@/lib/og/theme";
 
 export const alt = "The Chessmark leaderboard — Glicko-2 ratings over ranked games";
 export const size = CARD;
@@ -23,12 +23,16 @@ export const contentType = CONTENT_TYPE;
 export const revalidate = REVALIDATE_SECONDS;
 
 export default async function Image() {
-  const [leaderboard, fonts] = await Promise.all([getLeaderboard(), pieceFont()]);
+  /* Two reads in parallel: the ranking, and the game worth drawing beside it. */
+  const [leaderboard, fen] = await Promise.all([
+    getLeaderboard(),
+    listGames(undefined, 30).then(featuredFen),
+  ]);
   const top = leaderboard.rows.slice(0, 5);
 
   return new ImageResponse(
     (
-      <Card board={<Board fen={START_PLACEMENT} square={54} />}>
+      <Card board={<Board fen={fen} square={54} />}>
         <Wordmark section="Leaderboard" />
 
         {/* **No fragment around these.** Satori lays a `<>…</>` out as a node of its own rather than
@@ -66,6 +70,6 @@ export default async function Image() {
         )}
       </Card>
     ),
-    { ...size, fonts },
+    size,
   );
 }

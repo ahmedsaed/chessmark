@@ -7,11 +7,12 @@
 
 import { ImageResponse } from "next/og";
 
-import { listTournaments } from "@/lib/api";
+import { listGames, listTournaments } from "@/lib/api";
 import { Board } from "@/lib/og/board";
-import { START_PLACEMENT } from "@/lib/og/fen";
+import { featuredFen } from "@/lib/og/featured";
+import { sentenceCase } from "@/lib/og/clip";
 import { Card, Standings, Stats, Title, Wordmark } from "@/lib/og/shell";
-import { CARD, CONTENT_TYPE, COLOUR, pieceFont, REVALIDATE_SECONDS } from "@/lib/og/theme";
+import { CARD, CONTENT_TYPE, COLOUR, REVALIDATE_SECONDS } from "@/lib/og/theme";
 
 export const alt = "Chessmark tournaments";
 export const size = CARD;
@@ -19,12 +20,15 @@ export const contentType = CONTENT_TYPE;
 export const revalidate = REVALIDATE_SECONDS;
 
 export default async function Image() {
-  const [tournaments, fonts] = await Promise.all([listTournaments(6), pieceFont()]);
+  const [tournaments, fen] = await Promise.all([
+    listTournaments(6),
+    listGames(undefined, 30).then(featuredFen),
+  ]);
   const running = tournaments.filter((event) => event.status === "running").length;
 
   return new ImageResponse(
     (
-      <Card board={<Board fen={START_PLACEMENT} square={54} />}>
+      <Card board={<Board fen={fen} square={54} />}>
           <Wordmark section="Tournaments" />
           <Title>Events</Title>
 
@@ -33,7 +37,7 @@ export default async function Image() {
             rows={tournaments.slice(0, 4).map((event, index) => ({
               place: index + 1,
               name: event.name,
-              figure: event.status,
+              figure: sentenceCase(event.status),
               // A finished or abandoned event is still worth listing and is not the live one.
               muted: event.status !== "running",
             }))}
@@ -47,6 +51,6 @@ export default async function Image() {
           />
       </Card>
     ),
-    { ...size, fonts },
+    size,
   );
 }

@@ -28,7 +28,7 @@ import { getGame, getModel } from "@/lib/api";
 import { modelSlugFromSegments } from "@/lib/models";
 import { Board } from "@/lib/og/board";
 import { Card, CentredCard, Missing, Stats, Subtitle, Title, Wordmark } from "@/lib/og/shell";
-import { CARD, COLOUR, pieceFont, REVALIDATE_SECONDS } from "@/lib/og/theme";
+import { CARD, COLOUR, REVALIDATE_SECONDS } from "@/lib/og/theme";
 import type { LeaderboardRow } from "@/lib/types";
 
 /* A Route Handler has no `alt`/`size`/`contentType` exports — those belong to the file convention.
@@ -51,21 +51,21 @@ function headline(ratings: LeaderboardRow[]): LeaderboardRow | null {
 
 export async function GET(_request: Request, context: { params: Promise<{ slug: string[] }> }) {
   const { slug } = await context.params;
-  const [model, fonts] = await Promise.all([
-    getModel(modelSlugFromSegments(slug)),
-    pieceFont(),
-  ]);
+  const model = await getModel(modelSlugFromSegments(slug));
 
   if (!model) {
-    return new ImageResponse(<Missing what="No such model" />, { ...CARD, fonts });
+    return new ImageResponse(<Missing what="No such model" />, CARD);
   }
 
   const best = headline(model.ratings);
   const { stats } = model;
 
-  // The first ranked game of the best-rated contestant — the one whose number is on the card, so
-  // the board and the rating describe the same entrant.
-  const gameId = best ? model.rated_games?.[`${best.model_slug}@${best.quantization}`]?.[0] : undefined;
+  /* The **most recent** ranked game of the best-rated contestant, so the board and the rating
+     describe the same entrant and the position is the newest thing this model has done. First was
+     stable and arbitrary; last is stable and current, and a card that goes stale as a model keeps
+     playing is the wrong kind of stable. */
+  const played = best ? model.rated_games?.[`${best.model_slug}@${best.quantization}`] : undefined;
+  const gameId = played?.at(-1);
   const game = gameId ? await getGame(gameId) : null;
 
   const figures = (
@@ -99,7 +99,7 @@ export async function GET(_request: Request, context: { params: Promise<{ slug: 
           {figures}
         </CentredCard>
       ),
-      { ...CARD, fonts },
+      CARD,
     );
   }
 
@@ -112,6 +112,6 @@ export async function GET(_request: Request, context: { params: Promise<{ slug: 
           {figures}
       </Card>
     ),
-    { ...CARD, fonts },
+    CARD,
   );
 }

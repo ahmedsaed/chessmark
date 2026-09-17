@@ -1,19 +1,15 @@
 # assets
 
-## `chess-pieces.ttf`
+Empty, and worth a note rather than a deleted directory.
 
-A subset of **DejaVu Sans** containing only the six filled chess glyphs, `U+265A`–`U+265F`
-(♚♛♜♝♞♟). 2.9 KB — the full face is ~750 KB, and the OG card needs nothing else from it.
+**This held `chess-pieces.ttf`** — a 2.9 KB subset of DejaVu Sans containing only `U+265A`–`U+265F`
+(♚♛♜♝♞♟), vendored because a social card is rendered on the server by Satori, which has no access to
+system fonts, and a production host without DejaVu would have drawn every piece as a tofu box.
 
-It is vendored rather than loaded from the system because the OG image is generated on the server
-at request time, and a production host with no DejaVu installed would render every piece as a
-tofu box. A font the card depends on has to travel with the code.
+It is gone because the cards now draw `react-chessboard`'s `defaultPieces` — the same Cburnett SVGs
+the site itself renders, which `PlayerBar` already used for captured pieces. A card and the page it
+links to show the same shapes, and the pieces carry their own stroke, so a black piece reads on a
+dark square in a way a single-weight glyph never did.
 
-**Only the filled glyphs are subset, on purpose.** The outline glyphs `U+2654`–`U+2659` are the
-"white" pieces, and a white outline on a light square is close to invisible. Both colours are
-drawn with the filled shapes instead and separated by CSS `color`, which is legible on every
-square and matches how the pieces read on a physical board.
-
-Licence: Bitstream Vera Fonts Copyright, reproduced verbatim in `chess-pieces.LICENSE.txt`.
-The subset keeps the DejaVu name, which the licence permits — it forbids only reusing the
-"Bitstream" or "Vera" names.
+If a card ever needs a *text* face of its own, this is where it goes, and the reason above is why:
+`ImageResponse` ships a default face for text and nothing else.

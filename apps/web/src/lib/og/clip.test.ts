@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { clip } from "@/lib/og/clip";
+import { clip, sentenceCase } from "@/lib/og/clip";
 
 describe("clip", () => {
   it("leaves a name that fits exactly alone", () => {
@@ -47,5 +47,30 @@ describe("clip", () => {
     // Not reachable from the cards, and it must not throw or return something longer than asked.
     expect(clip("anything", 3).length).toBeLessThanOrEqual(3);
     expect(() => clip("anything", 0)).not.toThrow();
+  });
+});
+
+describe("sentenceCase", () => {
+  it("lifts the first letter and leaves the rest alone", () => {
+    /* The API speaks in lowercase enum values, which is right in a payload and wrong on a card. */
+    expect(sentenceCase("running")).toBe("Running");
+    expect(sentenceCase("checkmate")).toBe("Checkmate");
+  });
+
+  it("does not touch a word that is already capitalised", () => {
+    expect(sentenceCase("Running")).toBe("Running");
+  });
+
+  it("leaves the rest of the string exactly as it was", () => {
+    // `illegal_move_forfeit` arrives with its underscores already turned into spaces, and the
+    // words after the first are not title-cased — this is a sentence, not a heading.
+    expect(sentenceCase("illegal move forfeit")).toBe("Illegal move forfeit");
+    expect(sentenceCase("insufficient material")).toBe("Insufficient material");
+  });
+
+  it("survives an empty string", () => {
+    // `game.termination` is nullable, and the card coalesces it to "" before calling this.
+    expect(sentenceCase("")).toBe("");
+    expect(() => sentenceCase("")).not.toThrow();
   });
 });

@@ -7,20 +7,11 @@
  * JSX module into a report that is meant to measure rules.
  */
 
-/** The filled glyphs, `U+265A`–`U+265F` — the only six in the vendored subset. */
-const GLYPH: Record<string, string> = {
-  k: "\u265a",
-  q: "\u265b",
-  r: "\u265c",
-  b: "\u265d",
-  n: "\u265e",
-  p: "\u265f",
-};
-
 export const START_PLACEMENT = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR";
 
 export interface Square {
-  glyph: string;
+  /** The piece letter, lowercase — `k`, `q`, `r`, `b`, `n`, `p`. */
+  piece: string;
   white: boolean;
 }
 
@@ -46,7 +37,7 @@ export function ranks(fen: string): (Square | null)[][] {
         for (let empty = 0; empty < Number(character); empty += 1) cells.push(null);
       } else {
         cells.push({
-          glyph: GLYPH[character.toLowerCase()] ?? "",
+          piece: character.toLowerCase(),
           white: character === character.toUpperCase(),
         });
       }

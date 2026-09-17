@@ -19,3 +19,14 @@ export function clip(text: string, max: number): string {
 
   return `${text.slice(0, max - MARKER.length).trimEnd()}${MARKER}`;
 }
+
+/**
+ * First letter up.
+ *
+ * The API speaks in lowercase enum values — `running`, `checkmate`, `illegal_move_forfeit` — which
+ * is right in a payload and wrong on a card. The site's own chrome uppercases them with CSS; a card
+ * has no cascade, so it is done here.
+ */
+export function sentenceCase(text: string): string {
+  return text.length === 0 ? text : text[0].toUpperCase() + text.slice(1);
+}
