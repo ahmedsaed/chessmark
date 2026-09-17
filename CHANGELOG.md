@@ -15,6 +15,14 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-17
+
+**The site works on a phone, and a ceiling we imposed stopped counting as a result.** Five commits
+since `v0.3.0`. The two halves are unrelated in the code and had the same cause in the working
+habit: both were things nobody could see from where they were standing — one because the page was
+only ever opened on a desk, the other because the number it was wrong about agreed with the number
+beside it everywhere except one column.
+
 ### Changed
 
 - **The site is usable at phone width** (UI-11). Seven pages measured at 390px; the failures had one
@@ -47,6 +55,13 @@ file is only the record of *what shipped when*.
 
   Held by a new `mobile` Playwright project that CI runs beside `public`. Eight of its nine
   assertions fail without these changes.
+
+- **The board keeps the middle column** (UI-11). Not a phone bug — the desktop one the phone work
+  introduced and nearly shipped. `GameLayout` orders its slots twice, and `lg:order-none` let DOM
+  order stand: the grid was still three columns, the three tops still aligned, and the `min()`
+  middle column that exists to size the board went to the conversation while the board sat in a
+  323px rail. `replay.spec.ts` now asks which child is in which column, because everything short of
+  that passed.
 
 ### Fixed
 
@@ -755,6 +770,7 @@ flags the old code wrote.
 [ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
 [ADR-0044]: docs/adr/0044-the-ladder-resets-on-an-answered-call.md
 [ADR-0045]: docs/adr/0045-a-turn-keeps-the-rounds-it-completed.md
+[0.4.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.1.0
