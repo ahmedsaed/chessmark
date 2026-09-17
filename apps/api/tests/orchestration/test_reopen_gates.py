@@ -20,15 +20,18 @@ The refusals matter more than the acceptances, so most of these test those.
 
 from __future__ import annotations
 
+import datetime as dt
 import importlib
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.db.enums import EventType
-from chessmark.db.models import Game, LlmCall, Turn
+from chessmark.db import tournaments as tournament_repo
+from chessmark.db.enums import EventType, TournamentStatus
+from chessmark.db.models import Game, LlmCall, Tournament, TournamentGame, Turn
 from chessmark.db.repositories import append_event
 from chessmark.game import FORFEIT_TERMINATIONS, RESUMABLE_TERMINATIONS, Termination
 from tests.orchestration.conftest import Fixture
@@ -204,3 +207,108 @@ async def test_a_genuine_forfeit_is_never_cleared(db: AsyncSession, game: Fixtur
     assert cleared == 0
     await db.refresh(game.white)
     assert game.white.forfeited
+
+
+# ============================================================ a pairing a resume must un-settle
+
+
+async def _pairing(db: AsyncSession, game: Fixture, **verdict: object) -> TournamentGame:
+    """A pool pairing pointing at this game, carrying whatever verdict the caller names."""
+    tournament = Tournament(
+        slug=f"pool-{uuid.uuid4().hex[:8]}",
+        name="reopening",
+        format="pool",
+        status=TournamentStatus.RUNNING,
+        rounds=1,
+        max_concurrent=1,
+    )
+    db.add(tournament)
+    await db.flush()
+
+    row = TournamentGame(
+        tournament_id=tournament.id,
+        era=tournament_repo.current_era(),
+        round_number=1,
+        white_key="vendor/white",
+        black_key="vendor/black",
+        game_id=game.game.id,
+        started_at=dt.datetime.now(dt.UTC),
+        ended_at=dt.datetime.now(dt.UTC),
+        **verdict,
+    )
+    db.add(row)
+    await db.flush()
+    return row
+
+
+async def test_reopening_a_game_clears_the_score_its_pairing_holds(
+    db: AsyncSession, game: Fixture
+) -> None:
+    """`pool-free` round 175, and the reason this function now exists apart from `main`.
+
+    A 300-ply cap drew a game White was winning — a pawn on g7 and `g8=Q` on the move — and the
+    pairing recorded `0.5` for both seats. Reopening it has to take that back: the verdict came
+    from our own ceiling, and until the game reaches a new ending its pairing is *in flight*, which
+    is `white_score IS NULL` (the column's own comment).
+    """
+    row = await _pairing(db, game, white_score=0.5)
+
+    was = await _resume._unsettle_pairing(db, await _game(db, game))
+
+    assert was == "scored 0.5"
+    await db.refresh(row)
+    assert row.white_score is None
+    assert row.ended_at is None
+
+
+async def test_reopening_a_game_clears_the_abandonment_its_pairing_holds(
+    db: AsyncSession, game: Fixture
+) -> None:
+    """The other half a pairing can carry. A game abandoned on a provider 404 was resumed and
+    played on to checkmate at ply 120, and its pairing stayed *abandoned, no score* for ever."""
+    row = await _pairing(db, game, abandoned_reason="provider returned 404")
+
+    was = await _resume._unsettle_pairing(db, await _game(db, game))
+
+    assert was == "abandoned"
+    await db.refresh(row)
+    assert row.abandoned_reason is None
+    assert row.white_score is None
+    assert row.ended_at is None
+
+
+async def test_a_score_is_cleared_even_when_no_abandonment_is_recorded(
+    db: AsyncSession, game: Fixture
+) -> None:
+    """**The regression this file exists to stop repeating.**
+
+    The first version cleared `abandoned_reason` alone, so a pairing holding only a score kept it:
+    four resumed games ran for up to 89 plies while the schedule drew them as **played**, carrying
+    the score of the forfeit that had just been overturned, and the event reported `live: 0` with
+    four boards moving. Asserted as its own case because it passes trivially when both columns are
+    set — which is how it survived the test that did exist.
+    """
+    row = await _pairing(db, game, white_score=1.0)
+    assert row.abandoned_reason is None
+
+    await _resume._unsettle_pairing(db, await _game(db, game))
+
+    await db.refresh(row)
+    assert row.white_score is None
+
+
+async def test_a_pairing_with_nothing_recorded_is_left_alone(
+    db: AsyncSession, game: Fixture
+) -> None:
+    """Nothing to take back, and it must not report that it took something back — the caller
+    prints its answer, and a resume that claims to have re-opened a pairing it never touched sends
+    an operator looking for a change that did not happen."""
+    await _pairing(db, game)
+
+    assert await _resume._unsettle_pairing(db, await _game(db, game)) is None
+
+
+async def test_a_game_in_no_tournament_is_not_an_error(db: AsyncSession, game: Fixture) -> None:
+    """Most resumes are of a game nobody paired. The lookup returning nothing is the ordinary
+    case, not a failure, and a human game must be reopenable without a tournament row existing."""
+    assert await _resume._unsettle_pairing(db, await _game(db, game)) is None
