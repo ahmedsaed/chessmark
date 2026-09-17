@@ -10,7 +10,7 @@ import { ImageResponse } from "next/og";
 import { listModels } from "@/lib/api";
 import { Board } from "@/lib/og/board";
 import { START_PLACEMENT } from "@/lib/og/fen";
-import { Card, Panel, Stats, Subtitle, Title, Wordmark } from "@/lib/og/shell";
+import { Card, Stats, Subtitle, Title, Wordmark } from "@/lib/og/shell";
 import { CARD, CONTENT_TYPE, COLOUR, pieceFont, REVALIDATE_SECONDS } from "@/lib/og/theme";
 
 export const alt = "Every model Chessmark can field";
@@ -25,10 +25,7 @@ export default async function Image() {
 
   return new ImageResponse(
     (
-      <Card>
-        <Board fen={START_PLACEMENT} square={54} />
-
-        <Panel>
+      <Card board={<Board fen={START_PLACEMENT} square={54} />}>
           <Wordmark section="Models" />
           <Title>The catalogue</Title>
           <Subtitle>Every model that can be fielded, and what it costs to play.</Subtitle>
@@ -40,7 +37,6 @@ export default async function Image() {
               { value: String(reasoning), label: "reasoning" },
             ]}
           />
-        </Panel>
       </Card>
     ),
     { ...size, fonts },

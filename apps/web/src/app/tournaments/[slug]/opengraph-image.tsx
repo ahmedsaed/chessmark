@@ -11,7 +11,7 @@ import { ImageResponse } from "next/og";
 import { getTournament } from "@/lib/api";
 import { Board } from "@/lib/og/board";
 import { START_PLACEMENT } from "@/lib/og/fen";
-import { Card, Missing, Panel, Standings, Stats, Title, Wordmark } from "@/lib/og/shell";
+import { Card, Missing, Standings, Stats, Title, Wordmark } from "@/lib/og/shell";
 import { CARD, CONTENT_TYPE, COLOUR, pieceFont, REVALIDATE_SECONDS } from "@/lib/og/theme";
 
 export const alt = "A Chessmark tournament";
@@ -33,10 +33,7 @@ export default async function Image({ params }: { params: Promise<{ slug: string
 
   return new ImageResponse(
     (
-      <Card>
-        <Board fen={START_PLACEMENT} square={54} />
-
-        <Panel>
+      <Card board={<Board fen={START_PLACEMENT} square={54} />}>
           <Wordmark section={tournament.status} />
           <Title size={46}>{tournament.name}</Title>
 
@@ -69,7 +66,6 @@ export default async function Image({ params }: { params: Promise<{ slug: string
               },
             ]}
           />
-        </Panel>
       </Card>
     ),
     { ...size, fonts },

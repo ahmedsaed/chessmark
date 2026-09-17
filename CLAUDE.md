@@ -149,6 +149,28 @@ it.
 
 - **A fix needs a test that fails without it.** Verify that, don't assume it. More than one bug in
   this repository was found because an assertion that could never fail was noticed.
+- **Test the claim, not the plumbing — and if the output is visual, look at it.** An assertion that
+  cannot tell the right answer from the wrong one is not a test, however green it is. Three in this
+  repository passed against the broken thing they were written for:
+
+  * The social cards were asserted as `200 · image/png · > 5 KB`. The leaderboard's card was
+    rendering **five ratings beside an empty column**, wordmark pushed off the top and the stats row
+    running out through the right edge — 46 KB of perfectly valid PNG. It took one look at the image
+    to see and three rounds of instrumented guessing to find.
+  * "The player's name is not truncated" was green *before* the fix, because the fixture's name was
+    short enough to fit either way. Assert the structural property that changed — the name now has
+    the row — not the symptom that happens to be absent on this data.
+  * "The card renders" followed a redirect to a *different* card and passed. Fetch what the page
+    actually names.
+
+  So: render it and open it. Screenshot the page. Read the generated image. Check the output against
+  real data, not only the fixture — a name, a rating and a slug in this project are all longer in
+  production than in the seed, and short test data hides exactly the bugs that width causes. Then
+  write the assertion that would have caught what you saw.
+- **Green is not evidence on its own.** Before believing a passing suite, break the thing on purpose
+  and watch it go red. When output is cached, generated or rendered somewhere else, confirm you are
+  looking at *this* build: a byte-identical result across three different source states means the
+  edit never reached the renderer, not that the edit did nothing.
 - **Write the reason down where it belongs.** A decision goes in an ADR, a trap goes next to the
   code or in the guide that owns it, a gap goes in ROADMAP's *Known gaps*. Not here.
 - **Prefer the narrow fix.** A ceiling on paused games was reverted in favour of asking the precise

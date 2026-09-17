@@ -12,15 +12,47 @@
  * about not repeating the padding.
  */
 
-import { COLOUR } from "@/lib/og/theme";
+import { clip } from "@/lib/og/clip";
+import { CARD, COLOUR } from "@/lib/og/theme";
 
 /**
- * The outer frame. `children` are laid out left to right — a card is a picture beside a caption.
+ * The outer frame: a board on the left, a panel of words on the right.
+ *
+ * **Both columns are given explicit widths, and that is not belt-and-braces.** Satori does not
+ * resolve `flex: 1` — nor `flexGrow`/`flexBasis` longhand — into "the space left over" the way a
+ * browser does. A panel left to negotiate its width came out sized by its widest child, overflowed
+ * the card to the right, and starved the standings' name column to 0px, so the leaderboard rendered
+ * as five ratings beside an empty column with the stats row running off the edge. Both attempts to
+ * fix it inside the flex model produced byte-identical output.
+ *
+ * So the arithmetic is done here, once, rather than negotiated five times: the board is as wide as
+ * its squares, and the panel is everything that is left. A card that wants no board passes none and
+ * the panel takes the full width.
  *
  * `padding` is deliberately generous: an unfurler crops to its own aspect ratio, and every client
  * crops differently, so anything closer to the edge than this is something somebody will not see.
  */
-export function Card({ children, gap = 56 }: { children: React.ReactNode; gap?: number }) {
+const PADDING = 68;
+const GAP = 56;
+
+/** A board's drawn width: eight squares plus the 2px border either side. */
+export function boardWidth(square: number): number {
+  return square * 8 + 4;
+}
+
+export function Card({
+  board,
+  square = 54,
+  children,
+}: {
+  /** The board to sit on the left, already sized with the same `square`. */
+  board?: React.ReactNode;
+  square?: number;
+  children: React.ReactNode;
+}) {
+  const aside = board ? boardWidth(square) + GAP : 0;
+  const panel = CARD.width - PADDING * 2 - aside;
+
   return (
     <div
       style={{
@@ -28,13 +60,16 @@ export function Card({ children, gap = 56 }: { children: React.ReactNode; gap?: 
         height: "100%",
         display: "flex",
         alignItems: "center",
-        gap,
-        padding: "0 68px",
+        gap: board ? GAP : 0,
+        padding: `0 ${PADDING}px`,
         background: COLOUR.ground,
         color: COLOUR.ink,
       }}
     >
-      {children}
+      {board}
+      <div style={{ display: "flex", flexDirection: "column", width: panel, minWidth: 0 }}>
+        {children}
+      </div>
     </div>
   );
 }
@@ -62,15 +97,6 @@ export function CentredCard({ children }: { children: React.ReactNode }) {
         color: COLOUR.ink,
       }}
     >
-      {children}
-    </div>
-  );
-}
-
-/** The side of the card that carries words. */
-export function Panel({ children, gap = 0 }: { children: React.ReactNode; gap?: number }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, gap, minWidth: 0 }}>
       {children}
     </div>
   );
@@ -154,9 +180,27 @@ export function Stats({ items }: { items: { value: string; label: string; tone?:
  * A ranked list — the leaderboard's rows, or a pool's table.
  *
  * Fixed-width columns rather than a table: Satori has no table layout, and a flex row whose cells
- * size to their content produces ragged numbers down the card. The rank column is narrow, the name
- * takes what is left, and the figure is right-aligned by giving it a width and `justifyContent`.
+ * size to their content produces ragged numbers down the card.
+ *
+ * **`whiteSpace: "nowrap"` is doing the load-bearing work, and leaving it out was spectacular.**
+ * A name cell of `flex: 1; minWidth: 0` is given almost no width by Satori when the text is one
+ * long unbreakable token, so `nvidia/nemotron-3-ultra-550b-a55b:free` wrapped a character per line,
+ * `overflow: hidden` clipped every one of them, and the row rendered **blank but tall**. Five of
+ * those pushed the wordmark off the top of the card and the stats row out through the right edge:
+ * the leaderboard's card came out as four ratings floating beside an empty column. It still
+ * returned `200 image/png` at 46 KB, which is exactly why the byte-size check in `site.spec.ts`
+ * did not notice and a person looking at the picture did in about a second.
+ *
+ * So the name is told not to wrap, and the figure is given a width rather than being sized by its
+ * content — a rating and a score are both short, and a fixed column is what stops the name
+ * negotiating with them for space.
+ *
+ * **And the truncation is done in the text, not in CSS.** `textOverflow: "ellipsis"` needs a `…`
+ * to draw, Satori looks for it in the fonts it was given, and the only one it was given is a
+ * six-glyph chess subset — so every truncated row ended in a tofu box. Three ASCII periods exist in
+ * every face there will ever be.
  */
+
 export function Standings({
   rows,
   highlightFirst = true,
@@ -186,18 +230,23 @@ export function Standings({
             <div
               style={{
                 display: "flex",
-                flex: 1,
+                flexGrow: 1,
+                flexBasis: 0,
                 minWidth: 0,
                 overflow: "hidden",
+                whiteSpace: "nowrap",
                 color: row.muted ? COLOUR.inkDim : COLOUR.ink,
               }}
             >
-              {row.name}
+              {clip(row.name, 30)}
             </div>
             <div
               style={{
                 display: "flex",
+                width: 104,
+                flexShrink: 0,
                 justifyContent: "flex-end",
+                whiteSpace: "nowrap",
                 color: leader ? COLOUR.accent : COLOUR.inkDim,
               }}
             >

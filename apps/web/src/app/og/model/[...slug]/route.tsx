@@ -27,7 +27,7 @@ import { ImageResponse } from "next/og";
 import { getGame, getModel } from "@/lib/api";
 import { modelSlugFromSegments } from "@/lib/models";
 import { Board } from "@/lib/og/board";
-import { Card, CentredCard, Missing, Panel, Stats, Subtitle, Title, Wordmark } from "@/lib/og/shell";
+import { Card, CentredCard, Missing, Stats, Subtitle, Title, Wordmark } from "@/lib/og/shell";
 import { CARD, COLOUR, pieceFont, REVALIDATE_SECONDS } from "@/lib/og/theme";
 import type { LeaderboardRow } from "@/lib/types";
 
@@ -105,15 +105,11 @@ export async function GET(_request: Request, context: { params: Promise<{ slug: 
 
   return new ImageResponse(
     (
-      <Card>
-        <Board fen={game.current_fen} square={54} />
-
-        <Panel>
+      <Card board={<Board fen={game.current_fen} square={54} />}>
           <Wordmark section="Model" />
           <Title size={40}>{model.display_name}</Title>
           <Subtitle>{model.openrouter_id}</Subtitle>
           {figures}
-        </Panel>
       </Card>
     ),
     { ...CARD, fonts },

@@ -10,7 +10,7 @@ import { ImageResponse } from "next/og";
 import { listTournaments } from "@/lib/api";
 import { Board } from "@/lib/og/board";
 import { START_PLACEMENT } from "@/lib/og/fen";
-import { Card, Panel, Standings, Stats, Title, Wordmark } from "@/lib/og/shell";
+import { Card, Standings, Stats, Title, Wordmark } from "@/lib/og/shell";
 import { CARD, CONTENT_TYPE, COLOUR, pieceFont, REVALIDATE_SECONDS } from "@/lib/og/theme";
 
 export const alt = "Chessmark tournaments";
@@ -24,10 +24,7 @@ export default async function Image() {
 
   return new ImageResponse(
     (
-      <Card>
-        <Board fen={START_PLACEMENT} square={54} />
-
-        <Panel>
+      <Card board={<Board fen={START_PLACEMENT} square={54} />}>
           <Wordmark section="Tournaments" />
           <Title>Events</Title>
 
@@ -48,7 +45,6 @@ export default async function Image() {
               { value: String(running), label: "running", tone: COLOUR.machine },
             ]}
           />
-        </Panel>
       </Card>
     ),
     { ...size, fonts },
