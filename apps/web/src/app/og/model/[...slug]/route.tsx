@@ -28,12 +28,28 @@ import { getGame, getModel } from "@/lib/api";
 import { modelSlugFromSegments } from "@/lib/models";
 import { Board } from "@/lib/og/board";
 import { Card, CentredCard, Missing, Stats, Subtitle, Title, Wordmark } from "@/lib/og/shell";
-import { CARD, COLOUR, REVALIDATE_SECONDS } from "@/lib/og/theme";
+import { CARD, COLOUR , REVALIDATE_SECONDS } from "@/lib/og/theme";
 import type { LeaderboardRow } from "@/lib/types";
 
 /* A Route Handler has no `alt`/`size`/`contentType` exports — those belong to the file convention.
    The alt text travels with the page's metadata instead; the size is `CARD`, below. */
-export const revalidate = REVALIDATE_SECONDS;
+/* **The literal, not `REVALIDATE_SECONDS`.** Next requires a segment config export to be
+   statically analysable and fails the production build with "Invalid segment configuration export
+   detected" if it is an imported constant — a `next build`-only error, which `make check` did not
+   run and so did not catch. Five minutes; `og/theme.ts` holds the reasoning. */
+export const revalidate = 300;
+
+/**
+ * No paths prerendered, but every path that *is* requested gets cached for `revalidate`.
+ *
+ * Without this Next marks the route dynamic — it cannot know the slugs — and a dynamic route
+ * renders on every request however long its `revalidate` is. An empty list is the documented way
+ * to say "generate on demand, then cache", which is what a social card wants: nobody waits on it,
+ * and the slugs actually shared are a fraction of the slugs that exist.
+ */
+export async function generateStaticParams() {
+  return [];
+}
 
 /**
  * The contestant to put on the card when a model is served at more than one precision.
@@ -51,7 +67,7 @@ function headline(ratings: LeaderboardRow[]): LeaderboardRow | null {
 
 export async function GET(_request: Request, context: { params: Promise<{ slug: string[] }> }) {
   const { slug } = await context.params;
-  const model = await getModel(modelSlugFromSegments(slug));
+  const model = await getModel(modelSlugFromSegments(slug), { cache: REVALIDATE_SECONDS });
 
   if (!model) {
     return new ImageResponse(<Missing what="No such model" />, CARD);
@@ -66,7 +82,7 @@ export async function GET(_request: Request, context: { params: Promise<{ slug: 
      playing is the wrong kind of stable. */
   const played = best ? model.rated_games?.[`${best.model_slug}@${best.quantization}`] : undefined;
   const gameId = played?.at(-1);
-  const game = gameId ? await getGame(gameId) : null;
+  const game = gameId ? await getGame(gameId, { cache: REVALIDATE_SECONDS }) : null;
 
   const figures = (
     <Stats

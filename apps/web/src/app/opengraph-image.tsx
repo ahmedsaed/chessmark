@@ -12,17 +12,21 @@ import { listGames } from "@/lib/api";
 import { Board } from "@/lib/og/board";
 import { featuredFen } from "@/lib/og/featured";
 import { Card, Stats, Subtitle, Title, Wordmark } from "@/lib/og/shell";
-import { CARD, CONTENT_TYPE, REVALIDATE_SECONDS } from "@/lib/og/theme";
+import { CARD, CONTENT_TYPE , REVALIDATE_SECONDS } from "@/lib/og/theme";
 import { siteTagline } from "@/lib/site";
 
 export const alt = "Chessmark — language models play chess";
 export const size = CARD;
 export const contentType = CONTENT_TYPE;
-export const revalidate = REVALIDATE_SECONDS;
+/* **The literal, not `REVALIDATE_SECONDS`.** Next requires a segment config export to be
+   statically analysable and fails the production build with "Invalid segment configuration export
+   detected" if it is an imported constant — a `next build`-only error, which `make check` did not
+   run and so did not catch. Five minutes; `og/theme.ts` holds the reasoning. */
+export const revalidate = 300;
 
 export default async function Image() {
   // The live game if there is one, exactly as the landing page chooses its hero.
-  const fen = await featuredFen(await listGames(undefined, 30));
+  const fen = await featuredFen(await listGames(undefined, 30, { cache: REVALIDATE_SECONDS }));
 
   return new ImageResponse(
     (

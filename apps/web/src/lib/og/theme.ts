@@ -32,8 +32,10 @@ export const CONTENT_TYPE = "image/png";
  * when the games disagree with it (ADR-0032). A card is a *picture of* that page, so it can afford
  * to be staler than the page is.
  *
- * Exported as one constant because a card that revalidates on a different clock from its
- * neighbours is a difference nobody will remember making.
+ * **The number is written as a literal in each route, and this constant is not imported there.**
+ * Next requires a segment config export to be statically analysable — an imported binding fails the
+ * production build with "Invalid segment configuration export detected", and only `next build` says
+ * so. This is the one place the *decision* lives; the routes carry the value and a pointer back.
  */
 export const REVALIDATE_SECONDS = 300;
 

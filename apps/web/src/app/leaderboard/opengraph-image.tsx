@@ -15,18 +15,22 @@ import { listGames, getLeaderboard } from "@/lib/api";
 import { Board } from "@/lib/og/board";
 import { featuredFen } from "@/lib/og/featured";
 import { Card, Standings, Stats, Title, Wordmark } from "@/lib/og/shell";
-import { CARD, CONTENT_TYPE, COLOUR, REVALIDATE_SECONDS } from "@/lib/og/theme";
+import { CARD, CONTENT_TYPE, COLOUR , REVALIDATE_SECONDS } from "@/lib/og/theme";
 
 export const alt = "The Chessmark leaderboard — Glicko-2 ratings over ranked games";
 export const size = CARD;
 export const contentType = CONTENT_TYPE;
-export const revalidate = REVALIDATE_SECONDS;
+/* **The literal, not `REVALIDATE_SECONDS`.** Next requires a segment config export to be
+   statically analysable and fails the production build with "Invalid segment configuration export
+   detected" if it is an imported constant — a `next build`-only error, which `make check` did not
+   run and so did not catch. Five minutes; `og/theme.ts` holds the reasoning. */
+export const revalidate = 300;
 
 export default async function Image() {
   /* Two reads in parallel: the ranking, and the game worth drawing beside it. */
   const [leaderboard, fen] = await Promise.all([
-    getLeaderboard(),
-    listGames(undefined, 30).then(featuredFen),
+    getLeaderboard({ cache: REVALIDATE_SECONDS }),
+    listGames(undefined, 30, { cache: REVALIDATE_SECONDS }).then(featuredFen),
   ]);
   const top = leaderboard.rows.slice(0, 5);
 
