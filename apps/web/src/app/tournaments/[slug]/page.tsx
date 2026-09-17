@@ -249,10 +249,15 @@ function Standings({ rows }: { rows: Standing[] }) {
 
       <ul className="flex flex-col gap-px border border-line-soft bg-line-soft">
         <li
+          /* **The trailing columns go below `sm`, and the name gets their width.** Five columns of
+             fixed widths left the `1fr` model column with **37px** on a phone —
+             `nemotron-3-nano-omni-30b-a3b-reasoning:free` needs 310px and showed four characters.
+             A pool is ranked by rating (ADR-0027), so rating is the column that has to survive;
+             points, W/D/L and SB are the ones a reader opens the page on a laptop for. */
           className={`tabular grid ${
             rated
-              ? "grid-cols-[2rem_1fr_5.5rem_3rem_4.5rem]"
-              : "grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem]"
+              ? "grid-cols-[2rem_1fr_5.5rem] sm:grid-cols-[2rem_1fr_5.5rem_3rem_4.5rem]"
+              : "grid-cols-[2rem_1fr_3rem] sm:grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem]"
           } items-center gap-2 bg-surface-2 px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.12em] text-ink-faint`}
         >
           <span>#</span>
@@ -268,15 +273,15 @@ function Standings({ rows }: { rows: Standing[] }) {
             <span className="text-right">Pts</span>
           )}
           {rated ? (
-            <span className="text-right">Pts</span>
+            <span className="hidden text-right sm:block">Pts</span>
           ) : (
-            <span className="text-right">W/D/L</span>
+            <span className="hidden text-right sm:block">W/D/L</span>
           )}
           {rated ? (
-            <span className="text-right">W/D/L</span>
+            <span className="hidden text-right sm:block">W/D/L</span>
           ) : (
             <span
-              className="text-right"
+              className="hidden text-right sm:block"
               title="Sonneborn-Berger: beating strong opponents counts more"
             >
               SB
@@ -297,8 +302,8 @@ function Standings({ rows }: { rows: Standing[] }) {
             }
             className={`tabular grid ${
               rated
-                ? "grid-cols-[2rem_1fr_5.5rem_3rem_4.5rem]"
-                : "grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem]"
+                ? "grid-cols-[2rem_1fr_5.5rem] sm:grid-cols-[2rem_1fr_5.5rem_3rem_4.5rem]"
+                : "grid-cols-[2rem_1fr_3rem] sm:grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem]"
             } items-center gap-2 bg-surface px-3 py-2 font-mono text-xs ${
               row.in_field ? "" : "opacity-50"
             }`}
@@ -337,7 +342,7 @@ function Standings({ rows }: { rows: Standing[] }) {
                     {row.rating_deviation !== null && (
                       /* The deviation is not decoration: it is what stops a two-game rating being
                          read as a two-hundred-game one. */
-                      <span className="ml-1 text-[10px] text-ink-faint">
+                      <span className="ml-1 hidden text-[10px] text-ink-faint sm:inline">
                         ± {Math.round(row.rating_deviation)}
                       </span>
                     )}
@@ -345,14 +350,16 @@ function Standings({ rows }: { rows: Standing[] }) {
                 )}
               </span>
             )}
-            <span className={`text-right ${rated ? "text-[10px] text-ink-faint" : "text-ink"}`}>
+            <span
+              className={`hidden text-right sm:block ${rated ? "text-[10px] text-ink-faint" : "text-ink"}`}
+            >
               {row.score.toFixed(1)}
             </span>
-            <span className="text-right text-[10px] text-ink-faint">
+            <span className="hidden text-right text-[10px] text-ink-faint sm:block">
               {row.wins}/{row.draws}/{row.losses}
             </span>
             {!rated && (
-              <span className="text-right text-[10px] text-ink-faint">
+              <span className="hidden text-right text-[10px] text-ink-faint sm:block">
                 {row.sonneborn_berger.toFixed(1)}
               </span>
             )}

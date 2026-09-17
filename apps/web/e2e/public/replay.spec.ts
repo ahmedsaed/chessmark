@@ -18,6 +18,37 @@ test.beforeEach(async ({ page }) => {
   await page.goto(`/games/${fixtures().replayGame}`);
 });
 
+test("the board holds the middle column, between the stats and the conversation", async ({
+  page,
+}) => {
+  /* **Three columns in the right order, not merely three columns.** `GameLayout` orders its slots
+     twice — stacked on a phone, side by side here — and a first version wrote `lg:order-none`,
+     which left the grid correct, the three tops aligned and the *board in a 323px rail* while the
+     conversation took the 708px centre. Every check short of this one passed.
+
+     The middle column is the `min()` expression that sizes the board; that is what it is for. */
+  const cells = await page.evaluate(() => {
+    const grid = document.querySelector('[class*="lg:grid-cols"]')!;
+    return [...grid.children]
+      .filter((cell) => (cell as HTMLElement).offsetParent !== null)
+      .map((cell) => ({
+        role: cell.querySelector("[data-fen]")
+          ? "board"
+          : cell.querySelector("aside") || cell.tagName === "ASIDE"
+            ? "stats"
+            : "stream",
+        x: cell.getBoundingClientRect().x,
+        width: Math.round(cell.getBoundingClientRect().width),
+      }))
+      .sort((a, b) => a.x - b.x);
+  });
+
+  expect(cells.map((cell) => cell.role)).toEqual(["stats", "board", "stream"]);
+  // The board's column is the widest of the three, which is the whole point of the arrangement.
+  expect(cells[1].width).toBeGreaterThan(cells[0].width);
+  expect(cells[1].width).toBeGreaterThan(cells[2].width);
+});
+
 test("a finished game opens at the final position", async ({ page }) => {
   const board = page.locator("[data-fen]").first();
   await expect(board).toBeVisible();

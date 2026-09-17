@@ -68,6 +68,29 @@ A finished game is scrubbable ply by ply, with the raw provider payloads behind 
 away. Replay **truncates the event log and reuses the live view's fold**, so the two cannot drift
 ([ADR-0008](adr/0008-game-events-log.md)).
 
+## The game page is three columns, and two tabs
+
+`GameLayout` owns the shape, and `LiveGame` and `Replay` both hand it a board, a stream and a rail.
+They drew the same grid character for character until a change had to be remembered into both.
+
+Wide, nothing has changed: one `min()` expression sizes the board from whichever runs out first, the
+height under the page chrome or a share of the width, and the two rails split the rest.
+
+**On a phone the three columns become a board and two tabs.** Stacked, the order was board,
+conversation, stats — so the stats sat a whole conversation below the board, on the one screen size
+where a scroll costs most, and *whose move it is* and *what it has cost* were the least reachable
+things on the page. Both panels stay mounted and are hidden with CSS: `EventStream` holds the
+reader's scroll position and which turn is expanded, and unmounting it would hand back a panel
+scrolled to the top every time somebody checked the stats.
+
+The conversation is **bounded** there, at `58svh`. Left to grow it was as tall as the game was long
+— 300 plies of it — so reaching the newest turn meant scrolling past every older one. It already
+scrolled inside itself; it only ever needed to be told how tall it is. `svh` rather than `vh`
+because a phone's URL bar makes `vh` taller than the screen.
+
+Held by the `mobile` browser project (UI-11), not by eye — see
+[TESTING.md](TESTING.md#the-browser-suite).
+
 ## Promotion is chosen, not assumed
 
 A human drag to the last rank opens a picker. It used to be a queen either way, which is right almost

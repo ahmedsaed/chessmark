@@ -60,26 +60,36 @@ export default async function LeaderboardPage() {
 
 function Table({ rows }: { rows: LeaderboardRow[] }) {
   return (
-    /* Scrolls inside itself rather than pushing the page sideways on a phone. */
+    /* **The secondary columns are hidden on a phone, not scrolled to.** This was an 820px table
+       inside a 333px scroller, which kept the page from moving sideways and cost more than it
+       saved: at rest a phone showed `#` and `Contestant`, and Rating — the reason the page exists —
+       needed a sideways swipe with nothing on screen to say it was there. `ModelTable` already
+       solved this by dropping columns at `sm`; this is the same rule, on the page that needed it
+       more. The `min-w` and the scroller come back at `sm`, where the table fits anyway. */
     <div className="mt-8 overflow-x-auto border border-line">
-      <table className="w-full min-w-[820px] border-collapse text-left">
+      {/* `table-fixed` below `sm` is what makes hiding the columns work. Hiding them alone left the
+          table `auto`-sized to a contestant slug that will not shrink — 463px inside a 333px
+          wrapper — so the page scrolled sideways anyway and the fix had bought nothing. Fixed
+          layout lets the widths below bind and the slug truncate; the scroller stays for `sm` up,
+          where the table really is 820px. */}
+      <table className="w-full table-fixed border-collapse text-left sm:table-auto sm:min-w-[820px]">
         <thead>
           <tr className="border-b border-line bg-surface-3 font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-faint">
-            <th className="px-3 py-2 font-normal">#</th>
-            <th className="px-3 py-2 font-normal">Contestant</th>
-            <th className="px-3 py-2 text-right font-normal" title="Glicko-2 rating and deviation">
+            <th className="w-7 px-2 py-2 font-normal sm:w-auto sm:px-3">#</th>
+            <th className="px-2 py-2 font-normal sm:px-3">Contestant</th>
+            <th className="w-24 px-2 py-2 text-right font-normal sm:w-auto sm:px-3" title="Glicko-2 rating and deviation">
               Rating
             </th>
-            <th className="px-3 py-2 text-right font-normal">W/D/L</th>
+            <th className="hidden px-3 py-2 text-right font-normal sm:table-cell">W/D/L</th>
             <th
-              className="px-3 py-2 text-right font-normal"
+              className="hidden px-3 py-2 text-right font-normal sm:table-cell"
               title="Illegal move attempts per move played — the benchmark's headline number"
             >
               Illegal/move
             </th>
-            <th className="px-3 py-2 text-right font-normal">Forfeits</th>
-            <th className="px-3 py-2 text-right font-normal">Cost/game</th>
-            <th className="px-3 py-2 text-right font-normal">Latency</th>
+            <th className="hidden px-3 py-2 text-right font-normal sm:table-cell">Forfeits</th>
+            <th className="hidden px-3 py-2 text-right font-normal sm:table-cell">Cost/game</th>
+            <th className="hidden px-3 py-2 text-right font-normal sm:table-cell">Latency</th>
           </tr>
         </thead>
         <tbody>
@@ -88,22 +98,22 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
               key={`${row.model_id}-${row.quantization}`}
               className="border-b border-line-soft last:border-0 hover:bg-surface-2"
             >
-              <td className="tabular px-3 py-2.5 font-mono text-[11px] text-ink-faint">
+              <td className="tabular px-2 py-2.5 font-mono text-[11px] text-ink-faint sm:px-3">
                 {index + 1}
               </td>
-              <td className="px-3 py-2.5">
+              <td className="min-w-0 px-2 py-2.5 sm:px-3">
                 {/* Drills through to the games that produced the row (BENCH-02). */}
                 <Link
                   href={`/models/${row.model_slug}#c-${encodeURIComponent(row.quantization)}`}
-                  className="font-mono text-xs text-ink transition-colors hover:text-accent"
+                  className="block truncate font-mono text-xs text-ink transition-colors hover:text-accent sm:inline"
                 >
                   {row.model_slug}
                 </Link>
-                <span className="ml-1.5 border border-good/40 px-1 py-px font-mono text-[8.5px] uppercase tracking-wider text-good">
+                <span className="mt-0.5 inline-block border border-good/40 px-1 py-px font-mono text-[8.5px] uppercase tracking-wider text-good sm:ml-1.5 sm:mt-0">
                   {row.quantization}
                 </span>
               </td>
-              <td className="tabular px-3 py-2.5 text-right font-mono text-xs text-ink">
+              <td className="tabular whitespace-nowrap px-2 py-2.5 text-right font-mono text-xs text-ink sm:px-3">
                 {Math.round(row.rating)}
                 {/* The `?` is the deviation said in a word. "± 208" is honest and most readers
                     cannot act on it; the mark is the same fact in a form they can. The number
@@ -118,13 +128,17 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
                 )}
                 {/* The deviation is not decoration: it is what stops a three-game rating being
                     read as a three-hundred-game one. */}
-                <span className="ml-1 text-ink-faint">± {Math.round(row.rating_deviation)}</span>
+                {/* The deviation is the first thing to go on a narrow screen: the `?` above already
+                    says "provisional", which is the part a reader acts on. */}
+                <span className="ml-1 hidden text-ink-faint sm:inline">
+                  ± {Math.round(row.rating_deviation)}
+                </span>
               </td>
-              <td className="tabular px-3 py-2.5 text-right font-mono text-xs text-ink-dim">
+              <td className="tabular hidden px-3 py-2.5 text-right font-mono text-xs text-ink-dim sm:table-cell">
                 {row.wins}/{row.draws}/{row.losses}
               </td>
               <td
-                className={`tabular px-3 py-2.5 text-right font-mono text-xs ${
+                className={`tabular hidden px-3 py-2.5 text-right font-mono text-xs sm:table-cell ${
                   row.illegal_per_move > 0 ? "text-bad" : "text-good"
                 }`}
                 title={`${row.illegal_attempts} attempts over ${row.moves_played} moves`}
@@ -132,16 +146,16 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
                 {row.illegal_per_move.toFixed(3)}
               </td>
               <td
-                className={`tabular px-3 py-2.5 text-right font-mono text-xs ${
+                className={`tabular hidden px-3 py-2.5 text-right font-mono text-xs sm:table-cell ${
                   row.forfeits > 0 ? "text-bad" : "text-ink-faint"
                 }`}
               >
                 {row.forfeits}
               </td>
-              <td className="tabular px-3 py-2.5 text-right font-mono text-xs text-ink-dim">
+              <td className="tabular hidden px-3 py-2.5 text-right font-mono text-xs text-ink-dim sm:table-cell">
                 {usd(row.mean_cost_usd)}
               </td>
-              <td className="tabular px-3 py-2.5 text-right font-mono text-xs text-ink-faint">
+              <td className="tabular hidden px-3 py-2.5 text-right font-mono text-xs text-ink-faint sm:table-cell">
                 {row.mean_latency_ms > 0 ? `${(row.mean_latency_ms / 1000).toFixed(1)}s` : "—"}
               </td>
             </tr>

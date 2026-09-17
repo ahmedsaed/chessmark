@@ -17,6 +17,7 @@ import { Chess } from "chess.js";
 
 import { Board } from "@/components/Board";
 import { EventStream } from "@/components/EventStream";
+import { GameLayout } from "@/components/GameLayout";
 import { PlayerBar } from "@/components/PlayerBar";
 import { StatsRail } from "@/components/StatsRail";
 import { legalTargets } from "@/lib/board";
@@ -193,26 +194,11 @@ export function LiveGame({
   );
 
   return (
-    <div className="flex flex-col gap-4">
-      <Header game={game} status={status} outcome={outcome} actions={actions} />
-
-      {/* One expression does the whole layout.
-          The board is square, so its size is bounded by whichever runs out first — the height left
-          under the page chrome, or a reasonable share of the width. `min()` of those two is the
-          board column; the two rails are `1fr` each and split everything else, so there is never a
-          dead gutter and never a horizontal scrollbar.
-          Deriving the board's width from its own height instead is the obvious idea and does not
-          work: in a grid an `auto` column must resolve its width before the row height is known,
-          and in flex the same knot ties itself the other way. Both were tried. */}
-      <div className="grid grid-cols-1 gap-4 lg:h-[calc(100dvh-9.5rem)] lg:grid-cols-[minmax(0,1fr)_min(calc(100dvh-12rem),52vw)_minmax(0,1fr)]">
-        {/* Stacked on a phone the order is board, conversation, stats: the conversation is the
-            reason someone opened the page, and burying it under the full stats rail means
-            scrolling past telemetry to reach the fight (ADR-0013). */}
-        <div className="order-3 min-w-0 overflow-y-auto lg:order-none">
-          <StatsRail game={game} toMove={toMove} />
-        </div>
-
-        <div className="order-1 flex min-h-0 min-w-0 flex-col gap-2 lg:order-none">
+    <GameLayout
+      header={<Header game={game} status={status} outcome={outcome} actions={actions} />}
+      streamLabel="Conversation"
+      board={
+        <>
           {/* Each player sits on the side of the board their pieces are on: the near seat below,
               the far seat above. A viewer playing Black has the board turned round, so the two
               swap with it. */}
@@ -239,42 +225,40 @@ export function LiveGame({
             active={toMove === nearColour}
             toMoveLabel={toMove === nearColour && !outcome ? "to move" : null}
           />
-        </div>
-
-        {promoting && (
-          <PromotionPicker
-            colour={seat ?? "white"}
-            onPick={(piece) => {
-              play(promoting.from, promoting.to, piece);
-              setPromoting(null);
-            }}
-            onCancel={() => setPromoting(null)}
-          />
-        )}
-
-        <div className="order-2 flex min-h-[24rem] min-w-0 flex-col lg:order-none lg:min-h-0">
-          {/* Resign, draw and chat live here rather than under the board. They are things said to
-              an opponent, and this is the column where everything said to an opponent already is —
-              under the board they crowded the one element that wants the room. */}
-          <EventStream
-            turns={turns}
-            notices={notices}
-            /* **The newest turn stays open.** `turn.live` alone covers a turn in flight, and a
-               live game spends most of its time between turns — a model waiting on the queue, an
-               endpoint on a cooldown — where nothing was expanded and the panel showed a column
-               of folded rows over a board that had just moved. The turn a reader is following is
-               the last one, whether or not it is currently generating. Seeded, not forced: one
-               click still folds it. */
-            focusKey={turns.at(-1)?.key ?? null}
-            players={game.players}
-            footer={controls}
-            emptyMessage={
-              paused ? `Paused — ${paused.text}` : undefined
-            }
-          />
-        </div>
-      </div>
-    </div>
+        </>
+      }
+      stream={
+        /* Resign, draw and chat live here rather than under the board. They are things said to
+           an opponent, and this is the column where everything said to an opponent already is —
+           under the board they crowded the one element that wants the room. */
+        <EventStream
+          turns={turns}
+          notices={notices}
+          /* **The newest turn stays open.** `turn.live` alone covers a turn in flight, and a
+             live game spends most of its time between turns — a model waiting on the queue, an
+             endpoint on a cooldown — where nothing was expanded and the panel showed a column
+             of folded rows over a board that had just moved. The turn a reader is following is
+             the last one, whether or not it is currently generating. Seeded, not forced: one
+             click still folds it. */
+          focusKey={turns.at(-1)?.key ?? null}
+          players={game.players}
+          footer={controls}
+          emptyMessage={paused ? `Paused — ${paused.text}` : undefined}
+        />
+      }
+      stats={<StatsRail game={game} toMove={toMove} />}
+    >
+      {promoting && (
+        <PromotionPicker
+          colour={seat ?? "white"}
+          onPick={(piece) => {
+            play(promoting.from, promoting.to, piece);
+            setPromoting(null);
+          }}
+          onCancel={() => setPromoting(null)}
+        />
+      )}
+    </GameLayout>
   );
 }
 
@@ -413,7 +397,11 @@ function Header({
       {/* Wrapped rather than rendered bare. `actions` is built in a Server Component and crosses
           the RSC boundary into this client one, which lands it in the children array without a
           key — React warns. A wrapper gives it a single-child slot instead of a list position. */}
-      {actions && <span className="ml-auto flex items-center">{actions}</span>}
+      {/* **`ml-auto` only once there is a row to push against.** On a phone `actions` wraps to a
+          line of its own, and an auto margin then pinned it to the right of an empty one — a gap
+          the width of the page beside two buttons, which reads as a layout failure rather than
+          alignment. Flush left below `sm`, with the rest of the header. */}
+      {actions && <span className="flex items-center sm:ml-auto">{actions}</span>}
     </div>
   );
 }

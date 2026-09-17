@@ -45,10 +45,29 @@ Playwright, in `apps/web/e2e/`. Two projects, because the flows differ in what t
 | | runs | needs |
 | --- | --- | --- |
 | `public` | `make test-e2e` — **and CI** | a running stack, nothing else |
+| `mobile` | `make test-e2e` / `make test-e2e-mobile` — **and CI** | a running stack, nothing else |
 | `signed-in` | `make test-e2e-all` | a real Clerk development instance |
 
 Reading is open to everyone (AUTH-02), so the lobby, the catalogue, a model page and a whole replay
 assert with no identity at all.
+
+`mobile` is the same public pages at 390px, and it exists because **a layout failure is invisible
+from a desk**. Every assertion in it is a measurement that was failing on production: a pairing's two
+model names splitting one row and getting **37px** each against the 310px the longest needs; a
+player's nameplate losing a quarter of its name to a huddle of captured pieces; the leaderboard's
+rating column parked off-screen behind a horizontal scroll nothing announced. None of it is
+reachable from vitest — `vitest.config.mts` keeps components out on the grounds that layout is
+Playwright's, and this is the project that makes that true rather than merely stated.
+
+It runs Chromium (`devices["Pixel 7"]`), not a WebKit phone, because CI installs `chromium` alone
+and what is asserted — width, touch targets, breakpoints — is not engine-specific.
+
+**Two traps, both hit while writing it.** A layout assertion can pass against the broken layout if
+the fixture is too short: `anthropic/claude-fable-5` fits at 390px either way, so "the name is not
+truncated" was green before the fix and proved nothing. Assert the *structural* property that
+changed — the name now has the row, the two names are on separate lines — and it holds whatever the
+data says. And the suite's own pairings are mostly **queued**, so they render without the `<a>` a
+selector written against production would go through; that one returned an empty list and passed.
 
 The signed-in flows sign in **for real** — a genuine Clerk session JWT, verified against real JWKS —
 using a `+clerk_test@example.com` address, which a development instance treats as a test identity:

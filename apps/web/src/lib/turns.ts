@@ -610,12 +610,24 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
            pause would be filed under the turn above it — which is the bug this whole change is
            about, reintroduced from the other direction. */
         if (current && current.san === null) {
-          const last = current.blocks.at(-1);
-          if (last?.kind === "paused" && last.text === reason) {
-            // A provider that keeps refusing produces pause, resume, pause, resume. One row with
-            // the count, carrying the wait the reader is actually in.
-            last.count += 1;
-            last.resumeAfter = resumeAfter;
+          /* **Searched, not peeked at.** A provider that keeps refusing produces pause, resume,
+             pause, resume — but inside a turn the model *retries* between refusals, so what sits
+             between two pauses is a `reasoning` block rather than nothing. Matching only
+             `blocks.at(-1)` therefore found the retry and opened a new row every time, and
+             `57e8a7bc` drew three byte-identical "Nvidia did not answer in time" rows in one turn:
+             the run `foldPauses` collapses between turns, back again inside one.
+
+             Folding every time leaves at most one row per reason, so this finds that row wherever
+             it is. It keeps its place — where the wait began — and takes the newest `resumeAfter`,
+             which is `foldPauses`'s `{ ...last, key: first.key }` said the other way round. Matching
+             on `text` is the same rule too: a rate limit and a halt stay two rows, because one row
+             saying it happened twice would describe neither. */
+          const run = current.blocks.findLast(
+            (block) => block.kind === "paused" && block.text === reason,
+          );
+          if (run?.kind === "paused") {
+            run.count += 1;
+            run.resumeAfter = resumeAfter;
           } else {
             current.blocks.push({
               kind: "paused",

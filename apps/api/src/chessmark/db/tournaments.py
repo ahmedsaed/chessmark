@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.agents.registry import endpoint_is_playable
 from chessmark.agents.tools import TOOL_SCHEMA_VERSION
-from chessmark.bench.ratable import era
+from chessmark.bench.ratable import HARNESS_TERMINATIONS, era
 from chessmark.db.enums import GameStatus, TournamentStatus
 from chessmark.db.models import (
     Game,
@@ -547,8 +547,24 @@ async def settle(session: AsyncSession, row: TournamentGame, game: Game) -> bool
     The game record is the authority (invariant 1), so this is the direction the disagreement is
     always resolved. Returning False when the pairing already agrees keeps it idempotent, which is
     what lets the caller offer every pairing on every tick.
+
+    **The termination decides that, not the status** — and reading the status alone is what let the
+    paragraph above be false for three of the seven harness endings. Only `ABANDONED` reaches here
+    as `ABORTED`; a `PLY_CAP`, a `BUDGET_EXCEEDED` or an `ADJUDICATION` is a `FINISHED` game
+    carrying a real `GameResult`, so it fell straight through to `_SCORES` and was scored like any
+    other draw. `pool-free` round 175 is the one that showed it: `ling-3.0-flash-sante` reached
+    `8/6P1/1k5P/5K2/5p2/8/8/8 w` — a pawn on g7, `g8=Q` on the move, the black king on b6 — and the
+    300-ply cap drew it. `ratable.py` excluded it from the rating, correctly and invisibly, while
+    this function handed both models half a point and the pool's table showed `0.5` beside
+    `unrated`. Half of one seat's verdict came from our own ceiling.
+
+    So this asks `HARNESS_TERMINATIONS` rather than keeping a fourth list of its own. That set was
+    already the answer and nothing linked it: `test_classification.py` exists because three sets
+    classifying terminations had drifted apart once, and this was the fourth, unlinked and one
+    module away.
     """
-    if game.status is GameStatus.ABORTED:
+    harness_stopped = game.termination in HARNESS_TERMINATIONS
+    if game.status is GameStatus.ABORTED or harness_stopped:
         if row.abandoned_reason and row.white_score is None:
             return False
         row.abandoned_reason = game.termination_detail or "the game was abandoned"

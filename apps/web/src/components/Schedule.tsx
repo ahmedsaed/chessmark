@@ -101,16 +101,25 @@ function Pairing({
           : "½–½";
 
   const body = (
-    <div className="flex items-center gap-2 bg-surface px-3 py-2 font-mono text-[11px]">
-      <StateDot state={pairing.state} />
-      <span className="min-w-0 flex-1 truncate text-ink-dim" title={names[pairing.white_key]}>
+    /* **Stacked on a phone, side by side from `sm` up.** Two `flex-1 truncate` names splitting one
+       narrow row gave each of them **37px**: `nemotron-3-nano-omni-30b-a3b-reasoning:free` needs
+       310px and showed four characters, so every pairing in the pool read `nemo… vs nemo…`. The
+       full name was in a `title`, which a thumb cannot open.
+       Grid on a phone so the names stack under one dot with the score beside both — a crosstable
+       row, which is the thing this is — and `sm:flex` hands the original row straight back, at
+       which point every placement class below is inert. */
+    <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-0.5 bg-surface px-3 py-2 font-mono text-[11px] sm:flex">
+      <span className="row-span-2 self-center sm:row-auto">
+        <StateDot state={pairing.state} />
+      </span>
+      <span className="min-w-0 truncate text-ink-dim sm:flex-1" title={names[pairing.white_key]}>
         {short(pairing.white_key)}
       </span>
-      <span className="tabular flex-none text-[10px] text-ink">
+      <span className="tabular row-span-2 self-center text-[10px] text-ink sm:row-auto sm:flex-none">
         {score ?? (pairing.state === "abandoned" ? "—" : "vs")}
       </span>
       <span
-        className="min-w-0 flex-1 truncate text-right text-ink-dim"
+        className="col-start-2 row-start-2 min-w-0 truncate text-ink-dim sm:col-auto sm:row-auto sm:flex-1 sm:text-right"
         title={pairing.black_key ? names[pairing.black_key] : "bye"}
       >
         {short(pairing.black_key)}

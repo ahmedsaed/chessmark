@@ -211,6 +211,31 @@ input[type="checkbox"]:disabled {
   outline-offset: 2px;
 }
 
+/* --- the small end of the type scale, on a phone ---------------------------------------------
+ *
+ * The site's secondary labels run 8.5px to 10px — section headings, badges, `copy link`, `game
+ * 1ddfea84`, the leaderboard's column heads. That is comfortable on a monitor at arm's length and
+ * marginal on a phone at reading distance, and it is most of what a phone reader is given.
+ *
+ * One rule rather than 139 of them. The sizes are arbitrary values in markup (`text-[10px]`), so
+ * there is no named scale to redefine — and rewriting every call site would put the same decision
+ * in 139 places, where the next person changing one would not find the other 138. The floor lives
+ * here, with its reason, and lifting it is one edit.
+ *
+ * Unlayered on purpose: Tailwind's utilities sit in `@layer utilities`, and anything outside a
+ * layer beats everything inside one, so this wins at `< sm` without `!important`. A deliberate
+ * larger size at a breakpoint (`sm:text-[9px]`) is unaffected — it only applies from `sm` up,
+ * which is exactly where this stops.
+ */
+@media (width < 40rem) {
+  [class*="text-[8.5px]"],
+  [class*="text-[9px]"],
+  [class*="text-[9.5px]"],
+  [class*="text-[10px]"] {
+    font-size: 11px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

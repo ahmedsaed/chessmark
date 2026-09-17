@@ -40,35 +40,62 @@ export function PlayerBar({
   const capturedColour = player.colour === "white" ? "black" : "white";
 
   return (
-    <div className="flex flex-none items-center gap-2 font-mono text-[11px]">
+    /* **Two lines on a phone, one from `sm` up.** The captures shared the name's line, and a name
+       is longer than a phone: `Nex AGI: Nex-N2.5-Pro (free)` wanted 209px, got 157px, and lost a
+       quarter of itself to a huddle of ten pieces. The huddle then wrapped *inside* the row, so the
+       two nameplates flanking the board were 30px and 17px tall — a difference a reader can see and
+       cannot account for.
+       Done with `order` and a zero-height `basis-full` break rather than a nested row, because the
+       desktop order is name, captures, advantage, label and a wrapper around the first and last of
+       those cannot produce it. The break is the only thing that moves. */
+    <div className="flex flex-none flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] sm:flex-nowrap">
       <i
         aria-hidden
-        className={`block h-2.5 w-2.5 flex-none border border-line ${
+        className={`order-1 block h-2.5 w-2.5 flex-none border border-line ${
           player.colour === "white" ? "bg-piece-white" : "bg-piece-black"
         }`}
       />
-      <span className={`truncate uppercase tracking-[0.08em] ${active ? "text-ink" : "text-ink-faint"}`}>
+      <span
+        className={`order-2 min-w-0 flex-1 truncate uppercase tracking-[0.08em] ${
+          active ? "text-ink" : "text-ink-faint"
+        }`}
+      >
         {player.display_name}
       </span>
 
-      {taken.length > 0 && (
-        <span
-          className="flex min-w-0 flex-wrap items-center"
-          aria-label={`captured: ${taken.length} piece${taken.length === 1 ? "" : "s"}`}
-        >
-          {taken.map((piece, index) => (
-            <Captured key={`${piece}-${index}`} piece={piece} colour={capturedColour} />
-          ))}
-        </span>
-      )}
-
       {advantage > 0 && (
-        <span className="tabular flex-none text-[10px] text-good" title="material advantage">
+        <span
+          className="tabular order-3 flex-none text-[10px] text-good sm:order-4"
+          title="material advantage"
+        >
           +{advantage}
         </span>
       )}
 
-      {toMoveLabel && <span className="ml-auto flex-none text-accent">{toMoveLabel}</span>}
+      {toMoveLabel && (
+        <span className="order-4 ml-auto flex-none text-accent sm:order-5">{toMoveLabel}</span>
+      )}
+
+      {taken.length > 0 && (
+        <>
+          {/* The line break itself. Zero height so it costs nothing, and gone at `sm` where the
+              row has the width to hold everything. */}
+          <span aria-hidden className="order-5 h-0 basis-full sm:hidden" />
+          <span
+            /* **The name is the one that yields, not this.** Making the name rigid at `sm` starved
+               the huddle to 33px and stacked ten pieces into five rows in a 323px rail. The name
+               truncates and the pieces keep their width — which is the trade the desktop rail was
+               already making, and the only thing this change was ever meant to alter is where the
+               huddle sits on a phone. */
+            className="order-6 flex min-w-0 flex-wrap items-center sm:order-3 sm:flex-none"
+            aria-label={`captured: ${taken.length} piece${taken.length === 1 ? "" : "s"}`}
+          >
+            {taken.map((piece, index) => (
+              <Captured key={`${piece}-${index}`} piece={piece} colour={capturedColour} />
+            ))}
+          </span>
+        </>
+      )}
     </div>
   );
 }

@@ -15,6 +15,69 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Changed
+
+- **The site is usable at phone width** (UI-11). Seven pages measured at 390px; the failures had one
+  shape — a flex row splitting a width that does not exist — and none of them was visible from a
+  desk.
+
+  - **The game page is a board and two tabs**, rather than three columns stacked. The order was
+    board, conversation, stats, so the stats sat a whole conversation below the board and *whose
+    move it is* was the least reachable thing on the page. The conversation is bounded at `58svh`
+    too: left to grow it was as tall as the game was long, and reaching the newest turn meant
+    scrolling past every older one. `LiveGame` and `Replay` now share `GameLayout` instead of
+    drawing the same grid character for character.
+  - **A pairing's two model names stack.** They shared one row and got **37px** each —
+    `nemotron-3-nano-omni-30b-a3b-reasoning:free` needs 310px and showed four characters, so every
+    fixture in the pool read `nemo… vs nemo…` with the full name in a `title` a thumb cannot open.
+  - **A nameplate's captured pieces move below the name.** `Nex AGI: Nex-N2.5-Pro (free)` wanted
+    209px and got 157px, losing a quarter of itself to a huddle of ten pieces; the huddle then
+    wrapped *inside* the row, so the two nameplates flanking one board were 30px and 17px tall.
+  - **The leaderboard and the pool table drop their trailing columns** instead of scrolling
+    sideways. The leaderboard was an 820px table in a 333px scroller, so a phone showed `#` and
+    `Contestant` and the rating — the reason the page exists — was behind a swipe nothing
+    announced. The pool's standings gave the model column 37px for the same reason; it gets 173px.
+  - **The replay transport is two rows on a phone** — the five controls, then the move count and
+    the speeds, centred. At 44px the controls fill the width on their own, so the speeds wrapped to
+    a line of their own and `ml-auto` pinned them to the right of an otherwise empty row. The
+    game header had the same bug: its actions wrapped and were pinned right, leaving a gap the
+    width of the page beside two buttons. `ml-auto` now waits for a row to push against.
+  - **The replay transport is 44px under a thumb**, 28px under a cursor, and the type scale has an
+    11px floor below `sm` — one rule in `globals.css` rather than 139 arbitrary values in markup.
+
+  Held by a new `mobile` Playwright project that CI runs beside `public`. Eight of its nine
+  assertions fail without these changes.
+
+### Fixed
+
+- **A harness ceiling is no longer scored as a pairing result** (invariant 11, [ADR-0019]).
+  `db/tournaments.settle` said in its own docstring that a game the harness stopped "is marked
+  abandoned rather than scored", and then asked a question that could not answer it: it read
+  `GameStatus.ABORTED`, which only `ABANDONED` produces. A `ply_cap`, a `budget_exceeded` or an
+  `adjudication` ends a game `FINISHED` carrying a real `GameResult`, so all three fell through to
+  `_SCORES` and were scored like any other draw.
+
+  `pool-free` round 175 is what it cost. `ling-3.0-flash-sante` reached
+  `8/6P1/1k5P/5K2/5p2/8/8/8 w` — a pawn on g7, `g8=Q` on the move, the black king on b6 — and the
+  300-ply cap drew it. `bench/ratable.py` excluded the game from the rating, correctly and
+  invisibly, while the pool's table handed both models half a point: the page showed `0.5` beside
+  `unrated`, and `lfm-2.5-2.6b` carried half a point our own ceiling had given it.
+
+  `settle` now asks `HARNESS_TERMINATIONS` rather than keeping a fourth list of its own. That set
+  was already the answer and nothing linked it — `test_classification.py` exists because three sets
+  classifying terminations had drifted apart once, and this was the fourth, one module away and
+  unchecked. It is also what makes the ply cap legitimate at all: the cap is **not** stated in the
+  system prompt, so under invariant 12 it may never decide a scored game.
+
+- **Identical pauses inside one turn fold into one row** (UI-10, [ADR-0045]). A run of pauses has
+  folded between turns since `50cd042`, and moving a pause inside the turn it interrupted brought
+  the run back where nothing was folding it: `foldEvents` matched only `blocks.at(-1)`, and inside a
+  turn the model *retries* between refusals, so what sits between two pauses is a `reasoning` block
+  rather than nothing. `57e8a7bc` drew three byte-identical "Nvidia did not answer in time" rows in
+  one turn. The fold now finds the run's row wherever it is, keeps it where the wait began, and
+  takes the newest `resumeAfter` — `foldPauses`'s `{ ...last, key: first.key }` said the other way
+  round. Matching on the pause text is unchanged, so a rate limit followed by a halt stays two rows.
+
 ## [0.3.0] — 2026-09-15
 
 **A provider that stops answering no longer destroys the work it interrupted.** One thread runs
