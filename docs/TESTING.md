@@ -72,9 +72,15 @@ selector written against production would go through; that one returned an empty
 
 The signed-in flows sign in **for real** — a genuine Clerk session JWT, verified against real JWKS —
 using a `+clerk_test@example.com` address, which a development instance treats as a test identity:
-no mail is sent, the code is fixed, and **no password lives in this repository**. They are opt-in and
-skipped rather than faked when the keys are absent, the same bargain the `llm` marker strikes. **CI
-runs the public half only**, so the playing flow is asserted locally.
+no mail is sent and the code is fixed. They are opt-in and skipped rather than faked when the keys
+are absent, the same bargain the `llm` marker strikes. **CI runs the public half only**, so the
+playing flow is asserted locally.
+
+`auth.setup.ts` gets that session by driving `window.Clerk` directly, which is right for the play
+tests and **asserts nothing about our own screens** — it never touches a field on them.
+`account.spec.ts` is what does, walking a throwaway identity through sign-up, the profile, a display
+name, signing out and signing back in. It found two bugs that were live on the site on the day it
+was written, both of them unreachable from the signed-out state anyone had been checking by eye.
 
 ### What it starts for itself
 
@@ -137,7 +143,7 @@ the shell, and the shell is what CI runs.
 database behind `head` fails there — `relation "tournaments" does not exist`, reported as a setup
 error rather than a test failure. `make migrate` first if you have just changed branches.
 
-### Four traps
+### Five traps
 
 1. **A message's content is not always a string.** By the time it reaches the provider, the
    prompt-caching path may have wrapped it into `[{"type": "text", ...}]` so a `cache_control` marker
@@ -145,11 +151,18 @@ error rather than a test failure. `make migrate` first if you have just changed 
    moves twenty times in one turn, in silence.
 2. **`/ w /` is not "the model has replied".** The starting position is white-to-move too, so the
    wait is already satisfied and every later assertion reads a board that has not moved.
-3. **The first `aria-expanded="false"` on a signed-in page is the account button**, not a turn.
-   Clicking it opens the Clerk user menu over the page and every later click fails on an element it
-   has covered. Scope fold selectors by their text.
+3. **Waiting for a folded turn in a live game waits for ever.** `EventStream` unfolds the *focused*
+   turn without being asked, and a human game has exactly one model turn — which is the focus. A
+   selector written against `aria-expanded="false"` timed out for as long as that default existed,
+   in the one project CI does not run. Open the turn *if* it is folded, and wait on its steps rather
+   than on the click: an assertion that something is **absent** cannot fail against a turn that
+   never opened.
 4. **Not every URL containing `/models` is an API call.** Assert against the API origin, or a router
    prefetch counts as a request the page did not make.
+5. **`signOut` ends the sessions of the client, not of the tab.** Every context built from
+   `STORAGE_STATE` restores the same client cookie, so a test that signs out revokes the session
+   every later test is still using. `account.spec.ts` creates and deletes a throwaway identity for
+   exactly this reason.
 
 ---
 

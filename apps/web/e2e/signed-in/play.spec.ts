@@ -48,14 +48,29 @@ async function sitDown(page: Page): Promise<string> {
 }
 
 /**
- * A folded turn in the conversation.
+ * The newest turn in the conversation, open, with its steps on screen.
  *
- * Scoped by its text, not by `aria-expanded` alone: the account button in the site header is also
- * a collapsed disclosure, and it sorts first in the document. Clicking *that* opens the Clerk user
- * menu over the page, and every later click then fails on an element it has covered.
+ * **The newest turn is usually open already, and waiting for a folded one hangs.** `EventStream`
+ * unfolds the focused turn without being asked, and in a live human game the model's single turn
+ * *is* the focus — so `button[aria-expanded="false"]` never matches and the click waits out the
+ * timeout. This suite is the one project CI does not run, so it stayed red from the day that
+ * default landed. The public replay suite hit the same edge and guards it the same way.
+ *
+ * Scoped to the turn rather than to `aria-expanded` across the page: the account button in the
+ * site header is a collapsed disclosure too, and it sorts first in the document.
+ *
+ * The steps are awaited rather than the click, because the callers below go on to assert that
+ * something is **absent** — and against a turn that never opened, that assertion cannot fail.
  */
-function foldedTurn(page: Page) {
-  return page.locator('button[aria-expanded="false"]').filter({ hasText: /\d+ tools/ });
+async function openNewestTurn(page: Page) {
+  const turn = page.getByTestId("turn").last();
+  const fold = turn.locator("button[aria-expanded]").filter({ hasText: /\d+ steps?/ }).first();
+  await expect(fold).toBeVisible();
+  if ((await fold.getAttribute("aria-expanded")) === "false") await fold.click();
+
+  const steps = turn.getByTestId("turn-steps");
+  await expect(steps).toBeVisible();
+  return steps;
 }
 
 /** Click a piece, then its destination. Click-to-move, not drag — the same path a person uses. */
@@ -128,9 +143,13 @@ test("the model's thinking is hidden while the game is live and readable once it
   await move(page, "e2", "e4");
   await expect(board).toHaveAttribute("data-fen", MODEL_HAS_REPLIED, { timeout: 45_000 });
 
-  // The turn is there, and expanding it shows the moves — but not the thinking behind them.
-  await foldedTurn(page).first().click();
-  await expect(page.getByText(/make_move/).first()).toBeVisible();
+  // The turn is open and its steps are on screen — the move is right there — and the thinking
+  // behind it is not merely collapsed but absent: no reasoning step was sent to this browser at
+  // all. Asserting the text is missing would also hold if the turn had a folded reasoning block
+  // in it, which is a different and much weaker claim than invariant 8 makes.
+  const live = await openNewestTurn(page);
+  await expect(live.getByText(/make_move/).first()).toBeVisible();
+  await expect(live.locator('[data-step="reasoning"]')).toHaveCount(0);
   await expect(page.getByText(SCRIPTED_REASONING)).toHaveCount(0);
 
   await page.getByRole("button", { name: "resign", exact: true }).click();
@@ -140,10 +159,18 @@ test("the model's thinking is hidden while the game is live and readable once it
   // reloaded page was still the live view.
   await expect(page.getByText(/0-1|resignation/i).first()).toBeVisible();
 
-  // Over — and now the same turn gives its reasoning up.
+  // Over — and now the same turn gives its reasoning up. The block is there to be opened, which
+  // is the half of invariant 8 that a redaction bug at write time would have destroyed for ever:
+  // the log is append-only, so text withheld on the way in is never recoverable.
   await page.goto(url);
-  const stillFolded = foldedTurn(page);
-  if (await stillFolded.count()) await stillFolded.first().click();
+  const over = await openNewestTurn(page);
+
+  // Reasoning keeps its own fold, shut by default even on a finished game — it is the longest
+  // thing in a turn and opening the turn into a wall of it buries the move.
+  const reasoning = over.locator('[data-step="reasoning"]');
+  await expect(reasoning).toHaveCount(1);
+  const unroll = reasoning.locator('button[aria-expanded="false"]').first();
+  if (await unroll.count()) await unroll.click();
 
   await expect(page.getByText(SCRIPTED_REASONING).first()).toBeVisible();
 });
