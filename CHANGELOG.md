@@ -15,7 +15,43 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Nobody could create an account through our sign-up form.** The Clerk instance requires a
+  password; the form asked for an email and a code and nothing else, so every email sign-up
+  verified its code and then stopped on `missing_requirements` — the account half-created, the
+  only sign of it a line of red text. Sign-up now takes a password. Signing *in* still does not
+  ask for one: the emailed code is the first factor, and the password exists to satisfy the
+  instance.
+
+- **A display name could never be saved.** `/profile` wrote `username`, which is an attribute a
+  Clerk instance enables or does not, and ours does not — every save came back *"username is not a
+  valid parameter for this request"*. It writes `first_name`, which is enabled, and which is also
+  what the API reads first when it resolves a person's name (`core/clerk.py::_display_name`), so
+  what is typed there is what a game shows.
+
+  Both of these were live, and both were found by writing the test rather than by anyone reporting
+  them. The screens had been checked by eye in their signed-out state, which is precisely the state
+  in which neither bug is reachable.
+
+- **`make test-e2e-all` is green** — the first time it has been. `the model's thinking is hidden
+  while the game is live` had been timing out on a folded turn that cannot exist: `EventStream`
+  unfolds the *focused* turn without being asked, and a live human game has exactly one model turn,
+  which is the focus. The test now opens the newest turn whether or not it is folded, and waits on
+  its steps rather than on the click — the assertions that follow are about something being
+  **absent**, and against a turn that never opened they could not have failed.
+
 ### Added
+
+- **The auth screens are asserted, not eyeballed** (UI-09). `account.spec.ts` walks a throwaway
+  identity through sign-up, the profile, a display name, signing out and signing back in — the two
+  bugs above are what it found on the day it was written. A fresh Clerk user rather than the
+  suite's own: `signOut` ends the sessions of the *client*, and every context restores the same
+  client cookie, so signing out on the shared account would revoke the session the play tests are
+  still using. It is deleted again afterwards.
+
+  `auth.setup.ts` does not cover any of this. It drives `window.Clerk` directly, which is the right
+  way to get a session for the play tests and goes nowhere near our form.
 
 - **Our own sign-in, sign-up and profile** — and `/profile` is a page the site did not have. Clerk's
   `<UserButton />` knew nothing about credits, spend or games, which are the three things a person

@@ -72,7 +72,10 @@ function Profile({ apiUrl }: { apiUrl: string }) {
     };
   }, [isSignedIn, getToken, apiUrl]);
 
-  const name = draft ?? user?.username ?? user?.firstName ?? "";
+  /* `firstName` first, and it is the only field actually written — see `save`. `username` stays
+     as a fallback for a reader whose account already carries one, because Google sign-in can put
+     one there even on an instance where the attribute is not editable. */
+  const name = draft ?? user?.firstName ?? user?.username ?? "";
 
   const save = useCallback(async () => {
     if (!user) return;
@@ -80,11 +83,16 @@ function Profile({ apiUrl }: { apiUrl: string }) {
     setError(null);
     setSaved(false);
     try {
-      await user.update({ username: name.trim() });
+      /* **`firstName`, not `username`.** `username` is an attribute a Clerk instance enables or
+         does not, and ours does not — every save came back *"username is not a valid parameter
+         for this request"*, so the display name could never be set at all. `first_name` is
+         enabled and optional, and it is also what the API reads first when it resolves a person's
+         name (`core/clerk.py::_display_name`), so what is typed here is what a game shows. */
+      await user.update({ firstName: name.trim() });
       setSaved(true);
     } catch (cause) {
       /* Clerk's field errors are structured; the first message is the one a person can act on
-         ("that username is taken"), and the rest repeat it in other words. */
+         ("must be at most 256 characters"), and the rest repeat it in other words. */
       setError(messageOf(cause));
     } finally {
       setSaving(false);
@@ -134,7 +142,7 @@ function Profile({ apiUrl }: { apiUrl: string }) {
             }}
             className="min-w-0 flex-1 border border-line bg-surface px-3 py-2 font-mono text-sm text-ink outline-none focus-visible:border-accent"
             placeholder="unnamed"
-            autoComplete="username"
+            autoComplete="given-name"
           />
           <button
             type="button"

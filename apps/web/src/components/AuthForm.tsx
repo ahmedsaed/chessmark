@@ -12,7 +12,11 @@
  * whole reason this exists; the theme control is the part we also wanted.
  *
  * **Scope is deliberately two strategies: Google, and an emailed code.** Those are what the
- * instance has enabled. Every other branch Clerk supports — password, MFA, `missing_requirements`,
+ * instance has enabled. Signing up also sets a password, because the instance requires one — the
+ * form went to production without that field and every email sign-up died on
+ * `missing_requirements` with the account half-created. It is not asked for again at sign-in: the
+ * emailed code is the first factor here, and the password exists to satisfy the instance and to be
+ * there if password sign-in is ever turned on. Every other branch Clerk supports — password, MFA, `missing_requirements`,
  * session tasks — is either unreachable here or surfaces as an error a person can read, rather than
  * being half-implemented. Hand-rolled auth fails by locking somebody out, so the flows that are not
  * covered must say so rather than appear to work.
@@ -22,6 +26,15 @@ import { useSignIn, useSignUp } from "@clerk/nextjs";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
+
+/**
+ * The instance's minimum password length.
+ *
+ * Duplicated from the Clerk dashboard deliberately: the value is a dashboard setting and this is a
+ * hint, not the enforcement. Clerk rejects a short password whatever this says — the cost of the
+ * two drifting is a message that is wrong by a few characters, not a weak password getting in.
+ */
+const PASSWORD_MIN_LENGTH = 15;
 
 type Mode = "sign-in" | "sign-up";
 type Step = "identify" | "code";
@@ -38,6 +51,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
   const [step, setStep] = useState<Step>("identify");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,7 +92,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
         if (sent.error) throw sent.error;
       } else {
         if (!signUp) return;
-        const created = await signUp.create({ emailAddress: email.trim() });
+        const created = await signUp.create({ emailAddress: email.trim(), password });
         if (created.error) throw created.error;
         const sent = await signUp.verifications.sendEmailCode();
         if (sent.error) throw sent.error;
@@ -89,7 +103,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     } finally {
       setBusy(false);
     }
-  }, [mode, email, signIn, signUp]);
+  }, [mode, email, password, signIn, signUp]);
 
   const verify = useCallback(async () => {
     setError(null);
@@ -170,6 +184,35 @@ export function AuthForm({ mode }: { mode: Mode }) {
               onChange={(event) => setEmail(event.target.value)}
               className="border border-line bg-surface px-3 py-2 font-mono text-sm text-ink outline-none focus-visible:border-accent"
             />
+
+            {mode === "sign-up" && (
+              <>
+                <label
+                  className="font-mono text-label uppercase tracking-[0.16em] text-ink-faint"
+                  htmlFor="password"
+                >
+                  Password
+                </label>
+                <input
+                  id="password"
+                  type="password"
+                  required
+                  /* The instance's floor. Stated in the hint below and enforced here so the
+                     browser says so before a round trip does; Clerk still checks it, and its
+                     message wins when the two disagree. */
+                  minLength={PASSWORD_MIN_LENGTH}
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  className="border border-line bg-surface px-3 py-2 font-mono text-sm text-ink outline-none focus-visible:border-accent"
+                  aria-describedby="password-hint"
+                />
+                <p id="password-hint" className="font-mono text-meta text-ink-faint">
+                  At least {PASSWORD_MIN_LENGTH} characters. You sign in with an emailed code, so
+                  this is only ever needed to create the account.
+                </p>
+              </>
+            )}
           </>
         ) : (
           <>
