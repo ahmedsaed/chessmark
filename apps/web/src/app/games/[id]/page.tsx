@@ -1,3 +1,6 @@
+import { cookies } from "next/headers";
+
+import { hasSessionCookie } from "@/lib/auth-scope";
 import { notFound } from "next/navigation";
 
 import { GameActions } from "@/components/GameActions";
@@ -36,6 +39,9 @@ export async function generateMetadata({ params }: PageProps<"/games/[id]">) {
 }
 
 export default async function GamePage({ params }: PageProps<"/games/[id]">) {
+  /* The same cookie the root layout uses to decide whether to mount Clerk (`lib/auth-scope`), so
+     a signed-out reader never reaches a hook that would throw without a provider. */
+  const signedIn = hasSessionCookie((await cookies()).get("__client_uat")?.value);
   const { id } = await params;
   const game = await getGame(id);
 
@@ -66,6 +72,7 @@ export default async function GamePage({ params }: PageProps<"/games/[id]">) {
         />
       ) : (
         <GameView
+          signedIn={signedIn}
           game={game}
           apiUrl={apiUrl}
           initialEvents={events}

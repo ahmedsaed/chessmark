@@ -1,3 +1,6 @@
+import { cookies } from "next/headers";
+
+import { hasSessionCookie } from "@/lib/auth-scope";
 import type { Metadata } from "next";
 
 import { MyGames } from "@/components/MyGames";
@@ -28,6 +31,9 @@ export const metadata: Metadata = pageMetadata({
  * and the model pages that Phase 20 covers.
  */
 export default async function PlayPage() {
+  /* Read here rather than asked of Clerk, so a signed-out visitor to this page loads no Clerk at
+     all — the same cookie the root layout uses to decide whether to mount it (`lib/auth-scope`). */
+  const signedIn = hasSessionCookie((await cookies()).get("__client_uat")?.value);
   const models = await listModels();
 
   return (
@@ -40,10 +46,10 @@ export default async function PlayPage() {
       </p>
 
       <div className="mt-8">
-        <NewGameSection apiUrl={apiUrl} models={models} />
+        <NewGameSection apiUrl={apiUrl} models={models} signedIn={signedIn} />
       </div>
 
-      <MyGames />
+      <MyGames signedIn={signedIn} />
     </main>
   );
 }

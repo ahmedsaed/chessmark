@@ -1,6 +1,10 @@
 import type { Metadata, Viewport } from "next";
 
+import { cookies, headers } from "next/headers";
+
 import { AuthProvider } from "@/components/AuthProvider";
+import { needsClerk } from "@/lib/auth-scope";
+import { PATHNAME_HEADER } from "@/proxy";
 import { SiteFooter } from "@/components/SiteFooter";
 import { SiteHeader } from "@/components/SiteHeader";
 import { siteDescription, siteName, siteTagline, siteUrl } from "@/lib/site";
@@ -39,18 +43,37 @@ export const viewport: Viewport = {
   colorScheme: "dark",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  /**
+   * **Clerk is mounted only when this request needs it.**
+   *
+   * A signed-out reader on `/leaderboard` has no identity to establish and nothing to show for
+   * one, so they download no Clerk at all — 87 KiB that used to load on every route. `needsClerk`
+   * answers from Clerk's own `__client_uat` cookie and the path, neither of which requires Clerk
+   * to read, and the header draws the signed-out bar from the same answer rather than from a hook.
+   *
+   * Both come from request-scoped APIs, which makes this layout dynamic — it already was, every
+   * route in this app is (FRONTEND.md).
+   */
+  const [cookieStore, headerList] = await Promise.all([cookies(), headers()]);
+  const pathname = headerList.get(PATHNAME_HEADER) ?? "/";
+  const mountClerk = needsClerk(pathname, cookieStore.get("__client_uat")?.value);
+
   /* `AuthProvider` sits **inside** `<body>`, not around `<html>`. Next.js 16 with cache
      components treats a provider wrapping `<html>` as uncached data accessed outside a
      `<Suspense>` boundary, which is an error rather than a warning. */
+  const shell = (
+    <>
+      <SiteHeader clerkMounted={mountClerk} />
+      {children}
+      <SiteFooter />
+    </>
+  );
+
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
-        <AuthProvider>
-          <SiteHeader />
-          {children}
-          <SiteFooter />
-        </AuthProvider>
+        {mountClerk ? <AuthProvider>{shell}</AuthProvider> : shell}
       </body>
     </html>
   );

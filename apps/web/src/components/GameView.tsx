@@ -25,9 +25,19 @@ export function GameView(props: {
   apiUrl: string;
   initialEvents: GameEvent[];
   actions?: React.ReactNode;
+  /** From Clerk's `__client_uat` cookie, read on the server. */
+  signedIn: boolean;
 }) {
+  /**
+   * **`useAuth` throws without `ClerkProvider`, and the provider is now conditional.**
+   *
+   * The root layout mounts Clerk only for a session or an identity route, so a signed-out reader
+   * has no provider — and a hook call here is not a wrong answer, it is a **500 on a public page**.
+   * The cookie the layout already read is passed down instead, so the hook below is reached only
+   * where the provider exists by construction.
+   */
   const hasHumanSeat = props.game.players.some((player) => player.kind === "human");
-  if (!clerkEnabled || !hasHumanSeat) {
+  if (!clerkEnabled || !props.signedIn || !hasHumanSeat) {
     return <LiveGame {...props} />;
   }
   return <Resolved {...props} />;

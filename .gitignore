@@ -60,3 +60,8 @@ logs/
 
 # Lighthouse CI writes its reports here; they are artifacts of a run, not of the repo.
 .lighthouseci/
+
+# A real Clerk session JWT, written by the browser suite. Never committed.
+e2e/.auth/
+apps/web/e2e/.auth/
+apps/web/e2e/.fixtures.json

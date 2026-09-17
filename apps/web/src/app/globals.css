@@ -80,7 +80,12 @@
   --color-machine-dim: #2f6c74;
 
   --color-good: #82b36b;
-  --color-bad: #c86a55;
+  /* **Also below AA, and found the same way.** `#c86a55` measured 4.25:1 on `surface-2` and
+     3.76:1 on `surface-3` — it is the colour of "abandoned", "paused" and an illegal-move count,
+     so it only appeared once the suite ran against a database that had those states. `#d8836d`
+     clears 4.5:1 on every surface with room to spare (worst 4.92:1) and still reads as the warning
+     colour rather than as the accent. */
+  --color-bad: #d8836d;
   --color-bad-deep: #4a251c;
 
   /* --- board (independent: candidate for a user preference later) --- */

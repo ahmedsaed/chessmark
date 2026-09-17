@@ -40,6 +40,21 @@ file is only the record of *what shipped when*.
   supports surfaces as an error a person can read rather than being half-implemented — hand-rolled
   auth fails by locking somebody out, so the flows that are not covered say so.
 
+- **Clerk is not loaded at all for a signed-out reader.** The provider mounts only when Clerk's own
+  `__client_uat` cookie shows a session or the route is about identity — neither of which needs
+  Clerk to read. A signed-out visitor to `/leaderboard` now downloads **3 KiB** of Clerk instead of
+  87, and the page is **258 KiB** where it was 619 before any of this.
+
+  The header draws its signed-out bar from that cookie rather than a hook, and `/play`,
+  `/games/[id]` and the landing page take the same flag as a prop. That last part is not optional:
+  `useAuth` *throws* without a provider, so a component that asks a hook what a cookie already
+  answered is a **500 on a public page** — which is exactly what the first attempt shipped, caught
+  by the browser suite.
+
+- **`--color-bad` failed WCAG AA too** — 4.25:1 on `surface-2`, 3.76:1 on `surface-3`. It is the
+  colour of "abandoned", "paused" and an illegal-move count, so it only surfaced once the budgets
+  ran against a database that had those states. `#d8836d` clears 4.5:1 everywhere.
+
 - **The Lighthouse suite measures the whole public site, with Clerk** (NFR-12). Twelve routes
   instead of four, including a real game and a real tournament from the browser suite's fixtures.
   It used to build with the Clerk keys cleared because a dev tenant was 55% of the page; owning the

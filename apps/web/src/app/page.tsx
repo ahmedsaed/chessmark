@@ -1,3 +1,6 @@
+import { cookies } from "next/headers";
+
+import { hasSessionCookie } from "@/lib/auth-scope";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
@@ -30,7 +33,10 @@ export const metadata: Metadata = { alternates: { canonical: "/" } };
  * independence: the hero paints as soon as *it* is ready, and a slow ranking delays only the
  * ranking.
  */
-export default function Home() {
+export default async function Home() {
+  /* The same cookie the root layout uses to decide whether to mount Clerk (`lib/auth-scope`), so
+     a signed-out reader never reaches a hook that would throw without a provider. */
+  const signedIn = hasSessionCookie((await cookies()).get("__client_uat")?.value);
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       <Suspense fallback={<HeroSkeleton />}>
@@ -39,7 +45,7 @@ export default function Home() {
 
       {/* A game you are playing is not a game you are watching, and the lobby could not tell them
           apart. Renders nothing at all for a visitor with no games of their own. */}
-      <MyGames heading="Your games" />
+      <MyGames heading="Your games" signedIn={signedIn} />
 
       <Suspense fallback={null}>
         <AlsoLive />
