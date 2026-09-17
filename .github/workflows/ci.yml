@@ -219,7 +219,7 @@ jobs:
       # worker) and starts its own scripted worker. Nothing calls a provider; nothing is spent.
       - name: Browser suite
         working-directory: apps/web
-        run: pnpm exec playwright test --project=public
+        run: pnpm exec playwright test --project=public --project=mobile
 
       # **Stop what the job started.** `&` leaves both servers running when the last step finishes,
       # and the post-steps then run inside a job that still has an API holding the uv cache. That

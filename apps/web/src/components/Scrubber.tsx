@@ -140,7 +140,7 @@ export function Scrubber({
           disabled={total === 0}
           aria-label={playing ? "Pause" : "Play"}
           title={`${playing ? "Pause" : "Play"} (space)`}
-          className="flex h-7 w-9 flex-none items-center justify-center border border-accent-deep bg-accent text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40"
+          className="flex h-11 w-14 flex-none items-center justify-center border border-accent-deep bg-accent text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40 sm:h-7 sm:w-9"
         >
           <span aria-hidden className="text-[11px] leading-none">
             {playing ? "❚❚" : "▶"}
@@ -169,7 +169,7 @@ export function Scrubber({
               type="button"
               onClick={() => onSpeedChange(index)}
               aria-pressed={speed === index}
-              className={`border px-1.5 py-0.5 font-mono text-[9px] transition-colors ${
+              className={`border px-2.5 py-2 font-mono text-[10px] transition-colors sm:px-1.5 sm:py-0.5 sm:text-[9px] ${
                 speed === index
                   ? "border-accent text-accent"
                   : "border-line text-ink-faint hover:text-ink-dim"
@@ -226,7 +226,10 @@ function Control({
       disabled={disabled}
       aria-label={label}
       title={`${label} (${hint})`}
-      className="flex h-7 w-7 flex-none items-center justify-center border border-line bg-surface text-ink-dim transition-colors hover:border-accent-dim hover:text-ink disabled:opacity-30 disabled:hover:border-line"
+      /* **44px under a thumb, 28px under a cursor.** The transport was `h-7 w-7` everywhere: a
+         comfortable target for a mouse and a guess for a finger, on the control a phone reader uses
+         most. The desktop size is unchanged — this only grows where there is no pointer. */
+      className="flex h-11 w-11 flex-none items-center justify-center border border-line bg-surface text-ink-dim transition-colors hover:border-accent-dim hover:text-ink disabled:opacity-30 disabled:hover:border-line sm:h-7 sm:w-7"
     >
       <span aria-hidden className="text-[10px] leading-none">
         {children}

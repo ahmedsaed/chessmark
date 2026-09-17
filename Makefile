@@ -125,8 +125,11 @@ test-web-fast: ## Frontend unit tests without the coverage pass
 
 # The browser suite. Needs the API, the web app and the datastores up; it starts its own scripted
 # worker and stops it again. Nothing here calls a provider.
-test-e2e: ## Run the browser suite (public pages — no Clerk needed)
-	cd $(WEB) && pnpm exec playwright test --project=public $(ARGS)
+test-e2e: ## Run the browser suite (public pages and the phone layout — no Clerk needed)
+	cd $(WEB) && pnpm exec playwright test --project=public --project=mobile $(ARGS)
+
+test-e2e-mobile: ## Just the phone layout (UI-11)
+	cd $(WEB) && pnpm exec playwright test --project=mobile $(ARGS)
 
 test-e2e-all: ## Run the whole browser suite, signed-in flows included. Needs Clerk keys
 	cd $(WEB) && pnpm exec playwright test $(ARGS)

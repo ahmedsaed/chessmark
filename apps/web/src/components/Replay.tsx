@@ -17,6 +17,7 @@ import { useCallback, useMemo, useState } from "react";
 
 import { Board } from "@/components/Board";
 import { EventStream } from "@/components/EventStream";
+import { GameLayout } from "@/components/GameLayout";
 import { captures } from "@/lib/captures";
 import { RawTranscript } from "@/components/RawTranscript";
 import { Scrubber } from "@/components/Scrubber";
@@ -106,42 +107,31 @@ export function Replay({
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <Header game={game} ended={ended} ply={ply} total={total} actions={actions} />
-
-      {/* One expression does the whole layout.
-          The board is square, so its size is bounded by whichever runs out first — the height left
-          under the page chrome, or a reasonable share of the width. `min()` of those two is the
-          board column; the two rails are `1fr` each and split everything else, so there is never a
-          dead gutter and never a horizontal scrollbar.
-          Deriving the board's width from its own height instead is the obvious idea and does not
-          work: in a grid an `auto` column must resolve its width before the row height is known,
-          and in flex the same knot ties itself the other way. Both were tried. */}
-      <div className="grid grid-cols-1 gap-4 lg:h-[calc(100dvh-9.5rem)] lg:grid-cols-[minmax(0,1fr)_min(calc(100dvh-12rem),52vw)_minmax(0,1fr)]">
-        <div className="order-3 min-w-0 overflow-y-auto lg:order-none">
-          <StatsRail game={game} toMove={sideToMove} activePly={ply} />
-        </div>
-
-        <div className="order-1 flex min-h-0 min-w-0 flex-col gap-2 lg:order-none">
-          {/* Black above, White below — each player on the side their pieces are on, and the
-              captures beside the name, so scrubbing shows material swing as it happened. */}
-          <PlayerBar
-            player={game.players.find((p) => p.colour === "black")}
-            taken={taken.black}
-            advantage={Math.max(0, -advantage)}
-            active={sideToMove === "black"}
-            toMoveLabel={game.result}
-          />
-          <Board fen={fen} lastMove={lastMove} />
-          <PlayerBar
-            player={game.players.find((p) => p.colour === "white")}
-            taken={taken.white}
-            advantage={Math.max(0, advantage)}
-            active={sideToMove === "white"}
-          />
-        </div>
-
-        <div className="order-2 flex min-h-[24rem] min-w-0 flex-col lg:order-none lg:min-h-0">
+    <>
+      <GameLayout
+        header={<Header game={game} ended={ended} ply={ply} total={total} actions={actions} />}
+        streamLabel="Moves"
+        board={
+          <>
+            {/* Black above, White below — each player on the side their pieces are on, and the
+                captures beside the name, so scrubbing shows material swing as it happened. */}
+            <PlayerBar
+              player={game.players.find((p) => p.colour === "black")}
+              taken={taken.black}
+              advantage={Math.max(0, -advantage)}
+              active={sideToMove === "black"}
+              toMoveLabel={game.result}
+            />
+            <Board fen={fen} lastMove={lastMove} />
+            <PlayerBar
+              player={game.players.find((p) => p.colour === "white")}
+              taken={taken.white}
+              advantage={Math.max(0, advantage)}
+              active={sideToMove === "white"}
+            />
+          </>
+        }
+        stream={
           <EventStream
             turns={turns}
             notices={notices}
@@ -152,7 +142,9 @@ export function Replay({
             header={
               /* The transport sits with the conversation rather than under the board: it is what
                  scrubs both, and taking it out of the centre column gives the board back the
-                 height that is the only thing limiting how large it can be. */
+                 height that is the only thing limiting how large it can be.
+                 It rides the panel on a phone too, so it stays reachable under the board rather
+                 than behind the Info tab. */
               <div className="flex-none border-b border-line p-2">
                 <Scrubber
                   ply={ply}
@@ -167,8 +159,9 @@ export function Replay({
               </div>
             }
           />
-        </div>
-      </div>
+        }
+        stats={<StatsRail game={game} toMove={sideToMove} activePly={ply} />}
+      />
 
       {inspecting && turnIds.has(inspecting.ply) && (
         <RawTranscript
@@ -179,7 +172,7 @@ export function Replay({
           onClose={() => setInspecting(null)}
         />
       )}
-    </div>
+    </>
   );
 }
 

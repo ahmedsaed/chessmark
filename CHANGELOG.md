@@ -15,6 +15,34 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Changed
+
+- **The site is usable at phone width** (UI-11). Seven pages measured at 390px; the failures had one
+  shape — a flex row splitting a width that does not exist — and none of them was visible from a
+  desk.
+
+  - **The game page is a board and two tabs**, rather than three columns stacked. The order was
+    board, conversation, stats, so the stats sat a whole conversation below the board and *whose
+    move it is* was the least reachable thing on the page. The conversation is bounded at `58svh`
+    too: left to grow it was as tall as the game was long, and reaching the newest turn meant
+    scrolling past every older one. `LiveGame` and `Replay` now share `GameLayout` instead of
+    drawing the same grid character for character.
+  - **A pairing's two model names stack.** They shared one row and got **37px** each —
+    `nemotron-3-nano-omni-30b-a3b-reasoning:free` needs 310px and showed four characters, so every
+    fixture in the pool read `nemo… vs nemo…` with the full name in a `title` a thumb cannot open.
+  - **A nameplate's captured pieces move below the name.** `Nex AGI: Nex-N2.5-Pro (free)` wanted
+    209px and got 157px, losing a quarter of itself to a huddle of ten pieces; the huddle then
+    wrapped *inside* the row, so the two nameplates flanking one board were 30px and 17px tall.
+  - **The leaderboard and the pool table drop their trailing columns** instead of scrolling
+    sideways. The leaderboard was an 820px table in a 333px scroller, so a phone showed `#` and
+    `Contestant` and the rating — the reason the page exists — was behind a swipe nothing
+    announced. The pool's standings gave the model column 37px for the same reason; it gets 173px.
+  - **The replay transport is 44px under a thumb**, 28px under a cursor, and the type scale has an
+    11px floor below `sm` — one rule in `globals.css` rather than 139 arbitrary values in markup.
+
+  Held by a new `mobile` Playwright project that CI runs beside `public`. Eight of its nine
+  assertions fail without these changes.
+
 ### Fixed
 
 - **A harness ceiling is no longer scored as a pairing result** (invariant 11, [ADR-0019]).

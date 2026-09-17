@@ -64,6 +64,19 @@ export default defineConfig({
       use: { ...devices["Desktop Chrome"] },
     },
     {
+      /* The same public pages, at 390px. A separate project rather than a second viewport inside
+         `public`, because these assert the *phone* layout specifically and would be meaningless
+         green on a desktop viewport — every failure they cover was a flex row splitting a width
+         that only a phone runs out of. Needs no identity, so CI runs it beside `public`. */
+      name: "mobile",
+      testMatch: /mobile\/.*\.spec\.ts/,
+      /* Pixel 7 rather than an iPhone: it is Chromium, and CI installs `chromium` alone. A WebKit
+         device here is a suite that is green locally for whoever ran `playwright install` and a
+         missing-executable error everywhere else. What is being asserted is width, touch and the
+         breakpoints — none of which is engine-specific. */
+      use: { ...devices["Pixel 7"] },
+    },
+    {
       name: "signed-in",
       testMatch: /signed-in\/.*\.spec\.ts/,
       dependencies: ["auth"],

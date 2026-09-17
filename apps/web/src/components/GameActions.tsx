@@ -28,14 +28,14 @@ export function GameActions({ pgnHref }: { pgnHref: string }) {
       <button
         type="button"
         onClick={copy}
-        className="border border-line bg-surface px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink"
+        className="inline-flex min-h-11 items-center border border-line bg-surface px-3 py-1 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink sm:min-h-0 sm:px-2 sm:text-[10px]"
       >
         {copied ? "copied" : "copy link"}
       </button>
       <a
         href={pgnHref}
         download
-        className="border border-line bg-surface px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink"
+        className="inline-flex min-h-11 items-center border border-line bg-surface px-3 py-1 font-mono text-[11px] uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink sm:min-h-0 sm:px-2 sm:text-[10px]"
       >
         pgn
       </a>
