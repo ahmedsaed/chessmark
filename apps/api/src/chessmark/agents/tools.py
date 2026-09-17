@@ -370,6 +370,13 @@ class ToolDispatcher:
         )
 
     def _get_move_history(self, arguments: dict[str, Any]) -> ToolResult:
+        #: **The `+` and `#` stay here, and that is deliberate** — `history_san()`, not `plain_san`.
+        #: The asymmetry with `get_legal_moves` is real and looks like an oversight, so: ADR-0042
+        #: strips the suffix from the *legal move list* because that list is a search handed over
+        #: free, and one `#` among forty-five alphabetically sorted moves names the mating move to a
+        #: model that never had to find it. A history is the opposite — moves already played, on a
+        #: board both seats can read, naming nothing about the position in front of them. Every PGN
+        #: ever written carries these marks.
         history = self.referee.board.history_san()
         last_n = arguments.get("last_n")
         if isinstance(last_n, int) and last_n > 0:
