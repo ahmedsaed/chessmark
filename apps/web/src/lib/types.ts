@@ -83,6 +83,8 @@ export interface MyGameSummary extends GameSummary {
 }
 
 export interface GameDetail extends GameSummary {
+  /** Why a paused game has not resumed. Null unless it is paused. */
+  waiting_on: WaitingOn | null;
   start_fen: string;
   current_fen: string;
   termination_detail: string | null;
@@ -259,6 +261,14 @@ export type TurnBlock =
       text: string;
       resumeAfter: string | null;
       count: number;
+      /**
+       * Whether this is the wait the game is sitting in **right now**.
+       *
+       * Set by `foldEvents` on exactly one row, and only while the game is paused. Every other
+       * pause row is history: it happened, it ended, and it must not describe itself as ongoing.
+       * The live one is the only row entitled to say what the game is waiting for.
+       */
+      live?: boolean;
     };
 
 /**
@@ -336,6 +346,24 @@ export interface TurnView {
  * turn for the notice to hang off. Carried separately and interleaved by `seq`, which is what keeps
  * a game that paused at move 12 reading in order rather than with its interruptions at the end.
  */
+/**
+ * Why a paused game has not resumed — the API's answer, from `reconciler.what_it_waits_for`.
+ *
+ * Distinct from `pause_reason`, which says why it *stopped*. A game can stop for a rate limit and
+ * then sit waiting for something else entirely; `c2fd378a` stopped for Poolside and then queued
+ * behind another game in its pool for twenty minutes, while the page went on blaming Poolside.
+ *
+ * Null unless the game is paused. Only ever on `GameDetail` — a list would pay a query per row.
+ */
+export interface WaitingOn {
+  /** `clock` · `halt` · `concurrency` · `due`. */
+  kind: string;
+  /** When the wait ends, for `clock`. */
+  until: string | null;
+  /** The event holding the slot, for `concurrency`. */
+  tournament: string | null;
+}
+
 export interface StreamNotice {
   key: string;
   seq: number;
@@ -343,6 +371,8 @@ export interface StreamNotice {
   text: string;
   /** When a pause will be retried, if it said. */
   resumeAfter: string | null;
+  /** For a `paused` notice: the wait the game is in right now. See `TurnBlock`'s copy. */
+  live?: boolean;
   /**
    * How many identical notices this one stands for, when a run was folded into it.
    *

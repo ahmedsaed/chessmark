@@ -43,10 +43,17 @@
  * to a contestant.
  */
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { buildTimeline, pauseCount, sameTurnContent } from "@/lib/turns";
-import type { Player, StreamNotice, ToolCallView, TurnBlock, TurnView } from "@/lib/types";
+import { buildTimeline, pauseCount, sameTurnContent, waitText } from "@/lib/turns";
+import type {
+  Player,
+  StreamNotice,
+  ToolCallView,
+  TurnBlock,
+  TurnView,
+  WaitingOn,
+} from "@/lib/types";
 
 type Filter = "all" | "moves-talk" | "talk" | "moves";
 
@@ -76,6 +83,7 @@ export function EventStream({
   header,
   footer,
   players = [],
+  waitingOn = null,
 }: {
   turns: TurnView[];
   /**
@@ -83,6 +91,14 @@ export function EventStream({
    * rather than appended, so a game that paused at move 12 reads in the order it happened.
    */
   notices?: StreamNotice[];
+  /**
+   * Why the game is paused *right now* — `GameDetail.waiting_on`.
+   *
+   * Only the live pause row uses it, and only that row is allowed to: every other pause is history
+   * and must not describe itself as ongoing. Null for a game that is not paused, which is what a
+   * replay passes, so a finished game's pause rows stay quiet.
+   */
+  waitingOn?: WaitingOn | null;
   /**
    * The turn to open by default. Replay passes the turn that produced the current ply so scrubbing
    * always lands on something readable. It seeds the open set rather than overriding it — a turn
@@ -178,6 +194,7 @@ export function EventStream({
   }, []);
 
   return (
+    <WaitingContext.Provider value={waitingOn}>
     <section
       aria-label="Event stream"
       className="flex min-h-0 flex-col border border-line bg-surface-2"
@@ -245,6 +262,7 @@ export function EventStream({
 
       {footer && <div className="flex-none border-t border-line bg-surface-3 p-2">{footer}</div>}
     </section>
+    </WaitingContext.Provider>
   );
 }
 
@@ -481,9 +499,7 @@ function Notice({ notice, bare = false }: { notice: StreamNotice; bare?: boolean
         </span>
       )}
       <span className="text-ink-dim"> · {body}</span>
-      {notice.resumeAfter && (
-        <span className="text-ink-faint"> · retrying {relativeTime(notice.resumeAfter)}</span>
-      )}
+      <Wait resumeAfter={notice.resumeAfter} waitingOn={notice.live ?? false} />
       </div>
     </div>
   );
@@ -495,11 +511,26 @@ function Notice({ notice, bare = false }: { notice: StreamNotice; bare?: boolean
  * Rendered client-side on purpose: a server-rendered "in 4 minutes" is wrong by the time anybody
  * reads it, and this column is already a client component following a live stream.
  */
-function relativeTime(iso: string): string {
-  const seconds = Math.round((new Date(iso).getTime() - Date.now()) / 1000);
-  if (!Number.isFinite(seconds) || seconds <= 20) return "shortly";
-  if (seconds < 90) return `in ${seconds}s`;
-  return `in ${Math.round(seconds / 60)} min`;
+/**
+ * The live wait, shared with the two rows that draw a pause.
+ *
+ * Context rather than a prop threaded through `EventStream` → section → `Notice`/`Block`: it is one
+ * value, set once at the root, read by two leaves, and every layer between them would otherwise
+ * carry a prop it has no use for.
+ */
+const WaitingContext = createContext<WaitingOn | null>(null);
+
+function Wait({
+  resumeAfter,
+  waitingOn,
+}: {
+  resumeAfter: string | null;
+  /** Whether *this* row is the wait the game is in now. Only that row may describe it. */
+  waitingOn: boolean;
+}) {
+  const live = useContext(WaitingContext);
+  const text = waitText(resumeAfter, waitingOn ? live : null);
+  return text ? <span className="text-ink-faint"> · {text}</span> : null;
 }
 
 /**
@@ -823,9 +854,7 @@ function Block({
             </span>
           )}
           <span className="text-ink-dim"> · {block.text}</span>
-          {block.resumeAfter && (
-            <span className="text-ink-faint"> · retrying {relativeTime(block.resumeAfter)}</span>
-          )}
+          <Wait resumeAfter={block.resumeAfter} waitingOn={block.live ?? false} />
         </div>
       );
   }

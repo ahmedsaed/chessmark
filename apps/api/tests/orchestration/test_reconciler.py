@@ -19,10 +19,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents.scripted import plays
 from chessmark.core.halt import SCOPE_FREE, SOURCE_CREDITS, SOURCE_OPERATOR, Halt
 from chessmark.db.enums import EventType, GameStatus
-from chessmark.db.models import Game, GameEvent, Player, TournamentGame
+from chessmark.db.models import Game, GameEvent, Player, Tournament, TournamentGame
 from chessmark.db.repositories import append_event
 from chessmark.game import Colour
-from chessmark.orchestration.reconciler import find_resumable, find_stalled, reconcile
+from chessmark.orchestration.reconciler import (
+    find_resumable,
+    find_stalled,
+    reconcile,
+    what_it_waits_for,
+)
 from chessmark.orchestration.worker import ADVANCED, HALTED, STALE
 from tests.orchestration.conftest import Fixture, both_sides, run_next, seat_match
 
@@ -825,3 +830,101 @@ async def test_a_resume_ends_the_latest_pause_not_the_first(
     )
     assert resumed is not None
     assert resumed.payload["paused_seq"] == halt_seq
+
+
+async def test_a_game_waiting_on_its_clock_says_so(db: AsyncSession, game: Fixture) -> None:
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) + dt.timedelta(minutes=5)
+    game.game.pause_reason = "rate-limited by Poolside"
+    await db.commit()
+
+    waiting = await what_it_waits_for(db, game.game)
+
+    assert waiting is not None
+    assert waiting.kind == "clock"
+
+
+async def test_a_game_queued_behind_its_event_says_which_event(
+    db: AsyncSession, game: Fixture
+) -> None:
+    """The case the page got wrong for twenty minutes.
+
+    `c2fd378a` stopped for a Poolside rate limit, came due a minute later, and then sat because
+    `pool-free` is bounded to one game and another held the slot. `pause_reason` went on saying
+    Poolside — true, and no longer the thing in the way.
+    """
+    tournament = Tournament(
+        name="Free Models", slug="pool-free-waiting", format="swiss", max_concurrent=1
+    )
+    db.add(tournament)
+    await db.flush()
+
+    # The slot-holder: a second game of the same event, running. `in_flight` counts PENDING and
+    # RUNNING pairings, so a paused game does not hold a slot — which is the whole reason this one
+    # has to queue for one.
+    holder = await seat_match(db, game.queue)
+    holder.game.status = GameStatus.RUNNING
+    # A distinct round each: the table is unique on (tournament, round, white, black).
+    db.add(
+        TournamentGame(
+            tournament_id=tournament.id,
+            round_number=1,
+            white_key="a",
+            black_key="b",
+            game_id=holder.game.id,
+        )
+    )
+    db.add(
+        TournamentGame(
+            tournament_id=tournament.id,
+            round_number=2,
+            white_key="a",
+            black_key="b",
+            game_id=game.game.id,
+        )
+    )
+
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=20)
+    game.game.pause_reason = "rate-limited by Poolside"
+    await db.commit()
+
+    waiting = await what_it_waits_for(db, game.game)
+
+    assert waiting is not None
+    assert waiting.kind == "concurrency", "it is not retrying — it is queued"
+    assert waiting.tournament == "Free Models"
+
+
+async def test_a_halted_game_is_not_reported_as_queued(db: AsyncSession, game: Fixture) -> None:
+    """Halt outranks concurrency, exactly as the sweep orders them.
+
+    A halted game never reaches `with_room_to_run`, so reporting a slot it is not competing for
+    would be a fiction — and the page would blame the pool for something the harness did.
+    """
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)
+    game.game.pause_reason = "the harness is halted: the free-model allowance for the day is spent"
+    await db.commit()
+
+    waiting = await what_it_waits_for(db, game.game)
+
+    assert waiting is not None
+    assert waiting.kind == "halt"
+
+
+async def test_a_due_game_with_nothing_in_the_way_is_due(db: AsyncSession, game: Fixture) -> None:
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)
+    game.game.pause_reason = "rate-limited by Poolside"
+    await db.commit()
+
+    waiting = await what_it_waits_for(db, game.game)
+
+    assert waiting is not None
+    assert waiting.kind == "due"
+
+
+async def test_a_running_game_is_waiting_for_nothing(db: AsyncSession, game: Fixture) -> None:
+    """Null rather than a kind, so the page has nothing to draw and costs no query."""
+    assert await what_it_waits_for(db, game.game) is None

@@ -296,6 +296,75 @@ async def with_room_to_run(session: AsyncSession, games: list[Game]) -> list[Gam
     return ready
 
 
+#: The prefix `_say_it_is_held` writes into `pause_reason` when a halt is what stops a game.
+#: Read rather than re-derived from Redis: the API has no halt client and should not grow one for a
+#: page read, and this string is written by the same sweep that would have answered the question.
+HALT_PREFIX = "the harness is halted:"
+
+
+@dataclass(frozen=True)
+class Waiting:
+    """What a paused game is actually waiting for, right now.
+
+    **Not the same question as "why did it stop".** `pause_reason` is why it stopped — a provider
+    refused it — and it keeps being true long after it stops being the thing in the way. Game
+    `c2fd378a` stopped for a Poolside rate limit at 11:04, came due at 11:05, and at 11:26 was still
+    paused because `pool-free` is bounded to one game at a time and another held the slot. The page
+    said "rate-limited by Poolside · retrying shortly" for the whole of it: the first half stale,
+    the second half wrong.
+
+    The order below mirrors `reconcile` exactly — clock, then halt, then concurrency — because a
+    page that disagreed with the sweep about why a game is sitting still would be a second bug
+    wearing the first one's clothes.
+    """
+
+    #: `clock` — the wait has not elapsed. `halt` — the harness is stopped. `concurrency` — due, but
+    #: its event is at its bound. `due` — nothing is in the way; the next sweep takes it.
+    kind: str
+    until: dt.datetime | None = None
+    #: The event holding the slot, for `concurrency`. Its name, because that is what the page shows.
+    tournament: str | None = None
+
+
+async def what_it_waits_for(
+    session: AsyncSession, game: Game, now: dt.datetime | None = None
+) -> Waiting | None:
+    """Why this paused game has not resumed. `None` for a game that is not paused.
+
+    One query at most, and only for a game that is both paused and due — a running game costs
+    nothing, which matters because this is on the game page's critical path.
+    """
+    if game.status is not GameStatus.PAUSED:
+        return None
+
+    clock = now or dt.datetime.now(dt.UTC)
+
+    if game.resume_after is not None and game.resume_after > clock:
+        return Waiting(kind="clock", until=game.resume_after)
+
+    # Ahead of concurrency, as in the sweep: a halted game never reaches `with_room_to_run`, so
+    # reporting a slot it is not competing for would be a fiction.
+    if (game.pause_reason or "").startswith(HALT_PREFIX):
+        return Waiting(kind="halt")
+
+    pairing = await session.scalar(
+        sa.select(TournamentGame).where(TournamentGame.game_id == game.id)
+    )
+    if pairing is None:
+        # Bounded by nothing — a human's game, anything started by hand. It resumes on the next tick.
+        return Waiting(kind="due")
+
+    tournament = await session.get(Tournament, pairing.tournament_id)
+    if tournament is None:  # pragma: no cover - a pairing without its event
+        return Waiting(kind="due")
+
+    running = len(await repo.in_flight(session, tournament.id))
+    if running >= tournament.max_concurrent:
+        return Waiting(kind="concurrency", tournament=tournament.name)
+
+    return Waiting(kind="due")
+
+
 async def resume(session: AsyncSession, game: Game) -> AdvanceTurn:
     """Put a paused game back into play. Appends one event, like every other state change.
 

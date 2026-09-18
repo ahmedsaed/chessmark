@@ -14,6 +14,7 @@ import type {
   StreamNotice,
   TurnBlock,
   TurnView,
+  WaitingOn,
 } from "@/lib/types";
 
 function asString(value: unknown): string {
@@ -722,7 +723,32 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
   }
 
   // A game that reached a result is not paused, whatever order the events arrived in.
-  return { turns, moves, ended, notices, paused: ended ? null : paused };
+  const stillPaused = ended ? null : paused;
+
+  /**
+   * Mark the one row the reader is *currently* waiting on.
+   *
+   * Every pause row looks alike, and all but one of them are history. Only this one may say what
+   * the game is waiting for — a replay of a finished game must not announce that it is queued for a
+   * slot, and an earlier ply's rate limit must not either. Searched from the end and matched on the
+   * reason, because the folded row keeps the *first* pause's `seq` while the live pause is the
+   * last event, so the two cannot be compared by number.
+   */
+  if (stillPaused) {
+    const block = turns
+      .flatMap((turn) => turn.blocks)
+      .findLast((b) => b.kind === "paused" && b.text === stillPaused.text);
+
+    if (block?.kind === "paused") block.live = true;
+    else {
+      const notice = notices.findLast(
+        (n) => n.kind === "paused" && n.text === stillPaused.text,
+      );
+      if (notice) notice.live = true;
+    }
+  }
+
+  return { turns, moves, ended, notices, paused: stillPaused };
 }
 
 
@@ -775,6 +801,57 @@ export type TimelineEntry =
  * and components are Playwright's — this is arithmetic, and arithmetic belongs where a unit test
  * can reach it.
  */
+/**
+ * What a paused game is waiting for, said the way a person would say it.
+ *
+ * **"retrying shortly" was a lie told by arithmetic.** The old copy ran every pause through a
+ * relative clock that returned `"shortly"` for any wait of twenty seconds or less — *including
+ * every negative one*. So a wait that expired twenty minutes ago read exactly like one about to
+ * end, and it did that forever. Game `c2fd378a` came due at 11:05 and still said "retrying
+ * shortly" at 11:26; it was not retrying, it was queued behind another game in its pool.
+ *
+ * Two different questions, and the row now keeps them apart. `pause_reason` is **why it stopped**
+ * and stays true forever. This is **what it is waiting for**, which changes underneath a reason
+ * that does not — and only the live pause row is entitled to answer it (`TurnBlock.live`).
+ *
+ * `null` means say nothing. That is the right answer for every historical pause: it ended, and a
+ * row in a replay claiming to be waiting for anything is worse than a row that is simply quiet.
+ */
+export function waitText(
+  resumeAfter: string | null,
+  waitingOn: WaitingOn | null,
+  now: number = Date.now(),
+): string | null {
+  /* The clock first, and from the timestamp rather than from `waitingOn.kind` — this row renders
+     on a live page where the wait elapses between renders, and the server's answer is from
+     whenever the page was fetched. */
+  if (resumeAfter) {
+    const seconds = Math.round((new Date(resumeAfter).getTime() - now) / 1000);
+    if (Number.isFinite(seconds) && seconds > 20) {
+      return seconds < 90 ? `retrying in ${seconds}s` : `retrying in ${Math.round(seconds / 60)} min`;
+    }
+  }
+
+  if (!waitingOn) return null;
+
+  switch (waitingOn.kind) {
+    /* The wait has not elapsed after all — the server read it a moment before we did. Deliberately
+       vague rather than recomputing a number that is about to be wrong again. */
+    case "clock":
+      return "retrying shortly";
+    case "halt":
+      return "held until the harness is resumed";
+    case "concurrency":
+      return waitingOn.tournament
+        ? `waiting for a slot in ${waitingOn.tournament}`
+        : "waiting for a slot";
+    case "due":
+      return "due to resume";
+    default:
+      return null;
+  }
+}
+
 export function pauseCount(turn: TurnView): number {
   return turn.blocks.reduce(
     (total, block) => total + (block.kind === "paused" ? block.count : 0),
