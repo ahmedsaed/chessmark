@@ -297,8 +297,38 @@ async def with_room_to_run(session: AsyncSession, games: list[Game]) -> list[Gam
 
 
 async def resume(session: AsyncSession, game: Game) -> AdvanceTurn:
-    """Put a paused game back into play. Appends one event, like every other state change."""
+    """Put a paused game back into play. Appends one event, like every other state change.
+
+    **The event names the pause it ends.** It used to carry one key — a prose `detail` reading
+    "the wait is over: <reason>" — so the only tie between a resume and the pause it answered was a
+    reason embedded in a sentence. Nothing downstream could pair them without parsing English, so
+    the frontend paired them *positionally* instead, and a run of eleven refusals on one turn drew
+    one folded pause and ten stray "RESUMED" rows because the two sides disagreed about which block
+    was the open one.
+
+    `reason` is the same string the pause wrote, as a field rather than a phrase. `paused_seq` is
+    the row it ends, so the pairing is a fact rather than an inference. The seat is copied from that
+    pause for the same reason the pause carries it: a resume that cannot say whose endpoint came
+    back cannot be attributed to a seat.
+
+    `detail` is unchanged and still first, because every game already in the archive has only that
+    and every reader of it must keep working.
+
+    **A resume does not always answer the pause immediately before it.** `_pause_for_halt` writes a
+    second `game_paused` on top of a provider pause without a resume between them — game
+    `c2fd378a` has exactly one such pair at seq 106/107 — so the latest pause is the one being
+    ended, and `previous_reason` on it is what the game was originally waiting for.
+    """
     was = game.pause_reason
+
+    pause = await session.scalar(
+        sa.select(GameEvent)
+        .where(GameEvent.game_id == game.id, GameEvent.type == EventType.GAME_PAUSED)
+        .order_by(GameEvent.seq.desc())
+        .limit(1)
+    )
+    seat = pause.payload if pause else {}
+
     game.status = GameStatus.RUNNING
     game.resume_after = None
     game.pause_reason = None
@@ -306,7 +336,14 @@ async def resume(session: AsyncSession, game: Game) -> AdvanceTurn:
         session,
         game_id=game.id,
         type=EventType.GAME_RESUMED,
-        payload={"detail": f"the wait is over: {was}" if was else "resumed after a pause"},
+        payload={
+            "detail": f"the wait is over: {was}" if was else "resumed after a pause",
+            "reason": was,
+            "paused_seq": pause.seq if pause else None,
+            "player_id": seat.get("player_id"),
+            "colour": seat.get("colour"),
+            "model": seat.get("model"),
+        },
     )
     return AdvanceTurn(game_id=game.id, expected_ply=game.ply_count)
 

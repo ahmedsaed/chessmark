@@ -14,6 +14,8 @@ import {
   compactionText,
   foldEvents,
   liveTurn,
+  pauseCount,
+  reasonFromDetail,
   sameTurnContent,
   supersedesFrames,
   withLiveTurn,
@@ -1320,5 +1322,100 @@ describe("a paused turn, replayed the way the stream delivers it", () => {
     ];
 
     expect(drawnAfterEach(script)).toEqual(script.map(() => ({ rows: 1, repeated: [] })));
+  });
+});
+
+describe("a resume is swallowed by the pause it answers (c2fd378a)", () => {
+  /**
+   * The production shape, taken from the game that exposed it.
+   *
+   * `c2fd378a` sat on ply 13 being refused by Poolside over and over: 27 `game_paused` and 25
+   * `game_resumed` rows, twelve of the pauses on the open turn alone. The page drew one folded
+   * `PAUSED ×11` row and ten stray `RESUMED` rows stacked beneath the turn's tool calls.
+   *
+   * Both sides of the pairing were already written and they disagreed. The pause fold *searches*
+   * the block list, because the model retries between refusals and the row deliberately stays where
+   * the wait began; the resume test peeked at `blocks.at(-1)`, found the retry, and let every
+   * resume after the first escape as its own notice.
+   *
+   * The resumes here carry the real payload — `detail: "the wait is over: <reason>"` — because
+   * that is all a game already in the archive has. The `reason` field is new.
+   */
+  const REASON = "poolside/laguna-s-2.1:free rate-limited by Poolside (upstream_provider_shared_pool)";
+
+  function refusals(times: number, withReasonField: boolean): GameEvent[] {
+    const out: GameEvent[] = [
+      event("turn_started", { ply: 13, colour: "white", player_id: "w", model: "poolside/laguna-s-2.1:free" }),
+    ];
+    for (let i = 0; i < times; i++) {
+      // The retry between refusals is what put a block between the pause and the resume.
+      out.push(event("tool_called", { tool: "get_board", ok: true, args: {}, result: {} }));
+      out.push(event("game_paused", { reason: REASON, resume_after: `12:${String(i).padStart(2, "0")}` }));
+      out.push(
+        event(
+          "game_resumed",
+          withReasonField
+            ? { detail: `the wait is over: ${REASON}`, reason: REASON, paused_seq: 1 }
+            : { detail: `the wait is over: ${REASON}` },
+        ),
+      );
+    }
+    return out;
+  }
+
+  it("draws one pause row and no stray resumes, for an archived game with no reason field", () => {
+    seq = 0;
+    const { turns, notices } = foldEvents(refusals(11, false), []);
+    const pauses = turns[0].blocks.filter((b) => b.kind === "paused");
+
+    expect(pauses).toHaveLength(1);
+    expect(pauses[0].kind === "paused" && pauses[0].count).toBe(11);
+    // The assertion that was missing. Ten of these used to survive as their own rows.
+    expect(notices.filter((n) => n.kind === "resumed")).toEqual([]);
+  });
+
+  it("does the same when the resume names its pause outright", () => {
+    seq = 0;
+    const { turns, notices } = foldEvents(refusals(11, true), []);
+    const pauses = turns[0].blocks.filter((b) => b.kind === "paused");
+
+    expect(pauses[0].kind === "paused" && pauses[0].count).toBe(11);
+    expect(notices.filter((n) => n.kind === "resumed")).toEqual([]);
+  });
+
+  it("will not let a resume silence a wait it did not end", () => {
+    /* The reason the match is on the reason. A rate limit and a halt are two problems; the halt
+       lifting must not make the rate limit's row disappear. `c2fd378a` has exactly this pair at
+       seq 106/107 — `_pause_for_halt` writes a second pause on top of a provider one. */
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
+      event("game_paused", { reason: "rate-limited by Poolside", resume_after: "12:00" }),
+      event("game_paused", { reason: "the harness is halted: the free allowance is spent" }),
+      event("game_resumed", {
+        detail: "the wait is over: the harness is halted: the free allowance is spent",
+        reason: "the harness is halted: the free allowance is spent",
+      }),
+      event("move_made", { ply: 1, colour: "white", san: "e4" }),
+    ];
+
+    const { turns } = foldEvents(events, []);
+    const pauses = turns[0].blocks.filter((b) => b.kind === "paused");
+
+    // Two distinct problems, two rows. Neither folds into the other.
+    expect(pauses).toHaveLength(2);
+  });
+
+  it("counts pauses, not pause rows", () => {
+    seq = 0;
+    const [turn] = foldEvents(refusals(11, false), []).turns;
+
+    // The header said "1 pause" over a row reading `×11`.
+    expect(pauseCount(turn)).toBe(11);
+  });
+
+  it("recovers the reason from an archived resume's prose", () => {
+    expect(reasonFromDetail(`the wait is over: ${REASON}`)).toBe(REASON);
+    expect(reasonFromDetail("reopened by an operator")).toBeNull();
   });
 });

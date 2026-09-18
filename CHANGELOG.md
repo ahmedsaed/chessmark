@@ -17,6 +17,34 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **A pause and the resume that ended it are one fact, and the page drew them as twelve.** Game
+  `c2fd378a` sat on ply 13 being refused by Poolside: 27 `game_paused` and 25 `game_resumed` rows,
+  twelve of the pauses on the open turn. The panel showed one folded `PAUSED x12` row, ten stray
+  `RESUMED` rows stacked under the turn's tool calls, and a header reading **"1 pause"** directly
+  above the row that said `x12`.
+
+  Three separate causes, all now fixed:
+
+  * **A resume was tied to its pause only by prose.** `game_resumed` carried a single `detail`
+    reading "the wait is over: <reason>", so nothing could pair the two without parsing English. It
+    now carries `reason`, `paused_seq` and the seat, copied from the pause it ends. `detail` is
+    unchanged, because every game in the archive has only that.
+  * **The two sides of the pairing disagreed.** The pause fold *searches* the block list — the model
+    retries between refusals, so the row deliberately stays where the wait began — while the resume
+    test peeked at `blocks.at(-1)`, found the retry, and let every resume after the first escape.
+    They are the same search now, matched on the reason so a halt lifting cannot silence a rate
+    limit's row.
+  * **The counter counted rows, not pauses.** `pauseCount` sums each folded row's `count`, and lives
+    in `lib/` so a unit test can reach it.
+
+  Verified against production: the same game now renders one `PAUSED x12` row, zero stray resumes,
+  and per-ply counts of 3, 1, 1, 2, 2, 2, 1, 3 — exactly what its raw event log contains.
+
+  Also settled while debugging it: **a pause is not always followed by a resume.**
+  `_pause_for_halt` writes a second `game_paused` on top of a provider one with nothing between —
+  `c2fd378a` has exactly that pair at seq 106/107 — so a resume ends the *latest* pause, not the
+  first.
+
 - **Two ADRs were numbered 0032, and a citation of it carried no information.** *The arithmetic that
   decides whether a request can be sent* and *The leaderboard is stored, not recomputed on every
   request* were written the same day and both took 0032; only the second reached the index. The
