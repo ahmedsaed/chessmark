@@ -237,7 +237,21 @@ export interface ToolCallView {
  * never missing from the log; `seq` had it all along.
  */
 export type TurnBlock =
-  | { kind: "reasoning"; seq: number; text: string; tokens: number; durationMs: number | null }
+  | {
+      kind: "reasoning";
+      seq: number;
+      text: string;
+      tokens: number;
+      durationMs: number | null;
+      /**
+       * When this block started arriving, for one still being generated.
+       *
+       * `durationMs` is the finished figure and arrives with the block that closes it; until then
+       * there is nothing to show but a running count, and a model that thinks for six minutes with
+       * a static "reasoning" label is indistinguishable from a stuck harness.
+       */
+      startedAt?: number | null;
+    }
   | { kind: "output"; seq: number; text: string }
   | { kind: "tool"; seq: number; call: ToolCallView }
   | { kind: "illegal"; seq: number; move: string; detail: string; attempt: number }
@@ -299,7 +313,20 @@ export type LiveFrame =
       attempt?: number | null;
     }
   /** A fragment of a block still being generated. Appended, then replaced by its `block`. */
-  | { frame: "token"; player_id: string; kind: "reasoning" | "output"; text: string };
+  | {
+      frame: "token";
+      player_id: string;
+      kind: "reasoning" | "output";
+      text: string;
+      /**
+       * When this fragment reached *this browser*, stamped by `useGameStream`.
+       *
+       * Not from the server, and deliberately not: a `token` frame carries no time of its own, and
+       * the thing being measured — how long a reader has been watching a model think — is a
+       * client-side question anyway. It is the arrival of the first fragment that starts the clock.
+       */
+      receivedAt?: number;
+    };
 
 /** One agent turn, assembled from the event stream. */
 export interface TurnView {

@@ -13,7 +13,9 @@ import {
   buildTimeline,
   compactionText,
   foldEvents,
+  liveBlocks,
   liveTurn,
+  reasoningLabel,
   pauseCount,
   reasonFromDetail,
   sameTurnContent,
@@ -1503,5 +1505,65 @@ describe("what a paused game says it is waiting for", () => {
     const rows = [...turns.flatMap((t) => t.blocks), ...notices];
 
     expect(rows.filter((r) => r.kind === "paused" && r.live)).toEqual([]);
+  });
+});
+
+describe("a model thinking says how long it has been thinking", () => {
+  /**
+   * A static "reasoning" label is indistinguishable from a stuck harness.
+   *
+   * The duration was already shown once a block *closed* — `reasoned for 12s`, from the event's
+   * `duration_ms`. While it was still being written there was nothing at all, which is exactly the
+   * stretch a reader watching a board not move is trying to interpret. `e601f9af`'s ply 8 spent 369
+   * seconds in one round of reasoning.
+   */
+  it("counts up while the block is still being written", () => {
+    expect(reasoningLabel({ tokens: 0, durationMs: null }, 12_000)).toBe("reasoning for 12s");
+    expect(reasoningLabel({ tokens: 0, durationMs: null }, 95_000)).toBe("reasoning for 1m 35s");
+  });
+
+  it("changes tense the moment it is done", () => {
+    // The same block, before and after its closing frame. Present tense while it runs, past when
+    // it has finished — the tense is the whole signal.
+    expect(reasoningLabel({ tokens: 0, durationMs: null }, 12_000)).toBe("reasoning for 12s");
+    expect(reasoningLabel({ tokens: 1200, durationMs: 12_000 })).toBe(
+      "reasoned for 12s · 1.2k tokens",
+    );
+  });
+
+  it("prefers the running count over a duration, because a live block has none", () => {
+    expect(reasoningLabel({ tokens: 0, durationMs: 999_000 }, 3_000)).toBe("reasoning for 3s");
+  });
+
+  it("still says plain 'reasoning' for the archive, which carried neither number", () => {
+    expect(reasoningLabel({ tokens: 0, durationMs: null })).toBe("reasoning");
+  });
+
+  it("stamps a live reasoning block with the moment its first fragment arrived", () => {
+    const frames: LiveFrame[] = [
+      { frame: "turn", player_id: "w", colour: "white", ply: 1, model: "m" },
+      { frame: "token", player_id: "w", kind: "reasoning", text: "thinking", receivedAt: 1_000 },
+      { frame: "token", player_id: "w", kind: "reasoning", text: " more", receivedAt: 5_000 },
+    ];
+
+    const blocks = liveBlocks(frames.slice(1));
+    const reasoning = blocks.find((b) => b.kind === "reasoning");
+
+    // The *first* fragment starts the clock; later ones must not reset it.
+    expect(reasoning?.kind === "reasoning" && reasoning.startedAt).toBe(1_000);
+  });
+
+  it("stops the clock when the block that closes it arrives", () => {
+    const frames: LiveFrame[] = [
+      { frame: "token", player_id: "w", kind: "reasoning", text: "thinking", receivedAt: 1_000 },
+      { frame: "block", player_id: "w", kind: "reasoning", text: "thinking", tokens: 9, duration_ms: 4_000 },
+    ];
+
+    const blocks = liveBlocks(frames);
+    const reasoning = blocks.filter((b) => b.kind === "reasoning");
+
+    // One closed block carrying the real figure — not a second, still-ticking provisional one.
+    expect(reasoning).toHaveLength(1);
+    expect(reasoning[0].kind === "reasoning" && reasoning[0].durationMs).toBe(4_000);
   });
 });

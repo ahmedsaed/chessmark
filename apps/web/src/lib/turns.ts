@@ -201,6 +201,11 @@ export function liveBlocks(frames: LiveFrame[]): TurnBlock[] {
      ever a preview of it. */
   const partial: { reasoning: string; output: string } = { reasoning: "", output: "" };
 
+  /* When the open reasoning run began, from the first fragment that started it. Cleared with the
+     text it belongs to, so a second round of reasoning in the same turn times itself rather than
+     inheriting the first one's clock. */
+  let reasoningSince: number | null = null;
+
   /* Negative and descending, so a provisional block can never collide with a committed event's
      `seq` — which is what React keys on, and what would otherwise reuse a real block's DOM for a
      provisional one. */
@@ -209,11 +214,19 @@ export function liveBlocks(frames: LiveFrame[]): TurnBlock[] {
   for (const frame of frames) {
     if (frame.frame === "turn") continue;
     if (frame.frame === "token") {
+      if (frame.kind === "reasoning" && reasoningSince === null) {
+        reasoningSince = frame.receivedAt ?? Date.now();
+      }
       partial[frame.kind] += frame.text;
       continue;
     }
 
-    if (frame.kind === "reasoning" || frame.kind === "output") partial[frame.kind] = "";
+    if (frame.kind === "reasoning" || frame.kind === "output") {
+      partial[frame.kind] = "";
+      // The block frame *is* the finished thing, and it carries the real `duration_ms`. The
+      // running count has done its job and must stop, or a closed block would go on ticking.
+      if (frame.kind === "reasoning") reasoningSince = null;
+    }
 
     switch (frame.kind) {
       case "reasoning":
@@ -264,7 +277,14 @@ export function liveBlocks(frames: LiveFrame[]): TurnBlock[] {
     if (!partial[kind].trim()) continue;
     blocks.push(
       kind === "reasoning"
-        ? { kind, seq: key--, text: partial[kind], tokens: 0, durationMs: null }
+        ? {
+            kind,
+            seq: key--,
+            text: partial[kind],
+            tokens: 0,
+            durationMs: null,
+            startedAt: reasoningSince,
+          }
         : { kind, seq: key--, text: partial[kind] },
     );
   }
@@ -850,6 +870,51 @@ export function waitText(
     default:
       return null;
   }
+}
+
+/**
+ * How long a model spent on one block of reasoning, said the way a person would say it.
+ *
+ * The number is real and it is often startling: a single round of `e601f9af`'s ply 8 took **369
+ * seconds**. That figure was in `llm_calls.latency_ms` from the first paid game and had never
+ * reached the page, so a reader watching a board not move had no way to tell a slow model from a
+ * stuck harness.
+ */
+export function thoughtFor(durationMs: number | null): string | null {
+  if (durationMs === null || durationMs <= 0) return null;
+  const seconds = Math.round(durationMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
+/** 18687 → "18.7k". A reader comparing two reasoning blocks does not want five digits of either. */
+function compactTokens(tokens: number): string {
+  return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
+}
+
+/**
+ * The label on a closed reasoning block.
+ *
+ * Duration first, because it is what a reader is actually asking — *what took so long* — and the
+ * token count second as the size hint. A block with neither still says "reasoning", which is the
+ * honest floor for the whole archive written before either number was carried on the event.
+ */
+export function reasoningLabel(
+  block: { tokens: number; durationMs: number | null },
+  /** Milliseconds so far, for a block still being written. Wins over `durationMs`, which is null there. */
+  elapsedMs: number | null = null,
+): string {
+  /* **Tense carries the whole meaning.** "reasoned for 12s" is a fact about something finished;
+     "reasoning for 12s" is a count still going up. A model that thinks for six minutes under a
+     static "reasoning" label is indistinguishable from a stuck harness, which is the thing a
+     reader watching a board not move is actually trying to work out. */
+  const live = thoughtFor(elapsedMs);
+  if (live) return `reasoning for ${live}`;
+
+  const spent = thoughtFor(block.durationMs);
+  const head = spent ? `reasoned for ${spent}` : "reasoning";
+  return block.tokens > 0 ? `${head} · ${compactTokens(block.tokens)} tokens` : head;
 }
 
 export function pauseCount(turn: TurnView): number {

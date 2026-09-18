@@ -1,12 +1,8 @@
-import { cookies } from "next/headers";
-
-import { hasSessionCookie } from "@/lib/auth-scope";
 import type { Metadata } from "next";
 import Link from "next/link";
 
 import { GameCard } from "@/components/GameCard";
 import { HeroGame } from "@/components/HeroGame";
-import { MyGames } from "@/components/MyGames";
 import { ReplayBoard } from "@/components/ReplayBoard";
 import { apiUrl, getGame, getLeaderboard, listGames } from "@/lib/api";
 import { pickReplays } from "@/lib/replays";
@@ -20,21 +16,17 @@ export const metadata: Metadata = { alternates: { canonical: "/" } };
 /**
  * The lobby.
  *
- * Every section fetches for itself behind its own `<Suspense>`, and that is the whole point.
- * The page used to `await` the lobby lists, then the featured game, then three replay details in
- * three sequential rounds, and render nothing until the slowest of them — the leaderboard —
- * came back. A visitor got a blank page for the length of the worst query on the page.
+ * **The same page for everybody, deliberately.** It carried a "Your games" section and read the
+ * session cookie to decide whether to draw it, which made the first page every visitor loads a
+ * *personalised* one — and the only page on the site that could not be reasoned about without
+ * knowing who was asking. `/profile` is where a person's own games live now, and it is a better
+ * home for them than a strip above the leaderboard.
  *
- * Next.js memoises `fetch` for the duration of one request, so the sections asking for the same
- * list are not asking twice; they are reading the same in-flight promise. What that buys is
- * independence: the hero paints as soon as *it* is ready, and a slow ranking delays only the
- * ranking.
+ * Nothing here reads a cookie, a header, or anything else about the request. That is worth keeping:
+ * it is what lets this page be cached per *content* rather than per reader, and a personalised
+ * fragment on a cached page is how one visitor gets served another's games.
  */
 export default async function Home() {
-  /* The same cookie the root layout uses to decide whether to mount Clerk (`lib/auth-scope`), so
-     a signed-out reader never reaches a hook that would throw without a provider. */
-  const signedIn = hasSessionCookie((await cookies()).get("__client_uat")?.value);
-
   /**
    * **One render, two rounds, nothing streamed.**
    *
@@ -62,9 +54,12 @@ export default async function Home() {
   const featured = live[0] ?? settled(recent)[0] ?? null;
 
   /* The featured game is held out so the hero and the replay row cannot show the same game. */
+  /* Six, not three: the grid is three wide at `lg`, so three filled one row and left the section
+     looking like the top of something cut off. Six is two full rows there, three at `sm`, and a
+     column on a phone. */
   const picks = pickReplays(
     recent.filter((entry) => entry.id !== featured?.id),
-    3,
+    6,
   );
 
   const [heroGame, ...replayDetails] = await Promise.all([
@@ -84,10 +79,6 @@ export default async function Home() {
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       {heroGame ? <HeroGame game={heroGame} apiUrl={apiUrl} /> : <EmptyHero />}
-
-      {/* A game you are playing is not a game you are watching, and the lobby could not tell them
-          apart. Renders nothing at all for a visitor with no games of their own. */}
-      <MyGames heading="Your games" signedIn={signedIn} />
 
       {alsoLive.length > 0 && (
         <Strip title="Also live" count={alsoLive.length}>

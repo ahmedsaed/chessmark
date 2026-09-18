@@ -115,7 +115,13 @@ export function useGameStream({ gameId, apiUrl, afterSeq, enabled = true }: Opti
            showing the turn only once it committed. The whole feature was invisible and nothing
            errored. */
         if (frame?.frame === "turn" || frame?.frame === "block" || frame?.frame === "token") {
-          setLive((previous) => [...previous, frame]);
+          /* Stamped here rather than where it is read: this is the only place that knows when
+             the fragment actually arrived, and a timestamp taken at render time would restart
+             every time React re-rendered. */
+          setLive((previous) => [
+            ...previous,
+            frame.frame === "token" ? { ...frame, receivedAt: Date.now() } : frame,
+          ]);
         }
       } catch {
         // A frame we cannot parse costs a flicker, never a wrong transcript.
