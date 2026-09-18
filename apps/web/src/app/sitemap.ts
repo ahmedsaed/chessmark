@@ -8,6 +8,17 @@ import { siteUrl, staticRoutes } from "@/lib/site";
 export const revalidate = 3600;
 
 /**
+ * An hour, asked for explicitly, because a route's own `revalidate` is only ever a **ceiling**.
+ *
+ * Next.js takes the shortest life among a segment's own `revalidate` and every `fetch` inside it,
+ * so once the reads below started carrying the site's five-minute fallback (ADR-0046) the hour
+ * above quietly became five minutes: the build's route table said `5m` where it had said `1h`, and
+ * nothing else in the site would ever have shown it. A sitemap being rebuilt twelve times an hour
+ * is waste rather than breakage, which is exactly the kind of regression that survives.
+ */
+const SITEMAP_LIFE = 3600;
+
+/**
  * Static pages, every model, every tournament, and the most recent finished games.
  *
  * Running games are left out on purpose: their content changes every few seconds and their URL
@@ -20,9 +31,9 @@ export const revalidate = 3600;
  */
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const [games, models, tournaments] = await Promise.all([
-    listGames(undefined, 200),
-    listModels(),
-    listTournaments(100),
+    listGames(undefined, 200, { cache: SITEMAP_LIFE }),
+    listModels(false, { cache: SITEMAP_LIFE }),
+    listTournaments(100, { cache: SITEMAP_LIFE }),
   ]);
 
   const statics: MetadataRoute.Sitemap = staticRoutes.map((route) => ({

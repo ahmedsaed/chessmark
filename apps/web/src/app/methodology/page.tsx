@@ -4,8 +4,6 @@ import Link from "next/link";
 import { getBenchSummary } from "@/lib/api";
 import { pageMetadata } from "@/lib/site";
 
-export const dynamic = "force-dynamic";
-
 export const metadata: Metadata = pageMetadata({
   title: "Methodology",
   description:

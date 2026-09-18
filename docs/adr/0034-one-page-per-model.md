@@ -54,7 +54,7 @@ commits its status line before the page body runs, so a `permanentRedirect()` fr
 have been served as a `200` with the navigation happening client-side — a crawler or a link checker
 would never see the `308`. This is the same trap that once turned every missing game, model and
 tournament into a `200`
-([FRONTEND.md](../FRONTEND.md#streaming-and-the-price-of-it)). A config redirect runs before
+([FRONTEND.md](../FRONTEND.md#the-404-trap-which-is-still-live)). A config redirect runs before
 routing, so it answers with the real status.
 
 ## Consequences

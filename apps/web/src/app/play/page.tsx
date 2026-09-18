@@ -8,8 +8,6 @@ import { NewGameSection } from "@/components/NewGameSection";
 import { apiUrl, listModels } from "@/lib/api";
 import { pageMetadata } from "@/lib/site";
 
-export const dynamic = "force-dynamic";
-
 export const metadata: Metadata = pageMetadata({
   title: "Play",
   description:

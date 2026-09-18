@@ -203,6 +203,24 @@ server-rendered page fetched nothing and rendered its empty state — a site tha
 a browser it is undefined and the public URL is used, which is what lets one constant in
 `lib/api.ts` serve both sides.
 
+## The cache invalidation pair
+
+`WEB_ORIGIN` (API side) and `REVALIDATE_SECRET` (both sides) are how the API tells the website that
+a cached answer has stopped being true (ADR-0046). The site caches every public read; without these
+it falls back to the five-minute `revalidate` its reads already carry.
+
+**Set them together or not at all, and this is the failure mode to know.** The web tier *refuses*
+the endpoint when its own half is unset — a 503, deliberately, because the alternative is publishing
+an unauthenticated cache-eviction route. So a deployment with `WEB_ORIGIN` and `REVALIDATE_SECRET`
+on the API but no `REVALIDATE_SECRET` on the web container logs one 401 per turn and caches exactly
+as if neither were set. The site is correct and simply lags; nothing is visibly broken.
+
+`REVALIDATE_SECRET` is a run-time secret on the web container, never a build arg — it is not
+`NEXT_PUBLIC_` anything. Generate it with `openssl rand -hex 32`.
+
+To check it is working: finish or start a game, then watch the API log for a `revalidation refused`
+or `revalidation failed` warning. Silence is success.
+
 ## The three URLs that must agree
 
 `NEXT_PUBLIC_API_URL` is **baked into the client bundle at build time** and cannot be supplied at

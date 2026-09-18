@@ -1,15 +1,39 @@
 /**
  * Server-side API client.
  *
- * In Next.js 16 `fetch` is **not** cached by default, so nothing here needs `no-store` — a live
- * game page reads fresh data on every request without asking.
+ * **Every public read is cached and tagged; the API decides when it expires.** In Next.js 16
+ * `fetch` is not cached by default, and this file used to leave it that way on the grounds that
+ * "a live game and a leaderboard are both wrong the moment they are cached". That sentence was
+ * doing too much work. It is true of a *running* game's board and false of everything else: a
+ * finished game can never change again, and the leaderboard, the catalogue and the tournament
+ * tables change on exactly one occasion — a game writing a `game_events` row (invariant 7) — which
+ * the API knows about the instant it happens and this process cannot guess at.
  *
- * **`cache` is the one opt-in, and only the social cards use it.** Uncached reads are also what
- * makes a route *dynamic*, and a dynamic route ignores its own `revalidate` — so the cards were
- * re-rendering a board and a Satori layout on **every unfurl**, which is exactly what the
- * revalidate was added to prevent. Nothing a person waits on caches; a picture of a page does.
+ * So the reads carry `tags` from `lib/cache-tags.ts` and the worker names those tags when the
+ * underlying record moves (`orchestration/revalidation.py` → `app/api/revalidate/route.ts`). The
+ * `revalidate` seconds alongside them are a **fallback** bounding a lost notification, not the
+ * mechanism. See ADR-0046.
+ *
+ * **Two things are never cached, and the distinction is the whole safety argument.** A read whose
+ * answer depends on *who is asking* — `/me`, `/games/mine` — must not be stored where the next
+ * visitor could be served it. Those are the `post`/`listMyGames` helpers at the bottom of this
+ * file, they all carry a Clerk token, and none of them goes anywhere near `get`.
+ *
+ * A game page is safe to cache despite invariant 8 because `must_withhold_thinking` is a function
+ * of `(status, has_human_player)` and **not** of the viewer: every reader of a given game is served
+ * identical bytes, so a shared cache entry cannot leak a live opponent's reasoning to anybody who
+ * was not already entitled to see it. If that rule ever becomes per-viewer, `getGame`, `listEvents`
+ * and `listTurns` must stop being cached on the same day.
  */
 
+import {
+  FALLBACK_REVALIDATE,
+  GAMES,
+  LEADERBOARD,
+  MODELS,
+  TOURNAMENTS,
+  game as gameTag,
+} from "@/lib/cache-tags";
 import { originFromEnv } from "@/lib/env";
 import type {
   BenchSummary,
@@ -66,16 +90,52 @@ export class ApiError extends Error {
   }
 }
 
-/** Seconds a read may be reused for. Omitted everywhere a person is looking at the answer. */
+/**
+ * How long a read may be reused for.
+ *
+ * Only the social cards pass this now. They want a *longer* life than the pages do — a card is a
+ * picture of a page and can afford to be staler than the page is — and they are the one caller
+ * that would rather serve a five-minute-old board than wait on a fresh one.
+ */
 export interface ReadOptions {
   cache?: number;
 }
 
-async function get<T>(path: string, options?: ReadOptions): Promise<T> {
+/**
+ * The `next` options for a tagged read.
+ *
+ * `revalidate` is present on every one of them, because **a tag does nothing on its own**: an
+ * untagged, unrevalidated `fetch` in Next 16 is simply uncached, and attaching `tags` to it would
+ * have looked like caching while caching nothing at all. The number is the fallback; the tags are
+ * the mechanism.
+ */
+function cached(tags: string[], seconds?: number) {
+  return { next: { tags, revalidate: seconds ?? FALLBACK_REVALIDATE } };
+}
+
+/**
+ * A read that must never be served from a store — the answer is changing as somebody watches it.
+ *
+ * **`revalidate: 0` is Next's own spelling of "do not cache", and it is not a smaller number.**
+ * The tags are kept so the shape of every call site stays the same; they simply have nothing to
+ * invalidate.
+ *
+ * This exists because caching a *running* game was wrong and the browser suite proved it. The
+ * argument for it was that a live board is self-correcting, since `EventStream` delivers
+ * subsequent moves over SSE — but the *first paint* comes from this read, and
+ * `revalidateTag(tag, "max")` is stale-while-revalidate, so the reader after a move is served the
+ * position from before it and the stream only carries what happens next. A person moved, the board
+ * did not, and `play.spec.ts` sat watching the opening position while the model replied.
+ */
+function live(tags: string[]) {
+  return { next: { tags, revalidate: 0 } };
+}
+
+async function get<T>(path: string, init: { next: { tags: string[]; revalidate: number } }): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(TIMEOUT_MS),
-    ...(options?.cache === undefined ? {} : { next: { revalidate: options.cache } }),
+    ...init,
   });
 
   if (!response.ok) {
@@ -94,9 +154,12 @@ async function get<T>(path: string, options?: ReadOptions): Promise<T> {
  */
 const ABSENT = new Set([404, 422]);
 
-async function getOrNull<T>(path: string, options?: ReadOptions): Promise<T | null> {
+async function getOrNull<T>(
+  path: string,
+  init: { next: { tags: string[]; revalidate: number } },
+): Promise<T | null> {
   try {
-    return await get<T>(path, options);
+    return await get<T>(path, init);
   } catch (error) {
     if (error instanceof ApiError && ABSENT.has(error.status)) return null;
     throw error;
@@ -120,9 +183,12 @@ function reportFailure(path: string, cause: unknown): void {
  * Never throws. The lobby should still render if the API is briefly unreachable — an empty
  * section is a better failure than a blank page.
  */
-async function getOrEmpty<T>(path: string, options?: ReadOptions): Promise<T[]> {
+async function getOrEmpty<T>(
+  path: string,
+  init: { next: { tags: string[]; revalidate: number } },
+): Promise<T[]> {
   try {
-    return await get<T[]>(path, options);
+    return await get<T[]>(path, init);
   } catch (error) {
     reportFailure(path, error);
     return [];
@@ -136,26 +202,49 @@ export function listGames(
 ): Promise<GameSummary[]> {
   const query = new URLSearchParams({ limit: String(limit) });
   if (status) query.set("status", status);
-  return getOrEmpty<GameSummary>(`/games?${query}`, options);
+  return getOrEmpty<GameSummary>(`/games?${query}`, cached([GAMES], options?.cache));
 }
 
-export function getGame(id: string, options?: ReadOptions): Promise<GameDetail | null> {
-  return getOrNull<GameDetail>(`/games/${id}`, options);
+/**
+ * One game.
+ *
+ * **Cached only when the caller can promise the game has stopped**, which is why `settled` is not
+ * optional-with-a-safe-looking-default: a game that is still being played must be read fresh every
+ * time, and the dangerous direction is serving a stale board to somebody watching it move. A caller
+ * that does not know passes nothing and gets the live read — wrong-but-slow rather than
+ * fast-but-wrong.
+ *
+ * A finished game is immutable forever, so the callers that *do* know — the lobby's replay row,
+ * which picks from `settled()` by construction — get the full benefit.
+ */
+export function getGame(
+  id: string,
+  options?: ReadOptions & { settled?: boolean },
+): Promise<GameDetail | null> {
+  /* Tagged per game *and* with the lobby's tag: the detail is one record, but a game appearing or
+     finishing also changes the lists it is in, and the worker names both. */
+  const tags = [GAMES, gameTag(id)];
+  return getOrNull<GameDetail>(
+    `/games/${id}`,
+    options?.settled ? cached(tags, options.cache) : live(tags),
+  );
 }
 
 export function listModels(freeOnly = false, options?: ReadOptions): Promise<ModelInfo[]> {
-  return getOrEmpty<ModelInfo>(`/models?free_only=${freeOnly}`, options);
+  return getOrEmpty<ModelInfo>(`/models?free_only=${freeOnly}`, cached([MODELS], options?.cache));
 }
 
 /** One model with its aggregates, or null for a slug nothing answers to. */
 export function getModel(slug: string, options?: ReadOptions): Promise<ModelDetail | null> {
-  return getOrNull<ModelDetail>(`/models/${slug}`, options);
+  /* A model's aggregates are recomputed from its games, so a finished game moves this page as
+     surely as it moves the catalogue. Both tags, for the same reason `getGame` carries both. */
+  return getOrNull<ModelDetail>(`/models/${slug}`, cached([MODELS, GAMES], options?.cache));
 }
 
 /** Every game a model has played, either seat (Phase 20). */
 export function listGamesByModel(slug: string, limit = 50): Promise<GameSummary[]> {
   const query = new URLSearchParams({ model: slug, limit: String(limit) });
-  return getOrEmpty<GameSummary>(`/games?${query}`);
+  return getOrEmpty<GameSummary>(`/games?${query}`, cached([GAMES]));
 }
 
 /** Rows per request. The server caps `limit` at 5000; this leaves room under it. */
@@ -184,6 +273,9 @@ export async function listEvents(id: string): Promise<GameEvent[]> {
   for (let page = 0; page < EVENT_PAGES; page++) {
     const batch = await getOrEmpty<GameEvent>(
       `/games/${id}/events?after_seq=${after}&limit=${EVENT_PAGE}`,
+      /* Never cached: this is the transcript of a game somebody may be watching, and a stale page
+         of it is a conversation missing its last turn. */
+      live([gameTag(id)]),
     );
     all.push(...batch);
     if (batch.length < EVENT_PAGE) break;
@@ -200,7 +292,8 @@ export async function listEvents(id: string): Promise<GameEvent[]> {
  * row it happened in — which is what makes the raw payloads reachable (LOG-07).
  */
 export function listTurns(id: string): Promise<TurnSummary[]> {
-  return getOrEmpty<TurnSummary>(`/games/${id}/turns`);
+  /* Live, for the reason `listEvents` is: the costs on this page move with every turn played. */
+  return getOrEmpty<TurnSummary>(`/games/${id}/turns`, live([gameTag(id)]));
 }
 
 /**
@@ -217,7 +310,7 @@ export function listTurns(id: string): Promise<TurnSummary[]> {
  */
 export async function getBenchSummary(): Promise<BenchSummary> {
   try {
-    return await get<BenchSummary>("/leaderboard/summary");
+    return await get<BenchSummary>("/leaderboard/summary", cached([LEADERBOARD]));
   } catch (error) {
     reportFailure("/leaderboard/summary", error);
     return { games_counted: 0, games_excluded: 0, games_finished: 0, prompt_version: null };
@@ -226,7 +319,7 @@ export async function getBenchSummary(): Promise<BenchSummary> {
 
 export async function getLeaderboard(options?: ReadOptions): Promise<Leaderboard> {
   try {
-    return await get<Leaderboard>("/leaderboard", options);
+    return await get<Leaderboard>("/leaderboard", cached([LEADERBOARD], options?.cache));
   } catch (error) {
     reportFailure("/leaderboard", error);
     return {
@@ -244,7 +337,10 @@ export function listTournaments(
   limit = 20,
   options?: ReadOptions,
 ): Promise<TournamentSummary[]> {
-  return getOrEmpty<TournamentSummary>(`/tournaments?limit=${limit}`, options);
+  return getOrEmpty<TournamentSummary>(
+    `/tournaments?limit=${limit}`,
+    cached([TOURNAMENTS], options?.cache),
+  );
 }
 
 /** One tournament with its table, pairings and games, or null for an unknown slug. */
@@ -254,7 +350,12 @@ export function getTournament(
   options?: ReadOptions,
 ): Promise<TournamentDetail | null> {
   const query = era ? `?era=${encodeURIComponent(era)}` : "";
-  return getOrNull<TournamentDetail>(`/tournaments/${slug}${query}`, options);
+  /* `GAMES` too: a tournament's table, its costs and its decisive count are all rolled up from the
+     games in it, so settling a pairing changes this page without changing the tournament row. */
+  return getOrNull<TournamentDetail>(
+    `/tournaments/${slug}${query}`,
+    cached([TOURNAMENTS, GAMES], options?.cache),
+  );
 }
 
 /** The PGN download URL. Handed to the browser as a link so the file arrives with its filename. */

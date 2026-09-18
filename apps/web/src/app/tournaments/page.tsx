@@ -5,8 +5,6 @@ import { listTournaments } from "@/lib/api";
 import type { TournamentSummary } from "@/lib/types";
 import { pageMetadata } from "@/lib/site";
 
-export const dynamic = "force-dynamic";
-
 export const metadata: Metadata = pageMetadata({
   title: "Tournaments",
   description:

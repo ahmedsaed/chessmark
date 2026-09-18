@@ -4,8 +4,6 @@ import { ModelTable } from "@/components/ModelTable";
 import { listModels } from "@/lib/api";
 import { pageMetadata } from "@/lib/site";
 
-export const dynamic = "force-dynamic";
-
 export const metadata: Metadata = pageMetadata({
   title: "Models",
   description:

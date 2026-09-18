@@ -8,8 +8,6 @@ import { GameView } from "@/components/GameView";
 import { Replay } from "@/components/Replay";
 import { apiUrl, getGame, listEvents, listTurns, pgnUrl } from "@/lib/api";
 
-export const dynamic = "force-dynamic";
-
 const TERMINAL = new Set(["finished", "aborted"]);
 
 export async function generateMetadata({ params }: PageProps<"/games/[id]">) {

@@ -3,6 +3,7 @@ import type { Metadata, Viewport } from "next";
 import { cookies, headers } from "next/headers";
 
 import { AuthProvider } from "@/components/AuthProvider";
+import { ClerkGate } from "@/components/ClerkGate";
 import { needsClerk } from "@/lib/auth-scope";
 import { PATHNAME_HEADER } from "@/proxy";
 import { SiteFooter } from "@/components/SiteFooter";
@@ -62,12 +63,22 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
   /* `AuthProvider` sits **inside** `<body>`, not around `<html>`. Next.js 16 with cache
      components treats a provider wrapping `<html>` as uncached data accessed outside a
      `<Suspense>` boundary, which is an error rather than a warning. */
+  /**
+   * **`mountClerk` is only ever right for *this* request, and this layout does not re-render.**
+   *
+   * A soft navigation preserves a shared layout, so a reader who arrives on `/` signed out and
+   * then clicks `sign in` reaches a route that needs Clerk with the decision `/` made. `ClerkGate`
+   * re-runs the same predicate on every navigation and mounts the provider if this one did not.
+   * It is the whole fix for "sign in sometimes says *That did not load.*"; the server decision
+   * stays because it is what gives a direct hit on `/sign-in` its provider in the first payload,
+   * with no client round trip and nothing to remount.
+   */
   const shell = (
-    <>
-      <SiteHeader clerkMounted={mountClerk} />
+    <ClerkGate serverMounted={mountClerk}>
+      <SiteHeader />
       {children}
       <SiteFooter />
-    </>
+    </ClerkGate>
   );
 
   return (

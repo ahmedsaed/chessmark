@@ -192,6 +192,10 @@ services:
       # resolve. Not `NEXT_PUBLIC_`, so it never reaches a browser — which is what lets one
       # constant in `lib/api.ts` serve both sides safely.
       INTERNAL_API_URL: http://api:8000
+      # The other half of ADR-0046. The API posts cache invalidations here; this is the web tier's
+      # copy of the shared secret, and it is read at *run* time rather than baked, because it is a
+      # secret and `NEXT_PUBLIC_` anything is not.
+      REVALIDATE_SECRET: ${REVALIDATE_SECRET:-}
     ports:
       - "${WEB_PORT:-3010}:3000"
     depends_on:

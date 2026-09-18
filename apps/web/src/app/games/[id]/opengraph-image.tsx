@@ -42,7 +42,7 @@ export async function generateStaticParams() {
 
 export default async function Image({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const game = await getGame(id, { cache: REVALIDATE_SECONDS });
+  const game = await getGame(id, { cache: REVALIDATE_SECONDS, settled: true });
 
   if (!game) return new ImageResponse(<Missing what="No such game" />, size);
 

@@ -15,6 +15,56 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Changed
+
+- **The pages arrive whole, and the skeletons are gone** (ADR-0046). Every page route was
+  `force-dynamic`, so a click produced no feedback until the whole server render finished — and the
+  fix for that had been a `loading.tsx` skeleton on four routes plus five `<Suspense>` boundaries on
+  the lobby. The lobby sent its first byte at 4.4ms and did not finish until 43.1ms: thirty-nine
+  milliseconds of assembling itself in front of the reader, behind a skeleton that did not match the
+  shape it stood in for.
+
+  The premise underneath it — "a live game and a leaderboard are both wrong the moment they are
+  cached" — was doing too much work. A running game's board does not come from the server render at
+  all; `EventStream` corrects it over SSE within milliseconds. A finished game can never change
+  again. And the leaderboard, the catalogue and the tournament tables change on exactly one
+  occasion, which the API knows and a clock can only guess at.
+
+  So every public read is now cached and tagged, and the worker names the stale tags the moment a
+  game writes a `game_events` row — `orchestration/revalidation.py` to `POST /api/revalidate`, from
+  inside `publish_events`. The `revalidate` seconds are a backstop for a lost notification, not the
+  mechanism.
+
+  Measured on 106 games, median time to the *last* byte: `/` 43.1 → 14.2ms, `/leaderboard`
+  20.4 → 4.4ms, `/about` 18.6 → 3.9ms, `/methodology` 16.6 → 4.1ms, `/models` 26.1 → 11.9ms,
+  `/tournaments` 15.1 → 3.9ms, `/play` 21.5 → 6.7ms. Five consecutive loads of `/leaderboard` cause
+  zero reads of `/leaderboard` on the API, against five before. First and last byte have converged,
+  which is the point: nothing streams any more.
+
+  Cache Components (PPR) was tried and reverted — it reintroduces the streaming, breaks the 404
+  contract site-wide, and costs the 87 KiB Clerk saving. ADR-0046 records why; ROADMAP's *Known
+  gaps* records what is left on the table.
+
+### Fixed
+
+- **`sign in` sometimes said "That did not load."** — and it was the site's own sign-in button. The
+  root layout mounts `ClerkProvider` from the request path and the session cookie, but the App
+  Router preserves a shared layout across a client-side navigation, so the layout never re-ran and
+  its decision was whatever the *previous* page made. A signed-out reader on `/` had no provider,
+  correctly; clicking `sign in` then reached a route that needs one, `useSignIn` threw
+  `useClerkSignal can only be used within the <ClerkProvider /> component`, and the root error
+  boundary covered the form. Reloading fixed it, which is why it read as random.
+
+  Nothing caught it because every test reaches those pages with `page.goto` — a document request,
+  the one path where the decision is right. `auth.setup.ts` even navigates directly and says why.
+
+  `ClerkGate` re-runs the same predicate on every navigation and mounts the provider if the request
+  did not. The provider stays above every route rather than moving into an `(identity)` route group,
+  which would have fixed the way in and broken the way out — a nested layout unmounts when you leave
+  its segment, so signing in and landing on `/play` would throw there instead. The 87 KiB stays off
+  the routes that do not need it: the import is dynamic, and `auth-navigation.spec.ts` asserts both
+  halves — clicking through loads Clerk, and reading `/leaderboard` does not.
+
 ### Added
 
 - **An account menu in the header, and a profile worth visiting** (UI-09, HUMAN-03). The header

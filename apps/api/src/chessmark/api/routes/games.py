@@ -49,7 +49,7 @@ from chessmark.api.schemas import (
     TurnDetail,
 )
 from chessmark.db.credits import InsufficientCreditsError, charge, cost_of
-from chessmark.db.enums import GameStatus, ModerationStatus, PlayerKind
+from chessmark.db.enums import EventType, GameStatus, ModerationStatus, PlayerKind
 from chessmark.db.models import (
     Game,
     LlmCall,
@@ -70,6 +70,7 @@ from chessmark.game.pgn import PgnMetadata, to_pgn
 from chessmark.orchestration import human as human_play
 from chessmark.orchestration.match import Seat, create_match, start_match
 from chessmark.orchestration.queue import AdvanceTurn
+from chessmark.orchestration.revalidation import notify_web
 
 router = APIRouter(prefix="/games", tags=["games"])
 
@@ -682,6 +683,15 @@ async def _settle(
     """
     await session.commit()
     await session.refresh(game)
+
+    # After the commit, like the enqueue below and for the same reason: the website must never be
+    # told to re-read a state the database has not accepted (ADR-0046). A person's own move is the
+    # one change that does not pass through `publish_events`, so without this the lobby card for
+    # the game they are playing would lag their own move by the fallback revalidate.
+    await notify_web(
+        game.id,
+        [EventType.GAME_ENDED] if action.game_over else [EventType.MOVE_MADE],
+    )
 
     if not action.game_over and game.status is GameStatus.RUNNING:
         await queue.enqueue(AdvanceTurn(game_id=game.id, expected_ply=game.ply_count))

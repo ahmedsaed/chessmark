@@ -2,7 +2,6 @@ import { cookies } from "next/headers";
 
 import { hasSessionCookie } from "@/lib/auth-scope";
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import Link from "next/link";
 
 import { GameCard } from "@/components/GameCard";
@@ -12,8 +11,6 @@ import { ReplayBoard } from "@/components/ReplayBoard";
 import { apiUrl, getGame, getLeaderboard, listGames } from "@/lib/api";
 import { pickReplays } from "@/lib/replays";
 import type { GameDetail, GameSummary, LeaderboardRow } from "@/lib/types";
-
-export const dynamic = "force-dynamic";
 
 /* Title and description are the root layout's, which are already this page's — the lobby is the
    site. Only the canonical is stated, and only here: on the layout it would be inherited by every
@@ -37,31 +34,74 @@ export default async function Home() {
   /* The same cookie the root layout uses to decide whether to mount Clerk (`lib/auth-scope`), so
      a signed-out reader never reaches a hook that would throw without a provider. */
   const signedIn = hasSessionCookie((await cookies()).get("__client_uat")?.value);
+
+  /**
+   * **One render, two rounds, nothing streamed.**
+   *
+   * This page used to put every section behind its own `<Suspense>`, so each painted when it was
+   * ready and the lobby assembled itself in front of the reader. That was the right answer while
+   * each section cost a live API round trip and the slowest of them — the ranking — held the page.
+   * It is the wrong answer now the reads are cached and tagged (ADR-0046): the whole page renders
+   * in about the time the shell alone used to take, so the boundaries bought nothing and cost a
+   * visible assembly. Measured on this machine: first byte 4.4ms and complete at 43.1ms became
+   * first byte 12.9ms and complete at 13.1ms.
+   *
+   * The fetching is still parallel, which is what the boundaries were really providing. Two rounds
+   * rather than one because the hero and the replay row both depend on *which* game is featured,
+   * and that is not known until the lists come back. Next.js memoises `fetch` per request, so the
+   * two calls for the lobby list below are one request.
+   */
+  const [live, recent, board] = await Promise.all([
+    listGames("running", 6),
+    lobbyGames(),
+    getLeaderboard(),
+  ]);
+
+  /* Prefers a running game; falls back to the most recent finished one, which keeps the hero from
+     being empty between games — most of the time, on a small deployment. */
+  const featured = live[0] ?? settled(recent)[0] ?? null;
+
+  /* The featured game is held out so the hero and the replay row cannot show the same game. */
+  const picks = pickReplays(
+    recent.filter((entry) => entry.id !== featured?.id),
+    3,
+  );
+
+  const [heroGame, ...replayDetails] = await Promise.all([
+    /* No event log. The hero shows a board and a move list, and `GameDetail.moves` is already the
+       authoritative move list at the render's cursor — fetching the whole log to fold it back down
+       to the same array cost 300KB of payload for a game of any length, on the one page every
+       visitor loads first. A live game's *subsequent* moves still arrive on the stream. */
+    featured ? getGame(featured.id, { settled: featured.status === "finished" }) : Promise.resolve(null),
+    /* `pickReplays` returns only `status === "finished"` games, so these can never move again. */
+    ...picks.map((pick) => getGame(pick.id, { settled: true })),
+  ]);
+
+  const replays = replayDetails.filter((detail): detail is GameDetail => detail !== null);
+  const alsoLive = live.slice(1);
+  const recentGames = settled(recent).slice(0, 6);
+
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
-      <Suspense fallback={<HeroSkeleton />}>
-        <Hero />
-      </Suspense>
+      {heroGame ? <HeroGame game={heroGame} apiUrl={apiUrl} /> : <EmptyHero />}
 
       {/* A game you are playing is not a game you are watching, and the lobby could not tell them
           apart. Renders nothing at all for a visitor with no games of their own. */}
       <MyGames heading="Your games" signedIn={signedIn} />
 
-      <Suspense fallback={null}>
-        <AlsoLive />
-      </Suspense>
+      {alsoLive.length > 0 && (
+        <Strip title="Also live" count={alsoLive.length}>
+          {alsoLive.map((entry) => (
+            <GameCard key={entry.id} game={entry} />
+          ))}
+        </Strip>
+      )}
 
-      <Suspense fallback={null}>
-        <ReplayRow />
-      </Suspense>
+      {replays.length > 0 && <Replays games={replays} />}
 
       <div className="mt-16 grid grid-cols-1 gap-10 lg:grid-cols-2">
-        <Suspense fallback={<SectionSkeleton title="Top contestants" rows={5} />}>
-          <TopContestants />
-        </Suspense>
-        <Suspense fallback={<SectionSkeleton title="Recent games" rows={4} />}>
-          <RecentGames />
-        </Suspense>
+        <Contestants rows={board.rows} counted={board.games_counted} />
+        <RecentGames games={recentGames} />
       </div>
     </main>
   );
@@ -94,65 +134,7 @@ function settled(games: GameSummary[]): GameSummary[] {
   return games.filter((game) => game.status !== "running" && game.status !== "paused");
 }
 
-/**
- * The game the hero shows.
- *
- * Prefers a running game; falls back to the most recent finished one, which keeps the hero from
- * being empty between games — most of the time, on a small deployment.
- */
-async function featuredGame(): Promise<GameSummary | null> {
-  const [live, recent] = await Promise.all([listGames("running", 6), lobbyGames()]);
-  return live[0] ?? settled(recent)[0] ?? null;
-}
-
-async function Hero() {
-  const featured = await featuredGame();
-  const game = featured ? await getGame(featured.id) : null;
-
-  /* No event log. The hero shows a board and a move list, and `GameDetail.moves` is already the
-     authoritative move list at the render's cursor — fetching the whole log to fold it back down
-     to the same array cost 300KB of payload for a game of any length, on the one page every
-     visitor loads first. A live game's *subsequent* moves still arrive on the stream. */
-  return game ? <HeroGame game={game} apiUrl={apiUrl} /> : <EmptyHero />;
-}
-
-async function AlsoLive() {
-  const live = await listGames("running", 6);
-  if (live.length <= 1) return null;
-
-  return (
-    <Strip title="Also live" count={live.length - 1}>
-      {live.slice(1).map((entry) => (
-        <GameCard key={entry.id} game={entry} />
-      ))}
-    </Strip>
-  );
-}
-
-async function ReplayRow() {
-  const [recent, featured] = await Promise.all([lobbyGames(), featuredGame()]);
-
-  /* The featured game is held out so the hero and the replay row cannot show the same game. */
-  const picks = pickReplays(
-    recent.filter((entry) => entry.id !== featured?.id),
-    3,
-  );
-  const games = (await Promise.all(picks.map((pick) => getGame(pick.id)))).filter(
-    (detail): detail is GameDetail => detail !== null,
-  );
-  if (games.length === 0) return null;
-
-  return <Replays games={games} />;
-}
-
-async function TopContestants() {
-  const board = await getLeaderboard();
-  return <Contestants rows={board.rows} counted={board.games_counted} />;
-}
-
-async function RecentGames() {
-  const games = settled(await lobbyGames()).slice(0, 6);
-
+function RecentGames({ games }: { games: GameSummary[] }) {
   return (
     <section>
       <h2 className="mb-4 font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
@@ -169,52 +151,6 @@ async function RecentGames() {
           ))}
         </ul>
       )}
-    </section>
-  );
-}
-
-/**
- * Placeholders that hold the shape they will be replaced by.
- *
- * Sized to the real thing on purpose: a fallback that is a different height moves the page under
- * the reader's cursor when it resolves, which reads worse than the wait it was hiding.
- */
-/**
- * Shaped like `HeroGame`, including on a phone.
- *
- * It was not, and the two disagreed in the one place it shows: the skeleton drew its board first
- * while the hero stacks headline, board, card. So a phone painted a grey square at the top and
- * then shunted it down the page when the game arrived — a layout jump on the first paint of the
- * page most people see first. The three blocks and their order have to match, or this is not a
- * skeleton of anything.
- */
-function HeroSkeleton() {
-  return (
-    <section className="flex flex-col gap-8 lg:grid lg:grid-cols-[minmax(0,440px)_minmax(0,1fr)] lg:items-center lg:gap-x-12 lg:gap-y-5">
-      <div className="order-1 flex min-w-0 flex-col gap-5 lg:col-start-2 lg:row-start-1">
-        <h1 className="font-serif text-4xl leading-[1.1] text-ink sm:text-5xl">
-          Language models play chess.
-          <br />
-          <span className="text-accent">Everything is recorded.</span>
-        </h1>
-      </div>
-      <div className="order-2 mx-auto aspect-square w-full max-w-[440px] animate-pulse bg-surface-2 lg:col-start-1 lg:row-span-2 lg:row-start-1" />
-      <div className="order-3 h-24 min-w-0 animate-pulse bg-surface-2 lg:col-start-2 lg:row-start-2" />
-    </section>
-  );
-}
-
-function SectionSkeleton({ title, rows }: { title: string; rows: number }) {
-  return (
-    <section>
-      <h2 className="mb-4 font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
-        {title}
-      </h2>
-      <div className="flex flex-col gap-3">
-        {Array.from({ length: rows }, (_, index) => (
-          <div key={index} className="h-14 animate-pulse bg-surface-2" />
-        ))}
-      </div>
     </section>
   );
 }

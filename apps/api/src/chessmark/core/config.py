@@ -92,6 +92,18 @@ class Settings(BaseSettings):
     #: whole.
     llm_stream: bool = True
 
+    # --- Frontend cache invalidation (ADR-0046) ---
+    #: Where to post cache invalidations. Empty disables them, and the site falls back to the
+    #: `revalidate` seconds its reads already carry — correct, just staler.
+    #:
+    #: Not `cors_origins[0]`, though it is usually the same address: that list is *who may call
+    #: us*, and reusing it here would mean adding a second allowed origin silently redirected our
+    #: invalidations to it.
+    web_origin: str = ""
+    #: Shared with the web tier's `REVALIDATE_SECRET`. Empty at either end disables the endpoint;
+    #: the web tier refuses rather than serving an unauthenticated cache-eviction route.
+    revalidate_secret: str = ""
+
     # --- Auth (Clerk) ---
     clerk_publishable_key: str = ""
     clerk_secret_key: str = ""

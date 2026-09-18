@@ -17,7 +17,7 @@ const nextConfig: NextConfig = {
    * covers the segment and everything under it: a streamed response commits its status line before
    * the page body runs, so a redirect issued from the page would have been served as a `200` with
    * the navigation happening client-side. That is the same trap that turned this project's 404s
-   * into 200s ([FRONTEND.md](../../docs/FRONTEND.md#streaming-and-the-price-of-it)) — a crawler or
+   * into 200s ([FRONTEND.md](../../docs/FRONTEND.md#the-404-trap-which-is-still-live)) — a crawler or
    * a link checker would never see the `308`. A config redirect runs before routing, so it does.
    *
    * The slug is one segment, not two: it is published percent-encoded (`vendor%2Fmodel`) because
