@@ -242,6 +242,9 @@ export function LiveGame({
              click still folds it. */
           focusKey={turns.at(-1)?.key ?? null}
           players={game.players}
+          /* Why it is paused *now*, from the server. Only the live pause row reads it; a replay
+             passes nothing, so a finished game's pause rows stay quiet. */
+          waitingOn={game.waiting_on}
           footer={controls}
           emptyMessage={paused ? `Paused — ${paused.text}` : undefined}
         />

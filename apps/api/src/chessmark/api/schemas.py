@@ -414,6 +414,22 @@ class TournamentRef(Schema):
     era: str | None
 
 
+class WaitingOn(BaseModel):
+    """What a paused game is waiting for *now*, as opposed to why it stopped.
+
+    On `GameDetail` and deliberately not on `GameSummary`: answering it costs a query, and a list
+    endpoint would pay that per row — the budget in CLAUDE.md is a page fetching what it displays.
+    A lobby card says "paused"; only the game's own page says what for.
+    """
+
+    #: `clock`, `halt`, `concurrency`, or `due`. See `reconciler.Waiting`.
+    kind: str
+    #: When the wait ends, for `clock`. Null for every other kind — nothing else is on a timer.
+    until: dt.datetime | None = None
+    #: The event holding the slot, for `concurrency`.
+    tournament: str | None = None
+
+
 class GameDetail(GameSummary):
     start_fen: str
     current_fen: str
@@ -433,6 +449,9 @@ class GameDetail(GameSummary):
     #: it was scheduled for.
     tournament: TournamentRef | None = None
 
+    #: Why a paused game has not resumed. Null unless the game is paused.
+    waiting_on: WaitingOn | None = None
+
     @classmethod
     def from_model(  # type: ignore[override]
         cls,
@@ -443,11 +462,13 @@ class GameDetail(GameSummary):
         current_fen: str,
         served_by: dict[uuid.UUID, tuple[list[str], str | None]] | None = None,
         tournament: TournamentRef | None = None,
+        waiting_on: WaitingOn | None = None,
     ) -> GameDetail:
         summary = GameSummary.from_model(game, players, served_by=served_by)
         return cls(
             **summary.model_dump(),
             tournament=tournament,
+            waiting_on=waiting_on,
             start_fen=game.start_fen,
             current_fen=current_fen,
             termination_detail=game.termination_detail,

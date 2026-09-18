@@ -47,6 +47,7 @@ from chessmark.api.schemas import (
     SeatOut,
     TournamentRef,
     TurnDetail,
+    WaitingOn,
 )
 from chessmark.db.credits import InsufficientCreditsError, charge, cost_of
 from chessmark.db.enums import EventType, GameStatus, ModerationStatus, PlayerKind
@@ -70,6 +71,7 @@ from chessmark.game.pgn import PgnMetadata, to_pgn
 from chessmark.orchestration import human as human_play
 from chessmark.orchestration.match import Seat, create_match, start_match
 from chessmark.orchestration.queue import AdvanceTurn
+from chessmark.orchestration.reconciler import what_it_waits_for
 from chessmark.orchestration.revalidation import notify_web
 
 router = APIRouter(prefix="/games", tags=["games"])
@@ -296,6 +298,12 @@ async def _tournament_of(session: AsyncSession, game_id: uuid.UUID) -> Tournamen
 @router.get("/{game_id}", response_model=GameDetail)
 async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
     referee = await rebuild_referee(session, game)
+
+    # Why it has not resumed, not why it stopped — `pause_reason` already answers the second and
+    # keeps answering it long after it stops being the thing in the way. Costs nothing for a game
+    # that is not paused, and one query for one that is.
+    waiting = await what_it_waits_for(session, game)
+
     return GameDetail.from_model(
         game,
         await _players(session, game.id),
@@ -303,6 +311,11 @@ async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
         current_fen=referee.board.fen,
         served_by=await _served_by(session, game.id),
         tournament=await _tournament_of(session, game.id),
+        waiting_on=(
+            WaitingOn(kind=waiting.kind, until=waiting.until, tournament=waiting.tournament)
+            if waiting
+            else None
+        ),
     )
 
 

@@ -17,6 +17,26 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **"retrying shortly" was a lie told by arithmetic.** Every pause ran through a relative clock that
+  returned `"shortly"` for any wait of twenty seconds or less — **including every negative one** — so
+  a wait that expired twenty minutes ago read exactly like one about to end, and did that forever.
+  Game `c2fd378a` came due at 11:05 and still said "retrying shortly" at 11:26. It was not retrying:
+  `pool-free` is bounded to one game at a time and another held the slot.
+
+  Two different questions, now kept apart. `pause_reason` is **why it stopped** and stays true
+  forever; `GameDetail.waiting_on` is **what it is waiting for**, which changes underneath a reason
+  that does not. `reconciler.what_it_waits_for` answers it in the sweep's own order — clock, halt,
+  concurrency, due — so the page cannot disagree with the reconciler about why a game sits still.
+
+  The row now reads `PAUSED · rate-limited by Poolside · waiting for a slot in Free Models`, or
+  `held until the harness is resumed`, or `due to resume`, or counts down a wait that really has not
+  elapsed. **Only the live pause row says any of it**: `foldEvents` marks exactly one, so a replay
+  of a finished game and an earlier ply's rate limit both stay quiet rather than claiming to be
+  waiting for something.
+
+  `waiting_on` is on `GameDetail` and deliberately not on `GameSummary` — it costs a query, and a
+  list endpoint would pay that per row.
+
 - **A pause and the resume that ended it are one fact, and the page drew them as twelve.** Game
   `c2fd378a` sat on ply 13 being refused by Poolside: 27 `game_paused` and 25 `game_resumed` rows,
   twelve of the pauses on the open turn. The panel showed one folded `PAUSED x12` row, ten stray

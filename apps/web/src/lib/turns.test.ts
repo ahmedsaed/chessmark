@@ -17,6 +17,7 @@ import {
   pauseCount,
   reasonFromDetail,
   sameTurnContent,
+  waitText,
   supersedesFrames,
   withLiveTurn,
 } from "@/lib/turns";
@@ -1417,5 +1418,90 @@ describe("a resume is swallowed by the pause it answers (c2fd378a)", () => {
   it("recovers the reason from an archived resume's prose", () => {
     expect(reasonFromDetail(`the wait is over: ${REASON}`)).toBe(REASON);
     expect(reasonFromDetail("reopened by an operator")).toBeNull();
+  });
+});
+
+describe("what a paused game says it is waiting for", () => {
+  /**
+   * "retrying shortly" was a lie told by arithmetic.
+   *
+   * The copy ran every pause through a relative clock returning `"shortly"` for any wait of twenty
+   * seconds or less — *including every negative one* — so a wait that expired twenty minutes ago
+   * read exactly like one about to end, and did so forever. `c2fd378a` came due at 11:05 and still
+   * said "retrying shortly" at 11:26, while it was actually queued behind another game in its pool.
+   */
+  const soon = () => new Date(Date.now() + 5 * 60_000).toISOString();
+  const long_past = () => new Date(Date.now() - 20 * 60_000).toISOString();
+
+  it("counts down a wait that has not elapsed", () => {
+    expect(waitText(soon(), null)).toBe("retrying in 5 min");
+  });
+
+  it("never says 'retrying' about a wait that is already over", () => {
+    // The bug, stated as the assertion that would have caught it.
+    expect(waitText(long_past(), null)).toBeNull();
+    expect(waitText(long_past(), { kind: "concurrency", until: null, tournament: "Free Models" }))
+      .not.toContain("retrying");
+  });
+
+  it("names the event holding the slot", () => {
+    expect(
+      waitText(long_past(), { kind: "concurrency", until: null, tournament: "Free Models" }),
+    ).toBe("waiting for a slot in Free Models");
+  });
+
+  it("says a halt is a halt, not a retry", () => {
+    expect(waitText(long_past(), { kind: "halt", until: null, tournament: null })).toBe(
+      "held until the harness is resumed",
+    );
+  });
+
+  it("says a due game is due", () => {
+    expect(waitText(long_past(), { kind: "due", until: null, tournament: null })).toBe(
+      "due to resume",
+    );
+  });
+
+  it("says nothing at all about a historical pause", () => {
+    /* A replay of a finished game passes no `waitingOn`, and every pause in it ended long ago. A
+       row claiming to be waiting for something is worse than a row that is quiet. */
+    expect(waitText(long_past(), null)).toBeNull();
+    expect(waitText(null, null)).toBeNull();
+  });
+
+  it("marks exactly one pause row as the live one", () => {
+    seq = 0;
+    const events = [
+      ...turn(1, "white", "e4"),
+      event("game_paused", { reason: "rate-limited", resume_after: "12:00" }),
+      event("game_resumed", { detail: "the wait is over: rate-limited", reason: "rate-limited" }),
+      ...turn(2, "black", "e5"),
+      event("game_paused", { reason: "rate-limited", resume_after: "13:00" }),
+    ];
+
+    const { turns, notices } = foldEvents(events, []);
+    const rows = [...turns.flatMap((t) => t.blocks), ...notices].filter(
+      (r) => r.kind === "paused",
+    );
+
+    // Two pauses happened; only the one the game is sitting in may describe itself as ongoing.
+    const live = rows.filter((r) => r.kind === "paused" && r.live === true);
+    expect(live).toHaveLength(1);
+    // And it is the most recent one — the wait the game is actually sitting in.
+    expect(live[0].seq).toBe(Math.max(...rows.map((r) => r.seq)));
+  });
+
+  it("marks none once the game has ended", () => {
+    seq = 0;
+    const events = [
+      ...turn(1, "white", "e4"),
+      event("game_paused", { reason: "rate-limited", resume_after: "12:00" }),
+      event("game_ended", { result: "1-0", termination: "checkmate", detail: "" }),
+    ];
+
+    const { turns, notices } = foldEvents(events, []);
+    const rows = [...turns.flatMap((t) => t.blocks), ...notices];
+
+    expect(rows.filter((r) => r.kind === "paused" && r.live)).toEqual([]);
   });
 });
