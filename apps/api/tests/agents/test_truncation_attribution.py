@@ -83,7 +83,7 @@ async def test_it_does_not_spend_the_strike_budget(db: AsyncSession, table: Tabl
     """It fails on the first one **when the ask was unanswerable**. Counting four of them is how
     the forfeit was reached.
 
-    The condition narrowed in ADR-0032: what decides is the *size* of what we allowed, not merely
+    The condition narrowed in ADR-0047: what decides is the *size* of what we allowed, not merely
     that the response reached it. A model handed 4,000 tokens and told to be brief has every chance
     of acting, and failing it on sight abandoned a game at ply 72 the day the registry became
     accurate about an endpoint's ceiling. At or below `MIN_USEFUL_COMPLETION` no answer fits at

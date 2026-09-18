@@ -1,6 +1,8 @@
-# ADR-0044: The cooldown ladder resets on an answered call
+# 0044. The cooldown ladder resets on an answered call
 
-**Status:** accepted · **Date:** 2026-09-15 · **Relates to:** [ADR-0015](0015-quantization-as-identity-and-pinned-endpoints.md), [ADR-0017](0017-rate-limits-pause-games.md)
+**Status:** Accepted
+**Date:** 2026-09-15
+**Relates to:** [ADR-0015](0015-quantization-as-identity-and-pinned-endpoints.md), [ADR-0017](0017-rate-limits-pause-games.md)
 
 ## Context
 

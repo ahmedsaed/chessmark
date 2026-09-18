@@ -1,6 +1,8 @@
-# ADR-0045: A turn keeps the rounds it completed
+# 0045. A turn keeps the rounds it completed, and the retry continues it
 
-**Status:** proposed · **Date:** 2026-09-15 · **Relates to:** [ADR-0003](0003-full-transcript-prompt-caching.md), [ADR-0007](0007-turn-level-jobs.md), [ADR-0019](0019-harness-bounds-are-not-findings.md), [ADR-0037](0037-a-turn-ends-when-the-model-stops.md)
+**Status:** Proposed
+**Date:** 2026-09-15
+**Relates to:** [ADR-0003](0003-full-transcript-prompt-caching.md), [ADR-0007](0007-turn-level-jobs.md), [ADR-0019](0019-harness-bounds-are-not-findings.md), [ADR-0037](0037-a-turn-ends-when-the-model-stops.md)
 
 ## Context
 

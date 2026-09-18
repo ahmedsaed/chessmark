@@ -779,7 +779,7 @@ class TurnRunner:
         # It mattered most when the fallback was half the window: on a resumed game at ply 18
         # holding 227k tokens, `max_tokens` went out at 64,000 against a prompt with 27,802 tokens
         # of room and the endpoint refused the request. `unmeasured_cap` holds back the reserve now
-        # (ADR-0032) and is far safer, but a measurement still beats a bound, and the reset was
+        # (ADR-0047) and is far safer, but a measurement still beats a bound, and the reset was
         # persisted — so a resumed game began blind, and `should_compact` is gated on having a
         # measurement, so it could not even compact its way out.
         if occupied is not None:

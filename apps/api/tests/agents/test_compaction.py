@@ -132,7 +132,7 @@ class TestTheCompletionCap:
             window.completion_cap(prompt + 1, 64_000)
 
     def test_an_unmeasured_prompt_is_bounded_rather_than_guessed_at(self) -> None:
-        """No measurement, so no guess — the reserve is held back instead (ADR-0032).
+        """No measurement, so no guess — the reserve is held back instead (ADR-0047).
 
         It was half the window, defended as a bound that "always fits" because a system prompt plus
         one turn prompt is a few thousand tokens. True of a genuine first call and false of every

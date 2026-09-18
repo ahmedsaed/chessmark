@@ -111,7 +111,7 @@ async def test_the_next_turn_asks_against_the_measured_size(db: AsyncSession, ta
     assert asked[0] == 20_000, (
         "a game's first call holds back the reserve, not half the window — the bound is not a "
         "guess at the prompt either way, but the reserve is the one that is still safe when the "
-        "measurement is missing for some reason other than a first call (ADR-0032)"
+        "measurement is missing for some reason other than a first call (ADR-0047)"
     )
     # The third turn's *move* call, not the closing one after it: a turn ends when the model
     # stops (AGENT-05), so the last call of a turn is the one where it says it is done, and that

@@ -4,7 +4,7 @@
 **Date:** 2026-09-09
 **Amends:** the drill-down shipped in Phase 12, which made
 `/leaderboard/{slug}?q={precision}` a page of its own. Reinforces
-[0015](0015-endpoint-pinning-and-quantization.md) — the contestant is still `(model, precision)`,
+[0015](0015-quantization-as-identity-and-pinned-endpoints.md) — the contestant is still `(model, precision)`,
 it is simply no longer a separate URL — and
 [0032](0032-the-leaderboard-is-stored-not-recomputed-per-request.md), which this extends to the
 model page.

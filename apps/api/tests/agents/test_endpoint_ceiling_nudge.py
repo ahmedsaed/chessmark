@@ -1,4 +1,4 @@
-"""An endpoint's own ceiling earns a nudge, however accurately we name it (ADR-0032).
+"""An endpoint's own ceiling earns a nudge, however accurately we name it (ADR-0047).
 
 The failure this file exists to prevent happened the moment the registry became *correct*.
 
