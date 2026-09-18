@@ -209,3 +209,57 @@ test.describe("at phone width", () => {
     expect(tooSmall).toEqual([]);
   });
 });
+
+test("at phone width the navigation trigger sits with the account controls, not adrift", async ({
+  page,
+}) => {
+  /**
+   * It floated in the middle of the bar, reading as a third nav item nobody had asked for.
+   *
+   * Two siblings each carried `ml-auto`, and two auto margins in one flex row *share* the free
+   * space rather than one of them taking it — so the trigger came to rest 157px into a 390px
+   * header. Invisible to types, lint and every other test: the button was present, labelled,
+   * clickable and the right size. Only its position was wrong.
+   *
+   * Asserted as the structural property rather than a coordinate: the trigger belongs to the
+   * right-hand group. A pixel assertion would break on any copy change, and would not say why.
+   */
+  await page.goto("/");
+
+  const trigger = page.getByRole("button", { name: "Navigation" });
+  await expect(trigger).toBeVisible();
+
+  const wordmark = await page.getByRole("link", { name: /chessmark home/i }).boundingBox();
+  const button = await trigger.boundingBox();
+  const account = await page.getByRole("link", { name: /^sign in$/i }).first().boundingBox();
+
+  test.skip(!account, "Clerk is not configured here, so there is no right-hand group to join");
+
+  /* Asserted rather than returned early. `if (!box) return` reads like a guard and behaves like a
+     pass: every one of these boxes must exist for the measurement below to mean anything, and a
+     silent return would make this test green against the very layout it was written for. */
+  expect(wordmark, "the wordmark should have a box").not.toBeNull();
+  expect(button, "the trigger should have a box").not.toBeNull();
+  expect(account, "the account controls should have a box").not.toBeNull();
+
+  /**
+   * **All the free space belongs on the wordmark's side.**
+   *
+   * The trigger should sit one flex gap from the account controls — they are one group — with
+   * every spare pixel in the bar pushed in front of them. When it was broken the two auto margins
+   * split that space evenly instead, leaving the trigger stranded in the middle.
+   *
+   * Asserted as a *ratio*, and that detail is load-bearing. The obvious form —
+   * `toAccount < toWordmark` — is green against the broken layout: splitting the space evenly makes
+   * the two gaps equal, and they came out 29.219 and 29.234, so the comparison passed on sixteen
+   * thousandths of a pixel. Correct, the gaps are 8 and 28. Doubling separates the two cases by a
+   * wide margin and cannot be won by rounding.
+   */
+  const toAccount = account!.x - (button!.x + button!.width);
+  const toWordmark = button!.x - (wordmark!.x + wordmark!.width);
+  expect(
+    toWordmark,
+    `the spare width should sit before the trigger, not around it ` +
+      `(${toWordmark.toFixed(1)}px before, ${toAccount.toFixed(1)}px after)`,
+  ).toBeGreaterThan(toAccount * 2);
+});

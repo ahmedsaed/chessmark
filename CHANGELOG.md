@@ -15,7 +15,29 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Changed
+
+- **The landing page is the same page for everybody.** It carried a "Your games" strip and read the
+  session cookie to decide whether to draw it, which made the first page every visitor loads the one
+  page on the site that could not be reasoned about without knowing who was asking. `/profile` now
+  owns a person's own games and is a better home for them. Nothing on `/` reads a cookie, a header
+  or anything else about the request any more.
+- **Six replays instead of three**, so the row is two full ranks on a wide screen rather than one
+  and a gap.
+
 ### Fixed
+
+- **A model thinking now says how long it has been thinking.** A finished block already read
+  `reasoned for 12s`, from the event's `duration_ms`; one still being written said a flat
+  "reasoning" and nothing else — which is precisely the stretch a reader watching a board not move
+  is trying to interpret, and `e601f9af` once spent 369 seconds in a single round. It counts up as
+  `reasoning for 12s` and changes tense to `reasoned for 12s` the moment the closing frame lands.
+  `useGameStream` stamps each `token` frame with its arrival time, because a clock started at render
+  time restarts on every render.
+- **The mobile menu button sat in the middle of the header.** It and the account controls both
+  carried `ml-auto`, and two auto margins in one flex row *share* the free space rather than one of
+  them taking it — so the trigger came to rest 157px into a 390px bar, reading as a third nav item.
+  Below `md` only the trigger takes the space now, and the account controls sit beside it.
 
 - **"retrying shortly" was a lie told by arithmetic.** Every pause ran through a relative clock that
   returned `"shortly"` for any wait of twenty seconds or less — **including every negative one** — so

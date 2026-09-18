@@ -69,6 +69,11 @@ export function SiteHeader() {
           aria-expanded={open}
           aria-controls="primary-nav-panel"
           aria-label="Navigation"
+          /* **The only `ml-auto` below `md`.** It was one of two — `AccountBar` carried the other —
+             and two auto margins in one flex row *share* the free space rather than one of them
+             taking it: the trigger came to rest in the middle of the bar, 157px into a 390px
+             header, looking like a third nav item nobody had asked for. It takes the space and the
+             account controls sit beside it, so the two right-hand things read as one group. */
           className="ml-auto flex-none border border-line p-1.5 text-ink-faint transition-colors hover:border-accent-dim hover:text-ink md:hidden"
         >
           <MenuGlyph open={open} />

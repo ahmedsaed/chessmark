@@ -45,7 +45,13 @@
 
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
-import { buildTimeline, pauseCount, sameTurnContent, waitText } from "@/lib/turns";
+import {
+  buildTimeline,
+  pauseCount,
+  reasoningLabel,
+  sameTurnContent,
+  waitText,
+} from "@/lib/turns";
 import type {
   Player,
   StreamNotice,
@@ -332,37 +338,23 @@ function stepSummary(turn: TurnView): string | undefined {
 }
 
 /**
- * How long a model spent on one block of reasoning, said the way a person would say it.
+ * Milliseconds since `startedAt`, re-rendered once a second.
  *
- * The number is real and it is often startling: a single round of `e601f9af`'s ply 8 took **369
- * seconds**. That figure was in `llm_calls.latency_ms` from the first paid game and had never
- * reached the page, so a reader watching a board not move had no way to tell a slow model from a
- * stuck harness.
+ * `null` for a block that has finished, which is the common case — the hook still runs, and the
+ * interval is not started, so a page of closed blocks schedules no timers.
  */
-export function thoughtFor(durationMs: number | null): string | null {
-  if (durationMs === null || durationMs <= 0) return null;
-  const seconds = Math.round(durationMs / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  return `${minutes}m ${String(seconds % 60).padStart(2, "0")}s`;
-}
+function useElapsed(startedAt: number | null | undefined): number | null {
+  const [now, setNow] = useState(() => Date.now());
 
-/** 18687 → "18.7k". A reader comparing two reasoning blocks does not want five digits of either. */
-function compactTokens(tokens: number): string {
-  return tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens);
-}
+  useEffect(() => {
+    if (!startedAt) return;
+    /* A second, because the label is rendered in seconds: anything faster repaints the same
+       string, and anything slower makes the count visibly lag the thing it is counting. */
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [startedAt]);
 
-/**
- * The label on a closed reasoning block.
- *
- * Duration first, because it is what a reader is actually asking — *what took so long* — and the
- * token count second as the size hint. A block with neither still says "reasoning", which is the
- * honest floor for the whole archive written before either number was carried on the event.
- */
-export function reasoningLabel(block: { tokens: number; durationMs: number | null }): string {
-  const spent = thoughtFor(block.durationMs);
-  const head = spent ? `reasoned for ${spent}` : "reasoning";
-  return block.tokens > 0 ? `${head} · ${compactTokens(block.tokens)} tokens` : head;
+  return startedAt ? Math.max(0, now - startedAt) : null;
 }
 
 /**
@@ -881,7 +873,8 @@ function ReasoningBlock({
   edge: string;
 }) {
   const [open, setOpen] = useState(false);
-  const label = reasoningLabel(block);
+  const elapsed = useElapsed(block.durationMs === null ? block.startedAt : null);
+  const label = reasoningLabel(block, elapsed);
 
   if (!open) {
     return (
