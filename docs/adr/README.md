@@ -51,6 +51,7 @@ supersedes the old one, rather than an edit.
 | [0043](0043-a-pool-carries-its-eras.md) | A pool carries its eras, because a pool never ends | Accepted |
 | [0044](0044-the-ladder-resets-on-an-answered-call.md) | The cooldown ladder resets on an answered call, not a finished turn | Accepted |
 | [0045](0045-a-turn-keeps-the-rounds-it-completed.md) | A turn keeps the rounds it completed, and the retry continues it | Proposed |
+| [0046](0046-the-api-invalidates-the-cache-a-clock-does-not.md) | The API invalidates the frontend's cache; a clock does not | Accepted |
 
 ## Template
 

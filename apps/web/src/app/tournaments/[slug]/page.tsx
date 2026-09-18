@@ -6,8 +6,6 @@ import { Schedule } from "@/components/Schedule";
 import { getTournament } from "@/lib/api";
 import type { Standing, TournamentDetail } from "@/lib/types";
 
-export const dynamic = "force-dynamic";
-
 export async function generateMetadata({ params }: PageProps<"/tournaments/[slug]">) {
   const { slug } = await params;
   const tournament = await getTournament(slug);

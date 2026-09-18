@@ -147,6 +147,30 @@ it.
 
 ## How to work here
 
+- **A structural decision is the owner's, and it is asked about *before* it is built.** Not after,
+  not in the summary, not as a line in the changelog. The owner directs vision; Claude owns
+  implementation — and choosing *what the site does* is vision wearing an implementation's clothes.
+
+  This rule is here because of a specific thing that shipped unasked. Every route was made
+  `force-dynamic` and four of them were given full-page skeleton loaders, so the site assembled
+  itself in front of the reader behind grey boxes — one of which did not even match the shape it
+  stood in for. **It would never have been approved if anyone had been asked.** It arrived as the
+  reasonable-looking consequence of a smaller decision, was documented confidently in the file that
+  owns it, and then had to be found by the owner noticing the site felt wrong.
+
+  So: state the change, its cost and the alternative, and **wait**. What needs asking:
+
+  * anything that changes how or when a page reaches a reader — rendering mode, caching,
+    streaming, loading states, prefetch, route structure
+  * a loading state of any kind. A skeleton, a spinner, a placeholder: the first question is
+    always why the thing underneath is slow, and the answer is usually not "it needs a costume"
+  * a new dependency, or a framework feature that changes the shape of the app
+  * a change to auth, identity, or anything on every page
+  * a schema change beyond an additive column, and anything touching the invariants above
+  * replacing a working approach with a different one, however much better it is
+
+  Do everything *around* the question while you wait — the unblocked work is still yours. A refusal
+  is cheap at this point and expensive once it is written, documented and merged.
 - **A fix needs a test that fails without it.** Verify that, don't assume it. More than one bug in
   this repository was found because an assertion that could never fail was noticed.
 - **Test the claim, not the plumbing — and if the output is visual, look at it.** An assertion that
@@ -213,10 +237,11 @@ regression, not a trade-off.
 | `GET /leaderboard/summary` | the counts without the ranking. `/about` and `/methodology` show no rating, so they ask for three integers rather than the board |
 | `GET /games/{id}/turns` | summary only. The verbatim payloads are `?include_calls=true`, and neither the replay nor the live view asks for them — the inspector opens one turn through `/turns/{id}/raw` (LOG-07) |
 | the replay scrubber | O(1) per step. Positions come from one `buildFrames` table and `EventStream`'s rows are memoised on content — both pinned by tests in `replay.test.ts` |
+| every public page | **complete in one response, not streamed.** Reads are cached and tagged, and the API invalidates the tag when a game moves ([ADR-0046](docs/adr/0046-the-api-invalidates-the-cache-a-clock-does-not.md)). First byte and last byte should be within a millisecond or two of each other; a growing gap between them means something went back to rendering per request |
 
 New endpoints are held to this on the way in, not audited into it later — see *How to work here*.
 
-Three traps worth knowing before touching this:
+Traps worth knowing before touching this:
 
 * **The leaderboard sits on the critical path of four pages** — `/`, `/about`, `/methodology` and
   `/leaderboard` all await it. A slow query there is not one slow page. Two of those show no rating
@@ -229,7 +254,16 @@ Three traps worth knowing before touching this:
   one page every visitor loads first.
 * **A `loading.tsx` above a route that can 404 turns its 404 into a 200** — the boundary makes the
   segment stream, and the status line is committed before `notFound()` runs.
-  ([FRONTEND.md](docs/FRONTEND.md#streaming-and-the-price-of-it))
+  ([FRONTEND.md](docs/FRONTEND.md#the-404-trap-which-is-still-live))
+* **A skeleton is a slow page wearing a costume.** Four routes had one, and the lobby assembled
+  itself out of five `<Suspense>` boundaries, because the render blocked on live reads. The fix was
+  to stop blocking, not to decorate the wait: `/` went from complete-at-43ms to complete-at-13ms and
+  every skeleton was deleted. Before adding a boundary, check whether the read underneath it should
+  have been cached ([ADR-0046](docs/adr/0046-the-api-invalidates-the-cache-a-clock-does-not.md)).
+* **`force-dynamic` un-caches a route's reads, silently.** It is equivalent to `no-store` on every
+  `fetch` in the segment, so a route that carries it keeps its cache tags, keeps looking cached, and
+  hits the API every time. Same trap one level down: a segment's `revalidate` is a *ceiling* over
+  its fetches, which is how `sitemap.ts` quietly dropped from an hour to five minutes.
 
 ## Definition of done
 

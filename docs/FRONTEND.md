@@ -158,28 +158,58 @@ single reader and all of them see the same thing. What is decided *per connectio
 `must_withhold_thinking`: two people can watch the same game and one of them — the one playing it —
 is shown no reasoning at all (invariant 8).
 
-## Streaming, and the price of it
+## Caching, and why nothing streams any more
 
-Every route is `force-dynamic` — a live game and a leaderboard are both wrong the moment they are
-cached — so without a Suspense boundary a click produced no feedback at all until the whole server
-render finished. No spinner, no route change. Several hundred milliseconds of that reads as a broken
-link rather than a slow one.
+**Every public read is cached and tagged, and the API says when a tag is stale** (ADR-0046). The
+tag vocabulary is `lib/cache-tags.ts`, attached by `lib/api.ts` and acted on by
+`app/api/revalidate/route.ts`; the other end is `orchestration/revalidation.py`. The `revalidate`
+seconds beside the tags are a **backstop bounding a lost notification**, not the mechanism — a
+clock is a guess about a moment the API already knows exactly.
 
-Two ways to yield, and they are not interchangeable:
+This replaced `force-dynamic` on all ten page routes, four `loading.tsx` skeletons and the lobby's
+five `<Suspense>` boundaries. Those existed because the render blocked on live reads, so a click
+produced no feedback until it finished; with the reads cached, the whole page renders in about the
+time the shell alone used to take. Measured on 106 games: `/` went from first byte 4.4ms /
+complete 43.1ms to first byte 12.9ms / complete **13.1ms**. First and last byte have converged,
+which is the actual goal — the page arrives whole rather than assembling itself in front of the
+reader.
 
-- **`loading.tsx`** wraps the segment **and every segment under it**. Cheapest for a leaf route.
-- **`<Suspense>` inside a synchronous page** yields per section, so a slow ranking delays only the
-  ranking. `app/page.tsx` is the worked example: the page component is not `async`, and each section
-  is its own async component. Next.js memoises `fetch` for the request, so sections asking for the
-  same list read one in-flight promise rather than two.
+Three things to know before changing any of it:
+
+* **`force-dynamic` is not a neutral safety net.** It is documented as equivalent to
+  `{ cache: 'no-store', next: { revalidate: 0 } }` on every `fetch` in the segment. Adding it back
+  to a route silently un-caches that route's reads while the tags stay attached and keep looking
+  like caching.
+* **A route's own `revalidate` is a ceiling, not a setting.** Next takes the shortest life among
+  the segment's `revalidate` and every `fetch` inside it. `sitemap.ts` says `3600` and silently
+  became five minutes the moment its reads carried the site fallback; it now passes
+  `{ cache: SITEMAP_LIFE }` explicitly. The build's route table is where this shows.
+* **A per-user read must never be cached.** `/me` and `/games/mine` answer differently depending on
+  who asks. They go through `post`/`listMyGames`, which carry a Clerk token and never touch the
+  cached `get`.
+* **Neither may a game that can still move.** `getGame` caches only on an explicit `settled: true`;
+  `listEvents` and `listTurns` never do. The first version of this cached them on the argument that
+  a live board is self-correcting over SSE — but the first paint comes from the server read, and
+  stale-while-revalidate hands the reader the position from *before* the last move while the stream
+  carries only what happens next. `play.spec.ts` failed five ways at once. A settled game is
+  immutable and cached hard; it is safe under invariant 8 only because `must_withhold_thinking`
+  depends on `(status, has_human_player)` and not on the viewer.
+
+### The 404 trap, which is still live
 
 **A `loading.tsx` above a route that can `notFound()` turns its 404 into a 200.** The boundary makes
 the segment stream, and a streamed response commits its status line before the page body runs — so
 the not-found page renders under a `200` and every link checker and crawler believes it. A blanket
 `app/loading.tsx` silently did this to every missing game, model and tournament; nothing in a
-browser looks wrong. Only routes that **cannot** 404 have one, and `site.spec.ts` asserts the status
-for the three that can. A route that 404s should resolve that check first and stream what comes
-after it.
+browser looks wrong. There is now no `loading.tsx` in the app at all, and `site.spec.ts:175` asserts
+the status for the three routes that can 404, so reintroducing one fails there rather than in
+production.
+
+This is also why **Cache Components (`cacheComponents: true`) is not enabled.** Under it *every*
+dynamic route streams a static shell first — Next's own docs say to move the existence check into
+`proxy` as a result — which would both reintroduce the assembly this section describes removing and
+put an API round trip in middleware. It was tried and reverted; ADR-0046 records the full reasoning
+and ROADMAP's *Known gaps* carries what is left on the table.
 
 ## Metadata, icons, and the sitemap
 

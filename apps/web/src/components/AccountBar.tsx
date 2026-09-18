@@ -20,22 +20,21 @@ import { useEffect, useState } from "react";
 
 import { AccountMenu } from "@/components/AccountMenu";
 import { clerkEnabled } from "@/components/AuthProvider";
+import { useClerkMounted } from "@/components/ClerkGate";
 import type { Me } from "@/lib/types";
 
-export function AccountBar({
-  apiUrl,
-  clerkMounted,
-}: {
-  apiUrl: string;
+export function AccountBar({ apiUrl }: { apiUrl: string }) {
   /**
-   * Whether the root layout mounted `ClerkProvider` for this request.
+   * Whether a `ClerkProvider` is above this component — from context, not a prop.
    *
-   * It is the only fact this needs: the layout mounts Clerk when a session cookie exists or the
-   * route is about identity, so *not* mounted means *not signed in* here, and a separate
-   * `signedIn` prop would be the same bit twice.
+   * It used to be threaded down from the root layout, which made it the answer for the *request*
+   * rather than for right now. `ClerkGate` can mount a provider the server never did, on a soft
+   * navigation the layout never saw, and a prop would still have been reporting first paint. It is
+   * the only fact this needs: Clerk is mounted when a session exists or the route is about
+   * identity, so *not* mounted means *not signed in* here.
    */
-  clerkMounted: boolean;
-}) {
+  const clerkMounted = useClerkMounted();
+
   if (!clerkEnabled) return null;
 
   /**

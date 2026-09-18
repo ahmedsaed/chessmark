@@ -14,8 +14,6 @@ import type {
   ModelDetail,
 } from "@/lib/types";
 
-export const dynamic = "force-dynamic";
-
 /**
  * Everything known about one model — the only page about it.
  *

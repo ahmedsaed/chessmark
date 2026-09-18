@@ -25,7 +25,7 @@ import { AccountBar } from "@/components/AccountBar";
 import { apiUrl } from "@/lib/api";
 import { primaryNav, siteName } from "@/lib/site";
 
-export function SiteHeader({ clerkMounted }: { clerkMounted: boolean }) {
+export function SiteHeader() {
   const pathname = usePathname();
   /* Open-for-which-path rather than a boolean, so navigating closes the panel without an effect
      that calls `setState` — which is a cascading render, and which the lint rule rightly refuses.
@@ -74,7 +74,7 @@ export function SiteHeader({ clerkMounted }: { clerkMounted: boolean }) {
           <MenuGlyph open={open} />
         </button>
 
-        <AccountBar apiUrl={apiUrl} clerkMounted={clerkMounted} />
+        <AccountBar apiUrl={apiUrl} />
       </div>
 
       {/* Under the bar rather than over the page: a sticky header is already the top of the

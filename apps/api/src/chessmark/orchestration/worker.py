@@ -56,6 +56,7 @@ from chessmark.db.repositories import (
 from chessmark.game import Colour, GameResult, Outcome, Referee, Termination
 from chessmark.orchestration.match import model_for
 from chessmark.orchestration.queue import AdvanceTurn, Delivery, TurnQueue
+from chessmark.orchestration.revalidation import notify_web
 
 log = logging.getLogger(__name__)
 
@@ -78,7 +79,16 @@ async def publish_events(redis: Any, game_id: uuid.UUID, events: list[GameEvent]
     already committed — which is also why every caller does this *after* the commit rather than
     inside it. A subscriber must not be told about a state the database has not accepted.
     """
-    if redis is None or not events:
+    if not events:
+        return
+
+    # The website's cache is the other subscriber, and it is not on Redis (ADR-0046). It goes first
+    # because it is the one a *reader who is not currently on the page* will be served from: the
+    # Redis frame reaches whoever is already watching, and this decides what the next person to
+    # open the leaderboard sees. Both are best-effort and neither can fail this call.
+    await notify_web(game_id, [str(event.type) for event in events])
+
+    if redis is None:
         return
 
     channel = EVENT_CHANNEL.format(game_id=game_id)

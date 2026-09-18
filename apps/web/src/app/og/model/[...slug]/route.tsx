@@ -82,7 +82,7 @@ export async function GET(_request: Request, context: { params: Promise<{ slug: 
      playing is the wrong kind of stable. */
   const played = best ? model.rated_games?.[`${best.model_slug}@${best.quantization}`] : undefined;
   const gameId = played?.at(-1);
-  const game = gameId ? await getGame(gameId, { cache: REVALIDATE_SECONDS }) : null;
+  const game = gameId ? await getGame(gameId, { cache: REVALIDATE_SECONDS, settled: true }) : null;
 
   const figures = (
     <Stats
