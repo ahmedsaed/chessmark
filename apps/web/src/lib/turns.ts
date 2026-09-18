@@ -658,9 +658,30 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
            telling of something already on the screen, and it cannot even be drawn in the right
            place: the notice is ordered against whole turns, so it landed after the move the resume
            made possible. A resume that ends a pause between turns still gets its row, because
-           there is nothing else there to say the game came back. */
-        const openPause = current?.san === null && current.blocks.at(-1)?.kind === "paused";
-        if (!openPause) {
+           there is nothing else there to say the game came back.
+
+           **Searched, not peeked at — the same rule the pause above folds by.** This tested
+           `blocks.at(-1)`, and the pause fold deliberately leaves its row *where the wait began*
+           and updates it in place. So from the second refusal onwards the last block is the
+           model's retry, never the pause, and every resume after the first escaped as its own
+           notice. Game `c2fd378a` drew one `PAUSED ×11` row and ten stray `RESUMED` rows under it
+           for that reason: two predicates that had to agree, and did not. They are now the same
+           search.
+
+           Matched on the reason, so a resume cannot swallow itself against an unrelated wait — a
+           rate limit and a halt are two rows, and ending one must not silence the other. `reason`
+           is a field on the event now; every game recorded before that has it only inside
+           `detail`, so it is recovered from the phrase for the archive's sake. */
+        const resumeReason = asString(payload.reason) || reasonFromDetail(asString(payload.detail));
+        const answered =
+          current?.san === null
+            ? current.blocks.findLast(
+                (block) =>
+                  block.kind === "paused" && (resumeReason ? block.text === resumeReason : true),
+              )
+            : undefined;
+
+        if (!answered) {
           notices.push({
             key: `resumed-${event.seq}`,
             seq: event.seq,
@@ -735,6 +756,38 @@ export type TimelineEntry =
  * `buildTimeline` has already grouped these, so the rule "a turn breaks the run" is a property of
  * the input instead of a condition in the loop.
  */
+/**
+ * The pause reason inside a resume's prose, for events recorded before it was a field.
+ *
+ * `reconciler.resume` writes `reason` explicitly now. Every game already in the archive carries it
+ * only as "the wait is over: <reason>", and those games still have to fold — so the phrase is the
+ * fallback rather than the source. An unrecognised shape returns null, and the caller then matches
+ * any open pause, which is what it did before the field existed.
+ */
+/**
+ * How many times a turn was paused — pauses, not pause *rows*.
+ *
+ * A repeated refusal folds into one block carrying `count`, so counting the blocks answers a
+ * different question than the one the summary line asks. `c2fd378a` summarised a turn that had been
+ * rate-limited eleven times as "1 pause", directly above a row reading `×11`.
+ *
+ * In `lib` rather than beside the header that renders it, because that header lives in a component
+ * and components are Playwright's — this is arithmetic, and arithmetic belongs where a unit test
+ * can reach it.
+ */
+export function pauseCount(turn: TurnView): number {
+  return turn.blocks.reduce(
+    (total, block) => total + (block.kind === "paused" ? block.count : 0),
+    0,
+  );
+}
+
+const RESUMED_PREFIX = "the wait is over: ";
+
+export function reasonFromDetail(detail: string): string | null {
+  return detail.startsWith(RESUMED_PREFIX) ? detail.slice(RESUMED_PREFIX.length) : null;
+}
+
 export function foldPauses(notices: StreamNotice[]): StreamNotice[] {
   const out: StreamNotice[] = [];
 

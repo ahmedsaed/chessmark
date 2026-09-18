@@ -20,6 +20,7 @@ from chessmark.agents.scripted import plays
 from chessmark.core.halt import SCOPE_FREE, SOURCE_CREDITS, SOURCE_OPERATOR, Halt
 from chessmark.db.enums import EventType, GameStatus
 from chessmark.db.models import Game, GameEvent, Player, TournamentGame
+from chessmark.db.repositories import append_event
 from chessmark.game import Colour
 from chessmark.orchestration.reconciler import find_resumable, find_stalled, reconcile
 from chessmark.orchestration.worker import ADVANCED, HALTED, STALE
@@ -726,3 +727,101 @@ async def test_nothing_is_published_for_a_quiet_sweep(
         assert await _drain(pubsub) == []
     finally:
         await pubsub.aclose()
+
+
+async def test_a_resume_names_the_pause_it_ends(
+    db: AsyncSession, game: Fixture, sessionmaker: Any
+) -> None:
+    """A resume must be pairable with its pause without parsing English.
+
+    The event carried one key — a prose `detail` reading "the wait is over: <reason>" — so the only
+    tie to the pause it answered was a reason embedded in a sentence. The frontend paired them
+    positionally instead, and game `c2fd378a` drew one folded `PAUSED x11` row with ten stray
+    `RESUMED` rows beneath it when the two sides disagreed about which block was open.
+
+    `detail` is asserted alongside the new fields because every game already in the archive has only
+    that, and every reader of those games has to keep working.
+    """
+    reason = "poolside/laguna-s-2.1:free rate-limited by Poolside"
+
+    await append_event(
+        db,
+        game_id=game.game.id,
+        type=EventType.GAME_PAUSED,
+        payload={
+            "reason": reason,
+            "player_id": str(game.white.id),
+            "colour": "white",
+            "model": "poolside/laguna-s-2.1:free",
+        },
+    )
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
+    game.game.pause_reason = reason
+    await db.commit()
+
+    paused_seq = await db.scalar(
+        sa.select(GameEvent.seq).where(
+            GameEvent.game_id == game.game.id, GameEvent.type == EventType.GAME_PAUSED
+        )
+    )
+
+    assert (await reconcile(sessionmaker, game.queue)).resumed == [str(game.game.id)]
+
+    resumed = await db.scalar(
+        sa.select(GameEvent)
+        .where(GameEvent.game_id == game.game.id, GameEvent.type == EventType.GAME_RESUMED)
+        .order_by(GameEvent.seq.desc())
+        .limit(1)
+    )
+    assert resumed is not None
+    assert resumed.payload["reason"] == reason, "the tie must be a field, not a phrase"
+    assert resumed.payload["paused_seq"] == paused_seq, "it must name the row it ends"
+    # The seat, copied from the pause: a resume that cannot say whose endpoint came back cannot be
+    # attributed to one.
+    assert resumed.payload["colour"] == "white"
+    assert resumed.payload["model"] == "poolside/laguna-s-2.1:free"
+    assert resumed.payload["detail"] == f"the wait is over: {reason}"
+
+
+async def test_a_resume_ends_the_latest_pause_not_the_first(
+    db: AsyncSession, game: Fixture, sessionmaker: Any
+) -> None:
+    """A pause is not always followed by a resume.
+
+    `_pause_for_halt` writes a second `game_paused` on top of a provider pause with nothing between
+    them — `c2fd378a` has exactly one such pair, at seq 106/107. So "the pause this resume ends" is
+    the *latest* one, and pairing with the first would attribute the halt lifting to a rate limit.
+    """
+    await append_event(
+        db,
+        game_id=game.game.id,
+        type=EventType.GAME_PAUSED,
+        payload={"reason": "rate-limited by Poolside", "colour": "white"},
+    )
+    await append_event(
+        db,
+        game_id=game.game.id,
+        type=EventType.GAME_PAUSED,
+        payload={"reason": "the harness is halted: the free allowance is spent", "held": True},
+    )
+    halt_seq = await db.scalar(
+        sa.select(sa.func.max(GameEvent.seq)).where(
+            GameEvent.game_id == game.game.id, GameEvent.type == EventType.GAME_PAUSED
+        )
+    )
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(seconds=1)
+    game.game.pause_reason = "the harness is halted: the free allowance is spent"
+    await db.commit()
+
+    await reconcile(sessionmaker, game.queue)
+
+    resumed = await db.scalar(
+        sa.select(GameEvent)
+        .where(GameEvent.game_id == game.game.id, GameEvent.type == EventType.GAME_RESUMED)
+        .order_by(GameEvent.seq.desc())
+        .limit(1)
+    )
+    assert resumed is not None
+    assert resumed.payload["paused_seq"] == halt_seq

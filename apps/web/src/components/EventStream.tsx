@@ -45,7 +45,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { buildTimeline, sameTurnContent } from "@/lib/turns";
+import { buildTimeline, pauseCount, sameTurnContent } from "@/lib/turns";
 import type { Player, StreamNotice, ToolCallView, TurnBlock, TurnView } from "@/lib/types";
 
 type Filter = "all" | "moves-talk" | "talk" | "moves";
@@ -305,7 +305,10 @@ function stepSummary(turn: TurnView): string | undefined {
     parts.push(`${turn.tools.length} tool${turn.tools.length === 1 ? "" : "s"}`);
   }
   if (turn.illegal.length > 0) parts.push(`${turn.illegal.length} illegal`);
-  const pauses = turn.blocks.filter((block) => block.kind === "paused").length;
+  /* **Summed, not counted** — `pauseCount`, which is why it is in `lib`. `filter(...).length`
+     reported the number of *rows*: a turn rate-limited eleven times folds into one block and
+     summarised itself as "1 pause" directly above a row reading `×11`. */
+  const pauses = pauseCount(turn);
   if (pauses > 0) parts.push(`${pauses} pause${pauses === 1 ? "" : "s"}`);
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
