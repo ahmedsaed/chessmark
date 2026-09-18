@@ -25,7 +25,10 @@ where a change belongs** — not here.
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | containers, `./chessmark`, CD, backups |
 
 **An ADR is immutable.** A decision that changes gets a new ADR that supersedes or amends the old
-one, rather than an edit.
+one, rather than an edit. The single exception is a *number* two ADRs both claim — that is a filing
+error, not a decision, and it is fixed by renumbering the later one and leaving a pointer at the old
+path ([adr/README.md](docs/adr/README.md)). `make check` fails on a duplicate number, an unindexed
+ADR, and any dead link or heading anchor in our markdown.
 
 ---
 

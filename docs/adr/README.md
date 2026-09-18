@@ -4,6 +4,19 @@ Each ADR records one decision: the context that forced it, what was chosen, what
 what we now have to live with. They are immutable — a decision that changes gets a **new** ADR that
 supersedes the old one, rather than an edit.
 
+**The one exception is the number, and only when two ADRs share one.** Immutability protects the
+*decision*; a filing error in which number it was given protects nothing. Two ADRs were both
+numbered 0032, and the collision was not cosmetic: `CHANGELOG.md` resolved a line about the
+leaderboard to the context arithmetic, and two source files cited "0032" meaning different
+decisions. The later one is renumbered, its content unchanged, and a **pointer** is left at the old
+path with `**Status:** Renumbered` so links written against it still land. See
+[0032](0032-the-arithmetic-that-decides-a-request.md) for what one looks like.
+
+`apps/api/tests/docs/test_adr_integrity.py` runs in `make check` and fails on a duplicate number, an
+ADR missing from the table below, an index row pointing at nothing, a header that is not the format
+used here, and any relative link or heading anchor in our markdown that does not resolve. All five
+were live in this directory before it was written.
+
 | # | Decision | Status |
 | --- | --- | --- |
 | [0001](0001-monorepo-fastapi-nextjs.md) | Monorepo with FastAPI + Next.js | Accepted |
@@ -52,6 +65,7 @@ supersedes the old one, rather than an edit.
 | [0044](0044-the-ladder-resets-on-an-answered-call.md) | The cooldown ladder resets on an answered call, not a finished turn | Accepted |
 | [0045](0045-a-turn-keeps-the-rounds-it-completed.md) | A turn keeps the rounds it completed, and the retry continues it | Proposed |
 | [0046](0046-the-api-invalidates-the-cache-a-clock-does-not.md) | The API invalidates the frontend's cache; a clock does not | Accepted |
+| [0047](0047-the-arithmetic-that-decides-a-request.md) | The arithmetic that decides whether a request can be sent | Accepted |
 
 ## Template
 

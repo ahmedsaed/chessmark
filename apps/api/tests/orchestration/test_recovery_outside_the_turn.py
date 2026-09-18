@@ -1,4 +1,4 @@
-"""A rescue that outlives the turn that needed it (ADR-0032).
+"""A rescue that outlives the turn that needed it (ADR-0047).
 
 A turn is one transaction (ADR-0007), which is what makes a crash mid-turn safe — and what makes a
 compaction *inside* a failing turn worthless. `29e7f004` and `e601f9af` were reopened three times

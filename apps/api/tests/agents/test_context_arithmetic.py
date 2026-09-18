@@ -1,4 +1,4 @@
-"""The arithmetic that decides whether a request can be sent (ADR-0031, ADR-0032).
+"""The arithmetic that decides whether a request can be sent (ADR-0031, ADR-0047).
 
 Two games sat abandoned through three resumes each, dying **one second** after being reopened. The
 one second is the whole diagnosis: a summarising call to a free model averages sixteen seconds, so

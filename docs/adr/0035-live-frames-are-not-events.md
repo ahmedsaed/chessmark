@@ -5,8 +5,10 @@
 **Extends:** [0008](0008-game-events-log.md) — the event log stays the only record and the only
 thing replay reads. Constrained by [0007](0007-turn-level-jobs.md), whose one-transaction-per-turn
 rule is why nothing could be published mid-turn, and by invariant 7, which reserves a `game_events`
-row for a state change. Reinforces invariant 8 via [0025](0025-reasoning-withheld-mid-game.md)'s
-read-time gate.
+row for a state change. Reinforces invariant 8, whose read-time gate is `api/redaction.py`'s
+`must_withhold_thinking` — cited here as the invariant rather than as an ADR because it has never
+had one. This line pointed at `0025-reasoning-withheld-mid-game.md`, a file that was never written;
+0025 went to an unrelated decision.
 
 ## Context
 

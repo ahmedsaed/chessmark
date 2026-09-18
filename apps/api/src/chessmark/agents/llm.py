@@ -211,7 +211,7 @@ _LOOKS_LIKE_CONTEXT = re.compile(
 #: Worth a second pattern because the total alone is ambiguous in the direction that matters.
 #: `requested` is prompt *plus* the `max_tokens` we asked to reserve, and compaction needs the
 #: prompt: charging our own output request against the transcript is what left `_summarise` with
-#: negative room and stopped two games recovering (ADR-0032). Subtracting what we asked for is a
+#: negative room and stopped two games recovering (ADR-0047). Subtracting what we asked for is a
 #: reasonable fallback and can under-count, which is the dangerous direction — so where the
 #: endpoint spells the split out, that is what gets used.
 _CONTEXT_BREAKDOWN = re.compile(

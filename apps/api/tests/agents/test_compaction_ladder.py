@@ -332,7 +332,7 @@ async def test_a_context_length_refusal_compacts_and_retries(
     assert events[0].payload["occupied_tokens"] == 261751 + 502, (
         "the endpoint's own count of the *prompt* — text plus tool schema, and not the output we "
         "asked it to reserve. Counting our own `max_tokens` as though it were transcript is what "
-        "left `_summarise` with negative room and stopped two games recovering (ADR-0032)"
+        "left `_summarise` with negative room and stopped two games recovering (ADR-0047)"
     )
     assert events[0].payload["context_tokens"] == 256_000
 

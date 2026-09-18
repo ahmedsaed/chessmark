@@ -8,7 +8,7 @@ whose *arithmetic* is broken rather than its availability.
 
 ## Context
 
-ADR-0031 and ADR-0032 fixed how a turn grows and how a refusal is recovered from. Two games stayed
+ADR-0031 and ADR-0047 fixed how a turn grows and how a refusal is recovered from. Two games stayed
 unrecoverable, and the reasons were different again.
 
 ### Twelve messages is not a size

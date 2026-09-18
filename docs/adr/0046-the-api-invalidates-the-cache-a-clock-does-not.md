@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Date:** 2026-09-18
 **Supersedes** the standing decision recorded in `lib/api.ts` and
-[FRONTEND.md](../FRONTEND.md#streaming-and-the-price-of-it) that every route is `force-dynamic` and
+[FRONTEND.md](../FRONTEND.md#caching-and-why-nothing-streams-any-more) that every route is `force-dynamic` and
 nothing a person waits on is cached. The social cards' own `revalidate` (ADR-era, `REVALIDATE_SECONDS`)
 is unchanged and still correct.
 

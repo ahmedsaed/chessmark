@@ -15,6 +15,28 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two ADRs were numbered 0032, and a citation of it carried no information.** *The arithmetic that
+  decides whether a request can be sent* and *The leaderboard is stored, not recomputed on every
+  request* were written the same day and both took 0032; only the second reached the index. The
+  collision had already produced wrong links: this file defines one `[ADR-0032]` reference, so a
+  line about the leaderboard's cost sent readers to the context arithmetic, and `agents/llm.py`
+  cited 0032 meaning one decision while `bench/snapshot.py` meant the other.
+
+  The arithmetic one is now [ADR-0047], unchanged, with a pointer left at the old path so existing
+  links still land. Renumbering is the one exception to ADR immutability — it protects the decision,
+  not the filing.
+
+  Two more citations were repointed: `0034` named `0015-endpoint-pinning-and-quantization.md` (a
+  rename), and `0035` named `0025-reasoning-withheld-mid-game.md` — **a file that was never
+  written**, while 0025 went to an unrelated decision. That rule has no ADR at all; it lives in
+  invariant 8 and `api/redaction.py`, and 0035 now says so.
+
+  `apps/api/tests/docs/test_adr_integrity.py` runs in `make check` and fails on a duplicate number,
+  an unindexed ADR, an index row pointing at nothing, a non-standard header, or any dead relative
+  link or heading anchor. All five were live in `docs/` when it was written.
+
 ### Changed
 
 - **The pages arrive whole, and the skeletons are gone** (ADR-0046). Every page route was
@@ -556,9 +578,9 @@ ladder, the record, the page — was built around that discard.
   counts into that endpoint's tokens, which is what lets a tail budget be expressed in the unit the
   window is in. It sizes a retention policy, never a safety bound: whether a request can be sent is
   still decided by the provider's own count alone (AGENT-19).
-- **`FRAMING_TOKENS` is 4,096, not 256** ([ADR-0032]). One thousandth of a 256,000-token window is
+- **`FRAMING_TOKENS` is 4,096, not 256** ([ADR-0047]). One thousandth of a 256,000-token window is
   a rounding error against a count taken on the provider's side; comparable agents hold back 4,096.
-- **An unmeasured call holds back the reserve rather than half the window** ([ADR-0032]). 25,600
+- **An unmeasured call holds back the reserve rather than half the window** ([ADR-0047]). 25,600
   against 256,000 where the old bound asked for 128,000. Half a window "always fits" for a game's
   genuine first call and not for a resumed one carrying 227,440 tokens, which is how a request for
   64,000 output reached an endpoint with 27,802 tokens of room.
@@ -818,8 +840,8 @@ ladder, the record, the page — was built around that discard.
   reconciled by reading them** — and it took far longer to find than it should have, because the
   product could raise the question at all.
 - **A model page cost two full sweeps of the archive**
-  ([the stored leaderboard](docs/adr/0032-the-leaderboard-is-stored-not-recomputed-per-request.md);
-  linked by path because two ADRs carry the number 0032). `get_model` recomputed the ratings and
+  ([ADR-0032](docs/adr/0032-the-leaderboard-is-stored-not-recomputed-per-request.md)). `get_model`
+  recomputed the ratings and
   the aggregates per request without sharing a scan — the cost ADR-0032 had just removed from the
   leaderboard, reintroduced on a route nothing measured. It reads the stored run now, and a
   query-count test holds it there.
@@ -843,18 +865,18 @@ ladder, the record, the page — was built around that discard.
   call. There is no honest recovery — no client-side count is trustworthy — so the game is
   abandoned and the endpoint is named. Nobody is forfeited (ADR-0019).
 - **The reactive compaction rung compacts against the prompt, not the whole request**
-  ([ADR-0032]). An endpoint's refusal reports a total that includes the `max_tokens` *we* asked it
+  ([ADR-0047]). An endpoint's refusal reports a total that includes the `max_tokens` *we* asked it
   to reserve, and passing that on charged our own output request against the transcript a second
   time — leaving `_summarise` with negative room, so it never called anything. `29e7f004` and
   `e601f9af` were reopened three times each and died **one second** after every attempt, never
   having tried to rescue themselves. The endpoint's own breakdown is parsed where it gives one.
-- **A truncation is failed on sight only when the request was unanswerable** ([ADR-0032]). The
+- **A truncation is failed on sight only when the request was unanswerable** ([ADR-0047]). The
   rule was "the response reached the number we sent", which made the verdict depend on the
   registry being *wrong*: while the catalogue was stale we asked `laguna-s-2.1` for 64,000, got
   its real 32,768, and read that as the endpoint's limit — worth a nudge and three retries. After
   the catalogue was refreshed the identical response read as ours and failed instantly, abandoning
   `a016a326` at ply 72. What decides now is the size of what we allowed.
-- **A rescue that outlives the turn that needed it** ([ADR-0032]). A turn is one transaction, so a
+- **A rescue that outlives the turn that needed it** ([ADR-0047]). A turn is one transaction, so a
   compaction inside a failing turn is rolled back with it and the next attempt sends the same
   bytes. On a context-length rejection the worker now elides stale tool output in a session of its
   own and requeues once — trim-only, because folding needs the provider that just refused us.
@@ -994,7 +1016,7 @@ flags the old code wrote.
 [ADR-0029]: docs/adr/0029-a-deviation-has-a-ceiling.md
 [ADR-0030]: docs/adr/0030-a-halt-pauses-the-board.md
 [ADR-0031]: docs/adr/0031-a-turn-may-not-inflate-its-own-context.md
-[ADR-0032]: docs/adr/0032-the-arithmetic-that-decides-a-request.md
+[ADR-0047]: docs/adr/0047-the-arithmetic-that-decides-a-request.md
 [ADR-0033]: docs/adr/0033-a-tail-budget-in-tokens-and-a-provider-that-cannot-count.md
 [ADR-0034]: docs/adr/0034-one-page-per-model.md
 [ADR-0035]: docs/adr/0035-live-frames-are-not-events.md
