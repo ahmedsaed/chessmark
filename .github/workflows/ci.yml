@@ -159,6 +159,15 @@ jobs:
       NEXT_PUBLIC_API_URL: http://localhost:8010
       E2E_WEB_URL: http://localhost:3010
 
+      # **The suite seeds the database behind the website's back, so it has to invalidate the
+      # cache** — exactly as the worker does in production (ADR-0046). Without these the web app
+      # starts against an *empty* database, the readiness probe below renders the lobby, and that
+      # empty answer is held for the full `FALLBACK_REVALIDATE`. The whole suite then reads a lobby
+      # with no games in it, which is how `the landing page leads with a game` began failing the
+      # moment the reads were cached. Not a test secret: it is the real mechanism, exercised here.
+      WEB_ORIGIN: http://localhost:3010
+      REVALIDATE_SECRET: ci-not-a-secret-nothing-here-is-public
+
     steps:
       - uses: actions/checkout@v4
 
@@ -210,8 +219,11 @@ jobs:
         working-directory: apps/web
         run: |
           pnpm start &
+          # `/robots.txt`, not `/`. The probe only needs to know the server answers, and asking it
+          # for the lobby made the health check the first *reader* of the game list — populating
+          # the cache from an empty database before anything had been seeded.
           for _ in $(seq 1 60); do
-            curl -sf http://localhost:3010/ >/dev/null && break
+            curl -sf http://localhost:3010/robots.txt >/dev/null && break
             sleep 1
           done
 

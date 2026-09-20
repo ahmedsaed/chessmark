@@ -229,11 +229,17 @@ test("at phone width the navigation trigger sits with the account controls, not 
   const trigger = page.getByRole("button", { name: "Navigation" });
   await expect(trigger).toBeVisible();
 
+  /* **Counted before it is measured.** `boundingBox()` auto-waits for its element, so on a build
+     with no Clerk keys — which is what CI runs — asking for the box of a `sign in` link that will
+     never exist does not return null, it hangs until the test times out. The skip below could not
+     fire because the await above it never resolved. Count first; the count is immediate. */
+  const signIn = page.getByRole("link", { name: /^sign in$/i }).first();
+  const hasAccountControls = (await signIn.count()) > 0;
+  test.skip(!hasAccountControls, "Clerk is not configured here, so there is no group to join");
+
   const wordmark = await page.getByRole("link", { name: /chessmark home/i }).boundingBox();
   const button = await trigger.boundingBox();
-  const account = await page.getByRole("link", { name: /^sign in$/i }).first().boundingBox();
-
-  test.skip(!account, "Clerk is not configured here, so there is no right-hand group to join");
+  const account = await signIn.boundingBox();
 
   /* Asserted rather than returned early. `if (!box) return` reads like a guard and behaves like a
      pass: every one of these boxes must exist for the measurement below to mean anything, and a
