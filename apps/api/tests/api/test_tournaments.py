@@ -453,3 +453,39 @@ async def test_naming_the_event_costs_one_query(client: AsyncClient, db: AsyncSe
         f"a game in an event took {evented} queries against {plain} for one outside — the card is "
         "reading the tournament separately from the pairing that points at it"
     )
+
+
+async def test_a_delisted_entrant_that_never_played_is_not_a_row(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The field tracks the catalogue, so an entrant leaves when its model is withdrawn.
+
+    Three of `pool-free`'s were withdrawn from the free tier before they were ever paired, and sat
+    in the table at nought games with no rating — indistinguishable from a model that had been
+    tried and had nothing to show. A row that says nothing is worse than no row.
+
+    A delisted entrant that *did* play keeps its row, greyed: those games are in the ratings of
+    everyone it met, and hiding it would leave opponents with results against somebody the table
+    does not admit exists. That half is the `or s.played > 0` in `listed`.
+    """
+    _, entrants = await make_event(db, models=4)
+    gone = entrants[0].key
+
+    # Withdrawn from the catalogue: no active endpoint, so `repo.in_field` stops returning it.
+    model_id = await db.scalar(
+        sa.select(ModelRegistry.id).where(ModelRegistry.openrouter_id == gone)
+    )
+    await db.execute(
+        sa.update(ModelEndpoint).where(ModelEndpoint.model_id == model_id).values(is_active=False)
+    )
+    await db.commit()
+
+    body = (await client.get("/tournaments/test-cup")).json()
+    keys = [row["key"] for row in body["standings"]]
+
+    assert gone not in keys, "a delisted entrant with no games should not hold a row"
+    assert len(keys) == 3
+    # The other three are still in the field and still listed, including on nought games — the rule
+    # is about being delisted, not about being unplayed.
+    assert all(row["in_field"] for row in body["standings"])
+    assert all(row["played"] == 0 for row in body["standings"])

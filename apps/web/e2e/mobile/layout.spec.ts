@@ -269,3 +269,37 @@ test("at phone width the navigation trigger sits with the account controls, not 
       `(${toWordmark.toFixed(1)}px before, ${toAccount.toFixed(1)}px after)`,
   ).toBeGreaterThan(toAccount * 2);
 });
+
+test("at phone width every header control is the same height", async ({ page }) => {
+  /**
+   * The bar had three heights in it.
+   *
+   * Each control derived its own from padding plus whatever it happened to contain: the nav
+   * trigger came to 28px from a 14px glyph, `sign in` to 26.5px from its line-height, and the
+   * signed-in account card to 32px from a 22px avatar. Side by side on a phone that is plainly
+   * visible, and no amount of care about any one of them fixes it — the heights have to be stated
+   * once, which is what `CONTROL_HEIGHT` is for.
+   *
+   * Measured rather than asserted against a constant: what matters is that they agree with each
+   * other, not that they agree with a number this test also hard-codes.
+   */
+  await page.goto("/");
+
+  const boxes = await page
+    .locator("header a[class*='border'], header button[class*='border']")
+    .evaluateAll((els) =>
+      els
+        .map((el) => el.getBoundingClientRect())
+        .filter((r) => r.height > 0)
+        .map((r) => ({ h: Math.round(r.height), top: Math.round(r.top) })),
+    );
+
+  test.skip(boxes.length < 2, "only one bordered control here — nothing to compare");
+
+  const heights = [...new Set(boxes.map((b) => b.h))];
+  expect(heights, `header controls disagree on height: ${JSON.stringify(boxes)}`).toHaveLength(1);
+
+  // And they sit on the same line, which is the thing a reader actually notices.
+  const tops = [...new Set(boxes.map((b) => b.top))];
+  expect(tops, `header controls are not aligned: ${JSON.stringify(boxes)}`).toHaveLength(1);
+});

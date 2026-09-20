@@ -74,7 +74,10 @@ export function SiteHeader() {
              taking it: the trigger came to rest in the middle of the bar, 157px into a 390px
              header, looking like a third nav item nobody had asked for. It takes the space and the
              account controls sit beside it, so the two right-hand things read as one group. */
-          className="ml-auto flex-none border border-line p-1.5 text-ink-faint transition-colors hover:border-accent-dim hover:text-ink md:hidden"
+          /* `h-7 w-7`: every control in this bar is 28px tall — see `CONTROL_HEIGHT` in
+             `AccountBar`. It was 28 by arithmetic (a 14px glyph inside `p-1.5` and a border) while
+             its neighbours came to 26.5 and 32 by their own, so the row had three heights in it. */
+          className="ml-auto flex h-7 w-7 flex-none items-center justify-center border border-line text-ink-faint transition-colors hover:border-accent-dim hover:text-ink md:hidden"
         >
           <MenuGlyph open={open} />
         </button>

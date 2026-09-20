@@ -23,6 +23,16 @@ import { clerkEnabled } from "@/components/AuthProvider";
 import { useClerkMounted } from "@/components/ClerkGate";
 import type { Me } from "@/lib/types";
 
+/**
+ * The height every control in the header shares.
+ *
+ * Each one used to derive its own from padding plus whatever it contained: the nav trigger came to
+ * 28px from a 14px glyph, `sign in` to 26.5px from its line-height, and the account card to 32px
+ * from a 22px avatar. Three heights in one 56px bar, visibly unaligned on a phone where they sit
+ * side by side. Stating it once is the only thing that keeps them equal as the contents change.
+ */
+export const CONTROL_HEIGHT = "h-7";
+
 export function AccountBar({ apiUrl }: { apiUrl: string }) {
   /**
    * Whether a `ClerkProvider` is above this component — from context, not a prop.
@@ -56,13 +66,13 @@ function SignedOutLinks() {
     <span className="flex shrink-0 items-center gap-2 md:ml-auto md:gap-3">
       <Link
         href="/sign-in"
-        className="whitespace-nowrap border border-line bg-surface px-2 py-1 font-mono text-meta uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink"
+        className={`${CONTROL_HEIGHT} inline-flex items-center whitespace-nowrap border border-line bg-surface px-2 font-mono text-meta uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink`}
       >
         sign in
       </Link>
       <Link
         href="/sign-up"
-        className="whitespace-nowrap border border-accent-deep bg-accent px-2 py-1 font-mono text-meta uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim"
+        className={`${CONTROL_HEIGHT} inline-flex items-center whitespace-nowrap border border-accent-deep bg-accent px-2 font-mono text-meta uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim`}
       >
         sign up
       </Link>
@@ -127,13 +137,13 @@ function Bar({ apiUrl }: { apiUrl: string }) {
       <Show when="signed-out">
         <Link
           href="/sign-in"
-          className="whitespace-nowrap border border-line bg-surface px-2 py-1 font-mono text-meta uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink"
+          className={`${CONTROL_HEIGHT} inline-flex items-center whitespace-nowrap border border-line bg-surface px-2 font-mono text-meta uppercase tracking-[0.1em] text-ink-faint transition-colors hover:border-accent-dim hover:text-ink`}
         >
           sign in
         </Link>
         <Link
           href="/sign-up"
-          className="whitespace-nowrap border border-accent-deep bg-accent px-2 py-1 font-mono text-meta uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim"
+          className={`${CONTROL_HEIGHT} inline-flex items-center whitespace-nowrap border border-accent-deep bg-accent px-2 font-mono text-meta uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim`}
         >
           sign up
         </Link>

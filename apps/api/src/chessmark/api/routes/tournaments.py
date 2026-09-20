@@ -298,6 +298,22 @@ async def get_tournament(
         ]
 
     stats = await _stats(session, tournament.id, era=showing)
+
+    def listed(s: Any) -> bool:
+        """Whether this entrant earns a row.
+
+        **A delisted model that never played is not a result, it is an empty row.** The field
+        tracks the catalogue, so an entrant leaves when its model is withdrawn from the free tier
+        (ADR-0041) — and three of `pool-free`'s were withdrawn before they were ever paired. They
+        sat in the table at nought games with no rating, indistinguishable from a model that had
+        been tried and had nothing to show.
+
+        One that *did* play stays, greyed, however few games it managed: those games happened, they
+        are in the ratings of everyone it met, and removing the row would leave opponents with
+        results against somebody the table does not admit exists.
+        """
+        return (not playable or s.key in playable) or s.played > 0
+
     return TournamentDetail(
         **_summary_fields(tournament, len(entrant_rows), stats),
         era=showing,
@@ -321,6 +337,7 @@ async def get_tournament(
                 rating_provisional=s.rating_provisional,
             )
             for s in table
+            if listed(s)
         ],
         pairings=[
             TournamentPairingOut(

@@ -209,6 +209,7 @@ def matchmake(
 
     met = _meetings(results, attempts)
     balance = _colour_balance(results)
+    whites = _whites_against(results, attempts)
     # Form is built over the whole field, not the available subset. A resting entrant's rating is
     # still real and is still what an opponent is chosen for proximity to; only its own turn to
     # play is deferred.
@@ -229,7 +230,7 @@ def matchmake(
         home = min(available, key=lambda key: home_key(board, key))
         away = min(available - {home}, key=lambda key: away_key(board, home, key))
 
-        white, black = _colours(home, away, balance)
+        white, black = _colours(home, away, balance, whites)
         # **One round number per game, not per batch.** Every game in a batch used to carry
         # `round_number` unchanged, which is right for a Swiss round — those games *are* one round,
         # paired together off one set of standings. A pool has no such thing: each game is matched
@@ -246,6 +247,9 @@ def matchmake(
         board.record(home, away)
         balance[white] = balance.get(white, 0) + 1
         balance[black] = balance.get(black, 0) - 1
+        # The pair ledger too, for the same reason: a batch that paired the same two twice would
+        # otherwise read its own first game as never having happened and repeat the colours.
+        whites[(white, black)] = whites.get((white, black), 0) + 1
         available -= {home, away}
 
     return games
@@ -265,16 +269,73 @@ def _pairings_each(met: dict[frozenset[str], int]) -> dict[str, int]:
     return played
 
 
-def _colours(home: str, away: str, balance: dict[str, int]) -> tuple[str, str]:
-    """White to whoever is more owed it.
+def _whites_against(
+    results: Sequence[Result], attempts: Sequence[Pairing] = ()
+) -> dict[tuple[str, str], int]:
+    """How many times the first entrant has had White against the second.
+
+    Ordered, unlike `_meetings`, because that is the whole question: a pair can be perfectly
+    balanced on *meetings* and still have put the same model on White every time.
+
+    Counts attempts as well as results, for the reason `_meetings` does. A fixture that keeps being
+    abandoned is still a fixture that keeps being scheduled one way round, and it is exactly the
+    pairing this most needs to catch.
+    """
+    counts: dict[tuple[str, str], int] = {}
+    for result in results:
+        if result.black is None:
+            continue
+        counts[(result.white, result.black)] = counts.get((result.white, result.black), 0) + 1
+    for attempt in attempts:
+        if attempt.black is None:
+            continue
+        counts[(attempt.white, attempt.black)] = counts.get((attempt.white, attempt.black), 0) + 1
+    return counts
+
+
+def _colours(
+    home: str,
+    away: str,
+    balance: dict[str, int],
+    whites: dict[tuple[str, str], int] | None = None,
+) -> tuple[str, str]:
+    """White to whoever is more owed it, then to whoever is more owed it *by this opponent*.
 
     Over a pool that runs for months this matters more than in a single event: White scores
     better, and a model that drew it two thirds of the time would carry a rating partly measuring
-    that.
+    that. The per-entrant balance is therefore the primary rule and stays so — it is the split that
+    actually biases a rating, and it is already even to within a game across the live pool.
+
+    **The gap was games that never settle.** A finished game moves both balances, so the next
+    meeting of that pair swaps colours on its own — that always worked. An *abandoned* one produces
+    no `Result`, moves nothing, and left the comparison level; `_colours` then fell through to
+    `return home, away`, so White went to `home`, which under `BALANCE` is
+    `min(available, fewest pairings)`. A pairing that kept being abandoned kept being scheduled the
+    same way round, and an entrant whose games never settle kept collecting White.
+
+    That is not hypothetical here: `pool-free` has five abandoned pairings in the current era, and
+    the entrants furthest behind are the ones whose endpoints rarely serve — so they are `home`
+    most often *and* the least likely to produce the result that would correct it.
+
+    Three keys now, each neutral where the one before it is level:
+
+    1. the per-entrant balance, as before;
+    2. **this pair's own history** — whoever has had White fewer times against *this* opponent, so a
+       rematch alternates without the fixture space having to double;
+    3. the key, which decides nothing but the very first meeting of a pair and decides it the same
+       way every time. Rule 2 swaps it on the next meeting.
     """
-    if balance.get(home, 0) > balance.get(away, 0):
-        return away, home
-    return home, away
+    home_balance, away_balance = balance.get(home, 0), balance.get(away, 0)
+    if home_balance != away_balance:
+        return (away, home) if home_balance > away_balance else (home, away)
+
+    ledger = whites or {}
+    home_whites = ledger.get((home, away), 0)
+    away_whites = ledger.get((away, home), 0)
+    if home_whites != away_whites:
+        return (away, home) if home_whites > away_whites else (home, away)
+
+    return (home, away) if home < away else (away, home)
 
 
 def _meetings(

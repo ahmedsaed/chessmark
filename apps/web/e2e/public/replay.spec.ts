@@ -271,3 +271,42 @@ test("the newest turn is open and its reasoning is not", async ({ page }) => {
     await expect(reasoning.first()).toHaveAttribute("aria-expanded", "false");
   }
 });
+
+test("the captured pieces sit beside the name, not floated to the far right", async ({ page }) => {
+  /**
+   * The nameplate's name was `flex-1`, so on a wide rail its *box* filled the row and the huddle
+   * sat against that box's right edge while the text ended far to the left — 284px of name in a
+   * 522px box, a **246px hole** between the two. It reads as two unrelated things at opposite ends
+   * of the bar rather than a name and what it has taken.
+   *
+   * **Measured from the end of the glyphs, not the end of the element**, which is the whole reason
+   * this went unnoticed: every structural check passes. The captures are in the right order, on the
+   * right line, inside the right row, and `sameLine` is true. Only the distance is wrong, and only
+   * against the rendered text width — the element's own box says everything is fine.
+   */
+  const gap = await page.evaluate(() => {
+    const captures = document.querySelector('[aria-label^="captured:"]');
+    if (!captures) return null;
+    const name = captures.parentElement?.querySelector("span.truncate");
+    if (!name) return null;
+
+    // The rendered width of the glyphs, which is where the name visually ends.
+    const probe = document.createElement("span");
+    const style = getComputedStyle(name);
+    probe.style.cssText =
+      `font:${style.font};letter-spacing:${style.letterSpacing};` +
+      "position:absolute;visibility:hidden;white-space:pre";
+    probe.textContent = name.textContent;
+    document.body.appendChild(probe);
+    const textWidth = probe.getBoundingClientRect().width;
+    probe.remove();
+
+    const nameBox = name.getBoundingClientRect();
+    return Math.round(captures.getBoundingClientRect().left - (nameBox.left + textWidth));
+  });
+
+  test.skip(gap === null, "this fixture has no captures to place");
+
+  // One flex gap (8px), with room for sub-pixel text measurement. It was 246.
+  expect(gap!, "the captures drifted away from the name they belong to").toBeLessThan(24);
+});
