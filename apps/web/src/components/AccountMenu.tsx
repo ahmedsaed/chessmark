@@ -18,6 +18,8 @@
  */
 
 import { useClerk, useUser } from "@clerk/nextjs";
+
+import { CONTROL_HEIGHT } from "@/components/AccountBar";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
@@ -79,7 +81,9 @@ export function AccountMenu({ me }: { me: Me | null }) {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={menuId}
-        className="flex items-center gap-2 border border-line bg-surface py-1 pl-1 pr-2 text-ink-faint transition-colors hover:border-accent-dim hover:text-ink"
+        /* The shared 28px. The avatar sets its own size inside that rather than deciding the
+           control's, which is how this came out 32px against a 28px trigger beside it. */
+        className={`${CONTROL_HEIGHT} flex items-center gap-2 border border-line bg-surface pl-1 pr-2 text-ink-faint transition-colors hover:border-accent-dim hover:text-ink`}
       >
         {picture ? (
           /* A plain `<img>`, not `next/image`. This is a 22px avatar from Clerk's CDN: routing it
@@ -93,13 +97,13 @@ export function AccountMenu({ me }: { me: Me | null }) {
             alt=""
             width={22}
             height={22}
-            className="h-[22px] w-[22px] shrink-0 rounded-full object-cover"
+            className="h-5 w-5 shrink-0 rounded-full object-cover"
             onError={() => setImageFailed(true)}
           />
         ) : (
           <span
             aria-hidden
-            className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full bg-surface-3 font-mono text-label text-ink-dim"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-surface-3 font-mono text-label text-ink-dim"
           >
             {initialsOf(name)}
           </span>

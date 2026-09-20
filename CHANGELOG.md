@@ -15,6 +15,30 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Colours stopped alternating whenever a game did not finish.** The per-entrant colour balance is
+  built from results, so a *settled* rematch has always swapped colours on its own. An abandoned
+  game produces no result, moves nobody's balance, and left the comparison level — at which point
+  `_colours` fell through to "White to `home`", and under `BALANCE` `home` is the entrant with the
+  fewest pairings. So a pairing that kept being abandoned kept being scheduled the same way round,
+  and an entrant whose games never settle kept collecting White. `pool-free` has five abandoned
+  pairings in the current era and its entrants furthest behind are the ones whose endpoints rarely
+  serve, so they were `home` most often *and* least likely to produce the result that corrects it.
+
+  `_whites_against` is an **ordered** ledger counting attempts as well as results, and it breaks the
+  tie before the fall-through does. Deliberately not a change to `_meetings`: making `(x,y)` and
+  `(y,x)` distinct fixtures would double the coverage target, and ADR-0041 bought that coverage on
+  purpose — Glicko wants diverse opponents more than symmetric ones.
+- **A delisted entrant that never played no longer holds a standings row.** The field tracks the
+  catalogue, and three of `pool-free`'s were withdrawn from the free tier before they were ever
+  paired; they sat at nought games with no rating, indistinguishable from a model that had been
+  tried and had nothing to show. One that *did* play keeps its row, greyed — those games are in the
+  ratings of everyone it met.
+- **The header had three control heights in it** — 28px for the nav trigger, 26.5px for `sign in`,
+  32px for the signed-in account card, each derived from its own padding and contents. Plainly
+  visible side by side on a phone. `CONTROL_HEIGHT` states it once.
+
 ### Changed
 
 - **The landing page is the same page for everybody.** It carried a "Your games" strip and read the

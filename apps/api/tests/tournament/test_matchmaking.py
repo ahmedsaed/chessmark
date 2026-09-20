@@ -407,3 +407,71 @@ class TestBalanceAgainstInformation:
 
         assert spread[Policy.BALANCE] <= 1
         assert spread[Policy.INFORMATION] > spread[Policy.BALANCE]
+
+
+class TestColoursAlternateEvenWhenGamesDoNotFinish:
+    """Colour alternation used to depend on games *settling*, and in this pool many do not.
+
+    The per-entrant balance is built from `Result`s, so a finished game moves it and the next
+    meeting of that pair swaps colours on its own — that part always worked and the first two tests
+    here are regression cover for it, not the fix.
+
+    **An abandoned game produces no `Result`.** It moves nobody's balance, so the comparison stays
+    level and `_colours` fell through to `return home, away` — White to `home`, which under
+    `BALANCE` is `min(available, fewest pairings)`. A pairing that keeps being abandoned therefore
+    kept being scheduled the same way round, and an entrant whose games never settle kept being
+    White. `pool-free` is full of exactly that: five abandoned pairings in the current era, and its
+    three least-played entrants are the ones whose endpoints rarely serve.
+
+    The pair ledger counts *attempts* as well as results, which is what closes it.
+    """
+
+    def test_a_settled_rematch_already_swapped_the_colours(self) -> None:
+        """Regression cover, not the fix: the balance rule has always handled this case."""
+        pair = [Entrant(key="A", seed=1), Entrant(key="B", seed=2)]
+        first = matchmake(pair, [], {}, count=1)
+
+        played = [
+            Result(white=first[0].white, black=first[0].black, white_score=1.0, round_number=1)
+        ]
+        second = matchmake(pair, played, {}, count=1)
+
+        assert second[0].white == first[0].black
+        assert second[0].black == first[0].white
+
+    def test_the_per_entrant_balance_still_wins(self) -> None:
+        """The primary rule is unchanged: it is the split that actually biases a rating."""
+        pair = [Entrant(key="A", seed=1), Entrant(key="B", seed=2)]
+        played = [
+            Result(white="A", black="C", white_score=1.0, round_number=1),
+            Result(white="A", black="C", white_score=1.0, round_number=2),
+        ]
+
+        game = matchmake(pair, played, {}, count=1)[0]
+
+        assert game.black == "A", "the entrant most owed Black must get it"
+
+    def test_an_abandoned_fixture_swaps_the_colours_next_time(self) -> None:
+        """The fix. No `Result` exists, so nothing else in the system can tell these apart."""
+        pair = [Entrant(key="A", seed=1), Entrant(key="B", seed=2)]
+        first = matchmake(pair, [], {}, count=1)
+
+        second = matchmake(pair, [], {}, attempts=first, count=1)
+
+        assert second[0].white == first[0].black, "an abandoned pairing repeated its colours"
+
+    def test_an_entrant_whose_games_never_settle_does_not_collect_whites(self) -> None:
+        """The bias this really was, stated over a run rather than a single pairing.
+
+        Nothing settles, so no balance ever moves and every colour decision is a tie. `A` is first
+        alphabetically and so wins every tie the old rule had left; with the ledger it alternates.
+        """
+        pair = [Entrant(key="A", seed=1), Entrant(key="B", seed=2)]
+        attempts: list[Pairing] = []
+
+        for _ in range(6):
+            attempts = attempts + matchmake(pair, [], {}, attempts=attempts, count=1)
+
+        whites = collections.Counter(game.white for game in attempts)
+        assert whites["A"] == 3, f"colours did not alternate across abandoned games: {whites}"
+        assert whites["B"] == 3
