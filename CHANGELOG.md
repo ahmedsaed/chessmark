@@ -35,6 +35,12 @@ file is only the record of *what shipped when*.
   paired; they sat at nought games with no rating, indistinguishable from a model that had been
   tried and had nothing to show. One that *did* play keeps its row, greyed — those games are in the
   ratings of everyone it met.
+- **The captured pieces drifted to the far right of the nameplate on a wide screen.** The name was
+  `flex-1`, so its *box* filled the row and the huddle sat against that box's edge while the text
+  ended far to the left — 284px of name in a 522px box, a 246px hole between the two. It reads as
+  two unrelated things at opposite ends of the bar rather than a name and what it has taken. The
+  name sizes to its content from `sm` up and still truncates; growing is only what puts it on a
+  line of its own on a phone. 246px to 8px, the row's own gap.
 - **The header had three control heights in it** — 28px for the nav trigger, 26.5px for `sign in`,
   32px for the signed-in account card, each derived from its own padding and contents. Plainly
   visible side by side on a phone. `CONTROL_HEIGHT` states it once.

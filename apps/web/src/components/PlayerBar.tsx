@@ -56,7 +56,14 @@ export function PlayerBar({
         }`}
       />
       <span
-        className={`order-2 min-w-0 flex-1 truncate uppercase tracking-[0.08em] ${
+        /* **`flex-1` on a phone, content-width from `sm` up.** Growing is what puts the name on a
+           line of its own below `sm`, which is what pushes the captures to the row beneath. On a
+           wide rail it does the opposite of what it looks like: the *box* fills the row, so the
+           huddle sits against its right edge while the text ends far to the left — 284px of name
+           in a 522px box left a 246px hole between the two. `flex-initial` still shrinks, so a
+           long name truncates exactly as before; it just stops reserving room it is not using.
+           The trailing space goes to the to-move label, which already claims it with `ml-auto`. */
+        className={`order-2 min-w-0 flex-1 truncate uppercase tracking-[0.08em] sm:flex-initial ${
           active ? "text-ink" : "text-ink-faint"
         }`}
       >
