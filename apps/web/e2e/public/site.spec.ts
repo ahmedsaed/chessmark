@@ -425,3 +425,82 @@ test("a loaded page stops asking for things", async ({ page }) => {
     expect(worst[1], `${path} kept re-requesting ${worst[0]}`).toBeLessThan(12);
   }
 });
+
+/**
+ * The lobby's tournaments section.
+ *
+ * Two things it is easy to ship broken, both of which happened while it was being written:
+ *
+ * * **A row built for more cells than exist.** A fixed four-wide grid put this deployment's two
+ *   cells — the explainer and the one running event — in the left half and left the right half
+ *   empty, which reads as a section waiting for something rather than a section.
+ * * **Numbers that are not the API's.** The card states a tournament's progress; the only way to
+ *   know it states *this* tournament's progress is to ask the same endpoint it was rendered from.
+ */
+test("the lobby explains what a tournament is, and fills its row with the ones there are", async ({
+  page,
+}) => {
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const response = await page.request.get(`${api}/tournaments?limit=20`);
+  expect(response.ok(), "the tournaments endpoint should answer").toBe(true);
+
+  const tournaments = (await response.json()) as { name: string; stats: Record<string, number> }[];
+  test.skip(tournaments.length === 0, "no tournaments in this database");
+
+  await page.goto("/");
+
+  // The concept, which is the reason the section is not just a second copy of `/tournaments`.
+  await expect(page.getByRole("heading", { name: "What a tournament is" })).toBeVisible();
+
+  /* The cells reach the end of the row. Measured against the section's own width rather than a
+     column count, because what went wrong was empty space, and that is what empty space looks
+     like from outside. */
+  const row = await page.evaluate(() => {
+    const heading = [...document.querySelectorAll("h2")].find(
+      (h) => h.textContent?.trim() === "Tournaments",
+    )!;
+    const grid = heading.closest("section")!.querySelector<HTMLElement>(".grid")!;
+    const cells = [...grid.children].map((cell) => cell.getBoundingClientRect());
+    const box = grid.getBoundingClientRect();
+    return {
+      cells: cells.length,
+      /* How far the last cell stops short of the grid's right edge. A half-empty row is half the
+         grid wide; a full one is a couple of pixels of rounding. */
+      shortBy: Math.round(box.right - Math.max(...cells.map((c) => c.right))),
+      width: Math.round(box.width),
+    };
+  });
+
+  expect(row.cells, "one cell per tournament shown, plus the explainer").toBe(
+    Math.min(tournaments.length, 3) + 1,
+  );
+  expect(
+    row.shortBy,
+    `the row is ${row.shortBy}px short of its own width (${row.width}px)`,
+  ).toBeLessThan(4);
+});
+
+test("a tournament card states the tournament's own numbers", async ({ page }) => {
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const response = await page.request.get(`${api}/tournaments?limit=20`);
+  const tournaments = (await response.json()) as {
+    name: string;
+    status: string;
+    entrant_count: number;
+    stats: { played: number; pairings: number };
+  }[];
+  test.skip(tournaments.length === 0, "no tournaments in this database");
+
+  /* The lobby shows running events first, so the card to check is the one the page would pick. */
+  const [first] = [...tournaments].sort(
+    (a, b) => Number(b.status === "running") - Number(a.status === "running"),
+  );
+
+  await page.goto("/");
+
+  const card = page.locator('a[href^="/tournaments/"]').first();
+  await expect(card).toContainText(first.name);
+  await expect(card).toContainText(`${first.entrant_count} entrants`);
+  // The progress line, which is the one thing here that is not on `/tournaments` already.
+  await expect(card).toContainText(`${first.stats.played} of ${first.stats.pairings} pairing`);
+});

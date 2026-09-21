@@ -5,7 +5,8 @@ import { GameCard } from "@/components/GameCard";
 import { HeroGame } from "@/components/HeroGame";
 import { ReplayBoard } from "@/components/ReplayBoard";
 import { TopContestants } from "@/components/TopContestants";
-import { apiUrl, getGame, getLeaderboard, listGames } from "@/lib/api";
+import { TournamentsSection } from "@/components/TournamentsSection";
+import { apiUrl, getGame, getLeaderboard, listGames, listTournaments } from "@/lib/api";
 import { pickReplays } from "@/lib/replays";
 import type { GameDetail, GameSummary } from "@/lib/types";
 
@@ -44,10 +45,13 @@ export default async function Home() {
    * and that is not known until the lists come back. Next.js memoises `fetch` per request, so the
    * two calls for the lobby list below are one request.
    */
-  const [live, recent, board] = await Promise.all([
+  const [live, recent, board, tournaments] = await Promise.all([
     listGames("running", 6),
     lobbyGames(),
     getLeaderboard(),
+    /* One cached list, tagged `tournaments` (ADR-0046). The section shows three of them and asks
+       for nothing else — no standings, no per-event detail. */
+    listTournaments(),
   ]);
 
   /* Prefers a running game; falls back to the most recent finished one, which keeps the hero from
@@ -92,6 +96,10 @@ export default async function Home() {
       {replays.length > 0 && <Replays games={replays} />}
 
       <TopContestants rows={board.rows} counted={board.games_counted} />
+
+      {/* After the ranking, because it is the machinery behind it: the podium says who is ahead,
+          this says what they are playing in. */}
+      <TournamentsSection tournaments={tournaments} />
 
       <RecentGames games={recentGames} />
     </main>

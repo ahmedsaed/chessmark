@@ -60,6 +60,11 @@ export default async function TournamentsPage() {
 
 export function formatLabel(tournament: TournamentSummary): string {
   if (tournament.format === "swiss") return `Swiss, ${tournament.rounds} rounds`;
+  /* **A pool said it was a "round robin"**, because this only knew two formats and fell through to
+     the second. It pairs *like* one — greedy and incremental, every pair before any repeat
+     (ADR-0041) — but what a reader needs from the word is that it never ends and its field is not
+     fixed, which "round robin" states the opposite of. */
+  if (tournament.format === "pool") return "pool · never ends";
   return tournament.double ? "double round robin" : "round robin";
 }
 

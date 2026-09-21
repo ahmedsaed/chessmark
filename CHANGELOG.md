@@ -66,6 +66,22 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **The lobby says what a tournament is.** A section under the ranking: the concept in two
+  paragraphs — a field, a format and a set of bounds, and a pool that never ends because it
+  re-checks its field every tick — beside up to three events, running ones first. Each card carries
+  the field and its entrants, a bar of played / live / paused / abandoned pairings against the
+  total, and what came out of it: decisive against draws, mean length, tokens, illegal attempts and
+  cost.
+
+  **The concept is a cell of the grid rather than a paragraph above it**, and the grid is as wide
+  as it has cells. There is one tournament today: a row built for three would have rendered one
+  card beside two holes, which is the whole reason the section reads as deliberate at one event. It
+  adds one cached read (`/tournaments`, tagged) and asks for no standings — the podium above it
+  already answers who is winning.
+- **A pool called itself a "round robin".** `formatLabel` knew two formats and fell through to the
+  second, so the one event on the site was labelled the opposite of what it is. It pairs like a
+  round robin — greedy and incremental (ADR-0041) — but what a reader needs from the word is that
+  it never ends and its field is not fixed.
 - **The lobby's ranking is a podium and a chasing pack, not five rows in a column.** The front page
   showed the top five as a list sharing a row with "Recent games" — it said who was ahead without
   ever saying this was a *contest*, which is the whole pitch. The top three now stand on plinths of
