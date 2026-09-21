@@ -306,6 +306,35 @@ export async function listEvents(id: string): Promise<GameEvent[]> {
 }
 
 /**
+ * How many events the lobby reads from a finished game. **Measured, not guessed.**
+ *
+ * The log's cost is wildly non-linear, because reasoning text dominates it and a model thinks
+ * harder as the position gets complicated. On `21d2867b` in production: 40 events is 14 KB, 120 is
+ * 90 KB, and 300 is **728 KB**. Forty covers the opening handful of turns, which is all the lobby
+ * shows, and keeps the read in the same class as every other one on the page.
+ */
+const OPENING_EVENTS = 40;
+
+/**
+ * The first few turns of a finished game.
+ *
+ * Deliberately *not* `listEvents`, which follows the cursor to the end of the log and never
+ * caches — right for the game page, wrong for a front-page excerpt that would pay 728 KB and a
+ * revalidation for one quotation.
+ *
+ * **Only ever called for a settled game between two models.** Reasoning is withheld on the way out
+ * of any game a person is playing (invariant 8), so calling this for a live human game would
+ * quietly return blocks with no text rather than leaking anything — it degrades safely, but the
+ * section would be empty and the reason would be invisible.
+ */
+export function openingEvents(id: string, limit = OPENING_EVENTS): Promise<GameEvent[]> {
+  return getOrEmpty<GameEvent>(
+    `/games/${id}/events?after_seq=0&limit=${limit}`,
+    cached([gameTag(id)]),
+  );
+}
+
+/**
  * Every turn of a game, with its per-turn token and cost totals.
  *
  * Replay needs this alongside the event log: events say what happened, turns say which database

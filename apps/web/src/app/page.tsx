@@ -6,6 +6,7 @@ import { GameCard } from "@/components/GameCard";
 import { HeroGame } from "@/components/HeroGame";
 import { ReplayBoard } from "@/components/ReplayBoard";
 import { TopContestants } from "@/components/TopContestants";
+import { TurnSpotlight } from "@/components/TurnSpotlight";
 import { TournamentsSection } from "@/components/TournamentsSection";
 import {
   apiUrl,
@@ -14,9 +15,12 @@ import {
   getLeaderboard,
   listGames,
   listTournaments,
+  openingEvents,
 } from "@/lib/api";
 import { pickReplays } from "@/lib/replays";
-import type { GameDetail, GameSummary } from "@/lib/types";
+import { pickTurn } from "@/lib/spotlight";
+import { foldEvents } from "@/lib/turns";
+import type { GameDetail, GameEvent, GameSummary, TurnView } from "@/lib/types";
 
 /* Title and description are the root layout's, which are already this page's — the lobby is the
    site. Only the canonical is stated, and only here: on the layout it would be inherited by every
@@ -78,7 +82,20 @@ export default async function Home() {
     6,
   );
 
-  const [heroGame, ...replayDetails] = await Promise.all([
+  /**
+   * The two games the turn excerpt may come from.
+   *
+   * **Sorted by illegal attempts, because that is the turn worth showing**: a model proposing a
+   * move the referee refuses, and then finding a legal one, is the benchmark happening in front of
+   * the reader. Two rather than one because plenty of models publish no reasoning text at all
+   * (`TurnView.reasoning`: "DeepSeek fills this; Gemini never does"), and a section that vanishes
+   * on half of the archive is worse than a second 14KB read.
+   */
+  const candidates = [...settled(recent)]
+    .sort((a, b) => illegalIn(b) - illegalIn(a))
+    .slice(0, SPOTLIGHT_GAMES);
+
+  const [heroGame, ...rest] = await Promise.all([
     /* No event log. The hero shows a board and a move list, and `GameDetail.moves` is already the
        authoritative move list at the render's cursor — fetching the whole log to fold it back down
        to the same array cost 300KB of payload for a game of any length, on the one page every
@@ -86,9 +103,14 @@ export default async function Home() {
     featured ? getGame(featured.id, { settled: featured.status === "finished" }) : Promise.resolve(null),
     /* `pickReplays` returns only `status === "finished"` games, so these can never move again. */
     ...picks.map((pick) => getGame(pick.id, { settled: true })),
+    /* The opening of each candidate, bounded and cached — not the whole log. */
+    ...candidates.map((game) => openingEvents(game.id)),
   ]);
 
+  const replayDetails = rest.slice(0, picks.length) as (GameDetail | null)[];
+  const openings = rest.slice(picks.length) as GameEvent[][];
   const replays = replayDetails.filter((detail): detail is GameDetail => detail !== null);
+  const spotlight = firstTurnWorthShowing(candidates, openings);
   const alsoLive = live.slice(1);
   const recentGames = settled(recent).slice(0, 6);
 
@@ -105,6 +127,8 @@ export default async function Home() {
       )}
 
       {replays.length > 0 && <Replays games={replays} />}
+
+      {spotlight && <TurnSpotlight game={spotlight.game} turn={spotlight.turn} />}
 
       <TopContestants rows={board.rows} counted={board.games_counted} />
 
@@ -291,4 +315,33 @@ function Replays({ games }: { games: GameDetail[] }) {
       </ul>
     </section>
   );
+}
+
+/** How many finished games the lobby may read an opening from. */
+const SPOTLIGHT_GAMES = 2;
+
+function illegalIn(game: GameSummary): number {
+  return game.players.reduce((total, player) => total + player.illegal_attempts, 0);
+}
+
+/**
+ * The first candidate whose opening has a turn worth showing.
+ *
+ * Order matters and is not "best across both": the games are already sorted by how much went wrong
+ * in them, so the first one that *has* something to show is the one to show. Falling through to the
+ * second is for the case where the first published no thinking at all, which is a property of the
+ * model rather than of the game.
+ */
+function firstTurnWorthShowing(
+  games: GameSummary[],
+  openings: GameEvent[][],
+): { game: GameSummary; turn: TurnView } | null {
+  for (const [index, game] of games.entries()) {
+    const events = openings[index] ?? [];
+    if (events.length === 0) continue;
+
+    const turn = pickTurn(foldEvents(events, []).turns);
+    if (turn) return { game, turn };
+  }
+  return null;
 }

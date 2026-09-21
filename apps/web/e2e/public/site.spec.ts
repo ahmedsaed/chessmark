@@ -546,3 +546,51 @@ test("the lobby's scoreboard and charge sheet are the API's numbers", async ({ p
     `illegal moves attempted in ${board.games_counted} ranked game`,
   );
 });
+
+/**
+ * The turn excerpt on the lobby.
+ *
+ * It is the one section built by folding a real event log rather than reading fields off a
+ * summary, so the failure mode is not an empty box — it is a *plausible* box: a quotation from the
+ * wrong game, or a fragment of a prompt template dressed up as a thought. Both render beautifully.
+ *
+ * `</role>` is not hypothetical. The first build of this picked a turn whose entire published
+ * reasoning was that, two tokens of it, under the heading "inside one turn".
+ */
+test("the turn on the lobby is a real turn of the game it links to", async ({ page }) => {
+  await page.goto("/");
+
+  const heading = page.getByRole("heading", { name: "Inside one turn" });
+  test.skip(
+    (await heading.count()) === 0,
+    "no finished game in this database published enough reasoning to show",
+  );
+
+  const section = page.locator("section", { has: heading });
+  const href = await section.getByRole("link", { name: "Open the game →" }).getAttribute("href");
+  expect(href, "the excerpt should link to its game").toMatch(/^\/games\//);
+
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const game = (await (await page.request.get(`${api}${href!.replace("/games/", "/games/")}`)).json()) as {
+    moves: string[];
+    players: { display_name: string; colour: string }[];
+  };
+
+  /* The header names a seat of *that* game. On its own this is weak — two games share a model —
+     so the move below is what actually ties the excerpt to the game it links to. Together they
+     catch the mistake nobody could see: an excerpt and a link from different games. */
+  const text = await section.innerText();
+  expect(
+    game.players.some((player) => text.includes(player.display_name)),
+    `the excerpt names neither seat of the game it links to`,
+  ).toBe(true);
+
+  // The move it says was played is a move that game actually contains.
+  const played = await section.getByText(/^played /).innerText();
+  expect(game.moves).toContain(played.replace("played", "").trim());
+
+  /* And it is a thought, not an artefact. Measured on the rendered text rather than trusted from
+     the picker, because the clamp and the fold both sit between them. */
+  const thought = await section.locator("p").first().innerText();
+  expect(thought.trim().length, `the excerpt shows "${thought}"`).toBeGreaterThan(80);
+});

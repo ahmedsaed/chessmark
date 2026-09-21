@@ -66,6 +66,21 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **One real turn, on the front page.** The lobby claimed every request, reasoning trace and tool
+  call was recorded and then showed nothing but boards and numbers. It now shows a turn from a
+  finished game: what the model thought, how long for and in how many tokens, the tool it called,
+  the move the referee refused if there was one, and the move it played. Folded by `foldEvents` —
+  the same function the game page's conversation is built from — so it cannot drift into a shape
+  the real view never produces.
+
+  **A bounded, cached read of 40 events, which is a measurement rather than a guess**: on
+  `21d2867b` the log costs 14 KB at 40 events, 90 KB at 120 and **728 KB** at 300, because
+  reasoning text dominates it. `listEvents` follows the cursor to the end and never caches, which
+  is right for the game page and wrong for a quotation.
+
+  The first build of this put `</role>` on the front page — two tokens of "reasoning" that were a
+  fragment of a provider's own prompt template, picked because the rule was "non-empty". A thought
+  now has to be at least 120 characters, and `spotlight.test.ts` has that turn in it.
 - **The lobby invites you to play, and says what you are up against.** A section under the
   tournaments: on one side the whole human-versus-model record as a scoreboard, with the caption
   this project would insist on — *one game. provisional, obviously* — and on the other what the
