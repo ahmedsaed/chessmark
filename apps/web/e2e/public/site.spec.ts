@@ -504,3 +504,45 @@ test("a tournament card states the tournament's own numbers", async ({ page }) =
   // The progress line, which is the one thing here that is not on `/tournaments` already.
   await expect(card).toContainText(`${first.stats.played} of ${first.stats.pairings} pairing`);
 });
+
+/**
+ * The lobby's invitation to play.
+ *
+ * Both halves state numbers, and both are the kind of number that is easy to render from the wrong
+ * place: the scoreboard is the human record from `/games/human-record`, and "know your opponent" is
+ * summed from the ranking the page already holds. A section whose whole point is that the figures
+ * are real has to be checked against the source, not against itself.
+ */
+test("the lobby's scoreboard and charge sheet are the API's numbers", async ({ page }) => {
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const [recordResponse, boardResponse] = await Promise.all([
+    page.request.get(`${api}/games/human-record`),
+    page.request.get(`${api}/leaderboard`),
+  ]);
+  expect(recordResponse.ok(), "the human record should answer").toBe(true);
+
+  const record = (await recordResponse.json()) as { wins: number; losses: number; games: number };
+  const board = (await boardResponse.json()) as {
+    games_counted: number;
+    rows: { illegal_attempts: number }[];
+  };
+
+  await page.goto("/");
+
+  const section = page.locator("section", { has: page.getByRole("link", { name: "Take a seat →" }) });
+  await expect(section).toBeVisible();
+
+  /* The score, both sides, in the order they are painted: humans first. A scoreboard that reads
+     the record backwards is the one mistake here nobody would notice from a screenshot. */
+  const score = await section.locator("p", { hasText: /^(Humans|Models)/ }).allInnerTexts();
+  expect(score.map((line) => line.split("\n").pop()?.trim())).toEqual([
+    String(record.wins),
+    String(record.losses),
+  ]);
+
+  const illegal = board.rows.reduce((total, row) => total + row.illegal_attempts, 0);
+  await expect(section).toContainText(`${illegal.toLocaleString("en")}`);
+  await expect(section).toContainText(
+    `illegal moves attempted in ${board.games_counted} ranked game`,
+  );
+});

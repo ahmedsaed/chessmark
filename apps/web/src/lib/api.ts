@@ -42,6 +42,7 @@ import type {
   GameResult,
   GameStatus,
   GameSummary,
+  HumanRecord,
   ModelDetail,
   ModelInfo,
   Leaderboard,
@@ -195,6 +196,25 @@ async function getOrEmpty<T>(
   }
 }
 
+/**
+ * The same bargain as `getOrEmpty`, for a read that answers with an object rather than a list.
+ *
+ * An unreachable API should cost the lobby one quiet section, not the page — and it should say so
+ * in the server log, which is the part `getOrNull` does not do.
+ */
+async function getOrFallback<T>(
+  path: string,
+  init: { next: { tags: string[]; revalidate: number } },
+  fallback: T,
+): Promise<T> {
+  try {
+    return await get<T>(path, init);
+  } catch (error) {
+    reportFailure(path, error);
+    return fallback;
+  }
+}
+
 export function listGames(
   status?: string,
   limit = 20,
@@ -333,6 +353,22 @@ export async function getLeaderboard(options?: ReadOptions): Promise<Leaderboard
 }
 
 /** Recent tournaments, newest first. Never throws: an empty list is the honest state. */
+/**
+ * The human-versus-model record.
+ *
+ * Tagged `games` like every other game read, so it refreshes when one ends rather than on a clock
+ * — which matters here more than elsewhere, since the whole point of the number is that it moves
+ * the moment somebody beats a model (ADR-0046).
+ */
+export function getHumanRecord(options?: ReadOptions): Promise<HumanRecord> {
+  return getOrFallback<HumanRecord>("/games/human-record", cached([GAMES], options?.cache), {
+    games: 0,
+    wins: 0,
+    draws: 0,
+    losses: 0,
+  });
+}
+
 export function listTournaments(
   limit = 20,
   options?: ReadOptions,

@@ -66,7 +66,9 @@ export function TournamentsSection({ tournaments }: { tournaments: TournamentSum
           blank — the "waiting for something" look the explainer-as-a-cell was meant to avoid.
           Written as whole class names because Tailwind reads the source, not the value.
           `auto-rows-fr` keeps a short card as tall as the explainer rather than leaving a step. */}
-      <div className={`grid auto-rows-fr grid-cols-1 gap-3 sm:grid-cols-2 ${COLUMNS[shown.length]}`}>
+      <div
+        className={`grid grid-cols-1 gap-3 sm:auto-rows-fr sm:grid-cols-2 ${COLUMNS[shown.length]}`}
+      >
         <Explainer />
 
         {shown.length === 0 ? (

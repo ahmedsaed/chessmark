@@ -1,12 +1,20 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { ChallengeSection } from "@/components/ChallengeSection";
 import { GameCard } from "@/components/GameCard";
 import { HeroGame } from "@/components/HeroGame";
 import { ReplayBoard } from "@/components/ReplayBoard";
 import { TopContestants } from "@/components/TopContestants";
 import { TournamentsSection } from "@/components/TournamentsSection";
-import { apiUrl, getGame, getLeaderboard, listGames, listTournaments } from "@/lib/api";
+import {
+  apiUrl,
+  getGame,
+  getHumanRecord,
+  getLeaderboard,
+  listGames,
+  listTournaments,
+} from "@/lib/api";
 import { pickReplays } from "@/lib/replays";
 import type { GameDetail, GameSummary } from "@/lib/types";
 
@@ -45,13 +53,16 @@ export default async function Home() {
    * and that is not known until the lists come back. Next.js memoises `fetch` per request, so the
    * two calls for the lobby list below are one request.
    */
-  const [live, recent, board, tournaments] = await Promise.all([
+  const [live, recent, board, tournaments, humans] = await Promise.all([
     listGames("running", 6),
     lobbyGames(),
     getLeaderboard(),
     /* One cached list, tagged `tournaments` (ADR-0046). The section shows three of them and asks
        for nothing else — no standings, no per-event detail. */
     listTournaments(),
+    /* Four integers, one aggregate, tagged `games`. The "know your opponent" half of that section
+       is summed from `board` above and costs nothing. */
+    getHumanRecord(),
   ]);
 
   /* Prefers a running game; falls back to the most recent finished one, which keeps the hero from
@@ -100,6 +111,14 @@ export default async function Home() {
       {/* After the ranking, because it is the machinery behind it: the podium says who is ahead,
           this says what they are playing in. */}
       <TournamentsSection tournaments={tournaments} />
+
+      {/* After the tournaments: the models have been introduced and ranked, and this is the reply
+          to "could I beat one of those". */}
+      <ChallengeSection
+        record={humans}
+        rows={board.rows}
+        gamesCounted={board.games_counted}
+      />
 
       <RecentGames games={recentGames} />
     </main>

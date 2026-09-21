@@ -66,6 +66,22 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **The lobby invites you to play, and says what you are up against.** A section under the
+  tournaments: on one side the whole human-versus-model record as a scoreboard, with the caption
+  this project would insist on — *one game. provisional, obviously* — and on the other what the
+  opponent has been caught doing in ranked games. Every line is measured, so the section is funny
+  for exactly as long as the models keep being bad at chess: 375 illegal moves attempted in 19
+  ranked games, 8 forfeits, and a worst offender at **4.12 illegal attempts per move** — 70 of them
+  across 17 moves.
+
+  `GET /games/human-record` is new and is the only read it adds: four integers in one statement,
+  with a query-count test, because tallying them in Python is a full scan of the archive on a route
+  the landing page calls. An unfinished game is not a defeat — only games that reached a result are
+  counted (invariant 11). The charge sheet is summed from the ranking the page already held.
+
+  It says nothing about credits, deliberately: a seat is granted while the site is in testing
+  (ADR-0016), and `/play` is where a signed-in reader learns that, because the lobby is the same
+  page for everybody and cannot tell who is asking.
 - **The lobby says what a tournament is.** A section under the ranking: the concept in two
   paragraphs — a field, a format and a set of bounds, and a pool that never ends because it
   re-checks its field every tick — beside up to three events, running ones first. Each card carries

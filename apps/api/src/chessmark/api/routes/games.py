@@ -38,6 +38,7 @@ from chessmark.api.schemas import (
     GameSummary,
     HumanActionResponse,
     HumanMoveRequest,
+    HumanRecord,
     HumanSayRequest,
     IllegalMoveResponse,
     MessageOut,
@@ -66,7 +67,7 @@ from chessmark.db.models import (
 )
 from chessmark.db.quotas import note_game_started
 from chessmark.db.repositories import load_events, rebuild_referee
-from chessmark.game import Colour, IllegalMoveError
+from chessmark.game import Colour, GameResult, IllegalMoveError
 from chessmark.game.pgn import PgnMetadata, to_pgn
 from chessmark.orchestration import human as human_play
 from chessmark.orchestration.match import Seat, create_match, start_match
@@ -201,6 +202,46 @@ def _side_to_move(start_fen: str, ply_count: int) -> Colour:
     if ply_count % 2 == 0:
         return starter
     return Colour.BLACK if starter is Colour.WHITE else Colour.WHITE
+
+
+@router.get("/human-record", response_model=HumanRecord)
+async def get_human_record(session: SessionDep) -> HumanRecord:
+    """How people have done against the models (HUMAN-01).
+
+    Declared **before** `/games/{game_id}` for the same reason as `/mine`: FastAPI matches in
+    declaration order and the UUID path param would otherwise swallow the literal and answer 422.
+
+    **One statement, four counts, and it does not grow with the archive.** The obvious version of
+    this reads the games and tallies them in Python, which is a full scan on every request for four
+    integers — the shape ADR-0032 removed from the leaderboard and that nothing was stopping
+    somebody adding back here. `FILTER` does the tallying where the rows already are.
+
+    Only games that reached a result are counted. An aborted or abandoned one has no winner and is
+    not a defeat for whoever was sitting there (invariant 11).
+    """
+    human = sa.orm.aliased(Player)
+    decided = Game.result != GameResult.ONGOING
+    won = Game.winner_colour == human.colour
+    lost = sa.and_(Game.winner_colour.is_not(None), Game.winner_colour != human.colour)
+
+    row = (
+        await session.execute(
+            sa.select(
+                sa.func.count().label("games"),
+                sa.func.count().filter(won).label("wins"),
+                sa.func.count().filter(Game.result == GameResult.DRAW).label("draws"),
+                sa.func.count().filter(lost).label("losses"),
+            )
+            .select_from(Game)
+            .join(
+                human,
+                sa.and_(human.game_id == Game.id, human.kind == PlayerKind.HUMAN),
+            )
+            .where(decided)
+        )
+    ).one()
+
+    return HumanRecord(games=row.games, wins=row.wins, draws=row.draws, losses=row.losses)
 
 
 @router.get("/mine", response_model=list[MyGameSummary])

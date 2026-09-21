@@ -524,6 +524,19 @@ export interface Leaderboard {
   periods: number;
 }
 
+/**
+ * How people have done against the models, all of it (`GET /games/human-record`).
+ *
+ * Always from the person's side of the board, and only games that reached a result: an abandoned
+ * game decided nothing and is not a defeat for whoever was sitting there (invariant 11).
+ */
+export interface HumanRecord {
+  games: number;
+  wins: number;
+  draws: number;
+  losses: number;
+}
+
 // ---------------------------------------------------------------- tournaments
 
 /** One row of a tournament table. */
