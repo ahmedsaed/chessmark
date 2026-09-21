@@ -17,6 +17,25 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **Every reader's browser was quietly hammering the site.** A visible `<Link>` to
+  `/models/[...slug]` prefetches; the payload comes back `no-store`, because every route here is
+  dynamic — the root layout reads the request to decide whether to mount Clerk — so the router
+  stores nothing and schedules the prefetch again, for as long as the link is on screen. Production
+  served **~90 requests in twelve seconds per link** on `/leaderboard`, and a production build here
+  ~110 a second. Nothing appeared in the console and no page looked wrong; the only symptom was
+  load. `/leaderboard` and `/tournaments/{slug}` were doing it live.
+
+  Not Clerk — it reproduces with Clerk disabled entirely — and not the `#c-` anchor, which was the
+  other plausible culprit. `prefetch={false}` on the four places that link to a model is the whole
+  fix, and it costs nothing worth having: prefetching a route whose payload cannot be stored buys
+  the reader nothing in the first place. A browser test now fails if any page requests one URL more
+  than a handful of times.
+
+- **The excluded-games list on `/leaderboard` could not be hit with a finger.** Ten-pixel game ids,
+  13px tall with six between them, four to a reason: Lighthouse scores `target-size` at **zero** on
+  that page against production data. It survived because the local seed has too few excluded games
+  for the audit to have anything to measure — the same reason the social cards' bug survived, and
+  the same fix: look at it with real data.
 - **Colours stopped alternating whenever a game did not finish.** The per-entrant colour balance is
   built from results, so a *settled* rematch has always swapped colours on its own. An abandoned
   game produces no result, moves nobody's balance, and left the comparison level — at which point
@@ -47,6 +66,16 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **The lobby's ranking is a podium and a chasing pack, not five rows in a column.** The front page
+  showed the top five as a list sharing a row with "Recent games" — it said who was ahead without
+  ever saying this was a *contest*, which is the whole pitch. The top three now stand on plinths of
+  descending height, 2 · 1 · 3, each carrying the rating and its deviation, the W/D/L and the
+  illegal-move rate; places four to ten run down a list beside them. It stays a podium on a phone —
+  shorter plinths, the name wrapped over three lines, and the two figures that will not fit in
+  113px waiting for `sm` — because stacking the three into a list there is the thing this section
+  replaced. "Recent games" takes the full width underneath, three cards across.
+
+  The section adds no request: it renders the ranking the lobby already awaited (ADR-0032).
 - **The landing page is the same page for everybody.** It carried a "Your games" strip and read the
   session cookie to decide whether to draw it, which made the first page every visitor loads the one
   page on the site that could not be reasoned about without knowing who was asking. `/profile` now

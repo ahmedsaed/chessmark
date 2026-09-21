@@ -74,6 +74,9 @@ export function ModelTable({ models }: { models: ModelInfo[] }) {
             {group.models.map((model) => (
               <li key={model.id}>
                 <Link
+                  /* Same link, same trap. It does not loop today only because these rows sit
+                     inside a collapsed provider group and are never visible in bulk. FRONTEND.md. */
+                  prefetch={false}
                   href={`/models/${model.openrouter_id}`}
                   className="grid grid-cols-[1fr_auto] items-center gap-3 bg-surface px-3 py-2 transition-colors hover:bg-surface-2 sm:grid-cols-[1fr_5rem_5rem_4rem_auto]"
                 >

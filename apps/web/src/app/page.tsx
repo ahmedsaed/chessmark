@@ -4,9 +4,10 @@ import Link from "next/link";
 import { GameCard } from "@/components/GameCard";
 import { HeroGame } from "@/components/HeroGame";
 import { ReplayBoard } from "@/components/ReplayBoard";
+import { TopContestants } from "@/components/TopContestants";
 import { apiUrl, getGame, getLeaderboard, listGames } from "@/lib/api";
 import { pickReplays } from "@/lib/replays";
-import type { GameDetail, GameSummary, LeaderboardRow } from "@/lib/types";
+import type { GameDetail, GameSummary } from "@/lib/types";
 
 /* Title and description are the root layout's, which are already this page's — the lobby is the
    site. Only the canonical is stated, and only here: on the layout it would be inherited by every
@@ -90,10 +91,9 @@ export default async function Home() {
 
       {replays.length > 0 && <Replays games={replays} />}
 
-      <div className="mt-16 grid grid-cols-1 gap-10 lg:grid-cols-2">
-        <Contestants rows={board.rows} counted={board.games_counted} />
-        <RecentGames games={recentGames} />
-      </div>
+      <TopContestants rows={board.rows} counted={board.games_counted} />
+
+      <RecentGames games={recentGames} />
     </main>
   );
 }
@@ -125,18 +125,31 @@ function settled(games: GameSummary[]): GameSummary[] {
   return games.filter((game) => game.status !== "running" && game.status !== "paused");
 }
 
+/**
+ * The last six games that stopped for good.
+ *
+ * Full width, three across, below the ranking. It shared a row with the top five contestants when
+ * both were lists; the leaderboard is a podium now and wants the whole page, and six cards in one
+ * column beside it would have been a very tall, very thin strip of nothing.
+ */
 function RecentGames({ games }: { games: GameSummary[] }) {
   return (
-    <section>
-      <h2 className="mb-4 font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
-        Recent games
-      </h2>
+    <section className="mt-14">
+      <div className="mb-4 flex items-baseline gap-3">
+        <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
+          Recent games
+        </h2>
+        <span className="h-px flex-1 bg-line-soft" aria-hidden />
+        <span className="tabular font-mono text-meta text-ink-faint">
+          {games.length} game{games.length === 1 ? "" : "s"}
+        </span>
+      </div>
       {games.length === 0 ? (
         <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
           Nothing finished yet.
         </p>
       ) : (
-        <ul className="flex flex-col gap-3">
+        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {games.map((game) => (
             <GameCard key={game.id} game={game} />
           ))}
@@ -249,68 +262,6 @@ function Replays({ games }: { games: GameDetail[] }) {
           );
         })}
       </ul>
-    </section>
-  );
-}
-
-/**
- * The top of the ranking, on the front page.
- *
- * The rating deviation travels with the rating everywhere it is shown. A visitor comparing a
- * contestant with one game against one with four needs to see that difference in the same glance,
- * or the ordering reads as more settled than it is.
- */
-function Contestants({ rows, counted }: { rows: LeaderboardRow[]; counted: number }) {
-  return (
-    <section>
-      <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
-          Top contestants
-        </h2>
-        <Link
-          href="/leaderboard"
-          className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-accent"
-        >
-          All →
-        </Link>
-      </div>
-
-      {rows.length === 0 ? (
-        <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
-          No ranked games yet. Ratings only move on games played in the fixed ranked
-          configuration — unranked games are recorded but never counted.
-        </p>
-      ) : (
-        <>
-          <ol className="flex flex-col gap-px border border-line-soft bg-line-soft">
-            {rows.slice(0, 5).map((row, index) => (
-              <li key={`${row.model_slug}@${row.quantization}`}>
-                <Link
-                  href={`/models/${row.model_slug}#c-${encodeURIComponent(row.quantization)}`}
-                  className="flex items-center gap-3 bg-surface px-4 py-2.5 transition-colors hover:bg-surface-2"
-                >
-                  <span className="tabular w-4 flex-none font-mono text-data text-ink-faint">
-                    {index + 1}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
-                    {row.model_slug}
-                    <span className="text-ink-faint">@{row.quantization}</span>
-                  </span>
-                  <span className="tabular flex-none font-mono text-xs text-accent">
-                    {Math.round(row.rating)}
-                    <span className="ml-1 text-meta text-ink-faint">
-                      ±{Math.round(row.rating_deviation)}
-                    </span>
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ol>
-          <p className="tabular mt-2 font-mono text-meta text-ink-faint">
-            Glicko-2 over {counted} ranked game{counted === 1 ? "" : "s"}
-          </p>
-        </>
-      )}
     </section>
   );
 }

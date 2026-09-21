@@ -303,3 +303,46 @@ test("at phone width every header control is the same height", async ({ page }) 
   const tops = [...new Set(boxes.map((b) => b.top))];
   expect(tops, `header controls are not aligned: ${JSON.stringify(boxes)}`).toHaveLength(1);
 });
+
+/**
+ * The lobby's podium, at 390px.
+ *
+ * Three columns of 113px is where a podium stops working, and it was stacked into a plain ranked
+ * list here until the numbers were measured. It fits — but only because two figures per card wait
+ * for `sm` and the name is allowed to wrap to three lines. Both are the kind of decision a later
+ * tidy-up undoes, so both are asserted: the plinths still descend, and nothing is cut off.
+ */
+test("the podium is a podium on a phone, and nothing on it is cut off", async ({ page }) => {
+  await page.goto("/");
+
+  const places = page.getByRole("list", { name: "The top three" }).locator("> li");
+  const count = await places.count();
+  // Counted before measuring: `boundingBox()` waits, so an absent podium would hang, not skip.
+  test.skip(count < 3, "fewer than three ranked contestants in this database");
+
+  const rows = await places.evaluateAll((items) =>
+    items.map((item) => {
+      const box = item.getBoundingClientRect();
+      const name = item.querySelector("p")!;
+      return {
+        top: Math.round(box.y),
+        floor: Math.round(box.bottom),
+        /* The name wraps rather than truncating, so nothing of it is behind a `title` a thumb
+           cannot open — the failure the nameplate fix on the game page was about. Height as well
+           as width: it is clamped to three lines, which every production name fits and a longer
+           one would not. */
+        clipped:
+          name.scrollWidth > name.clientWidth + 1 || name.scrollHeight > name.clientHeight + 1,
+      };
+    }),
+  );
+
+  // The DOM order is the ranking, so this is first, second, third whatever the painted order is.
+  expect(rows[0].top, "first place should stand highest, here too").toBeLessThan(rows[1].top);
+  expect(rows[1].top, "second place above third").toBeLessThan(rows[2].top);
+  expect(new Set(rows.map((row) => row.floor)).size, "on one floor").toBe(1);
+
+  for (const row of rows) {
+    expect(row.clipped, "the model name should wrap, not be cut off").toBe(false);
+  }
+});

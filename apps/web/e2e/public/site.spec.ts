@@ -314,3 +314,114 @@ test("the Clerk UI bundle is never requested", async ({ page }) => {
 
   expect(ui, "a prebuilt Clerk component is loading @clerk/ui site-wide").toEqual([]);
 });
+
+/**
+ * The podium (the lobby's leaderboard section).
+ *
+ * **Skipped loudly when nothing is ranked**, the same bargain the phone suite strikes on the
+ * leaderboard itself: this suite's games are played by the scripted provider against
+ * `vendor/model-N`, which `ratable.judge` excludes, so a run with no ranked fixture has no podium
+ * to measure. It is the assertion that matters locally against `make dev-pull` data, where the
+ * production slugs are 38 characters and the columns are 200px.
+ */
+test("the lobby stands the top three on a podium, tallest first", async ({ page }) => {
+  await page.goto("/");
+
+  const places = page.getByRole("list", { name: "The top three" }).locator("> li");
+  const count = await places.count();
+  /* Counted before anything measures, because `boundingBox()` waits for an element that is never
+     coming and the suite would hang rather than skip. */
+  test.skip(count < 3, "fewer than three ranked contestants in this database");
+
+  const boxes = await Promise.all(
+    [0, 1, 2].map(async (index) => {
+      const box = await places.nth(index).boundingBox();
+      expect(box, `place ${index + 1} should have a box`).not.toBeNull();
+      return box!;
+    }),
+  );
+
+  /* **This is the podium, and it is the only thing that says so.** The cards carry a rank nowhere
+     a desktop reader can see it — the `#1` badge is `sm:hidden` and the plinth numeral is
+     `aria-hidden` decoration — so the ranking is communicated by height alone. A card that stopped
+     standing taller than the one below it would still render, still link correctly, and still say
+     nothing, which is precisely the failure mode this file exists for. */
+  expect(boxes[0].y, "first place should stand highest").toBeLessThan(boxes[1].y);
+  expect(boxes[1].y, "second place should stand above third").toBeLessThan(boxes[2].y);
+
+  // And they stand on the same floor: a plinth is a *height*, not an offset.
+  const floor = boxes.map((box) => Math.round(box.y + box.height));
+  expect(new Set(floor).size, `the three places should share a base, got ${floor}`).toBe(1);
+
+  // 2 · 1 · 3 — first place is in the middle, which is what makes it read as a podium rather than
+  // a staircase. Only at desktop width; the phone suite asserts the stacked layout.
+  expect(boxes[1].x, "second place is painted to the left of first").toBeLessThan(boxes[0].x);
+  expect(boxes[0].x, "third place is painted to the right of first").toBeLessThan(boxes[2].x);
+});
+
+test("the lobby's ranking runs 1 to 10 across the podium and the list beside it", async ({
+  page,
+}) => {
+  /* **Checked against the API, not against itself.** The podium and the list are two slices of one
+     array, and a slice's mistakes are silent: skip a contestant and the ten shown are still in
+     descending order, show one twice and they still are. Only the ranking this page was handed can
+     tell, so this test asks for it. */
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const board = await page.request.get(`${api}/leaderboard`);
+  expect(board.ok(), "the leaderboard endpoint should answer").toBe(true);
+
+  const ranked = (await board.json()).rows as { rating: number }[];
+  test.skip(ranked.length === 0, "no ranked contestants in this database");
+
+  await page.goto("/");
+
+  const figures = await page
+    .getByTestId("rating")
+    .evaluateAll((spans) => spans.map((span) => Number.parseInt(span.textContent ?? "", 10)));
+
+  expect(figures, "the lobby shows the API's top ten, in its order, once each").toEqual(
+    ranked.slice(0, 10).map((row) => Math.round(row.rating)),
+  );
+
+  // Three of those stand on the podium, so the list beside it holds the rest — not six, not eight.
+  const listed = await page
+    .getByRole("list", { name: "Places four onward" })
+    .locator("> li")
+    .count();
+  expect(listed).toBe(Math.max(0, figures.length - 3));
+});
+
+/**
+ * No page may ask for the same URL over and over.
+ *
+ * A `<Link>` on screen prefetches, and a payload the router cannot store — every route here is
+ * dynamic, so every one of them is `no-store` — leaves the prefetch task dirty and schedules it
+ * again. `/leaderboard` and `/tournaments/{slug}` were doing this on production to every reader
+ * with the tab open: ~90 requests in twelve seconds per link there, ~110 a second on a production
+ * build locally. Nothing reached the console, no page looked wrong, and `make check` had nothing
+ * to say about it — the only symptom was load, on a server nobody was watching that closely.
+ *
+ * So the assertion is the *property*, not the workaround: a page settles. Whatever a future change
+ * does — a new link to a model, a different fix, a framework upgrade that makes `prefetch={false}`
+ * unnecessary — this still says whether the site sits quietly once it has loaded.
+ */
+test("a loaded page stops asking for things", async ({ page }) => {
+  const counts = new Map<string, number>();
+  page.on("request", (request) => {
+    const url = request.url().replace(/\?.*/, "");
+    counts.set(url, (counts.get(url) ?? 0) + 1);
+  });
+
+  const tournament = fixtures().tournament;
+  for (const path of ["/", "/leaderboard", ...(tournament ? [`/tournaments/${tournament}`] : [])]) {
+    counts.clear();
+    await page.goto(path);
+    /* Long enough for the loop to be unmistakable — it ran at a hundred requests a second — and
+       short enough not to lengthen the suite. A settled page makes no requests at all in this
+       window; the ceiling below is slack for a retry or a router prefetch, not a budget. */
+    await page.waitForTimeout(4000);
+
+    const worst = [...counts.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["nothing", 0];
+    expect(worst[1], `${path} kept re-requesting ${worst[0]}`).toBeLessThan(12);
+  }
+});

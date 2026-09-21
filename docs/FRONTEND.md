@@ -298,6 +298,22 @@ the unreferenced `create-next-app` SVGs broke the *deploy* while `make check` st
 dev server never noticed. `.gitkeep` holds it open. Nothing is served from there: the icons are
 App Router metadata files in `src/app/`.
 
+**A `<Link>` to a dynamic route prefetches in a loop, so every model link carries
+`prefetch={false}`.** A link that is on screen is prefetched; the payload comes back `no-store`,
+because every route in this app is dynamic — the root layout reads the request to decide whether to
+mount Clerk — so the router stores nothing, the prefetch task stays dirty, and it is scheduled
+again. Measured at **~110 requests a second per link** on a production build here, and ~90 in
+twelve seconds on the live site, where `/leaderboard` and `/tournaments/{slug}` were doing it to
+every reader with the tab open. Nothing reaches the console and no page looks wrong: the only
+symptom is load.
+
+It was not Clerk (it reproduces with Clerk disabled), not the `#c-` anchor, and `staleTimes.dynamic`
+does not settle it. The four places that link to `/models/[...slug]` therefore pass
+`prefetch={false}`, which costs a fetch on click and nothing else — prefetching a payload the router
+cannot store was never buying the reader anything. `site.spec.ts` fails if any page asks for one URL
+more than a handful of times, which is the property, not the workaround. **If a page grows a new
+link to a model, it needs the same prop.**
+
 **Client-side filtering is the point on `/models`.** It filters the whole catalogue with zero
 requests across nine keystrokes — measured, and asserted by the browser suite. Note that not every
 URL containing `/models` is an API call: a router prefetch is not a request the page made.
