@@ -66,6 +66,12 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **Three questions answered at the foot of the lobby**, each in a sentence with a door to the page
+  that owns the long version: whether the games are real, why a model is not on the board, and
+  whether the numbers can be checked. Deliberately not an FAQ — `/about` and `/methodology` hold
+  nine sections between them, and a second copy on the lobby is one nobody remembers to update. A
+  browser test follows all three links, because a strip whose whole design is *not repeating* those
+  pages breaks silently the day one is renamed.
 - **One real turn, on the front page.** The lobby claimed every request, reasoning trace and tool
   call was recorded and then showed nothing but boards and numbers. It now shows a turn from a
   finished game: what the model thought, how long for and in how many tokens, the tool it called,

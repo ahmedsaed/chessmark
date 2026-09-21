@@ -594,3 +594,28 @@ test("the turn on the lobby is a real turn of the game it links to", async ({ pa
   const thought = await section.locator("p").first().innerText();
   expect(thought.trim().length, `the excerpt shows "${thought}"`).toBeGreaterThan(80);
 });
+
+/**
+ * The closing strip is three answers and three doors. The doors are the part that rots.
+ *
+ * Its whole design is that it does not repeat what `/about` and `/methodology` say — which makes
+ * it entirely dependent on those routes still existing under those names. A renamed page turns
+ * the honest short answer into a 404, and nothing else on the site would notice.
+ */
+test("every answer on the lobby leads somewhere", async ({ page }) => {
+  await page.goto("/");
+
+  const strip = page.locator("section", {
+    has: page.getByRole("heading", { name: "Before you ask" }),
+  });
+  await expect(strip).toBeVisible();
+
+  const links = await strip.getByRole("link").all();
+  expect(links.length, "three questions, three doors").toBe(3);
+
+  for (const link of links) {
+    const href = await link.getAttribute("href");
+    const response = await page.request.get(href!);
+    expect(response.status(), `${href} should not be an error page`).toBeLessThan(400);
+  }
+});

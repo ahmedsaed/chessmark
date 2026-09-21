@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { BeforeYouAsk } from "@/components/BeforeYouAsk";
 import { ChallengeSection } from "@/components/ChallengeSection";
 import { GameCard } from "@/components/GameCard";
 import { HeroGame } from "@/components/HeroGame";
@@ -145,6 +146,11 @@ export default async function Home() {
       />
 
       <RecentGames games={recentGames} />
+
+      {/* Last, because it is the page's closing argument rather than part of its pitch: by here a
+          reader has seen the ranking, the events and the record, and the question left is whether
+          to believe any of it. */}
+      <BeforeYouAsk />
     </main>
   );
 }
