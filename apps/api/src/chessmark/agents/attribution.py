@@ -21,6 +21,11 @@ So attribution is sent for its own sake: an app page, per-model analytics, and o
 as ours rather than as an anonymous key. It carries nothing about a request — no prompt, no model,
 no game — which is why it can ride on every call unconditionally.
 
+`X-OpenRouter-Categories` is the third header and the only one that changes anything a *visitor*
+sees: the app page exists on the strength of the referer alone, but `openrouter.ai/apps` files its
+listings by category, and an app without one is in no section of the marketplace. See
+`Settings.app_categories` for what is recognised and why it is not validated here.
+
 **Only alongside a real credential.** A scripted gateway has no `api_key` and reaches no provider,
 so headers on its requests would appear in recorded fixtures and in the byte-comparison a cassette
 does, for a call that never leaves the process. `LlmGateway` therefore attaches these only when it
@@ -68,4 +73,24 @@ def attribution_headers(settings: Settings | None = None) -> dict[str, str]:
     title = (settings.app_title or "").strip()
     if title:
         headers["X-OpenRouter-Title"] = title
+
+    categories = _categories(settings.app_categories or "")
+    if categories:
+        headers["X-OpenRouter-Categories"] = categories
     return headers
+
+
+def _categories(configured: str) -> str:
+    """The category list, normalised to what OpenRouter accepts.
+
+    Lowercase and hyphenated is their format; **two is their per-request limit**, and sending more
+    is not an error, it is a request where some of them do not count. Taking the first two here
+    means the one that matters is the one written first, rather than whichever survived.
+
+    Unrecognised names are dropped on their side without complaint, which is why this does not
+    validate against a list: a copy of theirs in this file would go stale the first time they add a
+    category, and would then reject a *correct* value — worse than passing a wrong one through to
+    be ignored.
+    """
+    names = [name.strip().lower() for name in configured.split(",")]
+    return ",".join([name for name in names if name][:2])

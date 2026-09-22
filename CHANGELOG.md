@@ -17,6 +17,12 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **Chessmark is filed under a category on OpenRouter.** The app page has existed since the first
+  attributed call — `HTTP-Referer` alone creates it — but `openrouter.ai/apps` is a marketplace
+  grouped into Coding Agents, Productivity, Creative and Entertainment, and an app with no category
+  belongs to none of them. `X-OpenRouter-Categories: game` fixes that. Unrecognised names are
+  dropped silently on their side, which is why the value is normalised here and never checked
+  against a copy of their list.
 - **A halted game now says when the halt lifts.** Two games held behind the *same* free-tier halt
   read differently on production: one said "retrying shortly", because the worker had paused it
   with the halt's own expiry, and one said only "held until the harness is resumed", because it was
