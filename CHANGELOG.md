@@ -17,6 +17,25 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **Every reader's browser was quietly hammering the site.** A visible `<Link>` to
+  `/models/[...slug]` prefetches; the payload comes back `no-store`, because every route here is
+  dynamic — the root layout reads the request to decide whether to mount Clerk — so the router
+  stores nothing and schedules the prefetch again, for as long as the link is on screen. Production
+  served **~90 requests in twelve seconds per link** on `/leaderboard`, and a production build here
+  ~110 a second. Nothing appeared in the console and no page looked wrong; the only symptom was
+  load. `/leaderboard` and `/tournaments/{slug}` were doing it live.
+
+  Not Clerk — it reproduces with Clerk disabled entirely — and not the `#c-` anchor, which was the
+  other plausible culprit. `prefetch={false}` on the four places that link to a model is the whole
+  fix, and it costs nothing worth having: prefetching a route whose payload cannot be stored buys
+  the reader nothing in the first place. A browser test now fails if any page requests one URL more
+  than a handful of times.
+
+- **The excluded-games list on `/leaderboard` could not be hit with a finger.** Ten-pixel game ids,
+  13px tall with six between them, four to a reason: Lighthouse scores `target-size` at **zero** on
+  that page against production data. It survived because the local seed has too few excluded games
+  for the audit to have anything to measure — the same reason the social cards' bug survived, and
+  the same fix: look at it with real data.
 - **Colours stopped alternating whenever a game did not finish.** The per-entrant colour balance is
   built from results, so a *settled* rematch has always swapped colours on its own. An abandoned
   game produces no result, moves nobody's balance, and left the comparison level — at which point
@@ -47,6 +66,75 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **"Recent games" is gone from the lobby.** It and the replay row were two answers to one
+  question: both listed finished games, one at random with the clean endings and a board playing
+  itself, the other in time order as text. The only thing the second carried alone was a game that
+  ended badly — a ply cap, a forfeit, an abandonment — and `/leaderboard` already lists every game
+  the ranking excluded, grouped by reason and linked. 250px of page, and one fewer band saying
+  something the one above it had said.
+- **Three questions answered at the foot of the lobby**, each in a sentence with a door to the page
+  that owns the long version: whether the games are real, why a model is not on the board, and
+  whether the numbers can be checked. Deliberately not an FAQ — `/about` and `/methodology` hold
+  nine sections between them, and a second copy on the lobby is one nobody remembers to update. A
+  browser test follows all three links, because a strip whose whole design is *not repeating* those
+  pages breaks silently the day one is renamed.
+- **One real turn, on the front page.** The lobby claimed every request, reasoning trace and tool
+  call was recorded and then showed nothing but boards and numbers. It now shows a turn from a
+  finished game: what the model thought, how long for and in how many tokens, the tool it called,
+  the move the referee refused if there was one, and the move it played. Folded by `foldEvents` —
+  the same function the game page's conversation is built from — so it cannot drift into a shape
+  the real view never produces.
+
+  **A bounded, cached read of 40 events, which is a measurement rather than a guess**: on
+  `21d2867b` the log costs 14 KB at 40 events, 90 KB at 120 and **728 KB** at 300, because
+  reasoning text dominates it. `listEvents` follows the cursor to the end and never caches, which
+  is right for the game page and wrong for a quotation.
+
+  The first build of this put `</role>` on the front page — two tokens of "reasoning" that were a
+  fragment of a provider's own prompt template, picked because the rule was "non-empty". A thought
+  now has to be at least 120 characters, and `spotlight.test.ts` has that turn in it.
+- **The lobby invites you to play, and says what you are up against.** A section under the
+  tournaments: on one side the whole human-versus-model record as a scoreboard, with the caption
+  this project would insist on — *one game. provisional, obviously* — and on the other what the
+  opponent has been caught doing in ranked games. Every line is measured, so the section is funny
+  for exactly as long as the models keep being bad at chess: 375 illegal moves attempted in 19
+  ranked games, 8 forfeits, and a worst offender at **4.12 illegal attempts per move** — 70 of them
+  across 17 moves.
+
+  `GET /games/human-record` is new and is the only read it adds: four integers in one statement,
+  with a query-count test, because tallying them in Python is a full scan of the archive on a route
+  the landing page calls. An unfinished game is not a defeat — only games that reached a result are
+  counted (invariant 11). The charge sheet is summed from the ranking the page already held.
+
+  It says nothing about credits, deliberately: a seat is granted while the site is in testing
+  (ADR-0016), and `/play` is where a signed-in reader learns that, because the lobby is the same
+  page for everybody and cannot tell who is asking.
+- **The lobby says what a tournament is.** A section under the ranking: the concept in two
+  paragraphs — a field, a format and a set of bounds, and a pool that never ends because it
+  re-checks its field every tick — beside up to three events, running ones first. Each card carries
+  the field and its entrants, a bar of played / live / paused / abandoned pairings against the
+  total, and what came out of it: decisive against draws, mean length, tokens, illegal attempts and
+  cost.
+
+  **The concept is a cell of the grid rather than a paragraph above it**, and the grid is as wide
+  as it has cells. There is one tournament today: a row built for three would have rendered one
+  card beside two holes, which is the whole reason the section reads as deliberate at one event. It
+  adds one cached read (`/tournaments`, tagged) and asks for no standings — the podium above it
+  already answers who is winning.
+- **A pool called itself a "round robin".** `formatLabel` knew two formats and fell through to the
+  second, so the one event on the site was labelled the opposite of what it is. It pairs like a
+  round robin — greedy and incremental (ADR-0041) — but what a reader needs from the word is that
+  it never ends and its field is not fixed.
+- **The lobby's ranking is a podium and a chasing pack, not five rows in a column.** The front page
+  showed the top five as a list sharing a row with "Recent games" — it said who was ahead without
+  ever saying this was a *contest*, which is the whole pitch. The top three now stand on plinths of
+  descending height, 2 · 1 · 3, each carrying the rating and its deviation, the W/D/L and the
+  illegal-move rate; places four to ten run down a list beside them. It stays a podium on a phone —
+  shorter plinths, the name wrapped over three lines, and the two figures that will not fit in
+  113px waiting for `sm` — because stacking the three into a list there is the thing this section
+  replaced. "Recent games" takes the full width underneath, three cards across.
+
+  The section adds no request: it renders the ranking the lobby already awaited (ADR-0032).
 - **The landing page is the same page for everybody.** It carried a "Your games" strip and read the
   session cookie to decide whether to draw it, which made the first page every visitor loads the one
   page on the site that could not be reasoned about without knowing who was asking. `/profile` now

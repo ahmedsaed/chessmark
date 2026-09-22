@@ -308,6 +308,9 @@ function Standings({ rows }: { rows: Standing[] }) {
           >
             <span className={row.place === 1 ? "text-accent" : "text-ink-faint"}>{row.place}</span>
             <Link
+              /* The prefetch storm `/leaderboard` had: an uncacheable payload the router keeps
+                 re-requesting. FRONTEND.md. */
+              prefetch={false}
               href={`/models/${row.key.split("@")[0]}`}
               className="min-w-0 truncate text-ink transition-colors hover:text-accent"
             >

@@ -103,7 +103,12 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
               </td>
               <td className="min-w-0 px-2 py-2.5 sm:px-3">
                 {/* Drills through to the games that produced the row (BENCH-02). */}
+                {/* `prefetch={false}` because a visible link to `/models/[...slug]` prefetches a
+                    payload the router cannot store — every route here is dynamic, so it comes back
+                    `no-store` — and reschedules itself for as long as it is on screen. This page
+                    was serving ~90 requests in twelve seconds per row on production (FRONTEND.md). */}
                 <Link
+                  prefetch={false}
                   href={`/models/${row.model_slug}#c-${encodeURIComponent(row.quantization)}`}
                   className="block truncate font-mono text-xs text-ink transition-colors hover:text-accent sm:inline"
                 >
@@ -193,12 +198,17 @@ function Excluded({ excluded, counted }: { excluded: { game_id: string; reason: 
             <li key={reason} className="flex flex-wrap items-baseline gap-2 text-xs">
               <span className="tabular font-mono text-ink">{ids.length}×</span>
               <span className="text-ink-dim">{reason}</span>
-              <span className="flex flex-wrap gap-1.5">
+              {/* **`py-1` and a wider gap are a tap target, not padding.** These are 10px ids in a
+                  wrapped row, and with production data — where most reasons have four of them —
+                  Lighthouse scored `target-size` at zero: a 13px-tall link with 6px between it and
+                  the next is a guess with a finger. The local seed has too few excluded games for
+                  the audit to see it, which is why it survived. */}
+              <span className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
                 {ids.slice(0, 4).map((id) => (
                   <Link
                     key={id}
                     href={`/games/${id}`}
-                    className="font-mono text-meta text-ink-faint underline-offset-4 hover:text-accent hover:underline"
+                    className="inline-flex min-h-6 items-center py-1 font-mono text-meta text-ink-faint underline-offset-4 hover:text-accent hover:underline"
                   >
                     {id.slice(0, 8)}
                   </Link>

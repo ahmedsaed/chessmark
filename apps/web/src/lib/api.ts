@@ -42,6 +42,7 @@ import type {
   GameResult,
   GameStatus,
   GameSummary,
+  HumanRecord,
   ModelDetail,
   ModelInfo,
   Leaderboard,
@@ -195,6 +196,25 @@ async function getOrEmpty<T>(
   }
 }
 
+/**
+ * The same bargain as `getOrEmpty`, for a read that answers with an object rather than a list.
+ *
+ * An unreachable API should cost the lobby one quiet section, not the page — and it should say so
+ * in the server log, which is the part `getOrNull` does not do.
+ */
+async function getOrFallback<T>(
+  path: string,
+  init: { next: { tags: string[]; revalidate: number } },
+  fallback: T,
+): Promise<T> {
+  try {
+    return await get<T>(path, init);
+  } catch (error) {
+    reportFailure(path, error);
+    return fallback;
+  }
+}
+
 export function listGames(
   status?: string,
   limit = 20,
@@ -286,6 +306,35 @@ export async function listEvents(id: string): Promise<GameEvent[]> {
 }
 
 /**
+ * How many events the lobby reads from a finished game. **Measured, not guessed.**
+ *
+ * The log's cost is wildly non-linear, because reasoning text dominates it and a model thinks
+ * harder as the position gets complicated. On `21d2867b` in production: 40 events is 14 KB, 120 is
+ * 90 KB, and 300 is **728 KB**. Forty covers the opening handful of turns, which is all the lobby
+ * shows, and keeps the read in the same class as every other one on the page.
+ */
+const OPENING_EVENTS = 40;
+
+/**
+ * The first few turns of a finished game.
+ *
+ * Deliberately *not* `listEvents`, which follows the cursor to the end of the log and never
+ * caches — right for the game page, wrong for a front-page excerpt that would pay 728 KB and a
+ * revalidation for one quotation.
+ *
+ * **Only ever called for a settled game between two models.** Reasoning is withheld on the way out
+ * of any game a person is playing (invariant 8), so calling this for a live human game would
+ * quietly return blocks with no text rather than leaking anything — it degrades safely, but the
+ * section would be empty and the reason would be invisible.
+ */
+export function openingEvents(id: string, limit = OPENING_EVENTS): Promise<GameEvent[]> {
+  return getOrEmpty<GameEvent>(
+    `/games/${id}/events?after_seq=0&limit=${limit}`,
+    cached([gameTag(id)]),
+  );
+}
+
+/**
  * Every turn of a game, with its per-turn token and cost totals.
  *
  * Replay needs this alongside the event log: events say what happened, turns say which database
@@ -333,6 +382,22 @@ export async function getLeaderboard(options?: ReadOptions): Promise<Leaderboard
 }
 
 /** Recent tournaments, newest first. Never throws: an empty list is the honest state. */
+/**
+ * The human-versus-model record.
+ *
+ * Tagged `games` like every other game read, so it refreshes when one ends rather than on a clock
+ * — which matters here more than elsewhere, since the whole point of the number is that it moves
+ * the moment somebody beats a model (ADR-0046).
+ */
+export function getHumanRecord(options?: ReadOptions): Promise<HumanRecord> {
+  return getOrFallback<HumanRecord>("/games/human-record", cached([GAMES], options?.cache), {
+    games: 0,
+    wins: 0,
+    draws: 0,
+    losses: 0,
+  });
+}
+
 export function listTournaments(
   limit = 20,
   options?: ReadOptions,

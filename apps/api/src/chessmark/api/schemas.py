@@ -973,6 +973,27 @@ class BenchSummary(Schema):
     prompt_version: str | None = None
 
 
+class HumanRecord(Schema):
+    """How people have done against the models, all of it.
+
+    One number the site could not state: every game with a human seat is unranked by definition —
+    a person is not a contestant and never moves a rating — so nothing in the bench, which is where
+    all the other counting lives, had any reason to look at them.
+
+    **Unfinished and aborted games are not losses.** Only a game that reached a result is counted,
+    which is invariant 11 said in SQL: a harness bound ends a game without deciding it, and
+    recording that as a defeat for whoever was sitting there would be a finding about a player that
+    the game never made.
+    """
+
+    #: Games with a human seat that reached a result.
+    games: int = 0
+    #: From the person's side of the board, always.
+    wins: int = 0
+    draws: int = 0
+    losses: int = 0
+
+
 # ---------------------------------------------------------------------- tournaments
 
 

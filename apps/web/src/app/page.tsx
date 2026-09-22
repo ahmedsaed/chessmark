@@ -1,12 +1,27 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { BeforeYouAsk } from "@/components/BeforeYouAsk";
+import { ChallengeSection } from "@/components/ChallengeSection";
 import { GameCard } from "@/components/GameCard";
 import { HeroGame } from "@/components/HeroGame";
 import { ReplayBoard } from "@/components/ReplayBoard";
-import { apiUrl, getGame, getLeaderboard, listGames } from "@/lib/api";
+import { TopContestants } from "@/components/TopContestants";
+import { TurnSpotlight } from "@/components/TurnSpotlight";
+import { TournamentsSection } from "@/components/TournamentsSection";
+import {
+  apiUrl,
+  getGame,
+  getHumanRecord,
+  getLeaderboard,
+  listGames,
+  listTournaments,
+  openingEvents,
+} from "@/lib/api";
 import { pickReplays } from "@/lib/replays";
-import type { GameDetail, GameSummary, LeaderboardRow } from "@/lib/types";
+import { pickTurn } from "@/lib/spotlight";
+import { foldEvents } from "@/lib/turns";
+import type { GameDetail, GameEvent, GameSummary, TurnView } from "@/lib/types";
 
 /* Title and description are the root layout's, which are already this page's — the lobby is the
    site. Only the canonical is stated, and only here: on the layout it would be inherited by every
@@ -43,10 +58,16 @@ export default async function Home() {
    * and that is not known until the lists come back. Next.js memoises `fetch` per request, so the
    * two calls for the lobby list below are one request.
    */
-  const [live, recent, board] = await Promise.all([
+  const [live, recent, board, tournaments, humans] = await Promise.all([
     listGames("running", 6),
     lobbyGames(),
     getLeaderboard(),
+    /* One cached list, tagged `tournaments` (ADR-0046). The section shows three of them and asks
+       for nothing else — no standings, no per-event detail. */
+    listTournaments(),
+    /* Four integers, one aggregate, tagged `games`. The "know your opponent" half of that section
+       is summed from `board` above and costs nothing. */
+    getHumanRecord(),
   ]);
 
   /* Prefers a running game; falls back to the most recent finished one, which keeps the hero from
@@ -62,7 +83,20 @@ export default async function Home() {
     6,
   );
 
-  const [heroGame, ...replayDetails] = await Promise.all([
+  /**
+   * The two games the turn excerpt may come from.
+   *
+   * **Sorted by illegal attempts, because that is the turn worth showing**: a model proposing a
+   * move the referee refuses, and then finding a legal one, is the benchmark happening in front of
+   * the reader. Two rather than one because plenty of models publish no reasoning text at all
+   * (`TurnView.reasoning`: "DeepSeek fills this; Gemini never does"), and a section that vanishes
+   * on half of the archive is worse than a second 14KB read.
+   */
+  const candidates = [...settled(recent)]
+    .sort((a, b) => illegalIn(b) - illegalIn(a))
+    .slice(0, SPOTLIGHT_GAMES);
+
+  const [heroGame, ...rest] = await Promise.all([
     /* No event log. The hero shows a board and a move list, and `GameDetail.moves` is already the
        authoritative move list at the render's cursor — fetching the whole log to fold it back down
        to the same array cost 300KB of payload for a game of any length, on the one page every
@@ -70,11 +104,15 @@ export default async function Home() {
     featured ? getGame(featured.id, { settled: featured.status === "finished" }) : Promise.resolve(null),
     /* `pickReplays` returns only `status === "finished"` games, so these can never move again. */
     ...picks.map((pick) => getGame(pick.id, { settled: true })),
+    /* The opening of each candidate, bounded and cached — not the whole log. */
+    ...candidates.map((game) => openingEvents(game.id)),
   ]);
 
+  const replayDetails = rest.slice(0, picks.length) as (GameDetail | null)[];
+  const openings = rest.slice(picks.length) as GameEvent[][];
   const replays = replayDetails.filter((detail): detail is GameDetail => detail !== null);
+  const spotlight = firstTurnWorthShowing(candidates, openings);
   const alsoLive = live.slice(1);
-  const recentGames = settled(recent).slice(0, 6);
 
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
@@ -90,10 +128,26 @@ export default async function Home() {
 
       {replays.length > 0 && <Replays games={replays} />}
 
-      <div className="mt-16 grid grid-cols-1 gap-10 lg:grid-cols-2">
-        <Contestants rows={board.rows} counted={board.games_counted} />
-        <RecentGames games={recentGames} />
-      </div>
+      {spotlight && <TurnSpotlight game={spotlight.game} turn={spotlight.turn} />}
+
+      <TopContestants rows={board.rows} counted={board.games_counted} />
+
+      {/* After the ranking, because it is the machinery behind it: the podium says who is ahead,
+          this says what they are playing in. */}
+      <TournamentsSection tournaments={tournaments} />
+
+      {/* After the tournaments: the models have been introduced and ranked, and this is the reply
+          to "could I beat one of those". */}
+      <ChallengeSection
+        record={humans}
+        rows={board.rows}
+        gamesCounted={board.games_counted}
+      />
+
+      {/* Last, because it is the page's closing argument rather than part of its pitch: by here a
+          reader has seen the ranking, the events and the record, and the question left is whether
+          to believe any of it. */}
+      <BeforeYouAsk />
     </main>
   );
 }
@@ -123,27 +177,6 @@ function lobbyGames(): Promise<GameSummary[]> {
  */
 function settled(games: GameSummary[]): GameSummary[] {
   return games.filter((game) => game.status !== "running" && game.status !== "paused");
-}
-
-function RecentGames({ games }: { games: GameSummary[] }) {
-  return (
-    <section>
-      <h2 className="mb-4 font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
-        Recent games
-      </h2>
-      {games.length === 0 ? (
-        <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
-          Nothing finished yet.
-        </p>
-      ) : (
-        <ul className="flex flex-col gap-3">
-          {games.map((game) => (
-            <GameCard key={game.id} game={game} />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
 }
 
 function EmptyHero() {
@@ -188,11 +221,12 @@ function Strip({
 }
 
 /**
- * Three finished games, picked at random, each playing itself.
+ * Six finished games, picked at random, each playing itself.
  *
- * Only clean finishes — a checkmate or a resignation. A ply-cap draw or a budget stop is still
- * browsable from "Recent games", but it makes a poor replay: the interesting thing about those
- * records is why they stopped, not how they ended.
+ * Only clean finishes — a checkmate or a resignation. A ply-cap draw or a budget stop makes a poor
+ * replay: the interesting thing about those records is why they stopped, not how they ended. They
+ * are not hidden — `/leaderboard` lists every game the ranking excluded, grouped by reason and
+ * linked — but this row is not where they belong.
  */
 function Replays({ games }: { games: GameDetail[] }) {
   return (
@@ -253,64 +287,31 @@ function Replays({ games }: { games: GameDetail[] }) {
   );
 }
 
-/**
- * The top of the ranking, on the front page.
- *
- * The rating deviation travels with the rating everywhere it is shown. A visitor comparing a
- * contestant with one game against one with four needs to see that difference in the same glance,
- * or the ordering reads as more settled than it is.
- */
-function Contestants({ rows, counted }: { rows: LeaderboardRow[]; counted: number }) {
-  return (
-    <section>
-      <div className="mb-4 flex items-baseline justify-between gap-3">
-        <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
-          Top contestants
-        </h2>
-        <Link
-          href="/leaderboard"
-          className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-accent"
-        >
-          All →
-        </Link>
-      </div>
+/** How many finished games the lobby may read an opening from. */
+const SPOTLIGHT_GAMES = 2;
 
-      {rows.length === 0 ? (
-        <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
-          No ranked games yet. Ratings only move on games played in the fixed ranked
-          configuration — unranked games are recorded but never counted.
-        </p>
-      ) : (
-        <>
-          <ol className="flex flex-col gap-px border border-line-soft bg-line-soft">
-            {rows.slice(0, 5).map((row, index) => (
-              <li key={`${row.model_slug}@${row.quantization}`}>
-                <Link
-                  href={`/models/${row.model_slug}#c-${encodeURIComponent(row.quantization)}`}
-                  className="flex items-center gap-3 bg-surface px-4 py-2.5 transition-colors hover:bg-surface-2"
-                >
-                  <span className="tabular w-4 flex-none font-mono text-data text-ink-faint">
-                    {index + 1}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
-                    {row.model_slug}
-                    <span className="text-ink-faint">@{row.quantization}</span>
-                  </span>
-                  <span className="tabular flex-none font-mono text-xs text-accent">
-                    {Math.round(row.rating)}
-                    <span className="ml-1 text-meta text-ink-faint">
-                      ±{Math.round(row.rating_deviation)}
-                    </span>
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ol>
-          <p className="tabular mt-2 font-mono text-meta text-ink-faint">
-            Glicko-2 over {counted} ranked game{counted === 1 ? "" : "s"}
-          </p>
-        </>
-      )}
-    </section>
-  );
+function illegalIn(game: GameSummary): number {
+  return game.players.reduce((total, player) => total + player.illegal_attempts, 0);
+}
+
+/**
+ * The first candidate whose opening has a turn worth showing.
+ *
+ * Order matters and is not "best across both": the games are already sorted by how much went wrong
+ * in them, so the first one that *has* something to show is the one to show. Falling through to the
+ * second is for the case where the first published no thinking at all, which is a property of the
+ * model rather than of the game.
+ */
+function firstTurnWorthShowing(
+  games: GameSummary[],
+  openings: GameEvent[][],
+): { game: GameSummary; turn: TurnView } | null {
+  for (const [index, game] of games.entries()) {
+    const events = openings[index] ?? [];
+    if (events.length === 0) continue;
+
+    const turn = pickTurn(foldEvents(events, []).turns);
+    if (turn) return { game, turn };
+  }
+  return null;
 }

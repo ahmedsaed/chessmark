@@ -314,3 +314,308 @@ test("the Clerk UI bundle is never requested", async ({ page }) => {
 
   expect(ui, "a prebuilt Clerk component is loading @clerk/ui site-wide").toEqual([]);
 });
+
+/**
+ * The podium (the lobby's leaderboard section).
+ *
+ * **Skipped loudly when nothing is ranked**, the same bargain the phone suite strikes on the
+ * leaderboard itself: this suite's games are played by the scripted provider against
+ * `vendor/model-N`, which `ratable.judge` excludes, so a run with no ranked fixture has no podium
+ * to measure. It is the assertion that matters locally against `make dev-pull` data, where the
+ * production slugs are 38 characters and the columns are 200px.
+ */
+test("the lobby stands the top three on a podium, tallest first", async ({ page }) => {
+  await page.goto("/");
+
+  const places = page.getByRole("list", { name: "The top three" }).locator("> li");
+  const count = await places.count();
+  /* Counted before anything measures, because `boundingBox()` waits for an element that is never
+     coming and the suite would hang rather than skip. */
+  test.skip(count < 3, "fewer than three ranked contestants in this database");
+
+  const boxes = await Promise.all(
+    [0, 1, 2].map(async (index) => {
+      const box = await places.nth(index).boundingBox();
+      expect(box, `place ${index + 1} should have a box`).not.toBeNull();
+      return box!;
+    }),
+  );
+
+  /* **This is the podium, and it is the only thing that says so.** The cards carry a rank nowhere
+     a desktop reader can see it — the `#1` badge is `sm:hidden` and the plinth numeral is
+     `aria-hidden` decoration — so the ranking is communicated by height alone. A card that stopped
+     standing taller than the one below it would still render, still link correctly, and still say
+     nothing, which is precisely the failure mode this file exists for. */
+  expect(boxes[0].y, "first place should stand highest").toBeLessThan(boxes[1].y);
+  expect(boxes[1].y, "second place should stand above third").toBeLessThan(boxes[2].y);
+
+  // And they stand on the same floor: a plinth is a *height*, not an offset.
+  const floor = boxes.map((box) => Math.round(box.y + box.height));
+  expect(new Set(floor).size, `the three places should share a base, got ${floor}`).toBe(1);
+
+  // 2 · 1 · 3 — first place is in the middle, which is what makes it read as a podium rather than
+  // a staircase. Only at desktop width; the phone suite asserts the stacked layout.
+  expect(boxes[1].x, "second place is painted to the left of first").toBeLessThan(boxes[0].x);
+  expect(boxes[0].x, "third place is painted to the right of first").toBeLessThan(boxes[2].x);
+});
+
+test("the lobby's ranking runs 1 to 10 across the podium and the list beside it", async ({
+  page,
+}) => {
+  /* **Checked against the API, not against itself.** The podium and the list are two slices of one
+     array, and a slice's mistakes are silent: skip a contestant and the ten shown are still in
+     descending order, show one twice and they still are. Only the ranking this page was handed can
+     tell, so this test asks for it. */
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const board = await page.request.get(`${api}/leaderboard`);
+  expect(board.ok(), "the leaderboard endpoint should answer").toBe(true);
+
+  const ranked = (await board.json()).rows as { rating: number }[];
+  test.skip(ranked.length === 0, "no ranked contestants in this database");
+
+  await page.goto("/");
+
+  const figures = await page
+    .getByTestId("rating")
+    .evaluateAll((spans) => spans.map((span) => Number.parseInt(span.textContent ?? "", 10)));
+
+  expect(figures, "the lobby shows the API's top ten, in its order, once each").toEqual(
+    ranked.slice(0, 10).map((row) => Math.round(row.rating)),
+  );
+
+  // Three of those stand on the podium, so the list beside it holds the rest — not six, not eight.
+  const listed = await page
+    .getByRole("list", { name: "Places four onward" })
+    .locator("> li")
+    .count();
+  expect(listed).toBe(Math.max(0, figures.length - 3));
+});
+
+/**
+ * No page may ask for the same URL over and over.
+ *
+ * A `<Link>` on screen prefetches, and a payload the router cannot store — every route here is
+ * dynamic, so every one of them is `no-store` — leaves the prefetch task dirty and schedules it
+ * again. `/leaderboard` and `/tournaments/{slug}` were doing this on production to every reader
+ * with the tab open: ~90 requests in twelve seconds per link there, ~110 a second on a production
+ * build locally. Nothing reached the console, no page looked wrong, and `make check` had nothing
+ * to say about it — the only symptom was load, on a server nobody was watching that closely.
+ *
+ * So the assertion is the *property*, not the workaround: a page settles. Whatever a future change
+ * does — a new link to a model, a different fix, a framework upgrade that makes `prefetch={false}`
+ * unnecessary — this still says whether the site sits quietly once it has loaded.
+ */
+test("a loaded page stops asking for things", async ({ page }) => {
+  const counts = new Map<string, number>();
+  page.on("request", (request) => {
+    const url = request.url().replace(/\?.*/, "");
+    counts.set(url, (counts.get(url) ?? 0) + 1);
+  });
+
+  const tournament = fixtures().tournament;
+  for (const path of ["/", "/leaderboard", ...(tournament ? [`/tournaments/${tournament}`] : [])]) {
+    counts.clear();
+    await page.goto(path);
+    /* Long enough for the loop to be unmistakable — it ran at a hundred requests a second — and
+       short enough not to lengthen the suite. A settled page makes no requests at all in this
+       window; the ceiling below is slack for a retry or a router prefetch, not a budget. */
+    await page.waitForTimeout(4000);
+
+    const worst = [...counts.entries()].sort((a, b) => b[1] - a[1])[0] ?? ["nothing", 0];
+    expect(worst[1], `${path} kept re-requesting ${worst[0]}`).toBeLessThan(12);
+  }
+});
+
+/**
+ * The lobby's tournaments section.
+ *
+ * Two things it is easy to ship broken, both of which happened while it was being written:
+ *
+ * * **A row built for more cells than exist.** A fixed four-wide grid put this deployment's two
+ *   cells — the explainer and the one running event — in the left half and left the right half
+ *   empty, which reads as a section waiting for something rather than a section.
+ * * **Numbers that are not the API's.** The card states a tournament's progress; the only way to
+ *   know it states *this* tournament's progress is to ask the same endpoint it was rendered from.
+ */
+test("the lobby explains what a tournament is, and fills its row with the ones there are", async ({
+  page,
+}) => {
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const response = await page.request.get(`${api}/tournaments?limit=20`);
+  expect(response.ok(), "the tournaments endpoint should answer").toBe(true);
+
+  const tournaments = (await response.json()) as { name: string; stats: Record<string, number> }[];
+  test.skip(tournaments.length === 0, "no tournaments in this database");
+
+  await page.goto("/");
+
+  // The concept, which is the reason the section is not just a second copy of `/tournaments`.
+  await expect(page.getByRole("heading", { name: "What a tournament is" })).toBeVisible();
+
+  /* The cells reach the end of the row. Measured against the section's own width rather than a
+     column count, because what went wrong was empty space, and that is what empty space looks
+     like from outside. */
+  const row = await page.evaluate(() => {
+    const heading = [...document.querySelectorAll("h2")].find(
+      (h) => h.textContent?.trim() === "Tournaments",
+    )!;
+    const grid = heading.closest("section")!.querySelector<HTMLElement>(".grid")!;
+    const cells = [...grid.children].map((cell) => cell.getBoundingClientRect());
+    const box = grid.getBoundingClientRect();
+    return {
+      cells: cells.length,
+      /* How far the last cell stops short of the grid's right edge. A half-empty row is half the
+         grid wide; a full one is a couple of pixels of rounding. */
+      shortBy: Math.round(box.right - Math.max(...cells.map((c) => c.right))),
+      width: Math.round(box.width),
+    };
+  });
+
+  expect(row.cells, "one cell per tournament shown, plus the explainer").toBe(
+    Math.min(tournaments.length, 3) + 1,
+  );
+  expect(
+    row.shortBy,
+    `the row is ${row.shortBy}px short of its own width (${row.width}px)`,
+  ).toBeLessThan(4);
+});
+
+test("a tournament card states the tournament's own numbers", async ({ page }) => {
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const response = await page.request.get(`${api}/tournaments?limit=20`);
+  const tournaments = (await response.json()) as {
+    name: string;
+    status: string;
+    entrant_count: number;
+    stats: { played: number; pairings: number };
+  }[];
+  test.skip(tournaments.length === 0, "no tournaments in this database");
+
+  /* The lobby shows running events first, so the card to check is the one the page would pick. */
+  const [first] = [...tournaments].sort(
+    (a, b) => Number(b.status === "running") - Number(a.status === "running"),
+  );
+
+  await page.goto("/");
+
+  const card = page.locator('a[href^="/tournaments/"]').first();
+  await expect(card).toContainText(first.name);
+  await expect(card).toContainText(`${first.entrant_count} entrants`);
+  // The progress line, which is the one thing here that is not on `/tournaments` already.
+  await expect(card).toContainText(`${first.stats.played} of ${first.stats.pairings} pairing`);
+});
+
+/**
+ * The lobby's invitation to play.
+ *
+ * Both halves state numbers, and both are the kind of number that is easy to render from the wrong
+ * place: the scoreboard is the human record from `/games/human-record`, and "know your opponent" is
+ * summed from the ranking the page already holds. A section whose whole point is that the figures
+ * are real has to be checked against the source, not against itself.
+ */
+test("the lobby's scoreboard and charge sheet are the API's numbers", async ({ page }) => {
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const [recordResponse, boardResponse] = await Promise.all([
+    page.request.get(`${api}/games/human-record`),
+    page.request.get(`${api}/leaderboard`),
+  ]);
+  expect(recordResponse.ok(), "the human record should answer").toBe(true);
+
+  const record = (await recordResponse.json()) as { wins: number; losses: number; games: number };
+  const board = (await boardResponse.json()) as {
+    games_counted: number;
+    rows: { illegal_attempts: number }[];
+  };
+
+  await page.goto("/");
+
+  const section = page.locator("section", { has: page.getByRole("link", { name: "Take a seat →" }) });
+  await expect(section).toBeVisible();
+
+  /* The score, both sides, in the order they are painted: humans first. A scoreboard that reads
+     the record backwards is the one mistake here nobody would notice from a screenshot. */
+  const score = await section.locator("p", { hasText: /^(Humans|Models)/ }).allInnerTexts();
+  expect(score.map((line) => line.split("\n").pop()?.trim())).toEqual([
+    String(record.wins),
+    String(record.losses),
+  ]);
+
+  const illegal = board.rows.reduce((total, row) => total + row.illegal_attempts, 0);
+  await expect(section).toContainText(`${illegal.toLocaleString("en")}`);
+  await expect(section).toContainText(
+    `illegal moves attempted in ${board.games_counted} ranked game`,
+  );
+});
+
+/**
+ * The turn excerpt on the lobby.
+ *
+ * It is the one section built by folding a real event log rather than reading fields off a
+ * summary, so the failure mode is not an empty box — it is a *plausible* box: a quotation from the
+ * wrong game, or a fragment of a prompt template dressed up as a thought. Both render beautifully.
+ *
+ * `</role>` is not hypothetical. The first build of this picked a turn whose entire published
+ * reasoning was that, two tokens of it, under the heading "inside one turn".
+ */
+test("the turn on the lobby is a real turn of the game it links to", async ({ page }) => {
+  await page.goto("/");
+
+  const heading = page.getByRole("heading", { name: "Inside one turn" });
+  test.skip(
+    (await heading.count()) === 0,
+    "no finished game in this database published enough reasoning to show",
+  );
+
+  const section = page.locator("section", { has: heading });
+  const href = await section.getByRole("link", { name: "Open the game →" }).getAttribute("href");
+  expect(href, "the excerpt should link to its game").toMatch(/^\/games\//);
+
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const game = (await (await page.request.get(`${api}${href!.replace("/games/", "/games/")}`)).json()) as {
+    moves: string[];
+    players: { display_name: string; colour: string }[];
+  };
+
+  /* The header names a seat of *that* game. On its own this is weak — two games share a model —
+     so the move below is what actually ties the excerpt to the game it links to. Together they
+     catch the mistake nobody could see: an excerpt and a link from different games. */
+  const text = await section.innerText();
+  expect(
+    game.players.some((player) => text.includes(player.display_name)),
+    `the excerpt names neither seat of the game it links to`,
+  ).toBe(true);
+
+  // The move it says was played is a move that game actually contains.
+  const played = await section.getByText(/^played /).innerText();
+  expect(game.moves).toContain(played.replace("played", "").trim());
+
+  /* And it is a thought, not an artefact. Measured on the rendered text rather than trusted from
+     the picker, because the clamp and the fold both sit between them. */
+  const thought = await section.locator("p").first().innerText();
+  expect(thought.trim().length, `the excerpt shows "${thought}"`).toBeGreaterThan(80);
+});
+
+/**
+ * The closing strip is three answers and three doors. The doors are the part that rots.
+ *
+ * Its whole design is that it does not repeat what `/about` and `/methodology` say — which makes
+ * it entirely dependent on those routes still existing under those names. A renamed page turns
+ * the honest short answer into a 404, and nothing else on the site would notice.
+ */
+test("every answer on the lobby leads somewhere", async ({ page }) => {
+  await page.goto("/");
+
+  const strip = page.locator("section", {
+    has: page.getByRole("heading", { name: "Before you ask" }),
+  });
+  await expect(strip).toBeVisible();
+
+  const links = await strip.getByRole("link").all();
+  expect(links.length, "three questions, three doors").toBe(3);
+
+  for (const link of links) {
+    const href = await link.getAttribute("href");
+    const response = await page.request.get(href!);
+    expect(response.status(), `${href} should not be an error page`).toBeLessThan(400);
+  }
+});
