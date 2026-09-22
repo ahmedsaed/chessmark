@@ -17,6 +17,20 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **A halted game now says when the halt lifts.** Two games held behind the *same* free-tier halt
+  read differently on production: one said "retrying shortly", because the worker had paused it
+  with the halt's own expiry, and one said only "held until the harness is resumed", because it was
+  *already* paused when the allowance ran out — and `_say_it_is_held` deliberately leaves
+  `resume_after` in the past so the game resumes the instant the halt lifts rather than waiting out
+  a clock. Both correct about the game; only one of any use to somebody watching a board that will
+  not move.
+
+  The expiry was already in the database, in the payload of the notice that recorded the halt.
+  `what_it_waits_for` reads it there rather than from Redis, so the API still has no halt client
+  (which is the decision `HALT_PREFIX` documents), and the page says *held · back in 6h*. A halt
+  with no end — an operator's — still says so.
+- **A debug `print` ran on every reconciler sweep**, since 2026-09-15. It dumped the ids and event
+  sequences of everything the sweep published, to stdout, on a timer, in production.
 - **Every reader's browser was quietly hammering the site.** A visible `<Link>` to
   `/models/[...slug]` prefetches; the payload comes back `no-store`, because every route here is
   dynamic — the root layout reads the request to decide whether to mount Clerk — so the router

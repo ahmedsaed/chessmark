@@ -17,12 +17,19 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.scripted import plays
-from chessmark.core.halt import SCOPE_FREE, SOURCE_CREDITS, SOURCE_OPERATOR, Halt
+from chessmark.core.halt import (
+    SCOPE_FREE,
+    SOURCE_CREDITS,
+    SOURCE_OPERATOR,
+    Halt,
+    HaltState,
+)
 from chessmark.db.enums import EventType, GameStatus
 from chessmark.db.models import Game, GameEvent, Player, Tournament, TournamentGame
 from chessmark.db.repositories import append_event
 from chessmark.game import Colour
 from chessmark.orchestration.reconciler import (
+    _say_it_is_held,
     find_resumable,
     find_stalled,
     reconcile,
@@ -911,6 +918,64 @@ async def test_a_halted_game_is_not_reported_as_queued(db: AsyncSession, game: F
 
     assert waiting is not None
     assert waiting.kind == "halt"
+
+
+async def test_a_halted_game_says_when_the_halt_lifts(db: AsyncSession, game: Fixture) -> None:
+    """The field that was missing from the answer (OPS-19).
+
+    Two games held behind the *same* free-tier halt reported different things on production:
+    `701c9acd` said `clock until 00:00Z`, because the worker paused it with the halt's own expiry,
+    and `609cdf73` said a bare `halt`, because it was already paused when the allowance ran out and
+    `_say_it_is_held` deliberately leaves `resume_after` in the past so the game resumes the instant
+    the halt lifts. Both correct about the game; only one of any use to a reader watching a board
+    that will not move.
+
+    The expiry is read from the notice `_say_it_is_held` wrote rather than from Redis, because the
+    API has no halt client and should not grow one for a page read.
+    """
+    lifts = dt.datetime.now(dt.UTC) + dt.timedelta(hours=6)
+    state = HaltState(
+        reason="the free-model allowance for the day is spent (429)",
+        source="free-tier",
+        at=dt.datetime.now(dt.UTC),
+        until=lifts,
+    )
+
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)
+    game.game.pause_reason = "rate-limited by Google AI Studio"
+    await _say_it_is_held(db, game.game, state)
+    await db.commit()
+
+    waiting = await what_it_waits_for(db, game.game)
+
+    assert waiting is not None
+    assert waiting.kind == "halt"
+    assert waiting.until == lifts, "the page should be able to say when the board moves again"
+
+
+async def test_a_halt_that_does_not_end_says_nothing_about_when(
+    db: AsyncSession, game: Fixture
+) -> None:
+    """An operator halt has no expiry, and inventing one would be worse than saying nothing."""
+    state = HaltState(
+        reason="stopped by hand",
+        source="operator",
+        at=dt.datetime.now(dt.UTC),
+        until=None,
+    )
+
+    game.game.status = GameStatus.PAUSED
+    game.game.resume_after = dt.datetime.now(dt.UTC) - dt.timedelta(minutes=1)
+    game.game.pause_reason = "rate-limited by Poolside"
+    await _say_it_is_held(db, game.game, state)
+    await db.commit()
+
+    waiting = await what_it_waits_for(db, game.game)
+
+    assert waiting is not None
+    assert waiting.kind == "halt"
+    assert waiting.until is None
 
 
 async def test_a_due_game_with_nothing_in_the_way_is_due(db: AsyncSession, game: Fixture) -> None:

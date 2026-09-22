@@ -1453,6 +1453,20 @@ describe("what a paused game says it is waiting for", () => {
   });
 
   it("says a halt is a halt, not a retry", () => {
+    /* A halt that states its end says it: the free-model allowance is the one that happens, and it
+       ends at `X-RateLimit-Reset` or the next UTC midnight. */
+    const sixHours = new Date(Date.now() + 6 * 3600 * 1000).toISOString();
+    expect(waitText(long_past(), { kind: "halt", until: sixHours, tournament: null })).toBe(
+      "held · back in 6h",
+    );
+    const anHour = new Date(Date.now() + 61 * 60 * 1000).toISOString();
+    expect(waitText(long_past(), { kind: "halt", until: anHour, tournament: null })).toBe(
+      "held · back in 61 min",
+    );
+    /* An end that has passed is not an end — the sweep has simply not reached it yet. */
+    expect(waitText(long_past(), { kind: "halt", until: long_past(), tournament: null })).toBe(
+      "held until the harness is resumed",
+    );
     expect(waitText(long_past(), { kind: "halt", until: null, tournament: null })).toBe(
       "held until the harness is resumed",
     );
