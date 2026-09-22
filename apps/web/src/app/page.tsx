@@ -113,7 +113,6 @@ export default async function Home() {
   const replays = replayDetails.filter((detail): detail is GameDetail => detail !== null);
   const spotlight = firstTurnWorthShowing(candidates, openings);
   const alsoLive = live.slice(1);
-  const recentGames = settled(recent).slice(0, 6);
 
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
@@ -144,8 +143,6 @@ export default async function Home() {
         rows={board.rows}
         gamesCounted={board.games_counted}
       />
-
-      <RecentGames games={recentGames} />
 
       {/* Last, because it is the page's closing argument rather than part of its pitch: by here a
           reader has seen the ranking, the events and the record, and the question left is whether
@@ -180,40 +177,6 @@ function lobbyGames(): Promise<GameSummary[]> {
  */
 function settled(games: GameSummary[]): GameSummary[] {
   return games.filter((game) => game.status !== "running" && game.status !== "paused");
-}
-
-/**
- * The last six games that stopped for good.
- *
- * Full width, three across, below the ranking. It shared a row with the top five contestants when
- * both were lists; the leaderboard is a podium now and wants the whole page, and six cards in one
- * column beside it would have been a very tall, very thin strip of nothing.
- */
-function RecentGames({ games }: { games: GameSummary[] }) {
-  return (
-    <section className="mt-14">
-      <div className="mb-4 flex items-baseline gap-3">
-        <h2 className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
-          Recent games
-        </h2>
-        <span className="h-px flex-1 bg-line-soft" aria-hidden />
-        <span className="tabular font-mono text-meta text-ink-faint">
-          {games.length} game{games.length === 1 ? "" : "s"}
-        </span>
-      </div>
-      {games.length === 0 ? (
-        <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
-          Nothing finished yet.
-        </p>
-      ) : (
-        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {games.map((game) => (
-            <GameCard key={game.id} game={game} />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
 }
 
 function EmptyHero() {
@@ -258,11 +221,12 @@ function Strip({
 }
 
 /**
- * Three finished games, picked at random, each playing itself.
+ * Six finished games, picked at random, each playing itself.
  *
- * Only clean finishes — a checkmate or a resignation. A ply-cap draw or a budget stop is still
- * browsable from "Recent games", but it makes a poor replay: the interesting thing about those
- * records is why they stopped, not how they ended.
+ * Only clean finishes — a checkmate or a resignation. A ply-cap draw or a budget stop makes a poor
+ * replay: the interesting thing about those records is why they stopped, not how they ended. They
+ * are not hidden — `/leaderboard` lists every game the ranking excluded, grouped by reason and
+ * linked — but this row is not where they belong.
  */
 function Replays({ games }: { games: GameDetail[] }) {
   return (

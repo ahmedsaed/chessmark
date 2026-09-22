@@ -1,9 +1,12 @@
 /**
  * The ranking, on the front page: a podium for the top three and the chasing pack beside it.
  *
- * This was five rows in a list sharing a column with "Recent games", which said who was winning
- * without ever saying it was a *contest*. The podium is the whole pitch of the site in one glance
- * — these models are ranked against each other, and three of them are ahead.
+ * This was five rows in a list sharing a column with a strip of recent results, which said who was
+ * winning without ever saying it was a *contest*. The podium is the whole pitch of the site in one
+ * glance — these models are ranked against each other, and three of them are ahead. (That strip is
+ * gone: a random row of replays and a recency-ordered list of the same finished games were two
+ * answers to one question, and the messy endings it uniquely carried are listed on `/leaderboard`,
+ * with their reasons.)
  *
  * **The rating deviation travels with the rating everywhere it is shown.** A visitor comparing a
  * contestant with one game against one with four needs to see that difference in the same glance,

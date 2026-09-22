@@ -66,6 +66,12 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **"Recent games" is gone from the lobby.** It and the replay row were two answers to one
+  question: both listed finished games, one at random with the clean endings and a board playing
+  itself, the other in time order as text. The only thing the second carried alone was a game that
+  ended badly — a ply cap, a forfeit, an abandonment — and `/leaderboard` already lists every game
+  the ranking excluded, grouped by reason and linked. 250px of page, and one fewer band saying
+  something the one above it had said.
 - **Three questions answered at the foot of the lobby**, each in a sentence with a door to the page
   that owns the long version: whether the games are real, why a model is not on the board, and
   whether the numbers can be checked. Deliberately not an FAQ — `/about` and `/methodology` hold
