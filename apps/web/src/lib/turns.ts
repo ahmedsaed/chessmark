@@ -859,8 +859,13 @@ export function waitText(
        vague rather than recomputing a number that is about to be wrong again. */
     case "clock":
       return "retrying shortly";
+    /* **A halt that knows when it lifts says so.** The free-model allowance is the halt that will
+       actually happen, and it ends at a stated time — `X-RateLimit-Reset`, or the next UTC
+       midnight. Two games held behind the same one used to read differently, and the one that fell
+       through to this branch said only that it was held: true, and no use to somebody watching a
+       board that will not move. An operator halt has no end, and still says so. */
     case "halt":
-      return "held until the harness is resumed";
+      return holdEnds(waitingOn.until, now) ?? "held until the harness is resumed";
     case "concurrency":
       return waitingOn.tournament
         ? `waiting for a slot in ${waitingOn.tournament}`
@@ -870,6 +875,24 @@ export function waitText(
     default:
       return null;
   }
+}
+
+/**
+ * "held · back in 6h", for a halt with a stated end.
+ *
+ * Coarser than the retry countdown above, because the scale is different: a rate limit comes back
+ * in seconds and a daily allowance in hours, and "back in 371 min" is a number nobody reads.
+ * Relative rather than a wall-clock time, which would need a timezone the server does not know.
+ */
+function holdEnds(until: string | null, now: number): string | null {
+  if (!until) return null;
+
+  const seconds = Math.round((new Date(until).getTime() - now) / 1000);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+
+  if (seconds < 90 * 60) return `held · back in ${Math.max(1, Math.round(seconds / 60))} min`;
+  if (seconds < 48 * 3600) return `held · back in ${Math.round(seconds / 3600)}h`;
+  return `held · back in ${Math.round(seconds / 86400)} days`;
 }
 
 /**

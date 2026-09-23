@@ -31,7 +31,35 @@ class TestWhatWeSend:
         assert headers == {
             "HTTP-Referer": "https://chessmark.server.ahmedsaed.me",
             "X-OpenRouter-Title": "Chessmark",
+            "X-OpenRouter-Categories": "game",
         }
+
+    def test_the_category_is_what_files_us_in_the_marketplace(self) -> None:
+        """The app *page* needs only the referer; a place in `openrouter.ai/apps` needs this.
+
+        `game` rather than a truer-sounding word: OpenRouter drops names it does not recognise
+        without saying so, so a category invented here would look configured and be absent.
+        """
+        headers = attribution_headers(_settings(app_url="https://chessmark.example"))
+
+        assert headers["X-OpenRouter-Categories"] == "game"
+
+    def test_at_most_two_categories_are_sent(self) -> None:
+        """Their per-request limit. Over it, some of what we sent simply does not count — and
+        which ones survive is not ours to decide, so the first two go and the rest do not."""
+        headers = attribution_headers(
+            _settings(app_url="https://chessmark.example", app_categories="game, roleplay, legal")
+        )
+
+        assert headers["X-OpenRouter-Categories"] == "game,roleplay"
+
+    def test_no_category_is_no_header(self) -> None:
+        """An empty setting must not send an empty list, which is a request saying something."""
+        headers = attribution_headers(
+            _settings(app_url="https://chessmark.example", app_categories="  ")
+        )
+
+        assert "X-OpenRouter-Categories" not in headers
 
     def test_a_trailing_slash_is_dropped(self) -> None:
         """Two spellings of one URL would be two app pages, and the usage would be split."""

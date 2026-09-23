@@ -77,6 +77,23 @@ class Settings(BaseSettings):
     #: at all, which is exactly the case where the default matters least.
     app_title: str = "Chessmark"
 
+    #: Marketplace categories, comma-separated, sent as `X-OpenRouter-Categories`.
+    #:
+    #: The app *page* exists without this — `HTTP-Referer` alone creates it, and ours has been
+    #: public and counting tokens since September. What categories buy is the **marketplace**:
+    #: `openrouter.ai/apps` files its listings under Coding Agents, Productivity, Creative and
+    #: Entertainment, and an app with no category belongs to none of them.
+    #:
+    #: OpenRouter recognises `cli-agent`, `ide-extension`, `cloud-agent`, `programming-app`,
+    #: `native-app-builder`, `creative-writing`, `video-gen`, `image-gen`, `audio-gen`,
+    #: `writing-assistant`, `general-chat`, `personal-agent`, `legal`, `roleplay` and `game`, and
+    #: **silently drops anything else** — so a typo here is invisible rather than an error. Two per
+    #: request, ten per app. The list is not validated against a copy of theirs kept here, which
+    #: would rot the first time they add one.
+    #:
+    #: `game` is the only honest fit for a site where models play chess and people watch.
+    app_categories: str = "game"
+
     #: Ask the provider to stream, so reasoning reaches the page as it is generated (ADR-0035).
     #:
     #: **On, because the failure it risks is no longer silent.** LiteLLM's streaming path reads

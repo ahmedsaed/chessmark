@@ -331,8 +331,9 @@ async def what_it_waits_for(
 ) -> Waiting | None:
     """Why this paused game has not resumed. `None` for a game that is not paused.
 
-    One query at most, and only for a game that is both paused and due — a running game costs
-    nothing, which matters because this is on the game page's critical path.
+    One query at most, and only for a game that is paused — a running game costs nothing, which
+    matters because this is on the game page's critical path. A halted game reads the notice that
+    recorded the halt; a due one reads its pairing. Never both.
     """
     if game.status is not GameStatus.PAUSED:
         return None
@@ -345,7 +346,7 @@ async def what_it_waits_for(
     # Ahead of concurrency, as in the sweep: a halted game never reaches `with_room_to_run`, so
     # reporting a slot it is not competing for would be a fiction.
     if (game.pause_reason or "").startswith(HALT_PREFIX):
-        return Waiting(kind="halt")
+        return Waiting(kind="halt", until=await _halt_lifts_at(session, game))
 
     pairing = await session.scalar(
         sa.select(TournamentGame).where(TournamentGame.game_id == game.id)
@@ -363,6 +364,40 @@ async def what_it_waits_for(
         return Waiting(kind="concurrency", tournament=tournament.name)
 
     return Waiting(kind="due")
+
+
+async def _halt_lifts_at(session: AsyncSession, game: Game) -> dt.datetime | None:
+    """When the halt holding this game says it lifts, or `None` when it does not say.
+
+    **Read from the notice, not from Redis.** The API has no halt client and should not grow one
+    for a page read (see `HALT_PREFIX`), and it does not need one: `_say_it_is_held` already writes
+    the halt's own expiry into the `game_paused` payload it appends, once per halt. The sweep that
+    would have answered this question has already answered it, in the database.
+
+    This is the field that was missing from the answer. Two games held behind the same free-tier
+    halt reported different things — one `clock until 00:00Z`, because `_pause_for_halt` had set
+    its `resume_after` to the halt's expiry, and one bare `halt`, because it was *already* paused
+    when the allowance ran out and `_say_it_is_held` deliberately leaves `resume_after` in the past
+    so the game resumes the moment the halt lifts. Both are correct about the game. Only one of
+    them could tell a reader when the board would move again.
+
+    The latest `game_paused` is the right row precisely because `_say_it_is_held` writes one per
+    halt: while `pause_reason` carries `HALT_PREFIX`, the most recent pause notice is the halt's.
+    """
+    pause = await session.scalar(
+        sa.select(GameEvent)
+        .where(GameEvent.game_id == game.id, GameEvent.type == EventType.GAME_PAUSED)
+        .order_by(GameEvent.seq.desc())
+        .limit(1)
+    )
+    stated = (pause.payload or {}).get("resume_after") if pause else None
+    if not isinstance(stated, str):
+        return None
+
+    try:
+        return dt.datetime.fromisoformat(stated)
+    except ValueError:  # pragma: no cover - a payload written by something that is not us
+        return None
 
 
 async def resume(session: AsyncSession, game: Game) -> AdvanceTurn:
@@ -581,12 +616,6 @@ async def reconcile(
 
     # After the commit, like every other publisher: a subscriber must never be told about a state
     # the database has not accepted.
-    print(
-        "DEBUG fresh:",
-        [(str(g)[:8], [e.seq for e in ev]) for g, ev in fresh],
-        "redis:",
-        redis is not None,
-    )
     for game_id, events in fresh:
         await publish_events(redis, game_id, events)
 
@@ -622,6 +651,9 @@ async def _say_it_is_held(session: AsyncSession, game: Game, state: HaltState) -
     keeps `find_resumable` handing this game back every tick — and that is what resumes it the
     moment the halt lifts. Moving it to `state.until` would read better on the page and would
     strand the game until then even if the credits arrived a minute later.
+
+    The page gets the expiry anyway: it is written into the payload below, and `_halt_lifts_at`
+    reads it there. The column keeps the behaviour, the event carries the fact.
     """
     reason = f"the harness is halted: {state.reason}"
     if game.pause_reason == reason:

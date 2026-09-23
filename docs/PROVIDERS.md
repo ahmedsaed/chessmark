@@ -83,11 +83,20 @@ LiteLLM does not know by name and would otherwise drop:
 and it is also OpenRouter's **sticky routing key** — the provider-side version of what ADR-0015 pins
 by hand. `agents/sessions.py` argues at length for both seats sharing one id.
 
-**App attribution goes in headers, not the body.** `agents/attribution.py` sends `HTTP-Referer` and
-`X-OpenRouter-Title` on every call carrying a real key — an app page, per-model analytics, usage
-counted as ours. `APP_URL` falls back to the first CORS origin, which is the front end's own address
-and therefore right on a development machine without a second variable to keep in step. They ride
-only with a key, so a scripted gateway's recorded request stays byte-identical to its cassette.
+**App attribution goes in headers, not the body.** `agents/attribution.py` sends `HTTP-Referer`,
+`X-OpenRouter-Title` and `X-OpenRouter-Categories` on every call carrying a real key — an app page,
+per-model analytics, usage counted as ours. `APP_URL` falls back to the first CORS origin, which is
+the front end's own address and therefore right on a development machine without a second variable
+to keep in step. They ride only with a key, so a scripted gateway's recorded request stays
+byte-identical to its cassette.
+
+**The referer creates the page; the category files it.** `openrouter.ai/apps?url=<our URL>` has
+existed and been public since the first attributed call — name, favicon, tokens by model. What it
+was missing is a section: `openrouter.ai/apps` is a leaderboard *and* a marketplace grouped by
+Coding Agents, Productivity, Creative and Entertainment, and an app with no category is in none of
+them. `APP_CATEGORIES=game` is the only honest fit here. Two per request, ten per app, and anything
+OpenRouter does not recognise is dropped **without an error** — so a typo is invisible, which is why
+the value is normalised but never validated against a copy of their list kept here.
 
 **Reasoning must be handed back, not just recorded.** Gemini 3 rejects a function call missing its
 `thought_signature`; DeepSeek rejects a thinking-mode history missing `reasoning_content`. OpenRouter
