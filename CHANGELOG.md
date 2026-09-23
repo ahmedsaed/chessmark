@@ -23,6 +23,22 @@ file is only the record of *what shipped when*.
   belongs to none of them. `X-OpenRouter-Categories: game` fixes that. Unrecognised names are
   dropped silently on their side, which is why the value is normalised here and never checked
   against a copy of their list.
+- **Reopening a game tells the players it reopened.** `8692cba1` reached the 300-ply cap, and the
+  model's own `make_move` result said so — `{"game_over": true, "result": "1/2-1/2", "termination":
+  "ply_cap"}`. It was reopened with a raised cap, which clears the ending from the *game record*
+  and left the *transcript* still saying the game had finished. The next turn asked Black to move
+  at ply 302; Black answered four times that the game had already ended "according to the terminal
+  state reported by the system", and the harness forfeited it for not calling a tool. A rated 1-0
+  against the only party in the exchange behaving correctly, and a harness bound recorded as a
+  finding about a player — which is what invariant 11 exists to prevent.
+
+  `resume_game.py` now appends a message to **both** seats naming the ending being set aside, the
+  ply it continues from and the cap it is playing to. An append, never an edit: the earlier "game
+  over" stays where it is, because the transcript is rows whose prefix has to remain byte-identical
+  for prompt caching (invariant 2).
+
+  `--overwritten-verdict` also stops claiming a race. It has only ever checked the record — a
+  harness stop, then a finding — and a deliberate reopen leaves exactly that shape.
 - **A halted game now says when the halt lifts.** Two games held behind the *same* free-tier halt
   read differently on production: one said "retrying shortly", because the worker had paused it
   with the halt's own expiry, and one said only "held until the harness is resumed", because it was

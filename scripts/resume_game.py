@@ -9,7 +9,8 @@ un-ending one would let a bad result be replayed until it improved. The refusal 
 this script existing rather than a hand-edited `UPDATE`.
 
 Appends a `game_resumed` event, so the reason a finished game started moving again is in the same
-log everything else reads (ADR-0008, invariant 7).
+log everything else reads (ADR-0008, invariant 7) — **and tells the players**, which is the part
+that was missing. See `_tell_the_players`.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from redis.asyncio import Redis  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from chessmark.agents.prompts import PROMPT_VERSION  # noqa: E402
+from chessmark.agents.transcript import append_message  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.enums import EventType, GameStatus  # noqa: E402
 from chessmark.db.models import Game, GameEvent, Player, TournamentGame  # noqa: E402
@@ -47,6 +49,56 @@ from chessmark.orchestration import AdvanceTurn, TurnQueue  # noqa: E402
 
 #: The two draws that were applied without a claim before ADR-0020.
 _UNCLAIMED = frozenset({Termination.THREEFOLD_REPETITION, Termination.FIFTY_MOVE_RULE})
+
+
+async def _tell_the_players(
+    session: Any, game: Any, *, previous: Any, ply: int
+) -> int:
+    """Append a message to each seat saying the game is live again. Returns how many were told.
+
+    **A model that is told the game is over and then asked to move is right to refuse.** Game
+    `8692cba1` reached the 300-ply cap, and its own `make_move` result said so —
+    `{"game_over": true, "result": "1/2-1/2", "termination": "ply_cap"}`. It was reopened here with
+    a raised cap, which clears the ending from the *game record* and left the *transcript* saying
+    the game had finished. The next turn asked Black to move at ply 302; Black answered four times
+    that the game had already ended "according to the terminal state reported by the system", and
+    the harness forfeited it for not calling a tool. The result was a rated 1-0 against a model
+    that was doing exactly what its context said to do — a harness bound recorded as a finding
+    about a player, which is the one thing invariant 11 exists to prevent.
+
+    **An append, not an edit.** The earlier "game over" stays exactly where it is: the transcript
+    is rows, the prefix must stay byte-identical for prompt caching, and rewriting history is what
+    invariant 2 forbids. This adds the correction at the end, which is how a player would be told
+    anything else.
+
+    Both seats, not only the one to move. The ending was announced in whichever transcript happened
+    to call `make_move` last, and the opponent's next prompt is an ordinary "it is your move" that
+    would read as normal — but a model that saw the result in its own tool output and a model that
+    did not should not be given different accounts of the same game.
+    """
+    if previous is None:
+        return 0
+
+    detail = game.termination_detail or ""
+    notice = (
+        f"The game was recorded as finished — {previous}"
+        + (f": {detail}" if detail else "")
+        + " — and that ending has been set aside. Disregard any earlier message in this "
+        f"conversation saying the game is over: it is live again from ply {ply}, the ply cap is "
+        f"now {game.max_plies}, and it is played on from the position on the board. "
+        "Call `make_move` when it is your move."
+    )
+
+    players = list(await session.scalars(sa.select(Player).where(Player.game_id == game.id)))
+    for player in players:
+        await append_message(
+            session,
+            player_id=player.id,
+            game_id=game.id,
+            role="user",
+            content=notice,
+        )
+    return len(players)
 
 
 async def _unsettle_pairing(session: Any, game: Any) -> str | None:
@@ -115,12 +167,17 @@ async def _clear_stale_forfeits(session: Any, game: Any, previous: Any) -> int:
 
 
 async def _verdict_was_overwritten(session: Any, game: Any) -> tuple[bool, str]:
-    """Whether this game's stored ending replaced an earlier one written by a race.
+    """Whether this game's stored ending replaced an earlier harness stop.
 
     A game should append one `game_ended` row. Before ADR-0022, two workers could play the same ply
     at once and the loser wrote its verdict over the winner's — one game ended **seven** times.
     Where the first ending was a harness stop and a later one is a forfeit, the rated verdict was
     chosen by scheduling.
+
+    **A race is not the only way to get two endings**, which is why this checks the record rather
+    than the cause. `8692cba1` ended at its ply cap, was reopened here with a raised one, and then
+    forfeited a model that had been told by our own tool that the game was over. The shape in the
+    log is identical — a harness stop, then a finding — and so is the correction.
 
     Reopens on the **first** ending, which is the one the race overwrote. Not the most favourable —
     the first, whatever it says — because a script that picks among real endings is a script that
@@ -321,7 +378,7 @@ async def main() -> int:
                 if not resumable:
                     print(why, file=sys.stderr)
                     return 2
-                print(f"reopening a verdict a race overwrote ({why})")
+                print(f"reopening a verdict a later ending overwrote ({why})")
 
             if not resumable:
                 print(
@@ -374,6 +431,10 @@ async def main() -> int:
                     f"cleared a stale forfeit on {cleared} seat(s) "
                     f"(written by the {previous} this reopens)"
                 )
+
+            told = await _tell_the_players(session, game, previous=previous, ply=referee.ply)
+            if told:
+                print(f"told {told} seat(s) the game is live again")
 
             await append_event(
                 session,
