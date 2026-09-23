@@ -137,7 +137,7 @@ async def _unsettle_pairing(session: Any, game: Any) -> str | None:
     return was
 
 
-async def _clear_stale_forfeits(session: Any, game: Any, previous: Any) -> int:
+async def _clear_stale_forfeits(session: Any, game: Any, previous: Any, *, corrected: bool) -> int:
     """Drop the seat's `forfeited` flag when the ending that wrote it is being reopened.
 
     **The same shape as un-settling the pairing, and it was missed for the same reason.** The flag
@@ -152,11 +152,18 @@ async def _clear_stale_forfeits(session: Any, game: Any, previous: Any) -> int:
     nothing in their play had earned (ADR-0024). The turn loop no longer writes one; this clears
     the ones it already wrote.
 
-    Refuses when the ending being reopened *was* a forfeit. No resumable termination is one today,
-    so this never fires — it is what keeps the function honest if that ever changes, because
-    clearing the flag on a genuine forfeit would erase the finding rather than a mistake.
+    Refuses when the ending being reopened *was* a forfeit, **unless a gate has already found that
+    forfeit to be ours**. Clearing the flag on a genuine forfeit would erase a finding rather than a
+    mistake, so the general rule stands — but `--overwritten-verdict` passes only when the *first*
+    ending was a harness stop, which is evidence the operator cannot fabricate and the same evidence
+    that allowed the reopen at all.
+
+    Without `corrected`, repairing `8692cba1` would have reopened the game and left Liquid carrying
+    a forfeit for it: the flag is published, `bench.service` counts it into the leaderboard's
+    forfeits column, and the game it was written for no longer ends that way. That is the exact
+    failure this function exists for, declined on a technicality.
     """
-    if previous in FORFEIT_TERMINATIONS:
+    if previous in FORFEIT_TERMINATIONS and not corrected:
         return 0
     cleared = await session.execute(
         sa.update(Player)
@@ -425,7 +432,11 @@ async def main() -> int:
             game.termination_detail = None
             game.ended_at = None
 
-            cleared = await _clear_stale_forfeits(session, game, previous)
+            # `corrected` is the gate's own finding: `--overwritten-verdict` passes only when the
+            # first ending was a harness stop, so the forfeit it reopens is one we produced.
+            cleared = await _clear_stale_forfeits(
+                session, game, previous, corrected=bool(args.overwritten_verdict)
+            )
             if cleared:
                 print(
                     f"cleared a stale forfeit on {cleared} seat(s) "

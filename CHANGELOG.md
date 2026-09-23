@@ -39,6 +39,11 @@ file is only the record of *what shipped when*.
 
   `--overwritten-verdict` also stops claiming a race. It has only ever checked the record — a
   harness stop, then a finding — and a deliberate reopen leaves exactly that shape.
+
+  And the seat's `forfeited` flag is cleared when that gate passes. It is refused for a genuine
+  forfeit and always will be, but the gate's own finding is that this one was ours: without it the
+  repair would have reopened the game and left the model carrying a forfeit, in the leaderboard's
+  published column, for an ending that no longer exists.
 - **A halted game now says when the halt lifts.** Two games held behind the *same* free-tier halt
   read differently on production: one said "retrying shortly", because the worker had paused it
   with the halt's own expiry, and one said only "held until the harness is resumed", because it was

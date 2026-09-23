@@ -178,7 +178,7 @@ async def test_reopening_a_harness_stop_clears_the_seats_forfeit(
     await db.flush()
 
     cleared = await _resume._clear_stale_forfeits(
-        db, await _game(db, game), Termination.BUDGET_EXCEEDED
+        db, await _game(db, game), Termination.BUDGET_EXCEEDED, corrected=False
     )
 
     assert cleared == 1
@@ -189,7 +189,10 @@ async def test_reopening_a_harness_stop_clears_the_seats_forfeit(
 async def test_a_seat_that_never_forfeited_is_left_alone(db: AsyncSession, game: Fixture) -> None:
     """Nothing to clear, and it must not report that it cleared something."""
     assert (
-        await _resume._clear_stale_forfeits(db, await _game(db, game), Termination.ABANDONED) == 0
+        await _resume._clear_stale_forfeits(
+            db, await _game(db, game), Termination.ABANDONED, corrected=False
+        )
+        == 0
     )
 
 
@@ -201,12 +204,34 @@ async def test_a_genuine_forfeit_is_never_cleared(db: AsyncSession, game: Fixtur
     await db.flush()
 
     cleared = await _resume._clear_stale_forfeits(
-        db, await _game(db, game), Termination.ILLEGAL_MOVE_FORFEIT
+        db, await _game(db, game), Termination.ILLEGAL_MOVE_FORFEIT, corrected=False
     )
 
     assert cleared == 0
     await db.refresh(game.white)
     assert game.white.forfeited
+
+
+async def test_a_forfeit_a_gate_found_to_be_ours_is_cleared(
+    db: AsyncSession, game: Fixture
+) -> None:
+    """`8692cba1`, and the half of its repair that would otherwise have been declined.
+
+    The reopen is gated on `--overwritten-verdict`, which passes only where the *first* ending was
+    a harness stop — evidence an operator cannot fabricate. Left as it was, the game would have
+    reopened and played on while the seat kept a forfeit for an ending that no longer exists, in
+    the leaderboard's published forfeits column.
+    """
+    game.white.forfeited = True
+    await db.flush()
+
+    cleared = await _resume._clear_stale_forfeits(
+        db, await _game(db, game), Termination.ERROR_FORFEIT, corrected=True
+    )
+
+    assert cleared == 1
+    await db.refresh(game.white)
+    assert not game.white.forfeited
 
 
 # ============================================================ a pairing a resume must un-settle
