@@ -50,7 +50,7 @@ export function SiteHeader() {
           </span>
         </Link>
 
-        <nav aria-label="Primary" className="hidden items-center gap-1 md:flex">
+        <nav aria-label="Primary" className="hidden items-center md:flex lg:gap-1">
           {primaryNav.map((link) => (
             <NavLink key={link.href} link={link} pathname={pathname} />
           ))}
@@ -116,8 +116,10 @@ function NavLink({
     <Link
       href={link.href}
       aria-current={active ? "page" : undefined}
-      className={`font-mono text-data uppercase tracking-[0.14em] transition-colors ${
-        stacked ? "border-b border-line-soft px-5 py-3" : "px-2.5 py-1"
+      className={`font-mono text-data uppercase tracking-[0.1em] transition-colors lg:tracking-[0.14em] ${
+        /* Tighter between `md` and `lg` — padding here, gap and tracking above: a sixth link
+           (Games, UI-12) put the bar 62px over at 768px, with Sign up off the right edge. */
+        stacked ? "border-b border-line-soft px-5 py-3" : "px-1.5 py-1 lg:px-2.5"
       } ${active ? "text-ink" : "text-ink-faint hover:text-ink-dim"}`}
     >
       {link.label}

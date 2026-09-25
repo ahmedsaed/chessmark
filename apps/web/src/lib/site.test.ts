@@ -122,7 +122,10 @@ describe("primaryNav", () => {
     expect(active("/")).toEqual([]);
   });
 
-  it("lights nothing on a game page, which belongs to no section", () => {
-    expect(active("/games/abc")).toEqual([]);
+  /* A game page belonged to no section until the archive gave it one (UI-12): `/games` is where
+     a reader goes back to from a game, so that is what the bar should say they are in. */
+  it("lights Games on the archive and on every game in it", () => {
+    expect(active("/games")).toEqual(["Games"]);
+    expect(active("/games/abc")).toEqual(["Games"]);
   });
 });

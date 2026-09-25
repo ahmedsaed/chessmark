@@ -226,6 +226,27 @@ export function listGames(
 }
 
 /**
+ * One page of the archive (UI-12), or null if the API could not be read.
+ *
+ * **Null, not `[]`.** `getOrEmpty` is right for the lobby, where a missing section is a better
+ * failure than a blank page — and wrong here, where an empty list *is* the answer: "no games match
+ * these filters" said about an API that never replied is a false statement about the archive.
+ *
+ * One cache entry per filter, tagged `games` like every other list, so any game that moves expires
+ * them all. `parseArchive` has already thrown away anything that is not a real filter, which is
+ * what keeps the number of entries bounded by what a person can actually ask for.
+ */
+export async function listArchive(query: URLSearchParams): Promise<GameSummary[] | null> {
+  const path = `/games?${query}`;
+  try {
+    return await get<GameSummary[]>(path, cached([GAMES]));
+  } catch (error) {
+    reportFailure(path, error);
+    return null;
+  }
+}
+
+/**
  * One game.
  *
  * **Cached only when the caller can promise the game has stopped**, which is why `settled` is not

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { StatusChip, formatLabel } from "@/app/tournaments/page";
 import { Schedule } from "@/components/Schedule";
 import { getTournament } from "@/lib/api";
+import { parseArchive, withFilter } from "@/lib/archive";
 import type { Standing, TournamentDetail } from "@/lib/types";
 
 export async function generateMetadata({ params }: PageProps<"/tournaments/[slug]">) {
@@ -105,6 +106,17 @@ export default async function TournamentPage({
         {tournament.field_description} · {tournament.entrant_count} entrants ·{" "}
         {formatLabel(tournament)}
         {tournament.is_ranked ? " · ranked" : " · unranked"}
+        {tournament.stats.played > 0 && (
+          <>
+            {" · "}
+            <Link
+              href={withFilter(parseArchive({}), { event: slug })}
+              className="text-accent underline underline-offset-4"
+            >
+              every game in it →
+            </Link>
+          </>
+        )}
       </p>
 
       <Progress tournament={tournament} />

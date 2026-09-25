@@ -15,6 +15,17 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Added
+
+- **An archive of every game, at `/games`.** Filter by status, result, how the game ended,
+  ranked or not, model against model or a person at the board, a model, a matchup, or an event.
+  Search either seat's name or its model's OpenRouter id. Every filtered view is a link. Aborted
+  games are harness failures rather than results, so they are hidden until asked for. Pages walk
+  by keyset, so a game starting mid-read never repeats a row. `GET /games` gains the same filters
+  and stays two statements whatever it is asked. The name search is backed by a trigram index,
+  which needs `pg_trgm`; the migration creates it. Linked from the header, the lobby, each model
+  and each tournament. (UI-12, [ADR-0048](docs/adr/0048-the-archive-filters-on-the-server-and-pages-by-keyset.md))
+
 ### Fixed
 
 - **Chessmark is filed under a category on OpenRouter.** The app page has existed since the first

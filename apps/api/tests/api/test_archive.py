@@ -270,19 +270,6 @@ async def test_keyset_pages_walk_the_archive_without_gaps(
     assert len(walked) == 5
 
 
-async def test_after_walks_back_and_reads_the_same_way(
-    client: AsyncClient, db: AsyncSession, models: None
-) -> None:
-    ids = [await _game(db, minute=m) for m in range(5)]
-    newest_first = [str(i) for i in reversed(ids)]
-
-    older = await _ids(client, limit=2, before=newest_first[3])
-    newer = await _ids(client, limit=2, after=newest_first[3])
-
-    assert older == newest_first[4:]
-    assert newer == newest_first[1:3], "the two games just above the anchor, newest first"
-
-
 async def test_a_new_game_does_not_shift_the_next_page(
     client: AsyncClient, db: AsyncSession, models: None
 ) -> None:
@@ -354,3 +341,25 @@ async def test_the_archive_costs_a_fixed_number_of_queries(
         f"the archive grew from {one_game} queries at one game to {seven_games} at seven"
     )
     assert paged == one_game, "the cursor must resolve inside the query, not as a lookup first"
+
+
+# ====================================================================== the page's vocabulary
+
+
+def test_the_archive_page_offers_every_termination() -> None:
+    """The web's `ENDINGS` is a hand-written copy of this enum, and a copy drifts.
+
+    It did on the day it was written: six harness endings (`abandoned` among them) were missing,
+    so the filter could not select them and the most common way an aborted game ends had no
+    words. This reads the TypeScript rather than trusting it.
+    """
+    import re
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[4] / "apps" / "web" / "src" / "lib" / "archive.ts"
+    ).read_text()
+    block = re.search(r"export const ENDINGS = \[(.*?)\] as const", source, re.S)
+    assert block is not None, "ENDINGS not found in archive.ts"
+
+    assert re.findall(r'"([a-z_]+)"', block.group(1)) == [t.value for t in Termination]

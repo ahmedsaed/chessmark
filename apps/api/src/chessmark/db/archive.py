@@ -91,14 +91,9 @@ def archive_query(
     search: str | None = None,
     sort: ArchiveSort = ArchiveSort.NEWEST,
     before: uuid.UUID | None = None,
-    after: uuid.UUID | None = None,
     limit: int = 50,
 ) -> sa.Select[tuple[Game]]:
-    """The page of games matching every filter given, in `sort` order.
-
-    `after` walks the other way — the page *newer* than a game — and comes back in ascending order;
-    the caller reverses it. Asking for both is the caller's mistake and `before` wins.
-    """
+    """The page of games matching every filter given, in `sort` order, after `before` if given."""
     column = _SORT_COLUMN[sort]
     query = sa.select(Game)
 
@@ -173,20 +168,15 @@ def archive_query(
             )
         )
 
-    anchor_id = before if before is not None else after
-    if anchor_id is not None:
+    if before is not None:
         anchor = aliased(Game)
         # `(value, id)` rather than the value alone: ply counts and costs tie constantly, and a
         # cursor on the value alone would skip every game sharing the anchor's.
-        mine_key = sa.tuple_(column, Game.id)
-        anchor_key = sa.tuple_(getattr(anchor, column.key), anchor.id)
         query = query.where(
             sa.exists().where(
-                anchor.id == anchor_id,
-                mine_key < anchor_key if before is not None else mine_key > anchor_key,
+                anchor.id == before,
+                sa.tuple_(column, Game.id) < sa.tuple_(getattr(anchor, column.key), anchor.id),
             )
         )
 
-    if before is None and after is not None:
-        return query.order_by(column.asc(), Game.id.asc()).limit(limit)
     return query.order_by(column.desc(), Game.id.desc()).limit(limit)

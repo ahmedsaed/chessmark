@@ -280,6 +280,25 @@ feature, because nothing compared the two lists. Both now read `staticRoutes`, a
 `site.test.ts` fails if a nav link is missing from it. A new static route goes in `staticRoutes`
 first.
 
+## The archive's state is its address
+
+`/games` (UI-12) holds no state of its own: the list is a function of the query string, parsed by
+`lib/archive.ts` and read once per distinct filter from the cache
+([ADR-0048](adr/0048-the-archive-filters-on-the-server-and-pages-by-keyset.md)). Three rules keep
+that true:
+
+* **One address per list.** `parseArchive` drops anything it does not recognise and `archiveHref`
+  leaves defaults out, so the page redirects `/games?q=&sort=newest` to `/games`. The no-JavaScript
+  form submission and the client navigation land on the same URL and the same cache entry.
+* **A filter change goes back to the first page.** A cursor names a game in the list it came from.
+  `withFilter` clears it, because "the page after a game you cannot see" starts somewhere arbitrary.
+* **`ArchiveFilters` is keyed on the address.** Its inputs use `defaultValue`, which React reads once,
+  so without the key a client navigation such as "clear filters" leaves the old choices showing.
+
+On a phone the secondary filters fold behind a checkbox toggle (`peer-checked`, no state), because
+eight stacked controls filled the first screen. The checkbox needs `sr-only!`: `globals.css` themes
+every checkbox with unlayered rules, which outrank a Tailwind utility.
+
 ## Traps
 
 **The site must load without Clerk keys.** `src/proxy.ts` called `clerkMiddleware()`

@@ -17,7 +17,7 @@ test("every public page renders with the shell and no console errors", async ({ 
     if (message.type() === "error") errors.push(message.text());
   });
 
-  for (const path of ["/", "/about", "/leaderboard", "/models", "/play", "/tournaments"]) {
+  for (const path of ["/", "/about", "/leaderboard", "/games", "/models", "/play", "/tournaments"]) {
     const response = await page.goto(path);
     expect(response?.status(), `${path} should not be an error page`).toBeLessThan(400);
 

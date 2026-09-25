@@ -236,7 +236,12 @@ function Replays({ games }: { games: GameDetail[] }) {
           Replays
         </h2>
         <span className="h-px flex-1 bg-line-soft" aria-hidden />
-        <span className="font-mono text-meta text-ink-faint">playing · open one to scrub it</span>
+        <span className="font-mono text-meta text-ink-faint">
+          playing · open one to scrub it ·{" "}
+          <Link href="/games" className="text-accent underline underline-offset-4">
+            every game →
+          </Link>
+        </span>
       </div>
 
       <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">

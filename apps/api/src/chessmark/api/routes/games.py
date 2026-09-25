@@ -180,9 +180,6 @@ async def list_games(
     before: Annotated[
         uuid.UUID | None, Query(description="The page that follows this game in `sort` order")
     ] = None,
-    after: Annotated[
-        uuid.UUID | None, Query(description="The page that precedes this game in `sort` order")
-    ] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[GameSummary]:
     """The archive (UI-12): every game, filtered, searched and paged by keyset.
@@ -204,15 +201,10 @@ async def list_games(
         search=q.strip() if q else None,
         sort=sort,
         before=before,
-        after=after,
         limit=limit,
     )
 
     games = list(await session.scalars(query))
-    if before is None and after is not None:
-        # Walked newer-first from the anchor, so it came back oldest-first; the page reads the same
-        # direction whichever way it was reached.
-        games.reverse()
     if not games:
         return []
 

@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { GameCard } from "@/components/GameCard";
 import { CreditBadge } from "@/components/ModelPicker";
 import { getModel, listGamesByModel } from "@/lib/api";
+import { parseArchive, withFilter } from "@/lib/archive";
 import { modelSlugFromSegments } from "@/lib/models";
 import { siteUrl } from "@/lib/site";
 import type {
@@ -107,7 +108,20 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
         <h1 className="font-serif text-4xl leading-tight text-ink">{model.display_name}</h1>
         <CreditBadge credits={model.credit_cost} />
       </div>
-      <p className="mt-1 font-mono text-xs text-ink-faint">{model.openrouter_id}</p>
+      <p className="mt-1 font-mono text-xs text-ink-faint">
+        {model.openrouter_id}
+        {model.stats.games > 0 && (
+          <>
+            {" · "}
+            <Link
+              href={withFilter(parseArchive({}), { model: model.openrouter_id })}
+              className="text-accent underline underline-offset-4"
+            >
+              every game it played →
+            </Link>
+          </>
+        )}
+      </p>
 
       <Facts model={model} />
 

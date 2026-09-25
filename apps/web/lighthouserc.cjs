@@ -46,6 +46,7 @@ const BASE = "http://localhost:3010";
 const STATIC_ROUTES = [
   "/",
   "/leaderboard",
+  "/games",
   "/models",
   "/tournaments",
   "/about",
