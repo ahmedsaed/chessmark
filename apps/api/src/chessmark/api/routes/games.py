@@ -50,6 +50,7 @@ from chessmark.api.schemas import (
     TurnDetail,
     WaitingOn,
 )
+from chessmark.db.archive import ArchiveKind, ArchiveOutcome, ArchiveSort, archive_query
 from chessmark.db.credits import InsufficientCreditsError, charge, cost_of
 from chessmark.db.enums import EventType, GameStatus, ModerationStatus, PlayerKind
 from chessmark.db.models import (
@@ -67,7 +68,7 @@ from chessmark.db.models import (
 )
 from chessmark.db.quotas import note_game_started
 from chessmark.db.repositories import load_events, rebuild_referee
-from chessmark.game import Colour, GameResult, IllegalMoveError
+from chessmark.game import Colour, GameResult, IllegalMoveError, Termination
 from chessmark.game.pgn import PgnMetadata, to_pgn
 from chessmark.orchestration import human as human_play
 from chessmark.orchestration.match import Seat, create_match, start_match
@@ -159,25 +160,59 @@ async def _reveal_reasoning(session: AsyncSession, game: Game) -> bool:
 @router.get("", response_model=list[GameSummary])
 async def list_games(
     session: SessionDep,
-    status_filter: Annotated[GameStatus | None, Query(alias="status")] = None,
+    status_filter: Annotated[
+        list[GameStatus] | None, Query(alias="status", description="Repeatable; any of them")
+    ] = None,
+    result: ArchiveOutcome | None = None,
+    termination: Termination | None = None,
+    ranked: bool | None = None,
+    kind: ArchiveKind | None = None,
     model: Annotated[str | None, Query(description="OpenRouter id; matches either seat")] = None,
+    opponent: Annotated[
+        str | None, Query(description="OpenRouter id; with `model`, the other seat")
+    ] = None,
+    tournament: Annotated[str | None, Query(description="Tournament slug")] = None,
+    q: Annotated[
+        str | None,
+        Query(max_length=100, description="Either seat's name, or its model's OpenRouter id"),
+    ] = None,
+    sort: ArchiveSort = ArchiveSort.NEWEST,
+    before: Annotated[
+        uuid.UUID | None, Query(description="The page that follows this game in `sort` order")
+    ] = None,
+    after: Annotated[
+        uuid.UUID | None, Query(description="The page that precedes this game in `sort` order")
+    ] = None,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> list[GameSummary]:
-    query = sa.select(Game).order_by(Game.created_at.desc()).limit(limit)
-    if status_filter is not None:
-        query = query.where(Game.status == status_filter)
-    if model is not None:
-        # Either seat, and a model that played itself appears once — `IN` over a subquery rather
-        # than a join, which would return the game twice.
-        query = query.where(
-            Game.id.in_(
-                sa.select(Player.game_id)
-                .join(ModelRegistry, ModelRegistry.id == Player.model_id)
-                .where(ModelRegistry.openrouter_id == model)
-            )
-        )
+    """The archive (UI-12): every game, filtered, searched and paged by keyset.
+
+    With no parameters this is what it always was — the newest games, every status — so the lobby,
+    the model pages and the sitemap read it unchanged. Hiding aborted games is the *page's*
+    default, not this endpoint's: an API that silently dropped a status would make "how many games
+    were aborted" unanswerable from the one place that lists them.
+    """
+    query = archive_query(
+        statuses=status_filter,
+        outcome=result,
+        termination=termination,
+        ranked=ranked,
+        kind=kind,
+        model=model,
+        opponent=opponent,
+        tournament=tournament,
+        search=q.strip() if q else None,
+        sort=sort,
+        before=before,
+        after=after,
+        limit=limit,
+    )
 
     games = list(await session.scalars(query))
+    if before is None and after is not None:
+        # Walked newer-first from the anchor, so it came back oldest-first; the page reads the same
+        # direction whichever way it was reached.
+        games.reverse()
     if not games:
         return []
 
