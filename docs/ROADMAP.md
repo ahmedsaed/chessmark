@@ -1435,7 +1435,10 @@ tournament — and nothing could answer "every draw between these two" without a
       the same address — `e2e/public/archive.spec.ts`
 - [x] At phone width the first game is on the first screen and nothing scrolls sideways —
       `e2e/mobile/layout.spec.ts`
-- [ ] Checked by eye against production's data (`make dev-pull`) — local names are shorter
+- [x] Checked against production's data (`make dev-pull`, 174 games): filters agree with SQL,
+      "Load more" walks all 134 played games with no repeat, and nothing is cut off at 390px. It
+      found the card naming neither opponent (`nemotron-3-ultra-550b-a55b:...` on every row),
+      now fixed
 
 **Covers:** UI-12
 

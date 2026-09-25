@@ -80,7 +80,7 @@ export function ArchiveFilters({
           name="q"
           defaultValue={filter.q ?? ""}
           maxLength={100}
-          placeholder="Search a model or a player…"
+          placeholder="Model or player…"
           aria-label="Search by model or player"
           className="min-w-0 flex-1 border border-line bg-ground px-3 py-2 font-mono text-sm text-ink placeholder:text-ink-faint focus:border-accent-dim focus:outline-none"
         />

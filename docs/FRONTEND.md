@@ -60,6 +60,17 @@ than setting a measure. The empty hero's paragraph is centred in a centred box, 
 stay centred; the footer blurb is one column of a flex row, so it is bounded to leave room for the
 nav beside it.
 
+**A link inside a sentence is underlined, always; a link on its own line may underline on hover.**
+The accent gold is 1.2:1 against the dim prose around it, where a link told apart by colour alone
+needs 3:1 (WCAG 1.4.1). Seven links in running text were gold-on-hover-underline, on `/about`,
+`/methodology`, the sign-in and sign-up forms, the profile and the archive's empty state. Lighthouse
+flagged every one. A link that is its own paragraph ("Clear filters", "How this ranking works →") has
+nothing to be confused with, and keeps the lighter style.
+
+**Dim with a colour token, never with `opacity`.** `ink-faint` is the faintest text that still
+passes AA on every surface. Halving its opacity for a departed model's row in a pool's table took
+it to 2.5:1. To make something recede, step it down a token.
+
 ## The right-hand column is `EventStream`, not `Conversation`
 
 It was named for trash talk and had long since stopped being that: it carries reasoning, output, tool

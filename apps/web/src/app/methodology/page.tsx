@@ -100,7 +100,7 @@ export default async function MethodologyPage() {
           Of {finished} finished games, <strong>{summary.games_counted}</strong> counted and{" "}
           <strong>{summary.games_excluded}</strong> did not. Every exclusion is listed with its
           reason on the{" "}
-          <Link href="/leaderboard" className="text-accent underline-offset-4 hover:underline">
+          <Link href="/leaderboard" className="text-accent underline underline-offset-4">
             leaderboard
           </Link>
           .

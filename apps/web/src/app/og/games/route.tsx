@@ -23,22 +23,90 @@ import { apiQuery, describeArchive, paginate, parseArchive } from "@/lib/archive
 import { Board } from "@/lib/og/board";
 import { featuredFen } from "@/lib/og/featured";
 import { clip } from "@/lib/og/clip";
-import { Card, Standings, Stats, Subtitle, Title, Wordmark } from "@/lib/og/shell";
-import { CARD } from "@/lib/og/theme";
+import { shortName } from "@/lib/og/names";
+import { Card, Stats, Subtitle, Title, Wordmark } from "@/lib/og/shell";
+import { CARD, COLOUR } from "@/lib/og/theme";
 import type { GameSummary } from "@/lib/types";
 
-/** How many games the card lists. Five fit beside the board at a legible size. */
-const SHOWN = 5;
+/** How many games the card lists: four two-line rows fit beside the board at a legible size. */
+const SHOWN = 4;
+
+/** A seat's name, short (`og/names.ts`). A person's name is theirs and is left alone. */
+function seat(game: GameSummary, colour: "white" | "black"): string {
+  return shortName(game.players.find((p) => p.colour === colour)?.display_name ?? "?");
+}
 
 /**
- * A seat, as short as it can be said. Two display names share one row and the row is clipped at
- * thirty characters, so "Google: Gemini 2.5 Flash" lost the part that says which model it is. A
- * model's id without its vendor keeps it; a person has only their name.
+ * The games, each on two lines — White above Black — with its result.
+ *
+ * Not `Standings`, which gives a row one line and thirty characters. Two model names do not fit
+ * in thirty characters: on production's data every row came out as
+ * `nemotron-3-ultra-550b-a55b:...`, so a card about a matchup could not say who either side was.
+ * One name per line fits the longest short name in the pool with room to spare.
  */
-function seat(game: GameSummary, colour: "white" | "black"): string {
-  const player = game.players.find((p) => p.colour === colour);
-  if (!player) return "?";
-  return player.model ? (player.model.split("/").at(-1) ?? player.model) : player.display_name;
+function GameRows({ games }: { games: GameSummary[] }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", marginTop: 24, gap: 14 }}>
+      {games.map((game, index) => {
+        const newest = index === 0;
+        return (
+          <div key={game.id} style={{ display: "flex", alignItems: "center", gap: 18 }}>
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                flexGrow: 1,
+                flexBasis: 0,
+                minWidth: 0,
+                fontSize: 23,
+                lineHeight: 1.25,
+                color: game.status === "aborted" ? COLOUR.inkDim : COLOUR.ink,
+              }}
+            >
+              {(["white", "black"] as const).map((colour) => (
+                <div
+                  key={colour}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                  }}
+                >
+                  {/* The page's own colour marks, so the card says which line was White. */}
+                  <div
+                    style={{
+                      display: "flex",
+                      width: 11,
+                      height: 11,
+                      flexShrink: 0,
+                      border: `1px solid ${COLOUR.inkFaint}`,
+                      background: colour === "white" ? COLOUR.ink : "transparent",
+                    }}
+                  />
+                  {clip(seat(game, colour), 34)}
+                </div>
+              ))}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                width: 104,
+                flexShrink: 0,
+                justifyContent: "flex-end",
+                whiteSpace: "nowrap",
+                fontSize: 25,
+                color: newest ? COLOUR.accent : COLOUR.inkDim,
+              }}
+            >
+              {standing(game)}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function standing(game: GameSummary): string {
@@ -60,7 +128,7 @@ export async function GET(request: Request) {
     listTournaments(),
   ]);
   const { headline, qualifiers } = describeArchive(filter, {
-    models: Object.fromEntries(models.map((m) => [m.openrouter_id, m.display_name])),
+    models: Object.fromEntries(models.map((m) => [m.openrouter_id, shortName(m.display_name)])),
     events: Object.fromEntries(tournaments.map((t) => [t.slug, t.name])),
   });
 
@@ -71,7 +139,8 @@ export async function GET(request: Request) {
   return new ImageResponse(
     <Card board={<Board fen={fen} square={54} />}>
       <Wordmark section="Games" />
-      <Title>{clip(headline, 40)}</Title>
+      {/* Smaller when it is long: a matchup is two names and the whole point of its card. */}
+      <Title size={headline.length > 30 ? 40 : 52}>{headline}</Title>
       {qualifiers.length > 0 && <Subtitle>{clip(qualifiers.join(" · "), 70)}</Subtitle>}
 
       {games.length === 0 && (
@@ -80,16 +149,7 @@ export async function GET(request: Request) {
         <Subtitle>{page === null ? "The archive could not be read" : "No games match"}</Subtitle>
       )}
 
-      {games.length > 0 && (
-        <Standings
-          rows={games.slice(0, SHOWN).map((game, index) => ({
-            place: index + 1,
-            name: `${seat(game, "white")} – ${seat(game, "black")}`,
-            figure: standing(game),
-            muted: game.status === "aborted",
-          }))}
-        />
-      )}
+      {games.length > 0 && <GameRows games={games.slice(0, SHOWN)} />}
 
       {games.length > 0 && (
         <Stats

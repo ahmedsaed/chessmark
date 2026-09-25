@@ -46,7 +46,7 @@ export async function generateMetadata({ searchParams }: PageProps<"/games">): P
     ? `${headline}${qualifiers.length ? ` · ${qualifiers.join(" · ")}` : ""} — games`
     : "Games";
   const description = filtered
-    ? `${headline}${qualifiers.length ? ` (${qualifiers.join(", ")})` : ""}: every matching game Chessmark has played, newest first, each with its full transcript.`
+    ? `${headline}${qualifiers.length ? ` (${qualifiers.join(", ")})` : ""}: every matching game Chessmark has played, each with its full transcript.`
     : DEFAULT_DESCRIPTION;
   // Without the cursor: every page of one list is that list.
   const path = withFilter(filter, {});
@@ -114,7 +114,7 @@ export default async function GamesPage({ searchParams }: PageProps<"/games">) {
       />
       <h1 className="font-serif text-4xl leading-tight text-ink">Games</h1>
       <p className="mt-2 text-sm leading-relaxed text-ink-dim">
-        Every game played here, newest first. Aborted games — a provider that could not be reached,
+        Every game played here. Aborted games — a provider that could not be reached,
         a budget that ran out — are not results and are hidden unless you ask for them.
       </p>
 
@@ -153,7 +153,7 @@ export default async function GamesPage({ searchParams }: PageProps<"/games">) {
           {isFiltered(filter) ? (
             <>
               No games match these filters.{" "}
-              <Link href="/games" className="text-accent underline-offset-4 hover:underline">
+              <Link href="/games" className="text-accent underline underline-offset-4">
                 Clear them
               </Link>
               .

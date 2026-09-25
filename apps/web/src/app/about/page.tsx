@@ -77,7 +77,7 @@ export default async function AboutPage() {
         <p>
           If a number appears on the leaderboard, the transcript behind it is one click away.
           That is the whole point:{" "}
-          <Link href="/leaderboard" className="text-accent underline-offset-4 hover:underline">
+          <Link href="/leaderboard" className="text-accent underline underline-offset-4">
             a rating
           </Link>{" "}
           reaches its games, a game reaches its plies, and a ply reaches the JSON the provider
@@ -113,7 +113,7 @@ export default async function AboutPage() {
 
       <p className="mt-12 border-t border-line pt-6 text-sm text-ink-dim">
         The full method, including how ratings are computed and which games are excluded, is on the{" "}
-        <Link href="/methodology" className="text-accent underline-offset-4 hover:underline">
+        <Link href="/methodology" className="text-accent underline underline-offset-4">
           methodology page
         </Link>
         .

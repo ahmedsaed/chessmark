@@ -475,7 +475,9 @@ function Fact({
     <div className="bg-surface px-3 py-2.5">
       <dt className="font-mono text-label uppercase tracking-[0.14em] text-ink-faint">{label}</dt>
       <dd className={`tabular mt-1 font-mono text-sm ${colour}`}>{value}</dd>
-      {note && <p className="tabular mt-0.5 font-mono text-label text-ink-faint">{note}</p>}
+      {/* A second `<dd>`, not a `<p>`: a `<dl>` group may hold only terms and descriptions, and
+          the `<p>` made the list invalid for a screen reader, which announces a `<dl>` as pairs. */}
+      {note && <dd className="tabular mt-0.5 font-mono text-label text-ink-faint">{note}</dd>}
     </div>
   );
 }

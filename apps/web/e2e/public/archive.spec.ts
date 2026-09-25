@@ -84,6 +84,11 @@ test("load more appends the next page below, without leaving the page", async ({
   /* Skipped loudly, never silently green: a page is fifty games and the suite may seed fewer. */
   test.skip((await button.count()) === 0, "fewer than one page of games — nothing to load");
 
+  /* Hydrated first. A click that lands before React does follows the link — the no-JavaScript
+     path, to a fresh page of fifty — which is the fallback working, not the button; on a hundred
+     and thirty-four games it lost the race every time. */
+  await page.waitForLoadState("networkidle");
+
   const hrefs = () =>
     page.locator("ol > li a").evaluateAll((a) => a.map((x) => x.getAttribute("href")));
   const first = await hrefs();
