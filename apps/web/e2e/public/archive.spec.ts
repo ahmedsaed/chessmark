@@ -130,3 +130,51 @@ test("the header still fits at the narrowest width that shows its links", async 
   );
   expect(Math.max(...rights), "every header control should be on screen").toBeLessThanOrEqual(edge);
 });
+
+test("a filtered view is described as itself, to people and to crawlers", async ({ page }) => {
+  /* The point of keeping the filters in the address is sharing it, and a link that unfurled as
+     plain "Games" would throw that away. Asserted on the tags an unfurler reads, not on the page. */
+  await page.goto("/games?q=gemini&result=black");
+
+  const meta = (selector: string) => page.locator(selector).getAttribute("content");
+  expect(await meta('meta[property="og:title"]')).toContain("“gemini”");
+  expect(await meta('meta[property="og:title"]')).toContain("Black wins");
+  expect(await meta('meta[name="description"]')).toContain("“gemini”");
+  expect(await meta('meta[property="og:image"]')).toMatch(/\/og\/games\?q=gemini&result=black$/);
+  expect(await page.locator('link[rel="canonical"]').getAttribute("href")).toMatch(
+    /\/games\?q=gemini&result=black$/,
+  );
+  // A search result is not a page to index; the games it links to still are.
+  expect(await meta('meta[name="robots"]')).toBe("noindex, follow");
+
+  // The archive itself, by contrast, is indexed and plainly named.
+  await page.goto("/games");
+  await expect(page.locator('meta[name="robots"]')).toHaveCount(0);
+  expect(await meta('meta[property="og:image"]')).toMatch(/\/og\/games$/);
+});
+
+test("a filtered card draws that filter's games, not the archive's", async ({ request }) => {
+  const { result } = fixtures();
+  const other = result === "1-0" ? "black" : "white";
+  /* Two different filters must produce two different pictures. A card that ignored its query
+     would be byte-identical across them and still pass every size and type check. */
+  const [mine, theirs] = await Promise.all([
+    request.get(`/og/games?result=${result === "1-0" ? "white" : "black"}`),
+    request.get(`/og/games?result=${other}&q=zz-no-such-player-zz`),
+  ]);
+  expect(mine.status()).toBe(200);
+  expect(theirs.status()).toBe(200);
+  expect(Buffer.compare(await mine.body(), await theirs.body())).not.toBe(0);
+});
+
+test("the archive's search is described for browsers", async ({ page, request }) => {
+  await page.goto("/games");
+  const href = await page
+    .locator('head link[rel="search"][type="application/opensearchdescription+xml"]')
+    .getAttribute("href");
+  expect(href).toBe("/opensearch.xml");
+
+  const response = await request.get(href!);
+  expect(response.headers()["content-type"]).toContain("application/opensearchdescription+xml");
+  expect(await response.text()).toMatch(/template="[^"]+\/games\?q=\{searchTerms\}"/);
+});

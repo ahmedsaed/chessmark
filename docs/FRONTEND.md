@@ -295,6 +295,17 @@ that true:
 * **`ArchiveFilters` is keyed on the address.** Its inputs use `defaultValue`, which React reads once,
   so without the key a client navigation such as "clear filters" leaves the old choices showing.
 
+**A filtered view describes itself.** `generateMetadata` and the card at `/og/games` both word the
+filter with `describeArchive`, so the title, description and image of a shared link cannot
+disagree. The card is a Route Handler rather than a colocated `opengraph-image`, because the
+colocated file never receives `searchParams`. `isIndexable` keeps everything except the archive and
+its one-model and one-event views out of the index. The filter combinations run to tens of
+thousands of near-duplicates.
+
+"Load more" is the page's one browser-side read: `ArchiveList` fetches the next page from the API
+and appends it (ADR-0048). It is an `<a>` to `?before=` first, so it still works without
+JavaScript.
+
 On a phone the secondary filters fold behind a checkbox toggle (`peer-checked`, no state), because
 eight stacked controls filled the first screen. The checkbox needs `sr-only!`: `globals.css` themes
 every checkbox with unlayered rules, which outrank a Tailwind utility.

@@ -8,6 +8,8 @@ import {
   isFiltered,
   paginate,
   append,
+  describeArchive,
+  isIndexable,
   parseArchive,
   withFilter,
 } from "@/lib/archive";
@@ -149,5 +151,72 @@ describe("append", () => {
   it("adds the next page below, without a game that is already shown", () => {
     const [a, b, c] = rows(3);
     expect(append([a, b], [b, c])).toEqual([a, b, c]);
+  });
+});
+
+describe("describeArchive", () => {
+  const names = {
+    models: { "acme/alpha": "Alpha One", "acme/beta": "Beta Two" },
+    events: { "spring-open": "Spring Open" },
+  };
+
+  it("calls the unfiltered archive what it is", () => {
+    expect(describeArchive(parseArchive({}), names)).toEqual({
+      headline: "Every game",
+      qualifiers: [],
+      filtered: false,
+    });
+  });
+
+  it("heads with the most specific thing the link names, by its display name", () => {
+    expect(
+      describeArchive(parseArchive({ model: "acme/alpha", vs: "acme/beta" }), names).headline,
+    ).toBe("Alpha One vs Beta Two");
+    expect(describeArchive(parseArchive({ event: "spring-open" }), names).headline).toBe(
+      "Spring Open",
+    );
+    // An id nobody has a name for is still said, as itself.
+    expect(describeArchive(parseArchive({ model: "other/gamma" }), names).headline).toBe(
+      "other/gamma",
+    );
+  });
+
+  it("puts a search first and keeps what else narrows it as qualifiers", () => {
+    const { headline, qualifiers } = describeArchive(
+      parseArchive({
+        q: "flash",
+        model: "acme/alpha",
+        event: "spring-open",
+        result: "draw",
+        sort: "longest",
+      }),
+      names,
+    );
+    expect(headline).toBe("“flash”");
+    expect(qualifiers).toEqual(["Alpha One", "Spring Open", "draws", "longest first"]);
+  });
+
+  it("does not repeat the event it heads with", () => {
+    const { qualifiers } = describeArchive(
+      parseArchive({ event: "spring-open", ranked: "ranked" }),
+      names,
+    );
+    expect(qualifiers).toEqual(["ranked"]);
+  });
+});
+
+describe("isIndexable", () => {
+  it("indexes the archive, a model's games and an event's games", () => {
+    expect(isIndexable(parseArchive({}))).toBe(true);
+    expect(isIndexable(parseArchive({ model: "acme/alpha" }))).toBe(true);
+    expect(isIndexable(parseArchive({ event: "spring-open" }))).toBe(true);
+  });
+
+  it("keeps searches, pages and every other combination out of the index", () => {
+    expect(isIndexable(parseArchive({ q: "flash" }))).toBe(false);
+    expect(isIndexable(parseArchive({ before: A }))).toBe(false);
+    expect(isIndexable(parseArchive({ result: "draw" }))).toBe(false);
+    expect(isIndexable(parseArchive({ model: "acme/alpha", vs: "acme/beta" }))).toBe(false);
+    expect(isIndexable(parseArchive({ model: "acme/alpha", sort: "longest" }))).toBe(false);
   });
 });

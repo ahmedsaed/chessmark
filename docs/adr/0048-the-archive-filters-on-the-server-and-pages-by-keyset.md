@@ -43,10 +43,18 @@ page is; nothing is fetched from the browser.
   failure, not a result (invariant 11), and they were nearly half the local archive. The API keeps
   returning every status when asked for none, so "how many were aborted" stays answerable.
 
-**Paging is keyset, and the cursor is a game id.** `before=<id>` is "the page after this game in
-the current sort", resolved inside the same `SELECT` against the anchor's own `(sort value, id)`.
-`after=<id>` walks the other way. The page asks for `PAGE_SIZE + 1` rows and uses the extra one to
-learn whether a next page exists.
+**Paging is keyset, the cursor is a game id, and the reader sees it as "Load more".**
+`before=<id>` is "the games after this one in the current sort", resolved inside the same `SELECT`
+against the anchor's own `(sort value, id)`. Every request asks for `PAGE_SIZE + 1` rows and uses the
+extra one to learn whether more exist. The first page is the server's. "Load more" fetches the next
+page from the API in the browser and appends it below the rows already shown, without changing the
+address. Without JavaScript the same button is a link to `?before=<last id>`, which the server
+renders as a page of its own.
+
+This page is the one exception to "nothing is fetched from the browser" above. Reading the next
+page through the server would add a Next request and a cache entry per page, for a read the API
+already answers in two statements. A reload returns to the first page, which is what reloading a
+list of results is expected to do.
 
 **Search is backed by a trigram index.** `ix_players_display_name_trgm`, a GIN index with
 `gin_trgm_ops` on `players.display_name`, requires `pg_trgm`. That extension ships in contrib with
@@ -57,6 +65,10 @@ a B-tree, so without the index every search is a sequential scan of two rows per
 
 * **Filter in the browser, as `/models` does.** Rejected for the three reasons above. It is right for
   a bounded list and wrong for one that grows every hour.
+* **Older and newer links, one page at a time.** This was built first and dropped on the owner's
+  review. Each click replaced the list and threw the reader back to the top, so the next fifty
+  games arrived above where they had been reading. Walking backwards also needed a second
+  cursor (`after`), which went with it.
 * **An `OFFSET` with numbered pages.** Numbered pages need a `COUNT(*)` for every filter. The
   offset itself shifts under the reader: a game that starts between two page loads pushes a row
   from page one onto page two, and the reader sees it twice. The archive is written to while it is

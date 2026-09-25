@@ -283,3 +283,92 @@ export function isCanonical(params: Params): boolean {
   expected.sort();
   return arrived.toString() === expected.toString();
 }
+
+/** Display names for the ids a filter carries, where they are known. */
+export interface ArchiveNames {
+  models?: Record<string, string>;
+  events?: Record<string, string>;
+}
+
+const RESULT_LABEL: Record<Result, string> = {
+  white: "White wins",
+  black: "Black wins",
+  draw: "draws",
+};
+const PLAYERS_LABEL: Record<Players, string> = {
+  models: "model vs model",
+  humans: "against people",
+};
+const SHOW_LABEL: Record<Show, string | null> = {
+  played: null,
+  live: "live",
+  finished: "finished",
+  aborted: "aborted",
+  all: "every status",
+};
+const SORT_LABEL: Record<Sort, string | null> = {
+  newest: null,
+  longest: "longest first",
+  costliest: "costliest first",
+};
+
+/**
+ * A filter in words: what the list is *of*, and what narrows it.
+ *
+ * One function so the page's title, its description and its social card cannot describe the same
+ * list three ways. The headline is the most specific thing the filter names — a search, a matchup,
+ * a model, an event — because that is what somebody sharing the link meant; the rest are
+ * qualifiers.
+ */
+export function describeArchive(
+  filter: ArchiveFilter,
+  names: ArchiveNames = {},
+): { headline: string; qualifiers: string[]; filtered: boolean } {
+  const model = (id: string) => names.models?.[id] ?? id;
+  const event = filter.event ? (names.events?.[filter.event] ?? filter.event) : undefined;
+  const one = filter.model ?? filter.vs;
+
+  let headline = "Every game";
+  let eventInHeadline = false;
+  if (filter.q) headline = `“${filter.q}”`;
+  else if (filter.model && filter.vs) headline = `${model(filter.model)} vs ${model(filter.vs)}`;
+  else if (one) headline = model(one);
+  else if (event) {
+    headline = event;
+    eventInHeadline = true;
+  }
+
+  const qualifiers = [
+    // A search headline still owes the reader the matchup it was narrowed to.
+    filter.q && filter.model && filter.vs ? `${model(filter.model)} vs ${model(filter.vs)}` : null,
+    filter.q && !(filter.model && filter.vs) && one ? model(one) : null,
+    event && !eventInHeadline ? event : null,
+    filter.result ? RESULT_LABEL[filter.result] : null,
+    filter.ending ? endingLabel(filter.ending) : null,
+    filter.players ? PLAYERS_LABEL[filter.players] : null,
+    filter.ranked ?? null,
+    SHOW_LABEL[filter.show],
+    SORT_LABEL[filter.sort],
+  ].filter((part): part is string => part !== null && part !== undefined);
+
+  return { headline, qualifiers, filtered: isFiltered(filter) };
+}
+
+/**
+ * Whether a search engine should index this view of the archive.
+ *
+ * **Only the archive itself and its one-name views** — a model's games, an event's games — which
+ * are stable pages somebody would search for. Every other combination is a filter over the same
+ * rows, and there are tens of thousands of them: indexed, they are a crawl trap of near-duplicates
+ * that dilutes the pages that matter. A search result is never indexed, which is what search
+ * engines themselves ask of site search. `noindex, follow` rather than a bare `noindex`, so the
+ * games those pages link to are still found.
+ */
+export function isIndexable(filter: ArchiveFilter): boolean {
+  if (filter.before || filter.q) return false;
+  const narrowed = withFilter(filter, {});
+  if (narrowed === "/games") return true;
+  const only = new URLSearchParams(narrowed.split("?")[1]);
+  const keys = [...only.keys()];
+  return keys.length === 1 && (keys[0] === "model" || keys[0] === "event");
+}

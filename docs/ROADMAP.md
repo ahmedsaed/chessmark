@@ -1426,6 +1426,10 @@ tournament — and nothing could answer "every draw between these two" without a
 - [x] The endpoint costs a fixed number of statements with every filter on, at one game and at
       seven, and a paged read costs the same as the first page
 - [x] A keyset walk under a sort where every game ties returns the whole archive once
+- [x] "Load more" appends below without moving the reader or the address, and is a plain link
+      without JavaScript
+- [x] A filtered link carries its own title, description, canonical, `noindex` and a card drawn
+      from its own games — two filters produce two different cards
 - [x] The name search uses `ix_players_display_name_trgm`, asserted from the plan
 - [x] A filter lands in the URL, a reload reproduces it, and a no-JavaScript submission redirects to
       the same address — `e2e/public/archive.spec.ts`

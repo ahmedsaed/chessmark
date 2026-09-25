@@ -8,20 +8,73 @@ import { apiUrl, listArchive, listModels, listTournaments } from "@/lib/api";
 import {
   apiQuery,
   archiveHref,
+  describeArchive,
+  isIndexable,
+  type ArchiveNames,
   isCanonical,
   isFiltered,
   paginate,
   parseArchive,
   withFilter,
 } from "@/lib/archive";
-import { pageMetadata } from "@/lib/site";
+import { pageMetadata, siteName, siteUrl } from "@/lib/site";
 
-export const metadata: Metadata = pageMetadata({
-  title: "Games",
-  description:
-    "Every game Chessmark has played — filter by result, ending, model or event, and open any of them.",
-  path: "/games",
-});
+const DEFAULT_DESCRIPTION =
+  "Every game Chessmark has played — filter by result, ending, model or event, search a model or a player, and open any of them.";
+
+/**
+ * The title, description, canonical and social card **of this filter**, not of the archive.
+ *
+ * A shared filtered link is the point of keeping the filters in the URL, and one that unfurled as
+ * plain "Games" would throw that away: the card, the title and the description all say what the
+ * list is of, from the same words the page uses (`describeArchive`). The card is a Route Handler at
+ * `/og/games` taking the same query, because a colocated `opengraph-image` cannot see
+ * `searchParams`.
+ *
+ * The two catalogue reads are the page's own and are memoised within the request, so naming the
+ * model rather than printing its id costs nothing.
+ */
+export async function generateMetadata({ searchParams }: PageProps<"/games">): Promise<Metadata> {
+  const filter = parseArchive(await searchParams);
+  const [models, tournaments] = await Promise.all([listModels(), listTournaments()]);
+  const { headline, qualifiers, filtered } = describeArchive(
+    filter,
+    namesFrom(models, tournaments),
+  );
+
+  const title = filtered
+    ? `${headline}${qualifiers.length ? ` · ${qualifiers.join(" · ")}` : ""} — games`
+    : "Games";
+  const description = filtered
+    ? `${headline}${qualifiers.length ? ` (${qualifiers.join(", ")})` : ""}: every matching game Chessmark has played, newest first, each with its full transcript.`
+    : DEFAULT_DESCRIPTION;
+  // Without the cursor: every page of one list is that list.
+  const path = withFilter(filter, {});
+  const query = path.split("?")[1];
+  const card = `${siteUrl}/og/games${query ? `?${query}` : ""}`;
+
+  return {
+    ...pageMetadata({ title, description, path, hasOwnImage: true }),
+    robots: isIndexable(filter) ? undefined : { index: false, follow: true },
+    openGraph: {
+      title: `${title} — ${siteName}`,
+      description,
+      url: `${siteUrl}${path}`,
+      images: [{ url: card, width: 1200, height: 630, alt: `${title} on Chessmark` }],
+    },
+    twitter: { title: `${title} — ${siteName}`, description, images: [card] },
+  };
+}
+
+function namesFrom(
+  models: { openrouter_id: string; display_name: string }[],
+  tournaments: { slug: string; name: string }[],
+): ArchiveNames {
+  return {
+    models: Object.fromEntries(models.map((m) => [m.openrouter_id, m.display_name])),
+    events: Object.fromEntries(tournaments.map((t) => [t.slug, t.name])),
+  };
+}
 
 /**
  * The archive (UI-12).
@@ -51,6 +104,14 @@ export default async function GamesPage({ searchParams }: PageProps<"/games">) {
 
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
+      {/* React hoists this into `<head>`. On this page rather than in the layout because it
+          describes this page's search, and the layout is every page's. */}
+      <link
+        rel="search"
+        type="application/opensearchdescription+xml"
+        title={`Search ${siteName} games`}
+        href="/opensearch.xml"
+      />
       <h1 className="font-serif text-4xl leading-tight text-ink">Games</h1>
       <p className="mt-2 text-sm leading-relaxed text-ink-dim">
         Every game played here, newest first. Aborted games — a provider that could not be reached,

@@ -203,6 +203,8 @@ test("every public page has a social card", async ({ page }) => {
     "/tournaments",
     "/about",
     "/methodology",
+    "/games",
+    "/games?result=draw",
     `/games/${replayGame}`,
     ...(tournament ? [`/tournaments/${tournament}`] : []),
   ];
@@ -234,6 +236,8 @@ test("every social card renders", async ({ page, request }) => {
     "/leaderboard",
     "/models",
     "/tournaments",
+    "/games",
+    "/games?result=draw",
     `/games/${replayGame}`,
     ...(tournament ? [`/tournaments/${tournament}`] : []),
   ];
