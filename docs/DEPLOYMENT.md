@@ -133,6 +133,14 @@ Three things about it are deliberate:
 
 **It drops the local database.** That is what it is for, and it is worth knowing before it happens.
 
+**And `make test-e2e` writes into whatever database is local.** Its global setup seeds a scripted
+game and a tournament and starts a turn worker, so running it after a pull mixes test games into
+the copy you pulled to look at. Its fixtures file also names the *seeded* ids, which are not in
+production's data. To run a read-only spec against the pulled data, use a config that spreads
+`playwright.config.ts` with `globalSetup` and `globalTeardown` unset, and point
+`e2e/.fixtures.json` at real ids, then put it back. Lighthouse reads the same file for its game and
+tournament pages.
+
 ## The catalogue keeps itself current
 
 `refresh_catalogue.py` registers what OpenRouter offers and then sweeps each model's endpoints —
