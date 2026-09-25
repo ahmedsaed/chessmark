@@ -174,7 +174,10 @@ const PAIRING_HINT: Record<TournamentPairing["state"], string> = {
 
 function StateDot({ state }: { state: TournamentPairing["state"] }) {
   return (
+    /* `role="img"` is what makes the label legal: an `<i>` is a generic element, and ARIA forbids
+       naming one, so the label was dropped rather than read. */
     <i
+      role="img"
       aria-label={`${state} — ${PAIRING_HINT[state]}`}
       title={`${state} — ${PAIRING_HINT[state]}`}
       className={`block h-1.5 w-1.5 flex-none ${PAIRING_TONE[state]}`}

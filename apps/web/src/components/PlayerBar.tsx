@@ -95,6 +95,9 @@ export function PlayerBar({
                already making, and the only thing this change was ever meant to alter is where the
                huddle sits on a phone. */
             className="order-6 flex min-w-0 flex-wrap items-center sm:order-3 sm:flex-none"
+            /* `role="img"`: a label on a bare `<span>` is prohibited and dropped, so "captured: 3
+               pieces" was never read. The pieces inside are decorative; this is one picture. */
+            role="img"
             aria-label={`captured: ${taken.length} piece${taken.length === 1 ? "" : "s"}`}
           >
             {taken.map((piece, index) => (

@@ -15,7 +15,29 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Added
+
+- **An archive of every game, at `/games`.** Filter by status, result, how the game ended,
+  ranked or not, model against model or a person at the board, a model, a matchup, or an event.
+  Search either seat's name or its model's OpenRouter id. Every filtered view is a link. Aborted
+  games are harness failures rather than results, so they are hidden until asked for. "Load more"
+  appends the next page in place, walked by keyset so a game starting mid-read never repeats a
+  row. A filtered link unfurls as that filter, with its own title, description and a card of
+  the games it matches. Only the archive and its one-model and one-event views are indexed, and
+  the search is described for browsers at `/opensearch.xml`. `GET /games` gains the same filters
+  and stays two statements whatever it is asked. The name search is backed by a trigram index,
+  which needs `pg_trgm`; the migration creates it. Linked from the header, the lobby, each model
+  and each tournament. (UI-12, [ADR-0048](docs/adr/0048-the-archive-filters-on-the-server-and-pages-by-keyset.md))
+
 ### Fixed
+
+- **Accessibility: every public page now scores 100 against production's data.** Links inside
+  sentences are underlined instead of being marked by colour alone, which was 1.2:1 against the
+  prose around them. A stat's note is a `<dd>`, not a `<p>` inside a `<dl>` (tournament, model and
+  profile pages). A pairing's state dot and a nameplate's captured pieces have `role="img"`, so their labels are read instead of dropped.
+  A departed model's row and a muted credit badge recede by colour token instead of by
+  `opacity`, which had taken faint text to 2.5:1. "Left the field" is now announced rather than
+  `aria-hidden`. `e2e/public/accessibility.spec.ts` asserts all four rules on every public page.
 
 - **Chessmark is filed under a category on OpenRouter.** The app page has existed since the first
   attributed call — `HTTP-Referer` alone creates it — but `openrouter.ai/apps` is a marketplace

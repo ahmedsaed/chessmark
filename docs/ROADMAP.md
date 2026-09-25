@@ -44,6 +44,7 @@ flowchart LR
     P21 --> P22[22 Accountability]
     P22 --> P17
     P7 --> P23[23 Browser suite]
+    P18 --> P24[24 Game archive]
     P23 --> P17
     P11 -.-> P17
     P13 --> P17
@@ -1403,6 +1404,43 @@ nothing in `reasoning`, so publishing one and withholding the other would defeat
 **Why it gates launch:** every UI claim in six phases rests on someone having looked at it once.
 The board, the conversation fold, and the reasoning gate have all been rewritten repeatedly in this
 project, and only the last rewrite was ever checked.
+
+---
+
+## Phase 24 — The game archive
+
+**Goal:** every game is reachable, and any slice of them is a link.
+
+Games were listed only in slices — six on the lobby, a model's on its page, an event's on its
+tournament — and nothing could answer "every draw between these two" without a database shell.
+
+**Objectives**
+1. `GET /games` filters by status, result, termination, ranked, kind, model, matchup, event and a
+   name search, and pages by keyset ([ADR-0048](adr/0048-the-archive-filters-on-the-server-and-pages-by-keyset.md))
+2. `/games`: the filters are the URL, the page is complete in one response, and the form works
+   without JavaScript
+3. Linked from the header, the lobby, every model page and every tournament page
+
+**Exit criteria**
+- [x] Every filter is asserted against a game it must exclude — `tests/api/test_archive.py`
+- [x] The endpoint costs a fixed number of statements with every filter on, at one game and at
+      seven, and a paged read costs the same as the first page
+- [x] A keyset walk under a sort where every game ties returns the whole archive once
+- [x] "Load more" appends below without moving the reader or the address, and is a plain link
+      without JavaScript
+- [x] A filtered link carries its own title, description, canonical, `noindex` and a card drawn
+      from its own games — two filters produce two different cards
+- [x] The name search uses `ix_players_display_name_trgm`, asserted from the plan
+- [x] A filter lands in the URL, a reload reproduces it, and a no-JavaScript submission redirects to
+      the same address — `e2e/public/archive.spec.ts`
+- [x] At phone width the first game is on the first screen and nothing scrolls sideways —
+      `e2e/mobile/layout.spec.ts`
+- [x] Checked against production's data (`make dev-pull`, 174 games): filters agree with SQL,
+      "Load more" walks all 134 played games with no repeat, and nothing is cut off at 390px. It
+      found the card naming neither opponent (`nemotron-3-ultra-550b-a55b:...` on every row),
+      now fixed
+
+**Covers:** UI-12
 
 ---
 

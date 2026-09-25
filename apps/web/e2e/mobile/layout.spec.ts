@@ -20,7 +20,15 @@ test.describe("at phone width", () => {
     /* The cheapest regression test on the list and the one that caught a real mistake: collapsing
        the leaderboard's columns without also fixing its `table-auto` layout left an 463px table in
        a 333px page, which scrolled sideways rather than truncating. */
-    for (const path of ["/", "/leaderboard", "/models", "/play", "/tournaments", "/about"]) {
+    for (const path of [
+      "/",
+      "/leaderboard",
+      "/games",
+      "/models",
+      "/play",
+      "/tournaments",
+      "/about",
+    ]) {
       await page.goto(path);
       const overflow = await page.evaluate(
         () => document.documentElement.scrollWidth - window.innerWidth,
@@ -165,7 +173,10 @@ test.describe("at phone width", () => {
         );
         if (names.length < 2) return null;
         const [first, second] = names.map((n) => n.getBoundingClientRect());
-        return { stacked: second.top >= first.bottom - 2, sameWidth: Math.abs(first.width - second.width) < 2 };
+        return {
+          stacked: second.top >= first.bottom - 2,
+          sameWidth: Math.abs(first.width - second.width) < 2,
+        };
       }),
     );
 
@@ -345,4 +356,33 @@ test("the podium is a podium on a phone, and nothing on it is cut off", async ({
   for (const row of rows) {
     expect(row.clipped, "the model name should wrap, not be cut off").toBe(false);
   }
+});
+
+test("the archive shows a game on its first screen, not only its filters", async ({ page }) => {
+  /* Eight stacked controls filled all 812px of a phone before the first row, so the page opened
+     on a form. The secondary filters fold behind a toggle below `sm`; this measures the result
+     rather than the class that produces it. */
+  await page.goto("/games");
+  const first = page.locator("ol > li").first();
+  await expect(first).toBeVisible();
+
+  const top = await first.evaluate((row) => row.getBoundingClientRect().top);
+  const viewport = page.viewportSize()!.height;
+  expect(top, "the first game should start inside the first screen").toBeLessThan(viewport);
+
+  // Folded, not gone: the toggle opens them.
+  await expect(page.getByLabel("Result")).toBeHidden();
+  await page.getByText("Filters", { exact: true }).click();
+  await expect(page.getByLabel("Result")).toBeVisible();
+});
+
+test("an archive row keeps a long model name whole", async ({ page }) => {
+  await page.goto("/games?show=all");
+  const names = page.locator("ol > li span.break-words");
+  test.skip((await names.count()) === 0, "no games in this database — nothing to measure");
+
+  const clipped = await names.evaluateAll(
+    (spans) => spans.filter((span) => span.scrollWidth > span.clientWidth + 1).length,
+  );
+  expect(clipped, "a player's name should wrap, not overflow its row").toBe(0);
 });

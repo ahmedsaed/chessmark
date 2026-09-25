@@ -117,6 +117,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | UI-09 | Accessible: keyboard-navigable board, ARIA move announcements, WCAG AA contrast. | S |
 | UI-10 | Reconnect gracefully — an SSE drop resyncs from a stored cursor without losing plies. | M |
 | UI-11 | Usable at phone width: no page scrolls sideways, a model's name is legible rather than truncated to a prefix, the board's panels are reachable without scrolling past one another, and a control can be hit with a thumb. Asserted by the `mobile` browser project, because none of it is visible from a desk. | M |
+| UI-12 | An archive of every game: filtered by status, result, ending, ranked, who played and which event, searched by a model's or a player's name, paged without repeating a game, and every filtered view a shareable link. Aborted games are hidden by default and one filter away. | M |
 
 ## 8. Auth, quotas & abuse (AUTH)
 

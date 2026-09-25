@@ -292,19 +292,21 @@ function Dropdown({
  * expensive end is the same signal the rest of the site uses for "this costs something".
  */
 export function CreditBadge({ credits, muted = false }: { credits: number; muted?: boolean }) {
-  const tone =
-    credits >= 6
-      ? "border-bad-deep text-bad"
+  const text = credits >= 6 ? "text-bad" : credits >= 3 ? "text-accent" : "text-ink-dim";
+  /* Muted recedes by its border, not by `opacity`: 70% took the red tier to 3.2:1 on a raised
+     surface, under AA for text this small. The tier colour stays whole — it is the information. */
+  const border = muted
+    ? "border-line-soft"
+    : credits >= 6
+      ? "border-bad-deep"
       : credits >= 3
-        ? "border-accent-deep text-accent"
-        : "border-line text-ink-dim";
+        ? "border-accent-deep"
+        : "border-line";
 
   return (
     <span
       title={`${credits} credit${credits === 1 ? "" : "s"} to start a game against this model`}
-      className={`tabular flex-none border px-1 py-px font-mono text-label uppercase tracking-wider ${tone} ${
-        muted ? "opacity-70" : ""
-      }`}
+      className={`tabular flex-none border px-1 py-px font-mono text-label uppercase tracking-wider ${text} ${border}`}
     >
       {credits} cr
     </span>

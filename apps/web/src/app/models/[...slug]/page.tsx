@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { GameCard } from "@/components/GameCard";
 import { CreditBadge } from "@/components/ModelPicker";
 import { getModel, listGamesByModel } from "@/lib/api";
+import { parseArchive, withFilter } from "@/lib/archive";
 import { modelSlugFromSegments } from "@/lib/models";
 import { siteUrl } from "@/lib/site";
 import type {
@@ -107,7 +108,20 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
         <h1 className="font-serif text-4xl leading-tight text-ink">{model.display_name}</h1>
         <CreditBadge credits={model.credit_cost} />
       </div>
-      <p className="mt-1 font-mono text-xs text-ink-faint">{model.openrouter_id}</p>
+      <p className="mt-1 font-mono text-xs text-ink-faint">
+        {model.openrouter_id}
+        {model.stats.games > 0 && (
+          <>
+            {" · "}
+            <Link
+              href={withFilter(parseArchive({}), { model: model.openrouter_id })}
+              className="text-accent underline underline-offset-4"
+            >
+              every game it played →
+            </Link>
+          </>
+        )}
+      </p>
 
       <Facts model={model} />
 
@@ -461,7 +475,9 @@ function Fact({
     <div className="bg-surface px-3 py-2.5">
       <dt className="font-mono text-label uppercase tracking-[0.14em] text-ink-faint">{label}</dt>
       <dd className={`tabular mt-1 font-mono text-sm ${colour}`}>{value}</dd>
-      {note && <p className="tabular mt-0.5 font-mono text-label text-ink-faint">{note}</p>}
+      {/* A second `<dd>`, not a `<p>`: a `<dl>` group may hold only terms and descriptions, and
+          the `<p>` made the list invalid for a screen reader, which announces a `<dl>` as pairs. */}
+      {note && <dd className="tabular mt-0.5 font-mono text-label text-ink-faint">{note}</dd>}
     </div>
   );
 }

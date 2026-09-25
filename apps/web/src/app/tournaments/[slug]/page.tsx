@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { StatusChip, formatLabel } from "@/app/tournaments/page";
 import { Schedule } from "@/components/Schedule";
 import { getTournament } from "@/lib/api";
+import { parseArchive, withFilter } from "@/lib/archive";
 import type { Standing, TournamentDetail } from "@/lib/types";
 
 export async function generateMetadata({ params }: PageProps<"/tournaments/[slug]">) {
@@ -105,6 +106,17 @@ export default async function TournamentPage({
         {tournament.field_description} · {tournament.entrant_count} entrants ·{" "}
         {formatLabel(tournament)}
         {tournament.is_ranked ? " · ranked" : " · unranked"}
+        {tournament.stats.played > 0 && (
+          <>
+            {" · "}
+            <Link
+              href={withFilter(parseArchive({}), { event: slug })}
+              className="text-accent underline underline-offset-4"
+            >
+              every game in it →
+            </Link>
+          </>
+        )}
       </p>
 
       <Progress tournament={tournament} />
@@ -303,7 +315,10 @@ function Standings({ rows }: { rows: Standing[] }) {
                 ? "grid-cols-[2rem_1fr_5.5rem] sm:grid-cols-[2rem_1fr_5.5rem_3rem_4.5rem]"
                 : "grid-cols-[2rem_1fr_3rem] sm:grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem]"
             } items-center gap-2 bg-surface px-3 py-2 font-mono text-xs ${
-              row.in_field ? "" : "opacity-50"
+              /* Dimmed with the faintest AA colour, not `opacity-50`: halving the opacity took the
+                 already-faint secondary text to 2.5:1, below AA on every departed row. The `!` is
+                 needed to outrank each cell's own colour. */
+              row.in_field ? "" : "[&_*]:text-ink-faint!"
             }`}
           >
             <span className={row.place === 1 ? "text-accent" : "text-ink-faint"}>{row.place}</span>
@@ -316,9 +331,9 @@ function Standings({ rows }: { rows: Standing[] }) {
             >
               {row.key.split("/").slice(1).join("/") || row.key}
               {!row.in_field && (
-                <span aria-hidden className="ml-1.5 text-label text-ink-faint">
-                  ·  left the field
-                </span>
+                /* Read aloud, not hidden: the dimming and the `title` are the only other signs a
+                   model has left, and neither reaches a screen reader. */
+                <span className="ml-1.5 text-label text-ink-faint">· left the field</span>
               )}
             </Link>
             {rated && (
@@ -392,7 +407,9 @@ function Fact({
     <div className="bg-surface px-3 py-2.5">
       <dt className="font-mono text-label uppercase tracking-[0.14em] text-ink-faint">{label}</dt>
       <dd className={`tabular mt-1 font-mono text-sm ${colour}`}>{value}</dd>
-      {note && <p className="tabular mt-0.5 font-mono text-label text-ink-faint">{note}</p>}
+      {/* A second `<dd>`, not a `<p>`: a `<dl>` group may hold only terms and descriptions, and
+          the `<p>` made the list invalid for a screen reader, which announces a `<dl>` as pairs. */}
+      {note && <dd className="tabular mt-0.5 font-mono text-label text-ink-faint">{note}</dd>}
     </div>
   );
 }

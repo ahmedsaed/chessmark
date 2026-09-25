@@ -215,7 +215,7 @@ erDiagram
 | `users` | Clerk-backed accounts | `clerk_user_id` unique; quota counters live in `usage_ledger` |
 | `model_registry` | Playable models | OpenRouter slug, display name, context window, per-token pricing, reasoning support, enabled flag |
 | `games` | One match | status, result, termination reason, `is_ranked`, `trash_talk_enabled`, `prompt_version`, `tool_schema_version`, `start_fen`, totals |
-| `players` | Two rows per game | `color`, `kind` (model/human/engine), FK to model or user, persona, sampling params |
+| `players` | Two rows per game | `color`, `kind` (model/human/engine), FK to model or user, persona, sampling params; `display_name` carries a `pg_trgm` GIN index for the archive's search ([ADR-0048](adr/0048-the-archive-filters-on-the-server-and-pages-by-keyset.md)) |
 | `plies` | The move record | `ply_number`, SAN, UCI, `fen_before`, `fen_after`, flags — **plus nullable `eval_cp`, `cp_loss`, `classification` for BENCH-08** |
 | `turns` | One agent turn | may span many LLM calls; carries `illegal_attempts`, tokens, cost, latency, outcome |
 | `llm_calls` | Verbatim provider I/O | request/response JSON, reasoning text, all token counts, cost, finish reason, error |

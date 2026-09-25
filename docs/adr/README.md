@@ -66,6 +66,7 @@ were live in this directory before it was written.
 | [0045](0045-a-turn-keeps-the-rounds-it-completed.md) | A turn keeps the rounds it completed, and the retry continues it | Proposed |
 | [0046](0046-the-api-invalidates-the-cache-a-clock-does-not.md) | The API invalidates the frontend's cache; a clock does not | Accepted |
 | [0047](0047-the-arithmetic-that-decides-a-request.md) | The arithmetic that decides whether a request can be sent | Accepted |
+| [0048](0048-the-archive-filters-on-the-server-and-pages-by-keyset.md) | The archive filters on the server, and pages by keyset | Accepted |
 
 ## Template
 

@@ -255,11 +255,11 @@ export function AuthForm({ mode }: { mode: Mode }) {
       <p className="mt-8 font-mono text-meta text-ink-faint">
         {mode === "sign-in" ? (
           <>
-            No account? <Link className="text-accent hover:underline" href="/sign-up">Create one</Link>
+            No account? <Link className="text-accent underline underline-offset-4" href="/sign-up">Create one</Link>
           </>
         ) : (
           <>
-            Already have one? <Link className="text-accent hover:underline" href="/sign-in">Sign in</Link>
+            Already have one? <Link className="text-accent underline underline-offset-4" href="/sign-in">Sign in</Link>
           </>
         )}
       </p>

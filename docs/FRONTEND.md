@@ -60,6 +60,17 @@ than setting a measure. The empty hero's paragraph is centred in a centred box, 
 stay centred; the footer blurb is one column of a flex row, so it is bounded to leave room for the
 nav beside it.
 
+**A link inside a sentence is underlined, always; a link on its own line may underline on hover.**
+The accent gold is 1.2:1 against the dim prose around it, where a link told apart by colour alone
+needs 3:1 (WCAG 1.4.1). Seven links in running text were gold-on-hover-underline, on `/about`,
+`/methodology`, the sign-in and sign-up forms, the profile and the archive's empty state. Lighthouse
+flagged every one. A link that is its own paragraph ("Clear filters", "How this ranking works →") has
+nothing to be confused with, and keeps the lighter style.
+
+**Dim with a colour token, never with `opacity`.** `ink-faint` is the faintest text that still
+passes AA on every surface. Halving its opacity for a departed model's row in a pool's table took
+it to 2.5:1. To make something recede, step it down a token.
+
 ## The right-hand column is `EventStream`, not `Conversation`
 
 It was named for trash talk and had long since stopped being that: it carries reasoning, output, tool
@@ -279,6 +290,36 @@ ADR-0043, went into both navs, and never reached `sitemap.ts` — unlisted for t
 feature, because nothing compared the two lists. Both now read `staticRoutes`, and
 `site.test.ts` fails if a nav link is missing from it. A new static route goes in `staticRoutes`
 first.
+
+## The archive's state is its address
+
+`/games` (UI-12) holds no state of its own: the list is a function of the query string, parsed by
+`lib/archive.ts` and read once per distinct filter from the cache
+([ADR-0048](adr/0048-the-archive-filters-on-the-server-and-pages-by-keyset.md)). Three rules keep
+that true:
+
+* **One address per list.** `parseArchive` drops anything it does not recognise and `archiveHref`
+  leaves defaults out, so the page redirects `/games?q=&sort=newest` to `/games`. The no-JavaScript
+  form submission and the client navigation land on the same URL and the same cache entry.
+* **A filter change goes back to the first page.** A cursor names a game in the list it came from.
+  `withFilter` clears it, because "the page after a game you cannot see" starts somewhere arbitrary.
+* **`ArchiveFilters` is keyed on the address.** Its inputs use `defaultValue`, which React reads once,
+  so without the key a client navigation such as "clear filters" leaves the old choices showing.
+
+**A filtered view describes itself.** `generateMetadata` and the card at `/og/games` both word the
+filter with `describeArchive`, so the title, description and image of a shared link cannot
+disagree. The card is a Route Handler rather than a colocated `opengraph-image`, because the
+colocated file never receives `searchParams`. `isIndexable` keeps everything except the archive and
+its one-model and one-event views out of the index. The filter combinations run to tens of
+thousands of near-duplicates.
+
+"Load more" is the page's one browser-side read: `ArchiveList` fetches the next page from the API
+and appends it (ADR-0048). It is an `<a>` to `?before=` first, so it still works without
+JavaScript.
+
+On a phone the secondary filters fold behind a checkbox toggle (`peer-checked`, no state), because
+eight stacked controls filled the first screen. The checkbox needs `sr-only!`: `globals.css` themes
+every checkbox with unlayered rules, which outrank a Tailwind utility.
 
 ## Traps
 

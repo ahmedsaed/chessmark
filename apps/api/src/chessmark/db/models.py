@@ -295,7 +295,18 @@ class Player(Base):
 
     game: Mapped[Game] = relationship(back_populates="players")
 
-    __table_args__ = (sa.UniqueConstraint("game_id", "colour", name="uq_players_game_id_colour"),)
+    __table_args__ = (
+        sa.UniqueConstraint("game_id", "colour", name="uq_players_game_id_colour"),
+        #: What the archive's search reads (`GET /games?q=`). A `%needle%` match cannot use a
+        #: B-tree at all, so without this every search is a sequential scan of two rows per game
+        #: ever played — a cost that grows with an archive that pools never stop adding to.
+        sa.Index(
+            "ix_players_display_name_trgm",
+            "display_name",
+            postgresql_using="gin",
+            postgresql_ops={"display_name": "gin_trgm_ops"},
+        ),
+    )
 
 
 class Turn(Base):

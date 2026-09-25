@@ -28,7 +28,7 @@ export const siteDescription =
 export interface NavLink {
   href: string;
   label: string;
-  /** Matches nested routes too — `/games/:id` lights up "Watch". */
+  /** Matches nested routes too — `/games/:id` lights up "Games". */
   match?: (pathname: string) => boolean;
 }
 
@@ -39,6 +39,7 @@ export interface NavLink {
  */
 export const primaryNav: NavLink[] = [
   { href: "/leaderboard", label: "Leaderboard", match: (p) => p.startsWith("/leaderboard") },
+  { href: "/games", label: "Games", match: (p) => p.startsWith("/games") },
   { href: "/tournaments", label: "Tournaments", match: (p) => p.startsWith("/tournaments") },
   { href: "/models", label: "Models", match: (p) => p.startsWith("/models") },
   { href: "/play", label: "Play", match: (p) => p.startsWith("/play") },
@@ -48,6 +49,7 @@ export const primaryNav: NavLink[] = [
 export const footerNav: NavLink[] = [
   { href: "/", label: "Watch" },
   { href: "/leaderboard", label: "Leaderboard" },
+  { href: "/games", label: "Games" },
   { href: "/tournaments", label: "Tournaments" },
   { href: "/models", label: "Models" },
   { href: "/play", label: "Play" },
@@ -72,6 +74,7 @@ export const staticRoutes: StaticRoute[] = [
   { path: "/", changeFrequency: "hourly", priority: 1 },
   { path: "/leaderboard", changeFrequency: "daily", priority: 0.9 },
   { path: "/tournaments", changeFrequency: "daily", priority: 0.85 },
+  { path: "/games", changeFrequency: "hourly", priority: 0.8 },
   { path: "/models", changeFrequency: "daily", priority: 0.8 },
   { path: "/play", changeFrequency: "monthly", priority: 0.7 },
   { path: "/methodology", changeFrequency: "monthly", priority: 0.6 },

@@ -275,7 +275,7 @@ function Played({ games }: { games: MyGameSummary[] | null }) {
         <Heading>Games</Heading>
         <p className="mt-3 text-sm text-ink-dim">
           You have not played yet.{" "}
-          <Link className="text-accent hover:underline" href="/play">
+          <Link className="text-accent underline underline-offset-4" href="/play">
             Sit down against a model
           </Link>{" "}
           — watching needs no account, but playing spends a credit.
@@ -346,7 +346,9 @@ function Fact({ label, value, note }: { label: string; value: string; note?: str
     <div className="bg-surface px-3 py-2.5">
       <dt className="font-mono text-label uppercase tracking-[0.14em] text-ink-faint">{label}</dt>
       <dd className="tabular mt-1 font-mono text-sm text-ink">{value}</dd>
-      {note && <p className="tabular mt-0.5 font-mono text-label text-ink-faint">{note}</p>}
+      {/* A second `<dd>`, not a `<p>`: a `<dl>` group may hold only terms and descriptions, and
+          the `<p>` made the list invalid for a screen reader, which announces a `<dl>` as pairs. */}
+      {note && <dd className="tabular mt-0.5 font-mono text-label text-ink-faint">{note}</dd>}
     </div>
   );
 }
