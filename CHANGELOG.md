@@ -34,7 +34,7 @@ file is only the record of *what shipped when*.
 - **Accessibility: every public page now scores 100 against production's data.** Links inside
   sentences are underlined instead of being marked by colour alone, which was 1.2:1 against the
   prose around them. A stat's note is a `<dd>`, not a `<p>` inside a `<dl>` (tournament, model and
-  profile pages). A pairing's state dot has `role="img"`, so its label is read instead of dropped.
+  profile pages). A pairing's state dot and a nameplate's captured pieces have `role="img"`, so their labels are read instead of dropped.
   A departed model's row and a muted credit badge recede by colour token instead of by
   `opacity`, which had taken faint text to 2.5:1. "Left the field" is now announced rather than
   `aria-hidden`. `e2e/public/accessibility.spec.ts` asserts all four rules on every public page.
