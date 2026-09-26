@@ -105,6 +105,47 @@ async def spend(
     return entry
 
 
+async def settle(
+    session: AsyncSession, user_id: uuid.UUID, amount: Decimal, *, game_id: uuid.UUID
+) -> CreditLedger | None:
+    """Charge (positive) or refund (negative) the difference between what a game's turns were
+    charged and what OpenRouter billed for it (ADR-0054). Never refused and never clamped: it is
+    money already spent, settled to the cent, and a balance may end below zero by it."""
+    if amount == ZERO:
+        return None
+    remaining = (
+        await session.execute(
+            sa.update(User)
+            .where(User.id == user_id)
+            .values(balance_usd=User.balance_usd - amount)
+            .returning(User.balance_usd)
+        )
+    ).scalar_one_or_none()
+    if remaining is None:
+        return None
+    entry = CreditLedger(
+        user_id=user_id,
+        delta=-amount,
+        balance_after=Decimal(remaining),
+        reason=CreditReason.SETTLEMENT,
+        game_id=game_id,
+    )
+    session.add(entry)
+    return entry
+
+
+async def charged_for(session: AsyncSession, game_id: uuid.UUID) -> Decimal:
+    """What a game's payer has been charged for it so far: its turns and any settlement."""
+    total = await session.scalar(
+        sa.select(sa.func.coalesce(sa.func.sum(CreditLedger.delta), 0)).where(
+            CreditLedger.game_id == game_id,
+            CreditLedger.unit == "usd",
+            CreditLedger.reason.in_((CreditReason.TURN, CreditReason.SETTLEMENT)),
+        )
+    )
+    return -Decimal(total or 0)
+
+
 async def grant(
     session: AsyncSession,
     user_id: uuid.UUID,

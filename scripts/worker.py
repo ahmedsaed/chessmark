@@ -37,6 +37,8 @@ from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import ProviderCooldown  # noqa: E402
 from chessmark.core.halt import Halt  # noqa: E402
+from chessmark.core.openrouter_billing import OpenRouterBilling  # noqa: E402
+from chessmark.db.billing import settle_billing  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.orchestration import TurnQueue, TurnWorker, reconcile  # noqa: E402
 from chessmark.orchestration.reconciler import SingleFlight  # noqa: E402
@@ -49,6 +51,13 @@ log = logging.getLogger("chessmark.worker")
 #: readable once it is over. A scripted model that never reasons would let that gate be deleted
 #: without a single test noticing.
 SCRIPTED_REASONING = "Taking the first move the board offers. I am scripted; there is no plan."
+
+
+#: Its own lock, held longer than the sweep's: a sweep that prices a backlog of generations one
+#: request at a time can outlast a minute, and a second worker starting the same games meanwhile
+#: would look each of them up twice.
+BILLING_LOCK = "chessmark:billing:lock"
+BILLING_LOCK_SECONDS = 600
 
 
 async def reconcile_loop(
@@ -79,6 +88,28 @@ async def reconcile_loop(
                 log.warning("reconciler: %s", report)
         except Exception:
             log.exception("reconciler failed")
+
+        # **Apart from the sweep above, and after it.** Reconciling a game against what OpenRouter
+        # billed asks a third party over the network; nothing that rescues a stalled game may wait
+        # on it, and a failure here must not look like one there (ADR-0054).
+        try:
+            async with SingleFlight(redis, key=BILLING_LOCK, ttl=BILLING_LOCK_SECONDS) as mine:
+                if not mine:
+                    continue
+                billing = await settle_billing(sessionmaker, billing_client())
+            if billing.reconciled:
+                log.info("billing: %s", billing)
+        except Exception:
+            log.exception("billing reconciliation failed")
+
+
+def billing_client() -> OpenRouterBilling:
+    settings = get_settings()
+    return OpenRouterBilling(
+        management_key=settings.openrouter_management_key,
+        api_key=settings.openrouter_api_key,
+        base_url=settings.openrouter_base_url,
+    )
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

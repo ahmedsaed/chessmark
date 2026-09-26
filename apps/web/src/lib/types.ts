@@ -114,6 +114,11 @@ export interface GameDetail extends GameSummary {
   /** Who started a game that is not a tournament's, by display name — never an email. Null for a
    *  game nobody started, and for a tournament game, which names its event instead. */
   started_by?: string | null;
+  /** What OpenRouter billed for the game's session, once reconciled (ADR-0054); null before. */
+  billed_usd?: string | null;
+  billed_requests?: number | null;
+  /** Requests OpenRouter billed that our record lost to a failure of ours. */
+  unrecorded_requests?: number | null;
 }
 
 /** Which event a game was played for — enough to say so and to link there. */

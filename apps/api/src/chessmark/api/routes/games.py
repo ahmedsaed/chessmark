@@ -67,6 +67,7 @@ from chessmark.db.models import (
     Tournament,
     TournamentGame,
     Turn,
+    UnrecordedGeneration,
     User,
 )
 from chessmark.db.quotas import note_game_started
@@ -387,6 +388,16 @@ async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
         served_by=await _served_by(session, game.id),
         tournament=tournament,
         started_by=None if tournament is not None else await _started_by(session, game),
+        # One count, and only for a game that has been reconciled.
+        unrecorded_requests=(
+            await session.scalar(
+                sa.select(sa.func.count())
+                .select_from(UnrecordedGeneration)
+                .where(UnrecordedGeneration.game_id == game.id)
+            )
+            if game.billed_usd is not None
+            else None
+        ),
         waiting_on=(
             WaitingOn(kind=waiting.kind, until=waiting.until, tournament=waiting.tournament)
             if waiting

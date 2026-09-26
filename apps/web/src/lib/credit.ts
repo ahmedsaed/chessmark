@@ -56,3 +56,46 @@ export function limitFrom(text: string): string | null {
   const value = Number(text);
   return text.trim() !== "" && Number.isFinite(value) && value > 0 ? value.toFixed(2) : null;
 }
+
+/**
+ * The game's cost as the page states it, and what to say when it moved (ADR-0054).
+ *
+ * While it plays, the cost is what each turn recorded. Once it has been reconciled — it ended, or
+ * its owner or its credit is holding it — it is what OpenRouter billed, which is what its owner is
+ * charged. The two differ only by requests a failure of ours lost from the record, and when they do
+ * the page says so rather than letting a number change without a word.
+ */
+export function gameCost(game: {
+  total_cost_usd: string;
+  billed_usd?: string | null;
+  billed_requests?: number | null;
+  unrecorded_requests?: number | null;
+}): { usd: string; note: string | null } {
+  if (game.billed_usd === null || game.billed_usd === undefined) {
+    return { usd: game.total_cost_usd, note: null };
+  }
+  const billed = Number(game.billed_usd);
+  const recorded = Number(game.total_cost_usd);
+  if (Math.abs(billed - recorded) < 0.00000001) return { usd: game.billed_usd, note: null };
+
+  const lost = game.unrecorded_requests ?? 0;
+  const requests = game.billed_requests ?? 0;
+  const difference = formatBalance(Math.abs(billed - recorded));
+  const why =
+    billed > recorded
+      ? `${difference} of it is ${lost} request${lost === 1 ? "" : "s"} that a failure on our side lost from the game's record. They were billed all the same, so they are included.`
+      : `That is ${difference} less than the game recorded as it played; the difference was refunded.`;
+  return {
+    usd: game.billed_usd,
+    note: `OpenRouter billed ${formatBalance(billed)} for ${requests} request${requests === 1 ? "" : "s"}. ${why}`,
+  };
+}
+
+/** A game's or a seat's cost, to the precision a single game needs: a tenth of a cent, or six
+ *  places for the calls that cost less than that. */
+export function usd(value: string): string {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "—";
+  if (amount === 0) return "$0.000";
+  return amount < 0.001 ? `$${amount.toFixed(6)}` : `$${amount.toFixed(3)}`;
+}

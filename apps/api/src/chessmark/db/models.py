@@ -212,6 +212,20 @@ class Game(Base):
     started_at: Mapped[dt.datetime | None] = mapped_column()
     ended_at: Mapped[dt.datetime | None] = mapped_column()
 
+    #: What OpenRouter billed for this game's session, and how many requests it counted
+    #: (ADR-0054). Null until the game has been reconciled — it ends, or its owner or its credit
+    #: holds it. `total_cost_usd` is what we recorded turn by turn; this is the truth it is checked
+    #: against, and what the person who started the game is finally charged.
+    billed_usd: Mapped[Decimal | None] = mapped_column(USD)
+    billed_requests: Mapped[int | None] = mapped_column(sa.Integer)
+    billed_checked_at: Mapped[dt.datetime | None] = mapped_column()
+    #: The reconciliation schedule: how many of its checks have run since the game last changed,
+    #: when that change was seen, and the event cursor it was seen at. A game that resumes and
+    #: plays on has a new `event_seq`, which starts the schedule again.
+    billing_checks: Mapped[int] = mapped_column(default=0, server_default="0")
+    billing_anchor_at: Mapped[dt.datetime | None] = mapped_column()
+    billing_seq: Mapped[int | None] = mapped_column(sa.Integer)
+
     players: Mapped[list[Player]] = relationship(
         back_populates="game", cascade="all, delete-orphan"
     )
@@ -815,6 +829,22 @@ class CreditLedger(Base):
     note: Mapped[str | None] = mapped_column(sa.Text)
 
     created_at: Mapped[dt.datetime] = created_at()
+
+
+class UnrecordedGeneration(Base):
+    """A generation OpenRouter billed to a game that no record of ours holds (ADR-0054).
+
+    Found by reconciliation, and kept so a later check does not look it up again. Its cost is
+    OpenRouter's exact per-generation figure — the analytics total truncates each generation to six
+    decimal places, which is about 1% of a decision model's call.
+    """
+
+    __tablename__ = "unrecorded_generations"
+
+    generation_id: Mapped[str] = mapped_column(sa.Text, primary_key=True)
+    game_id: Mapped[uuid.UUID] = mapped_column(_fk("games.id", ondelete="CASCADE"), index=True)
+    cost_usd: Mapped[Decimal] = mapped_column(USD)
+    found_at: Mapped[dt.datetime] = created_at()
 
 
 class UsageLedger(Base):

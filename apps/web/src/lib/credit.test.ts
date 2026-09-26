@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canPay, formatBalance, limitFrom, modelMoveCharged } from "@/lib/credit";
+import { canPay, formatBalance, gameCost, limitFrom, modelMoveCharged } from "@/lib/credit";
 
 describe("formatBalance", () => {
   it("writes a balance in dollars and cents", () => {
@@ -62,5 +62,34 @@ describe("limitFrom", () => {
   it("refuses a limit that would stop the game before it starts", () => {
     expect(limitFrom("0")).toBeNull();
     expect(limitFrom("-3")).toBeNull();
+  });
+});
+
+describe("gameCost", () => {
+  it("is the recorded cost while the game has not been reconciled", () => {
+    expect(gameCost({ total_cost_usd: "0.0123", billed_usd: null })).toEqual({
+      usd: "0.0123",
+      note: null,
+    });
+  });
+
+  it("is the billed cost once reconciled, and says nothing when the two agree", () => {
+    expect(gameCost({ total_cost_usd: "0.00831349", billed_usd: "0.00831349" }).note).toBeNull();
+  });
+
+  it("says why when OpenRouter billed more than the game recorded", () => {
+    const shown = gameCost({
+      total_cost_usd: "0.37833",
+      billed_usd: "0.418989",
+      billed_requests: 166,
+      unrecorded_requests: 21,
+    });
+    expect(shown.usd).toBe("0.418989");
+    expect(shown.note).toContain("$0.42 for 166 requests");
+    expect(shown.note).toContain("$0.04 of it is 21 requests");
+  });
+
+  it("says so when the bill came in under the record", () => {
+    expect(gameCost({ total_cost_usd: "0.003", billed_usd: "0.0025" }).note).toContain("refunded");
   });
 });

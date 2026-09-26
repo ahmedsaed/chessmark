@@ -19,13 +19,9 @@ import Link from "next/link";
 import { RuntimeBadge } from "@/components/RuntimeBadge";
 
 import type { GameDetail, Player } from "@/lib/types";
+import { CostRow } from "@/components/CostRow";
+import { usd } from "@/lib/credit";
 
-function usd(value: string): string {
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) return "—";
-  if (amount === 0) return "$0.000";
-  return amount < 0.001 ? `$${amount.toFixed(6)}` : `$${amount.toFixed(3)}`;
-}
 
 /**
  * Cached share of the **prompt**, not of every token.
@@ -133,7 +129,10 @@ export function StatsRail({
 
       <div className="flex flex-col gap-1.5 border border-line bg-surface-2 p-3">
         <Label>Spend</Label>
-        <Row label="Total" value={usd(game.total_cost_usd)} />
+        {/* What OpenRouter billed once the game is reconciled, what was recorded until then
+            (ADR-0054). When the two differ, the ⓘ says why, rather than a number changing
+            without a word. */}
+        <CostRow game={game} />
         <Row label="Cap" value={game.max_usd ? usd(game.max_usd) : "none"} muted />
         <Row label="Tokens" value={game.total_tokens.toLocaleString()} muted />
       </div>

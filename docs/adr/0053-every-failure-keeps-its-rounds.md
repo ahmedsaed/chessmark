@@ -60,7 +60,8 @@ about a player (invariant 11). It is still recorded for `status` (OPS-21).
 ## Consequences
 
 * **The record holds what OpenRouter billed**, except for requests that never produced an answer we
-  saw: a timeout, a refusal. Per-game reconciliation against OpenRouter covers those.
+  saw: a timeout, a refusal. Per-game reconciliation against OpenRouter covers those
+  ([ADR-0054](0054-a-game-is-charged-what-openrouter-billed.md)).
 * **A kept round is never paid for twice**, because the retry continues from it.
 * **A rejected request abandons a game with its record intact.** Before, the game ended with none of
   the rounds it had paid for on the record.

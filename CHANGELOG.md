@@ -17,6 +17,13 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **A game is charged what OpenRouter billed for it.** When a game ends, or is paused by its owner
+  or for lack of credit, it is checked against OpenRouter's own bill for its session, about 5
+  minutes, an hour and a day later. Its owner is settled to that figure, as a charge or a refund.
+  The page shows **Billed**, with an ⓘ that explains any difference from the running total.
+  `./chessmark status` compares the month's key usage with what the record and reconciliation
+  hold. Needs `OPENROUTER_MANAGEMENT_KEY` on the server. (OPS-25, AUTH-18,
+  [ADR-0054](docs/adr/0054-a-game-is-charged-what-openrouter-billed.md))
 - **`./chessmark status` lists turns that crashed.** A turn that raised something the worker had no
   rule for, such as a constraint violation, used to end the worker process. Its job had already
   been acknowledged, so the game sat silent until the stall sweep requeued it 45 minutes later, and

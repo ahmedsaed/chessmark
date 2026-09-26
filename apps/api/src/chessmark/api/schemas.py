@@ -474,6 +474,13 @@ class GameDetail(GameSummary):
     #: or a script's), and for a tournament game, which names its event instead.
     started_by: str | None = None
 
+    #: What OpenRouter billed for this game's session, once reconciled (ADR-0054) — null before.
+    #: `total_cost_usd` is what was recorded turn by turn; the two differ by requests our failures
+    #: lost, `unrecorded_requests` of them, which OpenRouter billed all the same.
+    billed_usd: Decimal | None = None
+    billed_requests: int | None = None
+    unrecorded_requests: int | None = None
+
     #: Why a paused game has not resumed. Null unless the game is paused.
     waiting_on: WaitingOn | None = None
 
@@ -489,12 +496,16 @@ class GameDetail(GameSummary):
         tournament: TournamentRef | None = None,
         waiting_on: WaitingOn | None = None,
         started_by: str | None = None,
+        unrecorded_requests: int | None = None,
     ) -> GameDetail:
         summary = GameSummary.from_model(game, players, served_by=served_by)
         return cls(
             **summary.model_dump(),
             tournament=tournament,
             started_by=started_by,
+            billed_usd=game.billed_usd,
+            billed_requests=game.billed_requests,
+            unrecorded_requests=unrecorded_requests,
             waiting_on=waiting_on,
             start_fen=game.start_fen,
             current_fen=current_fen,

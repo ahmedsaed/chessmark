@@ -33,6 +33,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 API_ROOT = REPO_ROOT / "apps" / "api"
 sys.path.insert(0, str(API_ROOT / "src"))
 
+import httpx  # noqa: E402
 import sqlalchemy as sa  # noqa: E402
 from redis.asyncio import Redis  # noqa: E402
 
@@ -51,6 +52,7 @@ from chessmark.db.models import (  # noqa: E402
     Ply,
     Tournament,
     TournamentGame,
+    UnrecordedGeneration,
 )
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.orchestration.queue import DEFAULT_GROUP, DEFAULT_STREAM  # noqa: E402
@@ -372,6 +374,71 @@ async def show_workers(report: Report, redis: Any) -> None:
         report.plain(f"{dead} name(s) left behind by earlier worker processes")
 
 
+#: A month's gap between the key's own usage and what our record plus reconciliation holds, below
+#: which it is noise: reconciliation runs up to a day behind a game, and a cent covers the rounding.
+BILLING_TOLERANCE_USD = Decimal("0.01")
+
+
+async def show_billing(report: Report, session: Any) -> None:
+    """What OpenRouter billed against what we hold (ADR-0054).
+
+    Two numbers. The last day's reconciliations — how many games, and what they found our record
+    had lost. And the safety net under all of it: this month's usage on the key itself against our
+    recorded calls plus every generation reconciliation has found. A gap that grows is spend that
+    neither the record nor reconciliation can see — a game outside the 30-day window, a call made
+    outside any game, or a new way to lose one.
+    """
+    report.head("billing")
+    settings = get_settings()
+    if not settings.openrouter_management_key:
+        report.warn("reconciliation is off", "OPENROUTER_MANAGEMENT_KEY is not set")
+
+    day = _now() - dt.timedelta(days=1)
+    reconciled, gap = (
+        await session.execute(
+            sa.select(
+                sa.func.count(),
+                sa.func.coalesce(sa.func.sum(Game.billed_usd - Game.total_cost_usd), 0),
+            ).where(Game.billed_checked_at >= day)
+        )
+    ).one()
+    lost = await session.scalar(
+        sa.select(sa.func.count())
+        .select_from(UnrecordedGeneration)
+        .where(UnrecordedGeneration.found_at >= day)
+    )
+    line = (
+        f"{reconciled} game(s) reconciled in 24h, {lost} lost request(s) found, ${gap:.6f} settled"
+    )
+    (report.warn if lost else report.ok)("reconciled", line)
+
+    month = _now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    recorded = await session.scalar(
+        sa.select(sa.func.coalesce(sa.func.sum(LlmCall.cost_usd), 0)).where(
+            LlmCall.created_at >= month
+        )
+    )
+    found = await session.scalar(
+        sa.select(sa.func.coalesce(sa.func.sum(UnrecordedGeneration.cost_usd), 0))
+        .join(Game, Game.id == UnrecordedGeneration.game_id)
+        .where(Game.created_at >= month)
+    )
+    held = Decimal(recorded or 0) + Decimal(found or 0)
+    try:
+        async with httpx.AsyncClient(timeout=10) as http:
+            response = await http.get(
+                f"{settings.openrouter_base_url}/key",
+                headers={"Authorization": f"Bearer {settings.openrouter_api_key}"},
+            )
+        billed = Decimal(str(response.json()["data"]["usage_monthly"]))
+    except Exception as error:  # the account's own number is a check, never a requirement
+        report.warn("could not read the key's usage", str(error)[:80])
+        return
+    difference = billed - held
+    line = f"key ${billed:.4f} this month · held ${held:.4f} · gap ${difference:.4f}"
+    (report.warn if abs(difference) > BILLING_TOLERANCE_USD else report.ok)("month", line)
+
+
 async def show_failures(report: Report, redis: Any) -> None:
     """Turns that crashed in the last day — the ones the worker had no rule for.
 
@@ -682,6 +749,7 @@ async def main() -> int:
             async with sessionmaker() as session:
                 if everything:
                     await show_platform(report, session)
+                    await show_billing(report, session)
                 if everything or args.games:
                     await show_games(report, session)
                 if everything or args.tournaments:
