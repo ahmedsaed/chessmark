@@ -41,6 +41,7 @@ from chessmark.tournament import (
     Pairing,
     Result,
     TournamentConfig,
+    standings,
 )
 
 
@@ -320,6 +321,39 @@ async def entrants_of(session: AsyncSession, tournament_id: uuid.UUID) -> list[E
         .order_by(TournamentEntrant.seed, TournamentEntrant.key)
     )
     return [Entrant(key=r.key, seed=r.seed, label=r.display_name) for r in rows]
+
+
+def is_listed(key: str, played: int, playable: set[str]) -> bool:
+    """Whether an entrant earns a row in the standings — and so a place in the entrant count.
+
+    **A delisted model that never played is not a result, it is an empty row.** The field tracks
+    the catalogue, so an entrant leaves when its model is withdrawn from the free tier (ADR-0041) —
+    and three of `pool-free`'s were withdrawn before they were ever paired. They sat in the table at
+    nought games with no rating, indistinguishable from a model that had been tried and had nothing
+    to show.
+
+    One that *did* play stays, greyed, however few games it managed: those games happened, they are
+    in the ratings of everyone it met, and removing the row would leave opponents with results
+    against somebody the table does not admit exists.
+
+    An empty `playable` means the field could not be resolved, and everyone is listed rather than
+    no one. A withdrawn entrant never reaches this: `entrants_of` leaves it out.
+    """
+    return not playable or key in playable or played > 0
+
+
+async def listed_count(session: AsyncSession, tournament: Tournament, *, era: str | None) -> int:
+    """How many entrants the standings list, counted by the rule that lists them.
+
+    **One rule for the table and the number above it.** The count was every entrant row ever
+    seated, withdrawn ones included, so the Decision Cup said "4 entrants" above a table of two —
+    the two Span models had been withdrawn and still counted.
+    """
+    entrants = await entrants_of(session, tournament.id)
+    playable = await in_field(session, tournament, filter_from_json(tournament.field_filter or {}))
+    results = await results_so_far(session, tournament.id, era=era)
+    table = standings(entrants, results, None)
+    return sum(1 for row in table if is_listed(row.key, row.played, playable))
 
 
 async def pair_games(

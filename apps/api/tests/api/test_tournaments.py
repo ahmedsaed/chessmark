@@ -489,3 +489,48 @@ async def test_a_delisted_entrant_that_never_played_is_not_a_row(
     # is about being delisted, not about being unplayed.
     assert all(row["in_field"] for row in body["standings"])
     assert all(row["played"] == 0 for row in body["standings"])
+
+
+async def test_the_entrant_count_is_the_standings_rows(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """**One rule for the table and the number above it.** The count was every entrant ever
+    seated, so the Decision Cup said "4 entrants" above a table of two — its two Span models had
+    been withdrawn and still counted.
+
+    Four entrants, one of each kind: withdrawn, delisted before playing, delisted after playing, and
+    active. The table lists the last two, and both counts must say two.
+    """
+    tid, entrants = await make_event(db, models=4)
+    withdrawn, delisted, retired, active = (e.key for e in entrants)
+
+    tournament = await db.get(repo.Tournament, tid)
+    assert tournament is not None
+    db.add(
+        TournamentGame(
+            tournament_id=tid,
+            round_number=1,
+            white_key=retired,
+            black_key=active,
+            white_score=1.0,
+            era=repo.era_of(tournament),
+        )
+    )
+    await db.execute(
+        sa.update(repo.TournamentEntrant)
+        .where(repo.TournamentEntrant.tournament_id == tid, repo.TournamentEntrant.key == withdrawn)
+        .values(withdrawn=True)
+    )
+    await db.execute(
+        sa.update(ModelRegistry)
+        .where(ModelRegistry.openrouter_id.in_([delisted, retired]))
+        .values(enabled=False)
+    )
+    await db.commit()
+
+    detail = (await client.get("/tournaments/test-cup")).json()
+    assert {row["key"] for row in detail["standings"]} == {retired, active}
+    assert detail["entrant_count"] == len(detail["standings"]) == 2
+
+    (listed,) = [t for t in (await client.get("/tournaments")).json() if t["slug"] == "test-cup"]
+    assert listed["entrant_count"] == 2

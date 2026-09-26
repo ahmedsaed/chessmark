@@ -208,15 +208,10 @@ async def list_tournaments(
 
     summaries: list[TournamentSummary] = []
     for tournament in rows:
-        entrants = await session.scalar(
-            sa.select(sa.func.count(TournamentEntrant.id)).where(
-                TournamentEntrant.tournament_id == tournament.id
-            )
-        )
-        stats = await _stats(session, tournament.id, era=await _shown_era(session, tournament))
-        summaries.append(
-            TournamentSummary(**_summary_fields(tournament, int(entrants or 0), stats))
-        )
+        showing = await _shown_era(session, tournament)
+        stats = await _stats(session, tournament.id, era=showing)
+        count = await repo.listed_count(session, tournament, era=showing)
+        summaries.append(TournamentSummary(**_summary_fields(tournament, count, stats)))
     return summaries
 
 
@@ -300,23 +295,11 @@ async def get_tournament(
 
     stats = await _stats(session, tournament.id, era=showing)
 
-    def listed(s: Any) -> bool:
-        """Whether this entrant earns a row.
-
-        **A delisted model that never played is not a result, it is an empty row.** The field
-        tracks the catalogue, so an entrant leaves when its model is withdrawn from the free tier
-        (ADR-0041) — and three of `pool-free`'s were withdrawn before they were ever paired. They
-        sat in the table at nought games with no rating, indistinguishable from a model that had
-        been tried and had nothing to show.
-
-        One that *did* play stays, greyed, however few games it managed: those games happened, they
-        are in the ratings of everyone it met, and removing the row would leave opponents with
-        results against somebody the table does not admit exists.
-        """
-        return (not playable or s.key in playable) or s.played > 0
+    listed = [s for s in table if repo.is_listed(s.key, s.played, playable)]
 
     return TournamentDetail(
-        **_summary_fields(tournament, len(entrant_rows), stats),
+        # The rows below, counted — not every entrant ever seated, withdrawn ones included.
+        **_summary_fields(tournament, len(listed), stats),
         era=showing,
         eras=eras,
         # Over the entrants the field still admits: a departed model's unplayed pairs are not
@@ -344,8 +327,7 @@ async def get_tournament(
                 rating_deviation=s.rating_deviation,
                 rating_provisional=s.rating_provisional,
             )
-            for s in table
-            if listed(s)
+            for s in listed
         ],
         pairings=[
             TournamentPairingOut(
