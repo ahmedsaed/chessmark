@@ -291,6 +291,27 @@ feature, because nothing compared the two lists. Both now read `staticRoutes`, a
 `site.test.ts` fails if a nav link is missing from it. A new static route goes in `staticRoutes`
 first.
 
+## A decision is drawn, not folded
+
+A decision model's turn is one `decided` event — no reasoning, no tool calls
+([ADR-0049](adr/0049-decision-models-play-through-their-own-harness.md)). `DecisionView` draws it
+**open**: the moves it weighed highest as bars with their percentages, what it did if it did more
+than move (resigned, claimed or accepted a draw, offered one), and the yes-probability of each other
+question. Reasoning is closed by default because it runs to thousands of tokens; a decision is five
+rows and the only view there is into what the model weighed.
+
+- **Withheld is not empty.** A person playing the model is sent the event without `probabilities`,
+  `confidence` or `answers` (invariant 8); `decisionBlock` reads their absence as `null`, and the
+  view says the weighing is shown when the game ends rather than drawing nothing.
+- **The chosen move is marked only when it was played.** A seat that resigned still ranked a move
+  first; highlighting it would claim a move the board never saw.
+- **`RuntimeBadge` marks a decision model wherever a model is named** — leaderboard, catalogue,
+  model page, picker and the game's stats rail. Only decision models: marking every chat model
+  "llm" is noise. Chat-only figures read as a dash for them — illegal moves (zero by construction)
+  and cache rate (a fresh request every turn).
+- `useGameStream` subscribes by the `EventType` list, which is `satisfies Record<EventType, true>` —
+  a new event type that is not added there never reaches a live page, and the compiler says so.
+
 ## The archive's state is its address
 
 `/games` (UI-12) holds no state of its own: the list is a function of the query string, parsed by

@@ -228,7 +228,9 @@ async def _instant(_seconds: float) -> None:
 
 @pytest.fixture
 def make_worker(sessionmaker: async_sessionmaker[AsyncSession], queue: Any, redis: Any) -> Any:
+    from chessmark.agents.decisions import DecisionGateway
     from chessmark.agents.llm import LlmGateway
+    from chessmark.agents.scripted_decisions import deciding
     from chessmark.orchestration.worker import TurnWorker
 
     def _make(
@@ -240,6 +242,7 @@ def make_worker(sessionmaker: async_sessionmaker[AsyncSession], queue: Any, redi
         retry: Any = None,
         cooldown: Any = None,
         live: Any = None,
+        decide_fn: Any = None,
     ) -> TurnWorker:
         return TurnWorker(
             sessionmaker=sessionmaker,
@@ -250,6 +253,10 @@ def make_worker(sessionmaker: async_sessionmaker[AsyncSession], queue: Any, redi
             consumer=consumer,
             cooldown=cooldown,
             live=live,
+            # Always scripted: the worker's own default reaches the network, and no test may.
+            decisions=DecisionGateway(
+                decide_fn=decide_fn or deciding(), retry=retry, sleep_fn=_instant
+            ),
         )
 
     return _make

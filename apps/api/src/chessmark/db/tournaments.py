@@ -19,11 +19,12 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.decision_request import DECISION_VERSION
 from chessmark.agents.prompts import PROMPT_VERSION
-from chessmark.agents.registry import endpoint_is_playable
+from chessmark.agents.registry import endpoint_is_playable, model_is_playable
 from chessmark.agents.tools import TOOL_SCHEMA_VERSION
-from chessmark.bench.ratable import HARNESS_TERMINATIONS, era
-from chessmark.db.enums import GameStatus, TournamentStatus
+from chessmark.bench.ratable import HARNESS_TERMINATIONS, decision_era, era
+from chessmark.db.enums import GameStatus, ModelRuntime, TournamentStatus
 from chessmark.db.models import (
     Game,
     ModelEndpoint,
@@ -43,14 +44,25 @@ from chessmark.tournament import (
 )
 
 
-def current_era() -> str:
+def current_era(runtime: str = "llm") -> str:
     """The era the deployed code is playing, which is the one a new pairing joins.
 
     Composed here rather than in `bench` because this is where the deployed constants are known;
     `era` itself is pure and takes them as arguments, so it can be tested without importing half
     the application.
+
+    **Per runtime** (ADR-0049). A decision event's task is the decision harness, so its era is that
+    version's major and moves only when `DECISION_VERSION` does — a new chat prompt says nothing
+    about what a decision model is asked, and must not open a new era in a pool of them.
     """
+    if runtime == "decision":
+        return decision_era(DECISION_VERSION)
     return era(PROMPT_VERSION, TOOL_SCHEMA_VERSION)
+
+
+def era_of(tournament: Tournament) -> str:
+    """The era a tournament is playing now: the current one for the kind of model it seats."""
+    return current_era(filter_from_json(tournament.field_filter or {}).runtime)
 
 
 def contestant_key(model_slug: str, quantization: str | None) -> str:
@@ -80,13 +92,16 @@ async def resolve_field(
     """
     query = sa.select(ModelRegistry).where(
         ModelRegistry.enabled.is_(True),
-        ModelRegistry.supports_tools.is_(True),
+        model_is_playable(min_context=0),
         # One definition of "an endpoint worth seating", shared with `select_endpoint` and the
         # catalogue. A field that admitted an entrant the picker then refused is how a pool spent
         # its pairings on a model whose only endpoint could not hold a game (AGENT-14).
         ModelRegistry.id.in_(sa.select(ModelEndpoint.model_id).where(*endpoint_is_playable())),
     )
 
+    # A field is one runtime (ADR-0049), so a chat event never seats a decision model by default
+    # and a decision event seats nothing else.
+    query = query.where(ModelRegistry.runtime == ModelRuntime(field.runtime))
     if field.slugs:
         query = query.where(ModelRegistry.openrouter_id.in_(field.slugs))
     if field.providers:
@@ -193,6 +208,9 @@ def _filter_as_json(field: FieldFilter) -> dict[str, Any]:
         "min_context_tokens": field.min_context_tokens,
         "requires_reasoning": field.requires_reasoning,
         "limit": field.limit,
+        # **Stored, because a pool re-resolves its field from this every tick.** Left out, a
+        # decision pool would read back as a chat field and seat the wrong kind of model.
+        "runtime": field.runtime,
         "describes": field.describe(),
     }
 
@@ -269,6 +287,8 @@ def filter_from_json(stored: dict[str, Any]) -> FieldFilter:
         min_context_tokens=stored.get("min_context_tokens"),
         requires_reasoning=stored.get("requires_reasoning"),
         limit=stored.get("limit"),
+        # Every event created before the key existed was a chat event.
+        runtime=stored.get("runtime") or "llm",
     )
 
 
@@ -302,7 +322,11 @@ async def entrants_of(session: AsyncSession, tournament_id: uuid.UUID) -> list[E
 
 
 async def record_round(
-    session: AsyncSession, tournament_id: uuid.UUID, pairings: list[Pairing]
+    session: AsyncSession,
+    tournament_id: uuid.UUID,
+    pairings: list[Pairing],
+    *,
+    era: str | None = None,
 ) -> list[TournamentGame]:
     """Write a round's pairings down before any of them is played.
 
@@ -329,7 +353,9 @@ async def record_round(
                 round_number=pairing.round_number,
                 white_key=pairing.white,
                 black_key=pairing.black,
-                era=current_era(),
+                # The caller's era, which knows what the event seats; the chat era otherwise,
+                # which is what every event was before there was a second kind.
+                era=era or current_era(),
             )
             # A bye is a scheduled point rather than a game, so it is settled on the spot.
             if pairing.is_bye:

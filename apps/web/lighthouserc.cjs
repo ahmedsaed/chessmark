@@ -64,6 +64,8 @@ function dynamicRoutes() {
     return [
       fixtures.replayGame && `/games/${fixtures.replayGame}`,
       fixtures.tournament && `/tournaments/${fixtures.tournament}`,
+      // The one page that draws a decision model's turns (ADR-0049).
+      fixtures.decisionGame && `/games/${fixtures.decisionGame}`,
     ].filter(Boolean);
   } catch {
     return [];

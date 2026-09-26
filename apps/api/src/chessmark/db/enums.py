@@ -38,6 +38,23 @@ class PlayerKind(StrEnum):
     """Stockfish, from Phase 14."""
 
 
+class ModelRuntime(StrEnum):
+    """How a model is asked for its move (ADR-0049).
+
+    A property of the *model*, not of the seat's kind: a decision model is still a `MODEL` seat,
+    played by the worker, rated on the same leaderboard and grouped by the same registry row. What
+    differs is the call that produces the move, and that is all this names.
+    """
+
+    LLM = "llm"
+    """A chat model that acts through tools, one transcript per seat (AGENT-01, ADR-0003)."""
+
+    DECISION = "decision"
+    """A decision model on OpenRouter's Decisions API. It never writes text: it is handed the
+    position and the legal moves, each described, and returns a probability for every move. No
+    transcript, no tools, and so no way to propose an illegal move at all."""
+
+
 class TurnStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
@@ -82,6 +99,11 @@ class EventType(StrEnum):
     #: `reasoning`, Gemini puts everything in `content`, and collapsing the two would either hide
     #: half the models or mislabel the other half.
     OUTPUT = "output"
+    #: A decision model answered (ADR-0049): the move it chose, the probability it gave every legal
+    #: move, and — when a draw was on offer — the probability it gave accepting. The decision seat's
+    #: equivalent of THINKING, and withheld from a person mid-game by the same rule (invariant 8),
+    #: because a ranking of every move is as much a plan as a paragraph of reasoning is.
+    DECIDED = "decided"
     TOOL_CALLED = "tool_called"
     ILLEGAL_ATTEMPT = "illegal_attempt"
     MOVE_MADE = "move_made"

@@ -67,6 +67,7 @@ were live in this directory before it was written.
 | [0046](0046-the-api-invalidates-the-cache-a-clock-does-not.md) | The API invalidates the frontend's cache; a clock does not | Accepted |
 | [0047](0047-the-arithmetic-that-decides-a-request.md) | The arithmetic that decides whether a request can be sent | Accepted |
 | [0048](0048-the-archive-filters-on-the-server-and-pages-by-keyset.md) | The archive filters on the server, and pages by keyset | Accepted |
+| [0049](0049-decision-models-play-through-their-own-harness.md) | Decision models play through their own harness | Accepted |
 
 ## Template
 

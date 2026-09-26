@@ -19,6 +19,20 @@ played, so its record is unreproducible (BENCH-04).
 playable-but-unrankable, and was amended once it was clear that a game record which cannot name its
 weights is as useless as a rating across them.
 
+**Decision models are exempt from the first and third** — they act through no tools and carry no
+transcript, so a 8k window holds everything one turn needs
+([ADR-0049](adr/0049-decision-models-play-through-their-own-harness.md)). They are also **not in the
+main listing**: the sync reads `/api/v1/models?output_modalities=decisions` as a second URL and
+registers what it returns as `runtime = decision`. `registry.model_is_playable` and
+`endpoint_is_playable` hold the two rules, so the catalogue, the picker and a tournament field
+agree. A decision model is asked through `POST /api/alpha/decisions`, not LiteLLM; its errors are
+classified by the same functions as a chat call's, so a 429 pauses and a 402 halts identically.
+
+Its gates — the probability at which it resigns, offers, accepts or claims — come from
+`make probe-decisions`, which runs every registered decision model over labelled positions and
+prints where its yeses and noes fall. **Run it for every new decision model**: a threshold does not
+carry from one model to another.
+
 ### The floor is 64k, and omitting it applies the policy
 
 The transcript grows about **1,818 tokens per ply**, measured, so 128k covered roughly seventy plies

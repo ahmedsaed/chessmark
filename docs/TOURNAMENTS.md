@@ -57,6 +57,10 @@ Concurrency and spend are not scoped: a game that is running costs an allowance 
 scheduled it, and it finishes and scores in its own era. The tournament page shows the current era
 and offers the earlier ones.
 
+**A decision-model event has an era of its own**: the decision harness's major (`d1`), because its
+task is that harness and nothing else — a chat prompt bump says nothing about what a decision model
+is asked ([ADR-0049](adr/0049-decision-models-play-through-their-own-harness.md)).
+
 Pools are **ranked** — an unranked one would play forever and measure nothing — and a pool over paid
 models is **refused without `--max-usd`**: with no end, the ceiling is the only thing that ever stops
 it. Raise it with `resume --max-usd`; nothing resets on its own.
@@ -64,6 +68,20 @@ it. Raise it with `resume --max-usd`; nothing resets on its own.
 A model that leaves the catalogue is **not** auto-withdrawn from a pool. Its games are real results
 and its rating is real; dropping it because an endpoint went quiet for an afternoon would rewrite
 history.
+
+## A field is one kind of model
+
+`--decision` seats decision models and nothing else; without it an event seats chat models only.
+Never both: a decision model is shown every move with facts and cannot play an illegal one, so a
+field mixing the two would rank them on different tasks. They meet on the leaderboard, where every
+rated game counts (ADR-0049).
+
+```
+make tournament ARGS="field --decision"
+make tournament ARGS="create --name 'Deciders' --slug deciders --decision --format pool --max-usd 1"
+```
+
+The filter's `runtime` is stored with the event, so a pool re-resolves the right field every tick.
 
 ## A closed event's field is frozen when it is created
 

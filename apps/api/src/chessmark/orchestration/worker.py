@@ -32,6 +32,8 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from chessmark.agents import compaction, llm
+from chessmark.agents.decision_turn import DecisionTurnRunner
+from chessmark.agents.decisions import DecisionGateway
 from chessmark.agents.live import LiveChannel, NullLive, RedisLive
 from chessmark.agents.llm import LlmGateway
 from chessmark.agents.routing import ProviderRouting
@@ -42,7 +44,7 @@ from chessmark.core.config import get_settings
 from chessmark.core.cooldown import ProviderCooldown, resume_at
 from chessmark.core.credits import fetch_balance
 from chessmark.core.halt import SCOPE_FREE, SOURCE_CREDITS, SOURCE_FREE_TIER, Halt, HaltState
-from chessmark.db.enums import EventType, GameStatus, PlayerKind, TurnStatus
+from chessmark.db.enums import EventType, GameStatus, ModelRuntime, PlayerKind, TurnStatus
 from chessmark.db.models import Game, GameEvent, ModelRegistry, Player, Turn
 from chessmark.db.quotas import record_spend
 from chessmark.db.repositories import (
@@ -253,10 +255,18 @@ class TurnWorker:
         cooldown: ProviderCooldown | None = None,
         halt: Halt | None = None,
         live: LiveChannel | None = None,
+        decisions: DecisionGateway | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
         self.queue = queue
         self.gateway = gateway
+        #: The Decisions API, for seats whose model is a decision model (ADR-0049). Built from the
+        #: chat gateway's key, prices and retry policy when not handed one, so a worker serves
+        #: both kinds of model on one configuration. A scripted worker passes a scripted one: the
+        #: default reaches the network.
+        self.decisions = decisions or DecisionGateway(
+            api_key=gateway.api_key, pricing=gateway.pricing, retry=gateway.retry
+        )
         self.redis = redis
         self.limits = limits
         #: Layer 1 of ADR-0011. Optional so scripted tests, which spend nothing, need not wire it.
@@ -273,6 +283,8 @@ class TurnWorker:
         # gateway is the only place that knows one did.
         if cooldown is not None and gateway.on_success is None:
             gateway.on_success = self._endpoint_served
+        if cooldown is not None and self.decisions.on_success is None:
+            self.decisions.on_success = self._endpoint_served
         #: Where a turn announces its rounds before it commits (ADR-0035). Defaults to the same
         #: Redis the committed events go out on, because a worker that can publish one can publish
         #: the other; a worker with neither simply does not stream, and plays an identical game.
@@ -433,25 +445,40 @@ class TurnWorker:
             # Route by *this player's* resolved policy. Per player rather than per game because
             # `only` names providers and providers are model-specific: one vendor's endpoint list
             # is a 404 for the other seat's model.
-            self.gateway.routing = ProviderRouting.from_record(
-                player.provider_routing or game.provider_routing
-            )
+            routing = ProviderRouting.from_record(player.provider_routing or game.provider_routing)
 
-            runner = TurnRunner(
-                session,
-                gateway=self.gateway,
-                referee=referee,
-                game=game,
-                player=player,
-                opponent=opponent,
-                model=model_for(player),
-                limits=self.limits,
-                # A turn is one transaction and publishes at the end of it, so without this a
-                # ten-minute turn is ten minutes of a still board followed by every event at once
-                # (ADR-0035). Frames are not records: they carry no `seq`, are never written down,
-                # and are superseded by the committed events moments later.
-                live=self.live,
-            )
+            runner: TurnRunner | DecisionTurnRunner
+            if player.runtime == ModelRuntime.DECISION:
+                # A decision model is asked through its own API, not the chat loop (ADR-0049).
+                # Everything after this line — the spend, the pause, the retry, the conclusion —
+                # reads the same `TurnResult`, so it is the one fork in the worker.
+                self.decisions.routing = routing
+                runner = DecisionTurnRunner(
+                    session,
+                    gateway=self.decisions,
+                    referee=referee,
+                    game=game,
+                    player=player,
+                    model=model_for(player),
+                    live=self.live,
+                )
+            else:
+                self.gateway.routing = routing
+                runner = TurnRunner(
+                    session,
+                    gateway=self.gateway,
+                    referee=referee,
+                    game=game,
+                    player=player,
+                    opponent=opponent,
+                    model=model_for(player),
+                    limits=self.limits,
+                    # A turn is one transaction and publishes at the end of it, so without this a
+                    # ten-minute turn is ten minutes of a still board followed by every event at
+                    # once (ADR-0035). Frames are not records: they carry no `seq`, are never
+                    # written down, and are superseded by the committed events moments later.
+                    live=self.live,
+                )
             before_seq = game.event_seq
             result = await runner.run(await self._interrupted_turn(session, player))
 

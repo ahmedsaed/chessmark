@@ -20,12 +20,22 @@ export type GameStatus = "pending" | "running" | "paused" | "finished" | "aborte
 
 export type GameResult = "1-0" | "0-1" | "1/2-1/2" | "*";
 
+/**
+ * How a model is asked for its move (ADR-0049). `llm` is a chat model acting through tools; a
+ * `decision` model answers OpenRouter's Decisions API with a probability for every legal move and
+ * writes no text at all. Both are ranked on one board, and the pages say which is which because
+ * the two play with different information.
+ */
+export type Runtime = "llm" | "decision";
+
 export interface Player {
   id: string;
   colour: Colour;
   kind: "model" | "human" | "engine";
   display_name: string;
   model: string | null;
+  /** How this seat was asked for its moves. Always `llm` for a person, who is asked nothing. */
+  runtime: Runtime;
   /**
    * What this seat ran under, and what actually served it. "Which model" is not a complete
    * answer: the same id at fp8 and at fp4 is not the same contestant.
@@ -90,6 +100,8 @@ export interface GameDetail extends GameSummary {
   termination_detail: string | null;
   prompt_version: string | null;
   tool_schema_version: string | null;
+  /** The decision harness a decision seat was asked under (ADR-0049). Null when none played. */
+  decision_version: string | null;
   max_usd: string | null;
   max_illegal_retries: number;
   max_plies: number;
@@ -120,6 +132,7 @@ export interface ModelInfo {
   context_length: number | null;
   supports_reasoning: boolean;
   is_free: boolean;
+  runtime: Runtime;
   prompt_usd_per_token: string;
   completion_usd_per_token: string;
   /** Every precision this model is served at. `contestants` is the useful shape. */
@@ -195,6 +208,7 @@ export type EventType =
   | "game_started"
   | "turn_started"
   | "thinking"
+  | "decided"
   | "output"
   | "tool_called"
   | "illegal_attempt"
@@ -257,6 +271,14 @@ export type TurnBlock =
   | { kind: "illegal"; seq: number; move: string; detail: string; attempt: number }
   | { kind: "said"; seq: number; text: string }
   /**
+   * A decision model's whole answer (ADR-0049): what it did, and how it weighed every option.
+   *
+   * `probabilities`, `confidence` and `answers` are **null while withheld** — a person playing the
+   * game may not read them until it ends (invariant 8), exactly as reasoning is stripped for them.
+   * What the seat *did* is never withheld: it is on the board a moment later.
+   */
+  | DecisionBlock
+  /**
    * The turn stopped here and came back — a rate limit, a halt, our own ceiling.
    *
    * **A step of the turn, because that is where it happens** (ADR-0045). The turn used to be
@@ -285,6 +307,24 @@ export type TurnBlock =
       live?: boolean;
     };
 
+export interface DecisionBlock {
+  kind: "decision";
+  seq: number;
+  /** `move`, `resign`, `claim_draw` or `accept_draw`. */
+  action: string;
+  /** The move it ranked first, in plain SAN — played when `action` is `move`. */
+  choice: string;
+  /** How many legal moves it was offered. */
+  options: number;
+  offersDraw: boolean;
+  /** Every legal move, most likely first. */
+  probabilities: [string, number][] | null;
+  confidence: number | null;
+  /** The yes-probability of each other question it was asked: resign, offer, claim, accept. */
+  answers: Record<string, number> | null;
+  durationMs: number | null;
+}
+
 /**
  * What a turn is doing, before it is a fact (ADR-0035).
  *
@@ -302,7 +342,7 @@ export type LiveFrame =
   | {
       frame: "block";
       player_id: string;
-      kind: "reasoning" | "output" | "tool" | "illegal" | "said";
+      kind: "reasoning" | "output" | "tool" | "illegal" | "said" | "decision";
       text?: string;
       tokens?: number;
       duration_ms?: number;
@@ -311,6 +351,14 @@ export type LiveFrame =
       args?: Record<string, unknown>;
       result?: Record<string, unknown> | null;
       attempt?: number | null;
+      /** The `decision` frame's fields, which are the `decided` event's payload. */
+      action?: string;
+      choice?: string;
+      options?: number;
+      offers_draw?: boolean;
+      probabilities?: [string, number][];
+      confidence?: number | null;
+      answers?: Record<string, number>;
     }
   /** A fragment of a block still being generated. Appended, then replaced by its `block`. */
   | {
@@ -484,6 +532,8 @@ export interface LeaderboardRow {
   /** Half the contestant's identity — `model@fp4` and `model@fp8` are different entrants. */
   quantization: string;
   display_name: string;
+  /** Chat model or decision model — ranked together, marked apart (ADR-0049). */
+  runtime: Runtime;
 
   rating: number;
   /**

@@ -22,6 +22,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
+import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { browseModels, countModels } from "@/lib/models";
 import type { ModelInfo } from "@/lib/types";
 
@@ -267,6 +268,7 @@ function Dropdown({
                             <span className="tabular hidden flex-none text-label text-ink-faint sm:inline">
                               {usdPerMillion(model.prompt_usd_per_token)}
                             </span>
+                            <RuntimeBadge runtime={model.runtime} />
                             <CreditBadge credits={model.credit_cost} />
                           </button>
                         </li>

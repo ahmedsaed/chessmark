@@ -28,6 +28,7 @@ from chessmark.api.schemas import (
 )
 from chessmark.bench import snapshot
 from chessmark.bench.service import TERMINAL
+from chessmark.db.enums import ModelRuntime
 from chessmark.db.models import Game, ModelRegistry, Player
 
 router = APIRouter(prefix="/leaderboard", tags=["leaderboard"])
@@ -45,12 +46,19 @@ async def get_leaderboard(session: SessionDep) -> Leaderboard:
 
     # Names are resolved here rather than stored, so renaming a model does not need a rebuild and
     # cannot leave a snapshot showing a label the registry no longer uses.
-    names = {row.id: row.display_name for row in await session.scalars(sa.select(ModelRegistry))}
+    # The runtime rides the same read: it is a fact about the model, like its name, and resolving
+    # it here keeps it out of a snapshot that would otherwise need rebuilding to learn it.
+    registry = {row.id: row for row in await session.scalars(sa.select(ModelRegistry))}
 
     rows = [
         LeaderboardRow(
             **row,
-            display_name=names.get(uuid.UUID(str(row["model_id"])), row["model_slug"]),
+            display_name=(
+                model.display_name
+                if (model := registry.get(uuid.UUID(str(row["model_id"])))) is not None
+                else row["model_slug"]
+            ),
+            runtime=model.runtime if model is not None else ModelRuntime.LLM,
         )
         for row in stored["rows"]
     ]

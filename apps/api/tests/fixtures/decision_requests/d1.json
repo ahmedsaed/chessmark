@@ -1,0 +1,351 @@
+{
+  "mid_exchange": {
+    "model": "vendor/model",
+    "questions": {
+      "move": {
+        "criteria": {
+          "Bxd7": "your bishop from c8 to d7; captures a bishop.",
+          "Kd8": "your king from e8 to d8.",
+          "Ke7": "your king from e8 to e7.",
+          "Kxd7": "your king from e8 to d7; captures a bishop.",
+          "Nxd7": "your knight from b8 to d7; captures a bishop."
+        },
+        "instructions": "You are playing chess as black against white, and it is your move. Which of your legal moves in `position` is the strongest one to play? Checkmating the opponent's king wins the game, and a player who resigns loses it. The game is drawn by stalemate, by insufficient material, by agreement, when the same position occurs five times, or after 75 moves by each side with no capture and no pawn move. Either player may also claim a draw once a position has occurred three times, or after 50 moves by each side with no capture and no pawn move.",
+        "type": "choice"
+      },
+      "offer_draw": {
+        "criteria": {
+          "false": "No: the position still has play in it, or you stand better.",
+          "true": "Yes: you stand clearly worse, or neither side has any real winning chances left."
+        },
+        "instructions": "You are playing chess as black. Take a draw only when you no longer expect to win by playing on: you stand clearly worse, or the position is a dead draw with no winning chances left for either side. A level position that still has play in it is not a reason to draw \u2014 either side can still win it. Should you offer your opponent a draw now, while still playing your move?",
+        "type": "noul"
+      },
+      "resign": {
+        "criteria": {
+          "false": "Play on: the game can still be saved, drawn or won.",
+          "true": "Resign: the game is lost beyond any doubt."
+        },
+        "instructions": "You are playing chess as black. Is the game in `position` lost for you beyond any doubt, so that you should resign? Resign only when nothing can save it: a decisive material deficit with no counterplay, or a mate that cannot be stopped. Standing worse, or being a pawn or two down, is never a reason to resign.",
+        "type": "noul"
+      }
+    },
+    "state": {
+      "opponent_last_move": "Bxd7+",
+      "opponent_last_move_captured": "your queen on d7",
+      "position": {
+        "black_pieces": [
+          "knight on e4",
+          "pawn on d5",
+          "pawn on a7",
+          "pawn on b7",
+          "pawn on c7",
+          "pawn on f7",
+          "pawn on g7",
+          "pawn on h7",
+          "rook on a8",
+          "knight on b8",
+          "bishop on c8",
+          "king on e8",
+          "bishop on f8",
+          "rook on h8"
+        ],
+        "fen": "rnb1kb1r/pppB1ppp/8/3p4/4n3/5N2/PPPP1PPP/RNBQK2R b KQkq - 0 6",
+        "material": {
+          "before_opponents_last_move": "level",
+          "standing": "you are behind",
+          "your_opponents": 38,
+          "yours": 29
+        },
+        "white_pieces": [
+          "rook on a1",
+          "knight on b1",
+          "bishop on c1",
+          "queen on d1",
+          "king on e1",
+          "rook on h1",
+          "pawn on a2",
+          "pawn on b2",
+          "pawn on c2",
+          "pawn on d2",
+          "pawn on f2",
+          "pawn on g2",
+          "pawn on h2",
+          "knight on f3",
+          "bishop on d7"
+        ],
+        "you_are_in_check": true
+      },
+      "recent_moves": [
+        "1.e4",
+        "e5",
+        "2.Nf3",
+        "Nf6",
+        "3.Nxe5",
+        "Nxe4",
+        "4.Nf3",
+        "d5",
+        "5.Bb5+",
+        "Qd7",
+        "6.Bxd7+"
+      ],
+      "you_are": "black"
+    }
+  },
+  "offered_and_claimable": {
+    "model": "vendor/model",
+    "questions": {
+      "accept_draw": {
+        "criteria": {
+          "false": "No: the position still has play in it, or you stand better.",
+          "true": "Yes: you stand clearly worse, or neither side has any real winning chances left."
+        },
+        "instructions": "You are playing chess as white, and your opponent has offered a draw (`draw_offer`). Take a draw only when you no longer expect to win by playing on: you stand clearly worse, or the position is a dead draw with no winning chances left for either side. A level position that still has play in it is not a reason to draw \u2014 either side can still win it. Should you accept it?",
+        "type": "noul"
+      },
+      "claim_draw": {
+        "criteria": {
+          "false": "No: the position still has play in it, or you stand better.",
+          "true": "Yes: you stand clearly worse, or neither side has any real winning chances left."
+        },
+        "instructions": "You are playing chess as white, and you may claim a draw now (`draw_claim`). Take a draw only when you no longer expect to win by playing on: you stand clearly worse, or the position is a dead draw with no winning chances left for either side. A level position that still has play in it is not a reason to draw \u2014 either side can still win it. Should you claim the draw?",
+        "type": "noul"
+      },
+      "move": {
+        "criteria": {
+          "Ba6": "your bishop from c4 to a6.",
+          "Bb3": "your bishop from c4 to b3.",
+          "Bb5": "your bishop from c4 to b5.",
+          "Bd3": "your bishop from c4 to d3.",
+          "Be2": "your bishop from c4 to e2.",
+          "Bf1": "your bishop from c4 to f1.",
+          "Bxd5": "your bishop from c4 to d5; captures a pawn.",
+          "Ke2": "your king from e1 to e2.",
+          "Kf1": "your king from e1 to f1.",
+          "Na3": "your knight from b1 to a3.",
+          "Nc3": "your knight from b1 to c3.",
+          "Ne6": "your knight from g5 to e6.",
+          "Nf3": "your knight from g5 to f3.",
+          "Nh3": "your knight from g5 to h3.",
+          "Nxf7": "your knight from g5 to f7; captures a pawn.",
+          "Nxh7": "your knight from g5 to h7; captures a pawn.",
+          "O-O": "castle kingside, the king to g1.",
+          "Qe2": "your queen from d1 to e2.",
+          "Qf3": "your queen from d1 to f3.",
+          "Qg4": "your queen from d1 to g4.",
+          "Qh5": "your queen from d1 to h5.",
+          "Rf1": "your rook from h1 to f1.",
+          "Rg1": "your rook from h1 to g1.",
+          "a3": "your pawn from a2 to a3.",
+          "a4": "your pawn from a2 to a4.",
+          "b3": "your pawn from b2 to b3.",
+          "b4": "your pawn from b2 to b4.",
+          "c3": "your pawn from c2 to c3.",
+          "d3": "your pawn from d2 to d3.",
+          "d4": "your pawn from d2 to d4.",
+          "exd5": "your pawn from e4 to d5; captures a pawn.",
+          "f3": "your pawn from f2 to f3.",
+          "f4": "your pawn from f2 to f4.",
+          "g3": "your pawn from g2 to g3.",
+          "g4": "your pawn from g2 to g4.",
+          "h3": "your pawn from h2 to h3.",
+          "h4": "your pawn from h2 to h4."
+        },
+        "instructions": "You are playing chess as white against black, and it is your move. Which of your legal moves in `position` is the strongest one to play? Checkmating the opponent's king wins the game, and a player who resigns loses it. The game is drawn by stalemate, by insufficient material, by agreement, when the same position occurs five times, or after 75 moves by each side with no capture and no pawn move. Either player may also claim a draw once a position has occurred three times, or after 50 moves by each side with no capture and no pawn move.",
+        "type": "choice"
+      },
+      "resign": {
+        "criteria": {
+          "false": "Play on: the game can still be saved, drawn or won.",
+          "true": "Resign: the game is lost beyond any doubt."
+        },
+        "instructions": "You are playing chess as white. Is the game in `position` lost for you beyond any doubt, so that you should resign? Resign only when nothing can save it: a decisive material deficit with no counterplay, or a mate that cannot be stopped. Standing worse, or being a pawn or two down, is never a reason to resign.",
+        "type": "noul"
+      }
+    },
+    "state": {
+      "draw_claim": "This position has now occurred three times, so you may claim a draw.",
+      "draw_offer": "Black has offered a draw.",
+      "opponent_last_move": "d5",
+      "position": {
+        "black_pieces": [
+          "pawn on d5",
+          "pawn on e5",
+          "knight on c6",
+          "knight on f6",
+          "pawn on a7",
+          "pawn on b7",
+          "pawn on c7",
+          "pawn on f7",
+          "pawn on g7",
+          "pawn on h7",
+          "rook on a8",
+          "bishop on c8",
+          "queen on d8",
+          "king on e8",
+          "bishop on f8",
+          "rook on h8"
+        ],
+        "fen": "r1bqkb1r/ppp2ppp/2n2n2/3pp1N1/2B1P3/8/PPPP1PPP/RNBQK2R w KQkq - 0 5",
+        "material": {
+          "standing": "level",
+          "your_opponents": 39,
+          "yours": 39
+        },
+        "white_pieces": [
+          "rook on a1",
+          "knight on b1",
+          "bishop on c1",
+          "queen on d1",
+          "king on e1",
+          "rook on h1",
+          "pawn on a2",
+          "pawn on b2",
+          "pawn on c2",
+          "pawn on d2",
+          "pawn on f2",
+          "pawn on g2",
+          "pawn on h2",
+          "bishop on c4",
+          "pawn on e4",
+          "knight on g5"
+        ],
+        "you_are_in_check": false
+      },
+      "recent_moves": [
+        "1.e4",
+        "e5",
+        "2.Nf3",
+        "Nc6",
+        "3.Bc4",
+        "Nf6",
+        "4.Ng5",
+        "d5"
+      ],
+      "you_are": "white"
+    }
+  },
+  "opening": {
+    "model": "vendor/model",
+    "questions": {
+      "move": {
+        "criteria": {
+          "Ba6": "your bishop from c4 to a6.",
+          "Bb3": "your bishop from c4 to b3.",
+          "Bb5": "your bishop from c4 to b5.",
+          "Bd3": "your bishop from c4 to d3.",
+          "Be2": "your bishop from c4 to e2.",
+          "Bf1": "your bishop from c4 to f1.",
+          "Bxd5": "your bishop from c4 to d5; captures a pawn.",
+          "Ke2": "your king from e1 to e2.",
+          "Kf1": "your king from e1 to f1.",
+          "Na3": "your knight from b1 to a3.",
+          "Nc3": "your knight from b1 to c3.",
+          "Ne6": "your knight from g5 to e6.",
+          "Nf3": "your knight from g5 to f3.",
+          "Nh3": "your knight from g5 to h3.",
+          "Nxf7": "your knight from g5 to f7; captures a pawn.",
+          "Nxh7": "your knight from g5 to h7; captures a pawn.",
+          "O-O": "castle kingside, the king to g1.",
+          "Qe2": "your queen from d1 to e2.",
+          "Qf3": "your queen from d1 to f3.",
+          "Qg4": "your queen from d1 to g4.",
+          "Qh5": "your queen from d1 to h5.",
+          "Rf1": "your rook from h1 to f1.",
+          "Rg1": "your rook from h1 to g1.",
+          "a3": "your pawn from a2 to a3.",
+          "a4": "your pawn from a2 to a4.",
+          "b3": "your pawn from b2 to b3.",
+          "b4": "your pawn from b2 to b4.",
+          "c3": "your pawn from c2 to c3.",
+          "d3": "your pawn from d2 to d3.",
+          "d4": "your pawn from d2 to d4.",
+          "exd5": "your pawn from e4 to d5; captures a pawn.",
+          "f3": "your pawn from f2 to f3.",
+          "f4": "your pawn from f2 to f4.",
+          "g3": "your pawn from g2 to g3.",
+          "g4": "your pawn from g2 to g4.",
+          "h3": "your pawn from h2 to h3.",
+          "h4": "your pawn from h2 to h4."
+        },
+        "instructions": "You are playing chess as white against black, and it is your move. Which of your legal moves in `position` is the strongest one to play? Checkmating the opponent's king wins the game, and a player who resigns loses it. The game is drawn by stalemate, by insufficient material, by agreement, when the same position occurs five times, or after 75 moves by each side with no capture and no pawn move. Either player may also claim a draw once a position has occurred three times, or after 50 moves by each side with no capture and no pawn move.",
+        "type": "choice"
+      },
+      "offer_draw": {
+        "criteria": {
+          "false": "No: the position still has play in it, or you stand better.",
+          "true": "Yes: you stand clearly worse, or neither side has any real winning chances left."
+        },
+        "instructions": "You are playing chess as white. Take a draw only when you no longer expect to win by playing on: you stand clearly worse, or the position is a dead draw with no winning chances left for either side. A level position that still has play in it is not a reason to draw \u2014 either side can still win it. Should you offer your opponent a draw now, while still playing your move?",
+        "type": "noul"
+      },
+      "resign": {
+        "criteria": {
+          "false": "Play on: the game can still be saved, drawn or won.",
+          "true": "Resign: the game is lost beyond any doubt."
+        },
+        "instructions": "You are playing chess as white. Is the game in `position` lost for you beyond any doubt, so that you should resign? Resign only when nothing can save it: a decisive material deficit with no counterplay, or a mate that cannot be stopped. Standing worse, or being a pawn or two down, is never a reason to resign.",
+        "type": "noul"
+      }
+    },
+    "state": {
+      "opponent_last_move": "d5",
+      "position": {
+        "black_pieces": [
+          "pawn on d5",
+          "pawn on e5",
+          "knight on c6",
+          "knight on f6",
+          "pawn on a7",
+          "pawn on b7",
+          "pawn on c7",
+          "pawn on f7",
+          "pawn on g7",
+          "pawn on h7",
+          "rook on a8",
+          "bishop on c8",
+          "queen on d8",
+          "king on e8",
+          "bishop on f8",
+          "rook on h8"
+        ],
+        "fen": "r1bqkb1r/ppp2ppp/2n2n2/3pp1N1/2B1P3/8/PPPP1PPP/RNBQK2R w KQkq - 0 5",
+        "material": {
+          "standing": "level",
+          "your_opponents": 39,
+          "yours": 39
+        },
+        "white_pieces": [
+          "rook on a1",
+          "knight on b1",
+          "bishop on c1",
+          "queen on d1",
+          "king on e1",
+          "rook on h1",
+          "pawn on a2",
+          "pawn on b2",
+          "pawn on c2",
+          "pawn on d2",
+          "pawn on f2",
+          "pawn on g2",
+          "pawn on h2",
+          "bishop on c4",
+          "pawn on e4",
+          "knight on g5"
+        ],
+        "you_are_in_check": false
+      },
+      "recent_moves": [
+        "1.e4",
+        "e5",
+        "2.Nf3",
+        "Nc6",
+        "3.Bc4",
+        "Nf6",
+        "4.Ng5",
+        "d5"
+      ],
+      "you_are": "white"
+    }
+  }
+}

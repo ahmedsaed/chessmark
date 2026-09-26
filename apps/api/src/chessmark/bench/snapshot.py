@@ -28,6 +28,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.decision_request import DECISION_VERSION
 from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.bench.service import (
     TERMINAL,
@@ -49,7 +50,10 @@ async def fingerprint(session: AsyncSession, *, prompt_version: str | None) -> s
       finishes, is aborted, or is deleted;
     * `model_endpoints` — because the precision an endpoint serves is half a contestant's identity
       (ADR-0015), so an edit there can move a row from `model@fp8` to `model@fp4`;
-    * the prompt version, since a game played under an older prompt measured a different task.
+    * the prompt version, since a game played under an older prompt measured a different task;
+    * the decision harness's version, for the same reason on the other harness (ADR-0049) — a bump
+      retires decision games from the ratings, and a stored run that did not notice would go on
+      counting them.
 
     Deliberately **not** covered: `model_registry.display_name`. It is a label, resolved at read,
     and baking it in would force a rebuild for a cosmetic rename.
@@ -65,7 +69,10 @@ async def fingerprint(session: AsyncSession, *, prompt_version: str | None) -> s
         )
     ).one()
 
-    return f"{prompt_version}|games={games[0]}@{games[1]}|endpoints={endpoints[0]}@{endpoints[1]}"
+    return (
+        f"{prompt_version}|{DECISION_VERSION}|games={games[0]}@{games[1]}"
+        f"|endpoints={endpoints[0]}@{endpoints[1]}"
+    )
 
 
 def _jsonable(value: Any) -> Any:

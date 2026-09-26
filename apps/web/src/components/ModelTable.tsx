@@ -17,6 +17,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { CreditBadge } from "@/components/ModelPicker";
+import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { browseModels, countModels } from "@/lib/models";
 import type { ModelInfo } from "@/lib/types";
 
@@ -100,7 +101,9 @@ export function ModelTable({ models }: { models: ModelInfo[] }) {
                     {context(model.context_length)}
                   </span>
                   <span className="hidden font-mono text-meta sm:block">
-                    {model.supports_reasoning ? (
+                    {model.runtime === "decision" ? (
+                      <RuntimeBadge runtime={model.runtime} />
+                    ) : model.supports_reasoning ? (
                       <span className="text-machine" title="exposes reasoning">
                         reasons
                       </span>

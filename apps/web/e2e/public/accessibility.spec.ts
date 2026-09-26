@@ -12,7 +12,7 @@ import { fixtures } from "../fixtures";
  */
 
 async function pages(page: Page): Promise<string[]> {
-  const { replayGame, tournament } = fixtures();
+  const { replayGame, tournament, decisionGame } = fixtures();
   await page.goto("/models");
   const model = await page.locator('a[href^="/models/"]').first().getAttribute("href");
   return [
@@ -28,6 +28,8 @@ async function pages(page: Page): Promise<string[]> {
     "/sign-in",
     "/sign-up",
     `/games/${replayGame}`,
+    // A decision game draws its turns differently — bars, a ranked list, a toggle (ADR-0049).
+    `/games/${decisionGame}`,
     ...(tournament ? [`/tournaments/${tournament}`] : []),
     ...(model ? [model] : []),
   ];

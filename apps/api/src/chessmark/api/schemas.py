@@ -19,7 +19,14 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from chessmark.agents.registry import is_floating_alias
-from chessmark.db.enums import CreditReason, EventType, GameStatus, PlayerKind, TurnStatus
+from chessmark.db.enums import (
+    CreditReason,
+    EventType,
+    GameStatus,
+    ModelRuntime,
+    PlayerKind,
+    TurnStatus,
+)
 from chessmark.db.models import (
     CreditLedger,
     Game,
@@ -75,6 +82,9 @@ class ModelOut(Schema):
     context_length: int | None
     supports_reasoning: bool
     is_free: bool
+    #: How the model is asked for a move — a chat model through tools, or a decision model through
+    #: the Decisions API (ADR-0049). The pages say which, because the two play different tasks.
+    runtime: ModelRuntime = ModelRuntime.LLM
     prompt_usd_per_token: Decimal
     completion_usd_per_token: Decimal
 
@@ -98,7 +108,9 @@ class ModelOut(Schema):
         cls, row: ModelRegistry, *, endpoints: list[ModelEndpoint] | None = None
     ) -> ModelOut:
         endpoints = endpoints or []
-        playable = [e for e in endpoints if e.is_active and e.supports_tools]
+        # A decision model's endpoints declare no tools, and need none (ADR-0049).
+        decision = row.runtime == ModelRuntime.DECISION
+        playable = [e for e in endpoints if e.is_active and (decision or e.supports_tools)]
 
         by_precision: dict[str, list[ModelEndpoint]] = {}
         for endpoint in playable:
@@ -134,6 +146,7 @@ class ModelOut(Schema):
             context_length=row.context_length,
             supports_reasoning=row.supports_reasoning,
             is_free=row.is_free,
+            runtime=row.runtime,
             prompt_usd_per_token=row.prompt_usd_per_token,
             completion_usd_per_token=row.completion_usd_per_token,
             quantizations=sorted(by_precision),
@@ -231,6 +244,9 @@ class PlayerOut(Schema):
     display_name: str
     model: str | None = None
     persona: str | None = None
+    #: How this seat was asked for its moves (ADR-0049). Copied onto the seat when the game was
+    #: created, so it says what played even if the registry has changed since.
+    runtime: ModelRuntime = ModelRuntime.LLM
 
     #: What this seat ran on. `pinned_provider` is the endpoint chosen before the game started
     #: (ADR-0015); `providers_used` is what actually served it. **They should be the same single
@@ -282,6 +298,7 @@ class PlayerOut(Schema):
             display_name=row.display_name,
             model=str(model) if model else None,
             persona=row.persona,
+            runtime=row.runtime,
             illegal_attempts=row.illegal_attempts,
             compactions=row.compactions,
             forfeited=row.forfeited,
@@ -436,6 +453,8 @@ class GameDetail(GameSummary):
     termination_detail: str | None
     prompt_version: str | None
     tool_schema_version: str | None
+    #: The decision harness a decision seat was asked under (ADR-0049). Null when none played.
+    decision_version: str | None = None
     max_usd: Decimal | None
     max_illegal_retries: int
     max_plies: int
@@ -474,6 +493,7 @@ class GameDetail(GameSummary):
             termination_detail=game.termination_detail,
             prompt_version=game.prompt_version,
             tool_schema_version=game.tool_schema_version,
+            decision_version=game.decision_version,
             max_usd=game.max_usd,
             max_illegal_retries=game.max_illegal_retries,
             max_plies=game.max_plies,
@@ -875,6 +895,10 @@ class LeaderboardRow(Schema):
     model_slug: str
     quantization: str
     display_name: str
+    #: Chat model or decision model (ADR-0049). Both are ranked on one board — every game between
+    #: any two of them is rated — and the board says which is which, because they play with
+    #: different information and a reader comparing them should know it.
+    runtime: ModelRuntime = ModelRuntime.LLM
 
     rating: float
     rating_deviation: float

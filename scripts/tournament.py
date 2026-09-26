@@ -95,6 +95,8 @@ def field_from(args: argparse.Namespace) -> FieldFilter:
         max_credit_cost=args.max_credits,
         requires_reasoning=True if args.reasoning else None,
         limit=args.limit,
+        # A field is one kind of model (ADR-0049); decision models get events of their own.
+        runtime="decision" if args.decision else "llm",
     )
 
 
@@ -515,7 +517,7 @@ async def cmd_standings(args: argparse.Namespace) -> int:
         era = (
             args.era
             if args.era in eras
-            else (repo.current_era() if repo.current_era() in eras else None)
+            else (repo.era_of(tournament) if repo.era_of(tournament) in eras else None)
         )
         if era is None and eras:
             era = eras[0]
@@ -552,6 +554,11 @@ def add_field_options(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--min-credits", type=int)
     group.add_argument("--max-credits", type=int)
     group.add_argument("--reasoning", action="store_true", help="reasoning models only")
+    group.add_argument(
+        "--decision",
+        action="store_true",
+        help="decision models instead of chat models — an event seats one kind or the other",
+    )
     group.add_argument("--limit", type=int, help="cap the field size")
 
 

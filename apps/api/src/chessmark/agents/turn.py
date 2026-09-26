@@ -45,7 +45,7 @@ from chessmark.agents.tools import (
     tool_schemas,
 )
 from chessmark.agents.types import Completion, LlmError, RateLimit, ToolInvocation
-from chessmark.db.enums import EventType, ModerationStatus, TurnStatus
+from chessmark.db.enums import EventType, ModelRuntime, ModerationStatus, TurnStatus
 from chessmark.db.models import Game, LlmCall, Message, Player, ToolCall, Turn
 from chessmark.db.repositories import append_event, open_draw_offer, record_ply
 from chessmark.game import (
@@ -1675,7 +1675,14 @@ class TurnRunner:
 
         The opponent's system prompt is seeded first if it has not played yet, so an opening taunt
         cannot end up as row 1, ahead of the prompt that heads the cached prefix.
+
+        **A decision seat has no transcript to deliver into** (ADR-0049). It is asked afresh every
+        turn from the position alone and never reads prose, so the message stays in the game's
+        record — the `message_sent` event — and goes no further. Delivering it would seed a system
+        prompt for a seat that has none.
         """
+        if self.opponent.runtime == ModelRuntime.DECISION:
+            return
         await ensure_system_prompt(
             self.session,
             game=self.game,

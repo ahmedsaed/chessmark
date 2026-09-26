@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents import prompts, transcript
-from chessmark.db.enums import EventType, GameStatus, ModerationStatus, PlayerKind
+from chessmark.db.enums import EventType, GameStatus, ModelRuntime, ModerationStatus, PlayerKind
 from chessmark.db.models import Game, Message, Player
 from chessmark.db.repositories import (
     append_event,
@@ -296,6 +296,11 @@ async def _tell_opponent(session: AsyncSession, game: Game, player: Player, cont
         sa.select(Player).where(Player.game_id == game.id, Player.id != player.id)
     )
     if opponent is None or PlayerKind(opponent.kind) is not PlayerKind.MODEL:
+        return
+    # **A decision model has no transcript** (ADR-0049). It is asked afresh from the position each
+    # turn, and an offer reaches it as a question in that request (`open_draw_offer`) rather than
+    # as a line of prose it would never read. Writing here would start a transcript nothing reads.
+    if opponent.runtime == ModelRuntime.DECISION:
         return
 
     await transcript.append_message(

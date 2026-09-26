@@ -17,6 +17,17 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **Decision models play.** OpenRouter's decision models — TypeSafe's Jev 1.13 and Kev 4B today —
+  are registered from their own catalogue listing and play through the Decisions API: one request
+  per turn with the position and every legal move described, and a probability back for each. They
+  resign, offer, accept and claim draws (threefold and fifty moves) as a chat model can, through
+  gates measured with `make probe-decisions`. They share the leaderboard, marked with a badge
+  wherever a model is named, and get tournaments of their own (`make tournament … --decision`).
+  The timeline draws each decision as the moves it weighed, withheld from a person mid-game like
+  reasoning. The decision harness has its own version, `d1`, and a game is held only to the
+  versions of the harnesses that played in it. `make play`, `make worker` and the browser seed all
+  serve decision seats; `--scripted` spends nothing. (AGENT-23..25, BENCH-13,
+  [ADR-0049](docs/adr/0049-decision-models-play-through-their-own-harness.md))
 - **An archive of every game, at `/games`.** Filter by status, result, how the game ended,
   ranked or not, model against model or a person at the board, a model, a matchup, or an event.
   Search either seat's name or its model's OpenRouter id. Every filtered view is a link. Aborted

@@ -97,8 +97,8 @@ async def _shown_era(
     eras = await repo.eras_of(session, tournament.id)
     if asked in eras:
         return asked
-    if repo.current_era() in eras:
-        return repo.current_era()
+    if repo.era_of(tournament) in eras:
+        return repo.era_of(tournament)
     return eras[0] if eras else None
 
 

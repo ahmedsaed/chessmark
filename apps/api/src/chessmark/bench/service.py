@@ -19,12 +19,13 @@ from decimal import Decimal
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.decision_request import DECISION_VERSION
 from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.agents.tools import TOOL_SCHEMA_VERSION
 from chessmark.bench.glicko2 import Glicko2, Outcome
 from chessmark.bench.glicko2 import Rating as Glicko2Rating
 from chessmark.bench.ratable import GameFacts, judge
-from chessmark.db.enums import GameStatus
+from chessmark.db.enums import GameStatus, ModelRuntime, PlayerKind
 from chessmark.db.models import (
     Game,
     LlmCall,
@@ -234,6 +235,7 @@ async def scan(
     prompt_version: str | None = PROMPT_VERSION,
     tool_schema_version: str | None = TOOL_SCHEMA_VERSION,
     tournament_id: uuid.UUID | None = None,
+    decision_version: str | None = DECISION_VERSION,
 ) -> Scan:
     """Judge every eligible game in one pass, batching every read.
 
@@ -261,10 +263,15 @@ async def scan(
             used_providers=tuple(used.get((game.id, p.id), ()) for p in players),
             model_slugs=tuple(str((p.sampling or {}).get("model") or "") for p in players),
             trash_talk_enabled=game.trash_talk_enabled,
+            decision_version=game.decision_version,
+            harnesses=tuple(_harness(p) for p in players),
         )
 
         verdict = judge(
-            facts, prompt_version=prompt_version, tool_schema_version=tool_schema_version
+            facts,
+            prompt_version=prompt_version,
+            tool_schema_version=tool_schema_version,
+            decision_version=decision_version,
         )
         if not verdict:
             result.excluded.append(Excluded(game_id=game.id, reason=verdict.reason))
@@ -273,6 +280,13 @@ async def scan(
         result.counted.append((game, players, _quantizations(game.id, players, served, endpoints)))
 
     return result
+
+
+def _harness(player: Player) -> str:
+    """Which harness asked this seat for its moves, as `GameFacts.harnesses` spells it."""
+    if PlayerKind(player.kind) is not PlayerKind.MODEL:
+        return "none"
+    return "decision" if player.runtime == ModelRuntime.DECISION else "llm"
 
 
 def _quantizations(
