@@ -39,6 +39,7 @@ from redis.asyncio import Redis  # noqa: E402
 from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import KEY_PREFIX as COOLDOWN_PREFIX  # noqa: E402
+from chessmark.core.failures import FailureLog  # noqa: E402
 from chessmark.core.halt import Halt  # noqa: E402
 from chessmark.db.enums import EventType, GameStatus  # noqa: E402
 from chessmark.db.models import (  # noqa: E402
@@ -108,6 +109,12 @@ CONSUMER_DEAD_AFTER = dt.timedelta(seconds=60)
 #: take the job back, which is the same fifteen minutes the queue uses — and 1.1% of turns reach
 #: that, where the reclaim is correct and the turn simply reruns (ADR-0007).
 WORKER_STUCK_AFTER = RECLAIM_AFTER
+
+#: How far back crashed turns are reported. A day, the same window a paused game is given.
+FAILURES_SINCE = dt.timedelta(hours=24)
+
+#: Rows of the failure table. A bug that crashes every retry fills it with one game.
+FAILURES_SHOWN = 10
 
 
 class Report:
@@ -365,6 +372,51 @@ async def show_workers(report: Report, redis: Any) -> None:
         report.plain(f"{dead} name(s) left behind by earlier worker processes")
 
 
+async def show_failures(report: Report, redis: Any) -> None:
+    """Turns that crashed in the last day — the ones the worker had no rule for.
+
+    Nothing else says so. The game carries no event for it, deliberately (`core/failures.py`), and
+    the traceback is in a log that `./chessmark logs` stops showing after a hundred lines. Red,
+    because every one is a bug somebody has to fix: the stall sweep will retry the game, but it will
+    crash the same way until the code changes.
+    """
+    report.head("failures")
+    since = _now() - FAILURES_SINCE
+    try:
+        failures = await FailureLog(redis).recent(since)
+    except Exception as error:  # an unreadable list is a status line, not a crash
+        report.bad("could not read the failure log", str(error)[:80])
+        return
+
+    if not failures:
+        report.ok("no turn crashed in the last 24h")
+        return
+
+    games = {failure.game_id for failure in failures}
+    report.bad(
+        f"{len(failures)} turn(s) crashed in the last 24h",
+        f"{len(games)} game(s)",
+    )
+    rows = [
+        [
+            ago(failure.at),
+            failure.game_id[:8],
+            str(failure.ply),
+            failure.error,
+            _cut(failure.message.splitlines()[0] if failure.message else "", 70, report.wide),
+        ]
+        for failure in failures[:FAILURES_SHOWN]
+    ]
+    report.table(["when", "game", "ply", "error", "message"], rows)
+    if len(failures) > FAILURES_SHOWN:
+        report.plain(f"and {len(failures) - FAILURES_SHOWN} more")
+    # The whole traceback, for the newest. `./chessmark logs` alone shows a hundred lines, which is
+    # how the first of these went unread: it had scrolled out before anybody asked.
+    report.plain(
+        f"traceback: LINES=20000 ./chessmark logs worker | grep -A40 {failures[0].game_id[:8]}"
+    )
+
+
 async def _held_games(redis: Any) -> dict[str, list[str]]:
     """Which game each consumer is currently holding a job for.
 
@@ -620,6 +672,7 @@ async def main() -> int:
                     await show_halt(report, redis)
                     await show_budgets(report, redis)
                 await show_workers(report, redis)
+                await show_failures(report, redis)
                 if everything:
                     await show_cooldowns(report, redis)
             except Exception as error:  # one dead datastore is not the whole report
