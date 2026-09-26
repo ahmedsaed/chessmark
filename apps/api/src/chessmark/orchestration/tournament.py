@@ -26,7 +26,7 @@ from chessmark.bench.service import compute_ratings
 from chessmark.core.cooldown import ProviderCooldown
 from chessmark.core.halt import SCOPE_ALL, Halt
 from chessmark.db import tournaments as repo
-from chessmark.db.enums import GameStatus, TournamentStatus
+from chessmark.db.enums import GameStatus, ModelRuntime, TournamentStatus
 from chessmark.db.models import (
     Game,
     ModelEndpoint,
@@ -344,7 +344,7 @@ async def _schedule_next_round(
         if highest:
             return None
         for games in round_robin(entrants, double=tournament.double):
-            await repo.record_round(session, tournament.id, games)
+            await repo.record_round(session, tournament.id, games, era=repo.era_of(tournament))
         return 1
 
     if highest >= tournament.rounds:
@@ -359,7 +359,12 @@ async def _schedule_next_round(
         return None
 
     results = await repo.results_so_far(session, tournament.id)
-    await repo.record_round(session, tournament.id, swiss_round(entrants, results, highest + 1))
+    await repo.record_round(
+        session,
+        tournament.id,
+        swiss_round(entrants, results, highest + 1),
+        era=repo.era_of(tournament),
+    )
     return highest + 1
 
 
@@ -425,7 +430,11 @@ async def _resting_entrants(
                 .where(
                     ModelRegistry.openrouter_id.in_(slugs),
                     ModelEndpoint.is_active.is_(True),
-                    ModelEndpoint.supports_tools.is_(True),
+                    # A decision model's endpoints declare no tools and serve it all the same.
+                    sa.or_(
+                        ModelEndpoint.supports_tools.is_(True),
+                        ModelRegistry.runtime == ModelRuntime.DECISION,
+                    ),
                 )
             )
         ).all()
@@ -568,7 +577,7 @@ async def _schedule_pool(
     now means every choice is made with the latest ratings — including for a model admitted on
     this same tick.
     """
-    era = repo.current_era()
+    era = repo.era_of(tournament)
     # **Stale pairings are closed, not left to rot.** A pairing written for the old task will never
     # be played — the pool has moved on — and leaving it `unplayed` would show a fixture in the
     # table that nothing will ever start (ADR-0043).
@@ -651,7 +660,7 @@ async def _schedule_pool(
     if not games:
         return None
 
-    await repo.record_round(session, tournament.id, games)
+    await repo.record_round(session, tournament.id, games, era=repo.era_of(tournament))
     return round_number
 
 
@@ -734,7 +743,7 @@ async def _start_games(
     if room <= 0:
         return 0, []
 
-    waiting = await repo.unplayed(session, tournament.id, era=repo.current_era())
+    waiting = await repo.unplayed(session, tournament.id, era=repo.era_of(tournament))
     if not waiting:
         return 0, []
 

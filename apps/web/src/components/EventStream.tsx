@@ -45,6 +45,8 @@
 
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
+import { DecisionView } from "@/components/DecisionView";
+
 import {
   buildTimeline,
   pauseCount,
@@ -325,6 +327,9 @@ function stepCount(turn: TurnView): number {
 
 function stepSummary(turn: TurnView): string | undefined {
   const parts: string[] = [];
+  /* A decision model's turn is one step, and the useful fact about it is what it chose from. */
+  const decision = turn.blocks.find((block) => block.kind === "decision");
+  if (decision?.kind === "decision") parts.push(`${decision.options} moves weighed`);
   if (turn.tools.length > 0) {
     parts.push(`${turn.tools.length} tool${turn.tools.length === 1 ? "" : "s"}`);
   }
@@ -805,6 +810,9 @@ function Block({
 
     case "tool":
       return <Tool tool={block.call} align={align} />;
+
+    case "decision":
+      return <DecisionView block={block} edge={edge} />;
 
     case "illegal":
       /* Drawn where it happened rather than gathered at the end: an illegal move *is* a failed

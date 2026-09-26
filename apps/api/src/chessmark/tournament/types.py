@@ -102,6 +102,10 @@ class Result:
         return (self.white,) if self.black is None else (self.white, self.black)
 
 
+#: The runtimes a field can name, as `db.enums.ModelRuntime` spells them.
+RUNTIMES = frozenset({"llm", "decision"})
+
+
 @dataclass(frozen=True, slots=True)
 class FieldFilter:
     """Which models enter. Every criterion is optional and they compose with AND.
@@ -127,6 +131,17 @@ class FieldFilter:
     requires_reasoning: bool | None = None
     #: Cap on how many models enter, applied after ordering. `None` means everything that matches.
     limit: int | None = None
+    #: Which kind of model enters: `"llm"` for chat models, `"decision"` for decision models
+    #: (ADR-0049). **One or the other, never both** — a decision model plays with every move
+    #: described and cannot make an illegal one, so an event mixing the two would rank them on
+    #: different tasks. They meet on the leaderboard, where every game is rated; an event is a
+    #: like-for-like field. A string rather than the database's enum because this package imports
+    #: nothing, and two values need no import to be checked.
+    runtime: str = "llm"
+
+    def __post_init__(self) -> None:
+        if self.runtime not in RUNTIMES:
+            raise ValueError(f"runtime must be one of {sorted(RUNTIMES)}, not {self.runtime!r}")
 
     def describe(self) -> str:
         """A one-line summary, for a standings page that should say what it selected."""
@@ -147,6 +162,8 @@ class FieldFilter:
             parts.append(f"≥{self.min_credit_cost} credits")
         if self.max_credit_cost is not None:
             parts.append(f"≤{self.max_credit_cost} credits")
+        if self.runtime == "decision":
+            parts.append("decision models")
         if self.requires_reasoning:
             parts.append("reasoning models")
         if self.limit is not None:

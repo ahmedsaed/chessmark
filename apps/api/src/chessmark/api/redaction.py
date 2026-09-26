@@ -31,10 +31,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.db.enums import EventType, GameStatus, PlayerKind
 from chessmark.db.models import Game, Player
 
-#: The key each event type carries that a live opponent must not read.
-WITHHELD_KEYS: dict[str, str] = {
-    str(EventType.THINKING): "reasoning",
-    str(EventType.OUTPUT): "content",
+#: The keys each event type carries that a live opponent must not read.
+#:
+#: **A decision model's probabilities are its reasoning** (ADR-0049). It writes no text, and the
+#: ranking it gives every legal move, with how sure it was, is as much a plan as a paragraph of
+#: thinking — and so is how near it came to resigning or offering a draw. What it *did* stays: the
+#: move, the claim, the resignation are all public a moment later.
+WITHHELD_KEYS: dict[str, frozenset[str]] = {
+    str(EventType.THINKING): frozenset({"reasoning"}),
+    str(EventType.OUTPUT): frozenset({"content"}),
+    str(EventType.DECIDED): frozenset({"probabilities", "confidence", "answers"}),
 }
 
 #: A game in one of these is over, and nothing needs holding back any more.
@@ -64,13 +70,13 @@ async def must_withhold_thinking(session: AsyncSession, game: Game) -> bool:
 
 
 def redact(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """One event's payload with the withheld key removed.
+    """One event's payload with the withheld keys removed.
 
     The token count deliberately stays: "it is thinking, and here is how much" is not a leak, and
     it is what the live view shows while a turn is in flight. The shape is otherwise exactly what
     the write-time redaction used to produce, so nothing downstream needs to know this changed.
     """
-    key = WITHHELD_KEYS.get(event_type)
-    if key is None or key not in payload:
+    keys = WITHHELD_KEYS.get(event_type)
+    if keys is None or keys.isdisjoint(payload):
         return payload
-    return {name: value for name, value in payload.items() if name != key}
+    return {name: value for name, value in payload.items() if name not in keys}

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { getLeaderboard } from "@/lib/api";
 import type { LeaderboardRow } from "@/lib/types";
 import { pageMetadata } from "@/lib/site";
+import { RuntimeBadge } from "@/components/RuntimeBadge";
 
 export const metadata: Metadata = pageMetadata({
   title: "Leaderboard",
@@ -117,6 +118,7 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
                 <span className="mt-0.5 inline-block border border-good/40 px-1 py-px font-mono text-label uppercase tracking-wider text-good sm:ml-1.5 sm:mt-0">
                   {row.quantization}
                 </span>
+                <RuntimeBadge runtime={row.runtime} className="ml-1.5 mt-0.5 sm:mt-0" />
               </td>
               <td className="tabular whitespace-nowrap px-2 py-2.5 text-right font-mono text-xs text-ink sm:px-3">
                 {Math.round(row.rating)}
@@ -142,14 +144,25 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
               <td className="tabular hidden px-3 py-2.5 text-right font-mono text-xs text-ink-dim sm:table-cell">
                 {row.wins}/{row.draws}/{row.losses}
               </td>
-              <td
-                className={`tabular hidden px-3 py-2.5 text-right font-mono text-xs sm:table-cell ${
-                  row.illegal_per_move > 0 ? "text-bad" : "text-good"
-                }`}
-                title={`${row.illegal_attempts} attempts over ${row.moves_played} moves`}
-              >
-                {row.illegal_per_move.toFixed(3)}
-              </td>
+              {/* A decision model is offered only legal moves (ADR-0049), so its zero is not a
+                  result — a dash, rather than a green 0.000 that reads as one. */}
+              {row.runtime === "decision" ? (
+                <td
+                  className="tabular hidden px-3 py-2.5 text-right font-mono text-xs text-ink-faint sm:table-cell"
+                  title="A decision model is offered only legal moves, so it cannot play an illegal one"
+                >
+                  —
+                </td>
+              ) : (
+                <td
+                  className={`tabular hidden px-3 py-2.5 text-right font-mono text-xs sm:table-cell ${
+                    row.illegal_per_move > 0 ? "text-bad" : "text-good"
+                  }`}
+                  title={`${row.illegal_attempts} attempts over ${row.moves_played} moves`}
+                >
+                  {row.illegal_per_move.toFixed(3)}
+                </td>
+              )}
               <td
                 className={`tabular hidden px-3 py-2.5 text-right font-mono text-xs sm:table-cell ${
                   row.forfeits > 0 ? "text-bad" : "text-ink-faint"

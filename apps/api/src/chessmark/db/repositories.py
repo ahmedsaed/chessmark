@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.db.enums import EventType, GameStatus, PlayerKind
+from chessmark.db.enums import EventType, GameStatus, ModelRuntime, PlayerKind
 from chessmark.db.models import Game, GameEvent, Player, Ply
 from chessmark.game import Colour, GameResult, MoveOutcome, Outcome, Referee
 
@@ -41,6 +41,7 @@ async def create_game(
     max_plies: int = 300,
     prompt_version: str | None = None,
     tool_schema_version: str | None = None,
+    decision_version: str | None = None,
     created_by_user_id: uuid.UUID | None = None,
     max_usd: Any = None,
 ) -> Game:
@@ -53,6 +54,7 @@ async def create_game(
         max_plies=max_plies,
         prompt_version=prompt_version,
         tool_schema_version=tool_schema_version,
+        decision_version=decision_version,
         created_by_user_id=created_by_user_id,
         max_usd=max_usd,
     )
@@ -120,6 +122,7 @@ async def add_player(
     persona: str | None = None,
     system_prompt_version: str | None = None,
     sampling: dict[str, Any] | None = None,
+    runtime: ModelRuntime = ModelRuntime.LLM,
 ) -> Player:
     player = Player(
         game_id=game_id,
@@ -131,6 +134,7 @@ async def add_player(
         persona=persona,
         system_prompt_version=system_prompt_version,
         sampling=sampling or {},
+        runtime=runtime,
     )
     session.add(player)
     await session.flush()

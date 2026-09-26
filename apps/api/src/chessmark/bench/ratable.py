@@ -113,6 +113,16 @@ def era(prompt_version: str | None, tool_schema_version: str | None) -> str:
     return f"{major(prompt_version) or '?'}+{major(tool_schema_version) or '?'}"
 
 
+def decision_era(decision_version: str | None) -> str:
+    """A decision event's task, as one string: `"d1"` (ADR-0049).
+
+    The decision harness is the whole of that task — there is no prompt and no tool surface — so
+    its era is its own major and nothing else. Distinct in shape from a chat era (`"v3+v4"`), so the
+    two can never be mistaken for one another in a pairing's `era` column.
+    """
+    return major(decision_version) or "?"
+
+
 def same_task(played: str | None, current: str | None) -> bool:
     """Whether a version `played` may be rated alongside `current`.
 
@@ -182,6 +192,20 @@ class GameFacts:
     used_providers: tuple[tuple[str, ...], ...] = ()
     model_slugs: tuple[str, ...] = ()
     trash_talk_enabled: bool = False
+    #: The decision harness's version, when a decision model played (ADR-0049).
+    decision_version: str | None = None
+    #: Per seat, which harness asked it for its moves: `"llm"`, `"decision"`, or `"none"` for a
+    #: person. Empty means a record from before there was a choice, and every one of those is a
+    #: chat game.
+    harnesses: tuple[str, ...] = ()
+
+    @property
+    def chat_played(self) -> bool:
+        return not self.harnesses or "llm" in self.harnesses
+
+    @property
+    def decision_played(self) -> bool:
+        return "decision" in self.harnesses
 
 
 def is_floating(model_slug: str) -> bool:
@@ -195,6 +219,7 @@ def judge(
     *,
     prompt_version: str | None = None,
     tool_schema_version: str | None = None,
+    decision_version: str | None = None,
 ) -> Verdict:
     """Decide whether a game may move a rating.
 
@@ -235,6 +260,24 @@ def judge(
             return Verdict(False, f"served by more than one endpoint ({', '.join(sorted(used))})")
         if pinned is not None and used and used[0] != pinned:
             return Verdict(False, f"pinned to {pinned} but served by {used[0]}")
+
+    # **Each harness is held to its own version, and only when it played** (ADR-0049). A game
+    # between two decision models ran no prompt and no tools, so a new chat prompt must not retire
+    # it; a chat game asked no decision question, so a new decision version must not either. A game
+    # between one of each is held to both, because both halves of it were measured.
+    if (
+        facts.decision_played
+        and decision_version is not None
+        and not same_task(facts.decision_version, decision_version)
+    ):
+        return Verdict(
+            False,
+            f"played under decision harness {facts.decision_version}, "
+            f"ratings are for {decision_version}",
+        )
+
+    if not facts.chat_played:
+        return RATABLE
 
     if tool_schema_version is not None and not same_task(
         facts.tool_schema_version, tool_schema_version

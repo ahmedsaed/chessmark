@@ -28,9 +28,11 @@ sys.path.insert(0, str(API_ROOT / "src"))
 
 from redis.asyncio import Redis  # noqa: E402
 
+from chessmark.agents.decisions import DecisionGateway  # noqa: E402
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
 from chessmark.agents.scripted import responsive  # noqa: E402
+from chessmark.agents.scripted_decisions import deciding  # noqa: E402
 from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import ProviderCooldown  # noqa: E402
@@ -177,6 +179,13 @@ async def main(argv: list[str] | None = None) -> int:
             )
             if args.scripted
             else LlmGateway(api_key=api_key, pricing=pricing, stream=settings.llm_stream)
+        ),
+        # Decision seats (ADR-0049). Scripted alongside the chat gateway, so `--scripted` still
+        # spends nothing whatever kind of model a game seats.
+        decisions=(
+            DecisionGateway(decide_fn=deciding(), pricing=pricing)
+            if args.scripted
+            else DecisionGateway(api_key=api_key, pricing=pricing)
         ),
         redis=redis,
         budget=budget,

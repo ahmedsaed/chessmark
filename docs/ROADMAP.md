@@ -67,6 +67,8 @@ launch.
 | The browser suite's **signed-in half does not run in CI** — it needs a real Clerk instance. CI asserts the public pages only; the playing flow, the auth screens and the profile are asserted locally by `make test-e2e-all`. This is not free: both bugs `account.spec.ts` found on the day it was written — sign-up dying on `missing_requirements`, and a display name that could never be saved — were live on the site, and the suite that would now catch them is the one nobody runs on a pull request. | Phase 23 |
 | **Cache Components (PPR) is not enabled**, so no page is prerendered — every route is still server-rendered per request, just from cached data (ADR-0046). Turning it on would make the fully-cached pages static, but it also makes *every* dynamic route stream a shell first, which is the behaviour ADR-0046 removed; it needs the three `notFound()` checks moved into `proxy` (an API round trip in middleware) and the root layout's Clerk decision restructured, which is auth on every page with no CI coverage. Measured headroom over today: single-digit milliseconds of server render. | Phase 23 |
 | **A lost revalidation POST leaves a page stale for up to five minutes.** Best-effort by design (it must not be able to fail a committed turn), bounded by `FALLBACK_REVALIDATE`, and logged as a warning — but nothing alerts on a run of them, so a wrong `REVALIDATE_SECRET` in production would show up as numbers that lag rather than as an error. | Phase 23 |
+| **A decision model's rating sits beside chat ratings on a nearly identical task.** It sees what a chat model's board shows and no more, but it is offered only legal moves, so it cannot lose a game to illegal moves the way a chat model can. Marked by a badge wherever a model is named; whether a separate board would read better is open until there are enough decision games (ADR-0049). | Phase 25 |
+| **The decision gates were probed on two models and twelve positions.** Enough to replace a guess with a measurement, not enough to call calibrated; Jev's dead-drawn ending already falls under the gate (ADR-0049). Re-run `make probe-decisions` on every new decision model. | Phase 25 |
 | **A closed event cannot be resumed cleanly.** Abandoning its last pairing completes it, `advance` returns *already over*, and no later tick settles anything. A pool never finishes, so this has not bitten. | Phase 13 |
 | **Standings and ratings are one decision, and human tournaments make two.** FIDE records a forfeit as a loss in the crosstable and excludes it from the rating: the table must be complete, the rating should only reflect games actually played. `db/tournaments.settle` and `bench/ratable.judge` make the same call in both places. Splitting them would give a third answer for endings like `truncated` — score it, do not rate it. **This row asserted that agreement for a month while it was false**: `settle` read `GameStatus.ABORTED`, which only `ABANDONED` produces, so a `ply_cap`, a `budget_exceeded` or an `adjudication` finished as a real `GameResult` and was scored like any other draw. `pool-free` round 175 showed it — a 300-ply cap drew a game White was winning with `g8=Q` on the move, and the pool's table put `0.5` beside `unrated`. It now asks `HARNESS_TERMINATIONS`, so the claim holds; the decision of whether to *split* them is still open. | Phase 13 |
 
@@ -1441,6 +1443,49 @@ tournament — and nothing could answer "every draw between these two" without a
       now fixed
 
 **Covers:** UI-12
+
+---
+
+## Phase 25 — Decision models
+
+**Goal:** OpenRouter's decision models play Chessmark — against each other, against chat models and
+against people — on the same leaderboard, in tournaments of their own.
+
+A decision model answers typed questions with probabilities and writes no text, so it cannot use
+the chat turn loop at all ([ADR-0049](adr/0049-decision-models-play-through-their-own-harness.md)).
+
+**Objectives**
+1. Register them from their own catalogue listing, as a `decision` runtime the seat copies
+2. One Decisions API request per turn: the position and every legal move with facts, plus resign,
+   offer, accept and claim as yes-or-no questions; `DECISION_VERSION` apart from the chat versions
+3. Ratings, eras and tournaments that hold each harness to its own version
+4. The timeline draws a decision, withheld from a person mid-game like reasoning
+
+**Exit criteria**
+- [x] A game between two decision models, and one against a chat model, play through the real
+      worker to checkmate, resignation, an agreed draw and a threefold claim —
+      `tests/orchestration/test_decision_games.py`
+- [x] An answer outside the offered moves is refused before the referee, and fails the turn
+      without forfeiting — mutated and seen to fail
+- [x] A decision pool seats only decision models on every tick, in its own era —
+      `tests/tournament/test_a_decision_event.py` (which found the field losing its runtime)
+- [x] Invariant 8: a person playing a decision model reads its move and not its probabilities, on
+      the event log, the live frame and `/raw` — `tests/api/test_decision_human_play.py`
+- [x] A chat-prompt bump does not retire decision games, and a decision bump does not retire chat
+      games — `tests/bench/test_decision_ratability.py`
+- [x] Changing the request without a version bump fails — `tests/agents/test_decision_request.py`
+- [x] The gates come from a probe, and the probe separates every labelled position for both models
+- [x] Two real games, Jev against Kev, played locally for under half a cent: the first found the
+      draw question drawing a level game at move seven, the second ran 71 plies to a resignation
+- [x] Facts cut back to what a board shows — no check, no attacks or defences — after the first
+      games showed labelled moves being played for their label; three games scored by Stockfish,
+      and play did not get worse (ADR-0049)
+- [x] The decision turn renders, at desktop and phone width — `e2e/public/decision.spec.ts`
+- [x] A capture is stated as what happened (what was taken, material before it) rather than as a
+      deficit, and a declined draw offer is not repeated
+      until a capture or pawn move — both found by reading the second real game move by move
+
+**Covers:** AGENT-23, AGENT-24, AGENT-25, BENCH-13
 
 ---
 

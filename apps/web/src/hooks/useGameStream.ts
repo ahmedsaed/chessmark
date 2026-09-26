@@ -48,6 +48,7 @@ const EVENT_TYPES = Object.keys({
   game_started: true,
   turn_started: true,
   thinking: true,
+  decided: true,
   output: true,
   tool_called: true,
   illegal_attempt: true,

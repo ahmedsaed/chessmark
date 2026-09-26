@@ -8,6 +8,7 @@
 
 import type {
   Colour,
+  DecisionBlock,
   EventType,
   GameEvent,
   LiveFrame,
@@ -95,6 +96,45 @@ function percent(fraction: number): string {
 /** 261751 → "262k". A reader comparing a prompt to a window does not want six digits of either. */
 function compact(tokens: number): string {
   return tokens >= 1000 ? `${Math.round(tokens / 1000)}k` : String(tokens);
+}
+
+/**
+ * A decision model's answer as a block, from a `decided` event or the `decision` frame that
+ * predicted it — the two carry the same fields, so one reader serves both and a frame cannot
+ * render differently from the event that settles it (ADR-0035, ADR-0049).
+ *
+ * **Absent is not zero.** A person playing the game is sent the payload without its
+ * probabilities (invariant 8), and `null` is how the panel knows to say they are held back rather
+ * than drawing an empty ranking as though the model had weighed nothing.
+ */
+export function decisionBlock(payload: Record<string, unknown>, seq: number): DecisionBlock {
+  const ranked = Array.isArray(payload.probabilities)
+    ? payload.probabilities.flatMap((entry): [string, number][] =>
+        Array.isArray(entry) && typeof entry[0] === "string" && typeof entry[1] === "number"
+          ? [[entry[0], entry[1]]]
+          : [],
+      )
+    : null;
+  const answers =
+    payload.answers && typeof payload.answers === "object" && !Array.isArray(payload.answers)
+      ? Object.fromEntries(
+          Object.entries(payload.answers as Record<string, unknown>).filter(
+            (entry): entry is [string, number] => typeof entry[1] === "number",
+          ),
+        )
+      : null;
+  return {
+    kind: "decision",
+    seq,
+    action: asString(payload.action) || "move",
+    choice: asString(payload.choice),
+    options: asNumber(payload.options),
+    offersDraw: payload.offers_draw === true,
+    probabilities: ranked,
+    confidence: typeof payload.confidence === "number" ? payload.confidence : null,
+    answers,
+    durationMs: typeof payload.duration_ms === "number" ? payload.duration_ms : null,
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -243,6 +283,9 @@ export function liveBlocks(frames: LiveFrame[]): TurnBlock[] {
         break;
       case "said":
         blocks.push({ kind: "said", seq: key--, text: frame.text ?? "" });
+        break;
+      case "decision":
+        blocks.push(decisionBlock(frame as unknown as Record<string, unknown>, key--));
         break;
       case "illegal":
         blocks.push({
@@ -516,6 +559,13 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
             durationMs: typeof payload.duration_ms === "number" ? payload.duration_ms : null,
           });
         } else current.withheldReasoning += asNumber(payload.tokens);
+        break;
+      }
+
+      case "decided": {
+        // A decision model's whole turn in one event (ADR-0049). No reasoning precedes it and no
+        // tool call follows: the answer *is* the thinking, and the move is the next event.
+        if (current) current.blocks.push(decisionBlock(payload, event.seq));
         break;
       }
 

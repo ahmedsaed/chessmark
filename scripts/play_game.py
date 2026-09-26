@@ -27,10 +27,12 @@ sys.path.insert(0, str(API_ROOT / "src"))
 import sqlalchemy as sa  # noqa: E402
 from redis.asyncio import Redis  # noqa: E402
 
+from chessmark.agents.decisions import DecisionGateway  # noqa: E402
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.pricing import PricingTable  # noqa: E402
 from chessmark.agents.routing import DEFAULT_QUANTIZATIONS, ProviderRouting  # noqa: E402
 from chessmark.agents.scripted import has_moved_this_turn, step, tool_call  # noqa: E402
+from chessmark.agents.scripted_decisions import deciding  # noqa: E402
 from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.models import Game, GameEvent, Ply  # noqa: E402
@@ -313,6 +315,10 @@ async def main() -> int:
         sessionmaker=sessionmaker,
         queue=queue,
         gateway=gateway,
+        # A decision model named on the command line is asked through its own API (ADR-0049); the
+        # worker builds that gateway from this one's key and prices. Scripted, it must not reach
+        # the network at all.
+        decisions=DecisionGateway(decide_fn=deciding()) if args.scripted else None,
         redis=redis,
         consumer="cli",
         budget=budget,

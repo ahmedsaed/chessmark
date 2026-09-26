@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Query, status
 
 from chessmark.agents.prompts import PROMPT_VERSION
-from chessmark.agents.registry import endpoint_is_playable
+from chessmark.agents.registry import endpoint_is_playable, model_is_playable
 from chessmark.api.deps import SessionDep
 from chessmark.api.schemas import (
     ExcludedGame,
@@ -43,8 +43,10 @@ async def list_models(
     Pass `playable=false` for the registry as stored, which is what an operator auditing what
     disappeared upstream wants.
     """
+    # No context floor here — the endpoint predicate below applies the one that matters, and a
+    # model's advertised window is not what a game is served at.
     query = sa.select(ModelRegistry).where(
-        ModelRegistry.enabled.is_(True), ModelRegistry.supports_tools.is_(True)
+        ModelRegistry.enabled.is_(True), model_is_playable(min_context=0)
     )
     if free_only:
         query = query.where(ModelRegistry.is_free.is_(True))
@@ -113,7 +115,7 @@ async def get_model(session: SessionDep, slug: str) -> ModelDetail:
     # because nothing measured this one. `test_a_model_page_costs_a_fixed_number_of_queries` does.
     stored = await snapshot.current(session, prompt_version=PROMPT_VERSION)
     ratings = [
-        LeaderboardRow(**entry, display_name=row.display_name)
+        LeaderboardRow(**entry, display_name=row.display_name, runtime=row.runtime)
         for entry in stored["rows"]
         if str(entry["model_id"]) == str(row.id)
     ]

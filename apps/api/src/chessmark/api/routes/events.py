@@ -203,9 +203,10 @@ def _visible_frame(frame: dict[str, Any], *, withhold: bool) -> dict[str, Any] |
     return frame
 
 
-#: The two registers a provider streams that carry the model's own words. `tool` and `said` are
-#: safe: a tool call is a fact about the board, and a message was addressed to the reader.
-_WITHHELD_KINDS = {"reasoning", "output"}
+#: The two registers a provider streams that carry the model's own words, and a decision model's
+#: whole answer (ADR-0049). `tool` and `said` are safe: a tool call is a fact about the board, and a
+#: message was addressed to the reader.
+_WITHHELD_KINDS = {"reasoning", "output", "decision"}
 
 
 def _already_over(game: Game, backfill: list[Any]) -> bool:

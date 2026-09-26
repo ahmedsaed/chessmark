@@ -9,12 +9,13 @@ from decimal import Decimal
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.decision_request import DECISION_VERSION
 from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.agents.registry import NoEndpointError, select_endpoint
 from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.tools import TOOL_SCHEMA_VERSION
 from chessmark.agents.turn import ensure_system_prompt
-from chessmark.db.enums import EventType, GameStatus, PlayerKind
+from chessmark.db.enums import EventType, GameStatus, ModelRuntime, PlayerKind
 from chessmark.db.models import Game, ModelRegistry, Player
 from chessmark.db.repositories import add_player, append_event, create_game, get_game
 from chessmark.game import ChessBoard, Colour
@@ -89,6 +90,18 @@ async def create_match(
     # is stored so the result can always say what precision it was played at (BENCH-04).
     routing = routing or ProviderRouting()
 
+    # Which harness each seat runs is the model's, read once here and copied onto the seat, so the
+    # game says what played it however the registry changes later (ADR-0049).
+    runtimes = {
+        colour: await runtime_for(session, seat)
+        for colour, seat in ((Colour.WHITE, white), (Colour.BLACK, black))
+    }
+    chat_seat = ModelRuntime.LLM in {
+        runtime
+        for colour, runtime in runtimes.items()
+        if (white if colour is Colour.WHITE else black).kind is PlayerKind.MODEL
+    }
+
     game = await create_game(
         session,
         start_fen=start_fen,
@@ -98,8 +111,12 @@ async def create_match(
         max_plies=max_plies,
         max_usd=max_usd,
         created_by_user_id=created_by_user_id,
-        prompt_version=PROMPT_VERSION,
-        tool_schema_version=TOOL_SCHEMA_VERSION,
+        # **Each harness records its own version, and only when it ran.** A game between two
+        # decision models used neither the prompt nor the tools, and stamping the current ones on
+        # it would retire its rating the day the *chat* prompt changes (`bench/ratable.judge`).
+        prompt_version=PROMPT_VERSION if chat_seat else None,
+        tool_schema_version=TOOL_SCHEMA_VERSION if chat_seat else None,
+        decision_version=(DECISION_VERSION if ModelRuntime.DECISION in runtimes.values() else None),
     )
     players: dict[Colour, Player] = {}
     for colour, seat in ((Colour.WHITE, white), (Colour.BLACK, black)):
@@ -112,8 +129,12 @@ async def create_match(
             model_id=seat.model_id or await registry_id_for(session, seat.model),
             user_id=seat.user_id,
             persona=seat.persona,
-            system_prompt_version=PROMPT_VERSION,
+            # A decision seat has no system prompt at all, so it has no version of one.
+            system_prompt_version=(
+                None if runtimes[colour] is ModelRuntime.DECISION else PROMPT_VERSION
+            ),
             sampling={"model": seat.model} if seat.model else {},
+            runtime=runtimes[colour],
         )
         # One endpoint, pinned for the whole game (ADR-0015). Previously the router chose per
         # call, and it did switch mid-game: the first paid benchmark was served by Baidu for 70
@@ -157,9 +178,12 @@ async def create_match(
     match = Match(game=game, white=players[Colour.WHITE], black=players[Colour.BLACK])
 
     for colour in (Colour.WHITE, Colour.BLACK):
-        # Only a model has a transcript. A human seat has no prompt, no cached prefix and no
-        # tokens, and seeding one would write a system prompt nothing will ever read.
+        # Only a chat model has a transcript. A human seat has no prompt, no cached prefix and no
+        # tokens, and a decision seat is asked afresh every turn (ADR-0049) — seeding either would
+        # write a system prompt nothing will ever read.
         if PlayerKind(match.player(colour).kind) is not PlayerKind.MODEL:
+            continue
+        if match.player(colour).runtime == ModelRuntime.DECISION:
             continue
 
         await ensure_system_prompt(
@@ -198,6 +222,7 @@ async def start_match(
             "trash_talk_enabled": game.trash_talk_enabled,
             "prompt_version": game.prompt_version,
             "tool_schema_version": game.tool_schema_version,
+            "decision_version": game.decision_version,
         },
     )
     await session.flush()
@@ -265,6 +290,21 @@ async def registry_id_for(session: AsyncSession, model_slug: str | None) -> uuid
         sa.select(ModelRegistry.id).where(ModelRegistry.openrouter_id == model_slug)
     )
     return model_id
+
+
+async def runtime_for(session: AsyncSession, seat: Seat) -> ModelRuntime:
+    """How this seat's model is asked for a move. A chat model unless the registry says otherwise.
+
+    An unregistered slug is a chat model, which is what every such seat has always been — the
+    registry is the only thing that can say a model answers through the Decisions API, and a seat
+    that is not a model at all has no runtime to speak of.
+    """
+    if seat.kind is not PlayerKind.MODEL or not seat.model:
+        return ModelRuntime.LLM
+    runtime = await session.scalar(
+        sa.select(ModelRegistry.runtime).where(ModelRegistry.openrouter_id == seat.model)
+    )
+    return ModelRuntime(runtime) if runtime is not None else ModelRuntime.LLM
 
 
 def model_for(player: Player) -> str:

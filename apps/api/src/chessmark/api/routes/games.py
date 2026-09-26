@@ -52,7 +52,7 @@ from chessmark.api.schemas import (
 )
 from chessmark.db.archive import ArchiveKind, ArchiveOutcome, ArchiveSort, archive_query
 from chessmark.db.credits import InsufficientCreditsError, charge, cost_of
-from chessmark.db.enums import EventType, GameStatus, ModerationStatus, PlayerKind
+from chessmark.db.enums import EventType, GameStatus, ModelRuntime, ModerationStatus, PlayerKind
 from chessmark.db.models import (
     Game,
     LlmCall,
@@ -656,8 +656,9 @@ async def create_game_endpoint(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Unknown model {slug!r}. See GET /models for what is playable.",
             )
-        if not model.supports_tools:
-            # AGENT-01: agents act only through tools, so a model without them cannot play at all.
+        if model.runtime != ModelRuntime.DECISION and not model.supports_tools:
+            # AGENT-01: a chat model acts only through tools, so one without them cannot play at
+            # all. A decision model acts through none and is asked another way (ADR-0049).
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"{slug!r} does not support tool calling and cannot play.",

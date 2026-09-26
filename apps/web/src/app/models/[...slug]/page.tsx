@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 
 import { GameCard } from "@/components/GameCard";
 import { CreditBadge } from "@/components/ModelPicker";
+import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { getModel, listGamesByModel } from "@/lib/api";
 import { parseArchive, withFilter } from "@/lib/archive";
 import { modelSlugFromSegments } from "@/lib/models";
@@ -107,6 +108,7 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
       <div className="mt-4 flex flex-wrap items-baseline gap-3">
         <h1 className="font-serif text-4xl leading-tight text-ink">{model.display_name}</h1>
         <CreditBadge credits={model.credit_cost} />
+        <RuntimeBadge runtime={model.runtime} />
       </div>
       <p className="mt-1 font-mono text-xs text-ink-faint">
         {model.openrouter_id}
@@ -166,9 +168,15 @@ function Facts({ model }: { model: ModelDetail }) {
       <Fact
         label="Context"
         value={model.context_length ? `${Math.round(model.context_length / 1000)}k` : "—"}
-        note="≈1.8k tokens a ply"
+        /* A chat model's window holds a growing transcript; a decision model's holds one
+           position and its legal moves, asked afresh every turn (ADR-0049). */
+        note={model.runtime === "decision" ? "one position a turn" : "≈1.8k tokens a ply"}
       />
-      <Fact label="Reasoning" value={model.supports_reasoning ? "yes" : "no"} />
+      {model.runtime === "decision" ? (
+        <Fact label="Kind" value="decision" note="probabilities, not text" />
+      ) : (
+        <Fact label="Reasoning" value={model.supports_reasoning ? "yes" : "no"} />
+      )}
     </dl>
   );
 }
@@ -205,7 +213,13 @@ function Record({ model }: { model: ModelDetail }) {
         <Fact
           label="Illegal per move"
           value={`${(s.illegal_per_move * 100).toFixed(2)}%`}
-          note={`${s.illegal_attempts} in ${s.moves_played} moves`}
+          /* Zero by construction for a decision model — it is offered only legal moves — and a
+             green 0.00% beside a chat model's would read as an achievement it never had to earn. */
+          note={
+            model.runtime === "decision"
+              ? "offered only legal moves"
+              : `${s.illegal_attempts} in ${s.moves_played} moves`
+          }
           tone={s.illegal_attempts > 0 ? "bad" : "good"}
         />
         <Fact
@@ -217,8 +231,12 @@ function Record({ model }: { model: ModelDetail }) {
         <Fact label="Tokens" value={s.total_tokens.toLocaleString()} />
         <Fact
           label="Cache rate"
-          value={s.cache_rate === null ? "—" : `${Math.round(s.cache_rate * 100)}%`}
-          note="of the prompt"
+          value={
+            s.cache_rate === null || model.runtime === "decision"
+              ? "—"
+              : `${Math.round(s.cache_rate * 100)}%`
+          }
+          note={model.runtime === "decision" ? "a fresh request each turn" : "of the prompt"}
         />
         <Fact
           label="Latency"
@@ -348,7 +366,11 @@ function ContestantBlock({
           <Fact
             label="Illegal per move"
             value={`${(rating.illegal_per_move * 100).toFixed(2)}%`}
-            note={`${rating.illegal_attempts} in ${rating.moves_played} moves`}
+            note={
+              rating.runtime === "decision"
+                ? "offered only legal moves"
+                : `${rating.illegal_attempts} in ${rating.moves_played} moves`
+            }
             tone={rating.illegal_attempts > 0 ? "bad" : "good"}
           />
           <Fact

@@ -16,6 +16,8 @@
 
 import Link from "next/link";
 
+import { RuntimeBadge } from "@/components/RuntimeBadge";
+
 import type { GameDetail, Player } from "@/lib/types";
 
 function usd(value: string): string {
@@ -33,7 +35,9 @@ function usd(value: string): string {
  * and make NFR-06's ">80%" unreachable by arithmetic.
  */
 function cacheRate(player: Player): string {
-  if (!player.prompt_tokens) return "—";
+  /* A decision model is sent a fresh request every turn with nothing in common with the last
+     beyond the rules, so there is no cache to hit and 0% would read as a failure to use one. */
+  if (!player.prompt_tokens || player.runtime === "decision") return "—";
   return `${Math.round((player.cached_tokens / player.prompt_tokens) * 100)}%`;
 }
 
@@ -192,8 +196,9 @@ function PlayerCard({
           </span>
         )}
       </div>
-      <p className="truncate font-mono text-label text-ink-faint">
-        {player.model ?? player.kind}
+      <p className="flex min-w-0 items-center gap-1.5 font-mono text-label text-ink-faint">
+        <span className="truncate">{player.model ?? player.kind}</span>
+        <RuntimeBadge runtime={player.runtime} />
       </p>
 
       <Endpoint player={player} />

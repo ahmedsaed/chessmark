@@ -35,11 +35,13 @@ import sqlalchemy as sa  # noqa: E402
 from play_game import scripted_players  # noqa: E402
 from redis.asyncio import Redis  # noqa: E402
 
+from chessmark.agents.decisions import DecisionGateway  # noqa: E402
 from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.registry import sync_model_registry  # noqa: E402
+from chessmark.agents.scripted_decisions import deciding  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db import tournaments as repo  # noqa: E402
-from chessmark.db.enums import GameStatus  # noqa: E402
+from chessmark.db.enums import GameStatus, ModelRuntime  # noqa: E402
 from chessmark.db.models import (  # noqa: E402
     Game,
     ModelEndpoint,
@@ -67,6 +69,14 @@ from chessmark.tournament import (  # noqa: E402
 #: seeded game from one they played.
 WHITE = "e2e/white"
 BLACK = "e2e/black"
+
+#: Two decision models, so the suite has a finished game whose turns are decisions rather than
+#: reasoning (ADR-0049). Registered **disabled**: a seat's runtime is read from the registry, so
+#: they have to exist, and disabled keeps them out of every picker and catalogue a developer's
+#: database shows.
+DECIDER_WHITE = "e2e/decider-white"
+DECIDER_BLACK = "e2e/decider-black"
+FOOLS_MATE = ["f3", "e5", "g4", "Qh4"]
 
 #: Enough of a catalogue for the picker and the model pages to have something to show.
 #:
@@ -250,6 +260,81 @@ async def ensure_tournament(session: Any) -> str | None:
     return E2E_TOURNAMENT
 
 
+async def ensure_deciders(session: Any) -> None:
+    for slug in (DECIDER_WHITE, DECIDER_BLACK):
+        known = await session.scalar(
+            sa.select(ModelRegistry.id).where(ModelRegistry.openrouter_id == slug)
+        )
+        if known is None:
+            session.add(
+                ModelRegistry(
+                    openrouter_id=slug,
+                    display_name=f"E2E {slug.split('-')[-1].capitalize()} Decider",
+                    provider="e2e",
+                    supports_tools=False,
+                    runtime=ModelRuntime.DECISION,
+                    enabled=False,
+                )
+            )
+    await session.commit()
+
+
+async def existing_decision_game(session: Any) -> str | None:
+    game_id = await session.scalar(
+        sa.select(Game.id)
+        .join(Player, Player.game_id == Game.id)
+        .where(
+            Game.status == GameStatus.FINISHED,
+            Player.colour == "white",
+            Player.sampling["model"].astext == DECIDER_WHITE,
+        )
+        .order_by(Game.created_at.desc())
+        .limit(1)
+    )
+    return str(game_id) if game_id else None
+
+
+async def play_decision_game() -> str:
+    """Fool's Mate between two scripted decision models, through the real worker."""
+    settings = get_settings()
+    redis: Redis[Any] = Redis.from_url(str(settings.redis_url))
+    queue = TurnQueue(redis)
+    await queue.ensure_group()
+    sessionmaker = get_sessionmaker()
+    try:
+        async with sessionmaker() as session:
+            match = await create_match(
+                session,
+                white=Seat(display_name="E2E White Decider", model=DECIDER_WHITE),
+                black=Seat(display_name="E2E Black Decider", model=DECIDER_BLACK),
+                is_ranked=False,
+                max_usd=Decimal("1"),
+                max_plies=20,
+            )
+            job = await start_match(session, queue, game_id=match.game.id)
+            await session.commit()
+            game_id = match.game.id
+        await queue.enqueue(job)
+
+        worker = TurnWorker(
+            sessionmaker=sessionmaker,
+            queue=queue,
+            gateway=LlmGateway(completion_fn=scripted_players()),
+            decisions=DecisionGateway(decide_fn=deciding(moves=FOOLS_MATE)),
+            redis=redis,
+            consumer="seed-e2e",
+        )
+        for _ in range(20):
+            deliveries = await queue.consume("seed-e2e", block_ms=2000)
+            if not deliveries:
+                break
+            for delivery in deliveries:
+                await worker.process(delivery)
+        return str(game_id)
+    finally:
+        await redis.aclose()
+
+
 async def main() -> int:
     sessionmaker = get_sessionmaker()
     try:
@@ -266,6 +351,12 @@ async def main() -> int:
             game_id = await play_scripted_game()
 
         async with sessionmaker() as session:
+            await ensure_deciders(session)
+            decision_game = await existing_decision_game(session)
+        if decision_game is None:
+            decision_game = await play_decision_game()
+
+        async with sessionmaker() as session:
             game = await session.get(Game, game_id)
             if game is None or game.status != GameStatus.FINISHED:
                 print(
@@ -280,6 +371,7 @@ async def main() -> int:
                 "plyCount": game.ply_count,
                 "models": models,
                 "tournament": tournament_slug,
+                "decisionGame": decision_game,
             }
 
         print(json.dumps(fixtures, indent=2))

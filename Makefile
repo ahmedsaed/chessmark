@@ -3,7 +3,7 @@ SHELL := /bin/bash
 API := apps/api
 WEB := apps/web
 
-.PHONY: help setup up down logs psql redis api web dev test lint fmt typecheck check clean dev-pull harvest-cassettes
+.PHONY: help setup up down logs psql redis api web dev test lint fmt typecheck check clean dev-pull harvest-cassettes probe-decisions
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -67,6 +67,9 @@ models-free: ## List free models that are currently served, tool-capable and pla
 
 smoke-llm: ## One real end-to-end LLM call. Manual only — the test suite never calls a provider
 	cd $(API) && uv run python ../../scripts/smoke_llm.py
+
+probe-decisions: ## Probe decision models on labelled positions (spends < $0.01). Sets the gates, ADR-0049
+	cd $(API) && uv run python ../../scripts/probe_decisions.py $(ARGS)
 
 play: ## Play a full game and watch it. ARGS="--scripted" needs no API key
 	cd $(API) && uv run python ../../scripts/play_game.py $(ARGS)

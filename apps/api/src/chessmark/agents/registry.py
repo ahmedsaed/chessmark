@@ -28,9 +28,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.pricing import ModelPricing, PricingTable
 from chessmark.core.config import get_settings
+from chessmark.db.enums import ModelRuntime
 from chessmark.db.models import ModelEndpoint, ModelRegistry
 
 MODELS_URL = "https://openrouter.ai/api/v1/models"
+
+#: **Decision models are not in the main listing at all** (ADR-0049). OpenRouter lists them only
+#: when asked for their output modality, so a sync that read one URL would never learn they exist.
+DECISION_MODELS_URL = f"{MODELS_URL}?output_modalities=decisions"
 
 
 @dataclass(slots=True)
@@ -53,6 +58,16 @@ class SyncReport:
 def provider_of(openrouter_id: str) -> str:
     """The vendor half of an OpenRouter slug: `nvidia/nemotron-nano-9b-v2:free` -> `nvidia`."""
     return openrouter_id.split("/", 1)[0] if "/" in openrouter_id else "unknown"
+
+
+def is_decision_model(model: dict[str, Any]) -> bool:
+    """Whether a catalogue entry answers the Decisions API rather than chat completions.
+
+    Read from the entry's declared output modality, which is the contract the Decisions API itself
+    keys on — not from its name, its vendor, or which of our two URLs it happened to arrive by.
+    """
+    architecture = model.get("architecture") or {}
+    return "decisions" in (architecture.get("output_modalities") or [])
 
 
 def to_registry_entry(model: dict[str, Any]) -> dict[str, Any]:
@@ -78,6 +93,7 @@ def to_registry_entry(model: dict[str, Any]) -> dict[str, Any]:
         "credit_cost": credit_cost_for(prompt, completion),
         "supports_reasoning": "reasoning" in supported,
         "supports_tools": "tools" in supported,
+        "runtime": ModelRuntime.DECISION if is_decision_model(model) else ModelRuntime.LLM,
         "is_free": model_id.endswith(":free"),
         "enabled": True,
         # Present for roughly 40% of the catalogue. See the column's note: it is the only
@@ -215,24 +231,40 @@ async def fetch_catalogue(
     registered, because registering it only invites a confusing failure later, and every one of
     those failures is a forfeit rather than an apology:
 
-    * `tools_only` (default): the runtime acts only through tools (AGENT-01).
+    * `tools_only` (default): the chat runtime acts only through tools (AGENT-01).
     * batch variants: asynchronous, so they cannot answer a turn. See `is_batch`.
     * `min_context`: too small to hold a game. See `fits_a_game`.
+
+    The first and third are about the *chat* runtime and pass every decision model, which plays
+    through neither tools nor a transcript (ADR-0049).
 
     The fourth is different in kind. A floating alias *can* play perfectly well; what it cannot do
     is say what played. Its record is unreproducible, which is a worse failure for a benchmark than
     being unable to move. See `is_floating_alias`.
     """
-    response = await client.get(MODELS_URL)
-    response.raise_for_status()
-    models: list[dict[str, Any]] = response.json()["data"]
+    models: dict[str, dict[str, Any]] = {}
+    for url in (MODELS_URL, DECISION_MODELS_URL):
+        response = await client.get(url)
+        response.raise_for_status()
+        for model in response.json()["data"]:
+            models.setdefault(model["id"], model)
 
-    entries = [to_registry_entry(model) for model in models]
+    floor = context_floor(min_context)
+    entries = [to_registry_entry(model) for model in models.values()]
     entries = [entry for entry in entries if not is_batch(entry["openrouter_id"])]
     entries = [e for e in entries if not is_floating_alias(e["openrouter_id"])]
-    entries = [e for e in entries if fits_a_game(e["context_length"], context_floor(min_context))]
+    # **The two chat-only rules do not apply to a decision model** (ADR-0049). It acts through no
+    # tools, and it carries no transcript — each turn is a fresh request holding one position — so
+    # the window that must hold a whole game's history only has to hold one move's question.
+    entries = [
+        e
+        for e in entries
+        if e.get("runtime") == ModelRuntime.DECISION or fits_a_game(e["context_length"], floor)
+    ]
     if tools_only:
-        entries = [entry for entry in entries if entry["supports_tools"]]
+        entries = [
+            e for e in entries if e.get("runtime") == ModelRuntime.DECISION or e["supports_tools"]
+        ]
     if free_only:
         entries = [entry for entry in entries if entry["is_free"]]
     return entries
@@ -267,6 +299,7 @@ async def sync_model_registry(
             "completion_usd_per_token": Decimal(str(entry.get("completion_usd_per_token", 0))),
             "supports_reasoning": bool(entry.get("supports_reasoning", False)),
             "supports_tools": bool(entry.get("supports_tools", True)),
+            "runtime": ModelRuntime(entry.get("runtime", ModelRuntime.LLM)),
             "is_free": bool(entry.get("is_free", slug.endswith(":free"))),
             "hugging_face_id": entry.get("hugging_face_id"),
             # Derived, and rewritten on every sync so a vendor's price change moves the tier with
@@ -331,6 +364,23 @@ async def load_pricing_table(session: AsyncSession) -> PricingTable:
     return table
 
 
+def model_is_playable(min_context: int | None = None) -> Any:
+    """What a registered model must be for a game to use it, as one SQL condition.
+
+    **Two runtimes, two answers** (ADR-0049). A chat model must call tools (AGENT-01) and have a
+    window that can hold a game (AGENT-14). A decision model does neither and needs neither: it is
+    handed one position and the legal moves each turn, so it is playable as it stands. Written once
+    so the catalogue, the picker and a tournament's field cannot disagree about which is which.
+    """
+    floor = context_floor(min_context)
+    chat: list[Any] = [ModelRegistry.supports_tools.is_(True)]
+    if floor > 0:
+        chat.append(
+            sa.or_(ModelRegistry.context_length.is_(None), ModelRegistry.context_length >= floor)
+        )
+    return sa.or_(ModelRegistry.runtime == ModelRuntime.DECISION, sa.and_(*chat))
+
+
 async def playable_models(
     session: AsyncSession, *, free_only: bool = False, min_context: int | None = None
 ) -> list[ModelRegistry]:
@@ -340,17 +390,9 @@ async def playable_models(
     The context floor was missing here, which is how a model too small to finish a game stayed on
     the list of models a game may use.
     """
-    floor = context_floor(min_context)
     query = sa.select(ModelRegistry).where(
-        ModelRegistry.enabled.is_(True), ModelRegistry.supports_tools.is_(True)
+        ModelRegistry.enabled.is_(True), model_is_playable(min_context)
     )
-    if floor > 0:
-        query = query.where(
-            sa.or_(
-                ModelRegistry.context_length.is_(None),
-                ModelRegistry.context_length >= floor,
-            )
-        )
     if free_only:
         query = query.where(ModelRegistry.is_free.is_(True))
 
@@ -541,17 +583,19 @@ def ineligible_reasons(
     know it is both too small *and* aliased, rather than fixing one and discovering the other.
     """
     floor = context_floor(min_context)
+    # The two chat-only rules, which a decision model is not held to (ADR-0049).
+    chat = row.runtime != ModelRuntime.DECISION
     against = []
-    if not row.supports_tools:
+    if chat and not row.supports_tools:
         against.append("no tool calling")
     if is_batch(row.openrouter_id):
         against.append("batch variant — asynchronous, cannot answer a turn")
     if is_floating_alias(row.openrouter_id):
         against.append("floating alias — plays, but cannot say what played")
-    if not fits_a_game(row.context_length, floor):
+    if chat and not fits_a_game(row.context_length, floor):
         against.append(f"context {row.context_length:,} < {floor:,}")
     if not has_endpoint:
-        against.append("no active tool-capable endpoint that can hold a game")
+        against.append("no active endpoint that can hold a game")
     return against
 
 
@@ -572,18 +616,22 @@ def endpoint_is_playable(min_context: int | None = None) -> tuple[Any, ...]:
     and excluding on missing metadata drops models over a gap in someone else's data.
     """
     floor = context_floor(min_context)
-    clauses: list[Any] = [
-        ModelEndpoint.is_active.is_(True),
-        ModelEndpoint.supports_tools.is_(True),
-    ]
+    chat: list[Any] = [ModelEndpoint.supports_tools.is_(True)]
     if floor > 0:
-        clauses.append(
+        chat.append(
             sa.or_(
                 ModelEndpoint.context_length.is_(None),
                 ModelEndpoint.context_length >= floor,
             )
         )
-    return tuple(clauses)
+    # **A decision model's endpoint declares no parameters at all** — `supported_parameters` is
+    # empty, because there are no tools or sampling knobs to declare — and its window holds one
+    # move's question rather than a game's transcript. Both chat rules would refuse every one of
+    # them (ADR-0049). A subquery rather than a join, so each caller keeps the shape it has.
+    decision = ModelEndpoint.model_id.in_(
+        sa.select(ModelRegistry.id).where(ModelRegistry.runtime == ModelRuntime.DECISION)
+    )
+    return (ModelEndpoint.is_active.is_(True), sa.or_(decision, sa.and_(*chat)))
 
 
 async def select_endpoint(
@@ -608,9 +656,10 @@ async def select_endpoint(
     over Novita at fp8 (95.93%) — recorded honestly, but not what anyone means by "GLM-4.7".
     `unknown` remains a contestant you can ask for; it is no longer the silent default.
 
-    Endpoints that cannot call tools are never selected: an agent that cannot act cannot play
-    (AGENT-01), and picking one would produce a forfeit that says nothing about the model. Nor are
-    endpoints whose own context window is under the floor — see `endpoint_is_playable`.
+    A chat model's endpoints that cannot call tools are never selected: an agent that cannot act
+    cannot play (AGENT-01), and picking one would produce a forfeit that says nothing about the
+    model. Nor are endpoints whose own context window is under the floor — see
+    `endpoint_is_playable`, which is also where a decision model is exempt from both.
     """
     query = (
         sa.select(ModelEndpoint)

@@ -10,6 +10,8 @@ export interface Fixtures {
   plyCount: number;
   /** The slug of the seeded tournament, or null if the catalogue was too small to field one. */
   tournament: string | null;
+  /** A finished game between two scripted decision models — Fool's Mate (ADR-0049). */
+  decisionGame: string;
 }
 
 /** The ids written by the seed project. Read per call so a test never holds a stale one. */

@@ -97,7 +97,7 @@ class TestReasons:
         assert len(reasons) == 2
 
     def test_having_no_usable_endpoint_counts(self) -> None:
-        assert "no active tool-capable endpoint that can hold a game" in ineligible_reasons(
+        assert "no active endpoint that can hold a game" in ineligible_reasons(
             self._row(), has_endpoint=False
         )
 

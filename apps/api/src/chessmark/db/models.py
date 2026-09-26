@@ -39,6 +39,7 @@ from chessmark.db.enums import (
     CreditReason,
     EventType,
     GameStatus,
+    ModelRuntime,
     ModerationStatus,
     PlayerKind,
     TournamentStatus,
@@ -90,6 +91,14 @@ class ModelRegistry(Base):
     completion_usd_per_token: Mapped[Decimal] = mapped_column(USD_PER_TOKEN, default=Decimal(0))
     supports_reasoning: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     supports_tools: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
+
+    #: How this model is asked for a move (ADR-0049). Read from the catalogue at sync: a model
+    #: listed under `output_modalities=decisions` is a decision model, everything else is a chat
+    #: model. **This, not `supports_tools`, is what makes a decision model playable** — it declares
+    #: no parameters at all, and would otherwise fail every "can it act" check the chat path needs.
+    runtime: Mapped[ModelRuntime] = mapped_column(
+        enum_column(ModelRuntime), default=ModelRuntime.LLM, server_default=ModelRuntime.LLM.value
+    )
     is_free: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     enabled: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
 
@@ -173,8 +182,17 @@ class Game(Base):
     auto_threefold_draw: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     auto_fifty_move_draw: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
 
+    #: The chat harness's two versions. `None` on a game with no chat seat: a game between two
+    #: decision models ran neither the prompt nor the tools, and recording the current ones anyway
+    #: would tie its rating to a harness it never used (ADR-0049).
     prompt_version: Mapped[str | None] = mapped_column(sa.Text)
     tool_schema_version: Mapped[str | None] = mapped_column(sa.Text)
+
+    #: The decision harness's version — the state, the questions and the facts a decision seat is
+    #: shown (`agents/decision_request.py`). Versioned apart from the prompt on purpose: the two
+    #: harnesses change for different reasons, and bumping one must not retire the other's games.
+    #: `None` on a game with no decision seat.
+    decision_version: Mapped[str | None] = mapped_column(sa.Text)
 
     #: The OpenRouter provider-routing policy this game ran under — which quantizations it would
     #: accept, the sort, any throughput floor. Recorded because it is as much a part of a result as
@@ -226,6 +244,13 @@ class Player(Base):
     display_name: Mapped[str] = mapped_column(sa.Text)
 
     persona: Mapped[str | None] = mapped_column(sa.Text)
+
+    #: How this seat was asked for its moves. Copied from the registry when the seat is created,
+    #: rather than joined at read time, so a game says what actually played it even if the
+    #: registry row is later changed or gone — the same reason `sampling["model"]` holds the slug.
+    runtime: Mapped[ModelRuntime] = mapped_column(
+        enum_column(ModelRuntime), default=ModelRuntime.LLM, server_default=ModelRuntime.LLM.value
+    )
     system_prompt_version: Mapped[str | None] = mapped_column(sa.Text)
     sampling: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
 
