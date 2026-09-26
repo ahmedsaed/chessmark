@@ -35,6 +35,12 @@ file is only the record of *what shipped when*.
   was, so `c4550202` drew a day of rate limits as one `×16` row above a halt from the night before,
   and the last thing on the page was a halt that had long since lifted. A retry or a different
   pause between two waits now starts a new row, and the newest wait is the last one drawn. (UI-10)
+- **A turn resumed after a call to an unknown tool no longer dies on its first tool call.** The
+  unknown call was written to `tool_calls` but not counted in `tool_call_count`, and the resumed
+  attempt numbered its calls from the count, so it reused a sequence and hit the unique constraint.
+  The job died without writing anything, and the game sat silent until the stall sweep requeued it
+  45 minutes later. `c4550202` did this on every resume for a day. A resumed turn now numbers its
+  calls from the rows it already wrote. (ADR-0045)
 - **A tournament's entrant count matches its table.** It counted every entrant ever seated,
   withdrawn ones included, so the Decision Cup said "4 entrants" above a table of two. Both the
   list and the event page now count the rows the standings show: models still in the field, and

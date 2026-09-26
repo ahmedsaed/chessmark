@@ -294,6 +294,16 @@ class _Carried:
         )
 
 
+async def _last_sequence(
+    session: AsyncSession, table: type[LlmCall] | type[ToolCall], turn_id: int
+) -> int:
+    """The highest `sequence` this turn has written to `table`, or 0 when it has written none."""
+    last = await session.scalar(
+        sa.select(sa.func.max(table.sequence)).where(table.turn_id == turn_id)
+    )
+    return int(last or 0)
+
+
 @dataclass(slots=True)
 class TurnResult:
     turn_id: int
@@ -481,8 +491,22 @@ class TurnRunner:
         # Both sequences carry too, not just the counters they feed: `llm_calls` and `tool_calls`
         # are each unique on `(turn_id, sequence)`, so an attempt that restarted either at 1 would
         # collide with the rows the interrupted attempt already wrote.
+        #
+        # **Read from the rows, not the counters.** They are not the same number: a call to a tool
+        # that does not exist is written to `tool_calls` but not counted in `tool_call_count`, so
+        # `c4550202` resumed a turn whose counter said 0 over a row at sequence 1, and every retry
+        # died on the constraint — silently, holding the game until the stall sweep came round
+        # forty-five minutes later. The counters stay what they are: the tool bound is about tools
+        # that ran. The sequence is about rows, so it asks the rows.
         self._llm_sequence = carried.llm_calls
         self._tool_sequence = carried.tool_calls
+        if resuming is not None:
+            self._llm_sequence = max(
+                self._llm_sequence, await _last_sequence(self.session, LlmCall, turn.id)
+            )
+            self._tool_sequence = max(
+                self._tool_sequence, await _last_sequence(self.session, ToolCall, turn.id)
+            )
         self.state.tool_calls = carried.tool_calls
         self.state.illegal_attempts = carried.illegal_attempts
 
