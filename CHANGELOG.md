@@ -27,6 +27,21 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **Credit is dollars, spent at what each turn actually cost.** A game used to cost one to six
+  credits when it started, by the price band of its models. That could not become money: two games
+  in one band cost an order of magnitude apart, and a resignation cost as much as a long game. Now
+  a balance is US dollars, each model turn is charged its real cost as it is played, and starting a
+  paid game needs only a balance above zero. When credit runs out, a game pauses before its next
+  turn and resumes once more is added. A person playing a free model needs no credit at all.
+  Existing balances were reset to zero. The picker shows each model's price band as `$`–`$$$$`,
+  and tournament fields select on it with `--min-tier`/`--max-tier`, replacing
+  `--min-credits`/`--max-credits`. `./chessmark credits` grants dollars. The header balance
+  refreshes when a model move in your own game is charged, and when you return to the tab. It does
+  not poll. (AUTH-10, AUTH-11, AUTH-13,
+  [ADR-0052](docs/adr/0052-credit-is-dollars-spent-at-actual-cost.md))
+- **Your game, your limit.** There is no server-wide spending limit on a game you start. You can
+  set your own when you start it ("Stop at $"), or leave it off. Tournaments keep their own limits.
+  (AUTH-15)
 - **Decision models choose what to do with their turn, and are checked before they play.** Resign,
   offer, accept and claim are now one choice beside the move, not four yes/no questions gated at a
   fixed number. The same answer meant different things on different models, so no single gate was
@@ -37,6 +52,17 @@ file is only the record of *what shipped when*.
   now `d2`, a new era for decision tournaments. `./chessmark deploy` now restarts the catalogue
   service, which it never had. (AGENT-24, AGENT-26,
   [ADR-0051](docs/adr/0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md))
+
+### Added
+
+- **Pause and resume a game between two models you started.** It pauses before its next turn
+  (the move in progress finishes and is charged), stays paused until you resume it, and needs
+  credit to resume. (AUTH-16)
+- **A game names who started it.** Outside a tournament, the game page shows "Started by" with the
+  person's display name, never their email. (AUTH-17)
+- **Research on selling credit without a company**, in
+  [docs/PAYMENTS.md](docs/PAYMENTS.md): a merchant of record would let a person sell worldwide and
+  be paid out in Egypt. Nothing is built.
 
 ### Fixed
 

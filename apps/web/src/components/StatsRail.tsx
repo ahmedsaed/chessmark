@@ -89,6 +89,15 @@ export function StatsRail({
             properly; this only has to say which event, and then get out of the way.
             Round and era ride the tooltip. Era is what says which results this one is comparable
             to (ADR-0043), so it earns a mention — not a line of its own. */}
+        {/* A game outside any event says who ran it instead, by display name (never an email). */}
+        {!game.tournament && game.started_by && (
+          <div className="flex justify-between gap-2 font-mono text-data text-ink-dim">
+            <span>Started by</span>
+            <span className="min-w-0 truncate text-ink" title={game.started_by}>
+              {game.started_by}
+            </span>
+          </div>
+        )}
         {game.tournament && (
           <div className="flex justify-between gap-2 font-mono text-data text-ink-dim">
             <span>Event</span>

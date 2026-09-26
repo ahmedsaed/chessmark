@@ -51,9 +51,7 @@ from chessmark.orchestration import AdvanceTurn, TurnQueue  # noqa: E402
 _UNCLAIMED = frozenset({Termination.THREEFOLD_REPETITION, Termination.FIFTY_MOVE_RULE})
 
 
-async def _tell_the_players(
-    session: Any, game: Any, *, previous: Any, ply: int
-) -> int:
+async def _tell_the_players(session: Any, game: Any, *, previous: Any, ply: int) -> int:
     """Append a message to each seat saying the game is live again. Returns how many were told.
 
     **A model that is told the game is over and then asked to move is right to refuse.** Game

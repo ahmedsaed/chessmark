@@ -287,8 +287,8 @@ Enforced at four independent layers, because any single one will eventually be b
 | Layer | Mechanism | Trips when |
 | --- | --- | --- |
 | 1. Global | Redis counter of today's spend, checked before every LLM call | daily budget exhausted → all new calls refused |
-| 2. Per user | `usage_ledger` daily games + USD | user quota exhausted → cannot start a game |
-| 3. Per game | Running total compared against `max_usd_per_game` | exceeded → game ends `budget_exceeded` |
+| 2. Per user | the credit balance, checked before every paid turn ([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)) | at or below zero → the game pauses until credit is added |
+| 3. Per game | Running total compared against the game's `max_usd` — a tournament's per-game limit, or the one a player chose for their own game, or none ([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)) | exceeded → game ends `budget_exceeded` |
 | 4. Per turn | Token and wall-clock ceiling | exceeded → turn forfeits |
 
 Cost is computed from actual returned token counts against `model_registry` pricing, written on the

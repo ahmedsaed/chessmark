@@ -92,8 +92,8 @@ def field_from(args: argparse.Namespace) -> FieldFilter:
         providers=tuple(args.provider or ()),
         free_only=free_only,
         open_weights=open_weights,
-        min_credit_cost=args.min_credits,
-        max_credit_cost=args.max_credits,
+        min_price_tier=args.min_tier,
+        max_price_tier=args.max_tier,
         requires_reasoning=True if args.reasoning else None,
         limit=args.limit,
         # A field is one kind of model (ADR-0049); decision models get events of their own.
@@ -611,8 +611,12 @@ def add_field_options(parser: argparse.ArgumentParser) -> None:
     group.add_argument("--paid", action="store_true", help="paid variants only")
     group.add_argument("--open-weights", action="store_true", help="models with a HuggingFace repo")
     group.add_argument("--closed-weights", action="store_true", help="models without one")
-    group.add_argument("--min-credits", type=int)
-    group.add_argument("--max-credits", type=int)
+    group.add_argument(
+        "--min-tier", type=int, choices=range(1, 5), help="price band, 1 (cheapest) to 4"
+    )
+    group.add_argument(
+        "--max-tier", type=int, choices=range(1, 5), help="price band, 1 (cheapest) to 4"
+    )
     group.add_argument("--reasoning", action="store_true", help="reasoning models only")
     group.add_argument(
         "--decision",

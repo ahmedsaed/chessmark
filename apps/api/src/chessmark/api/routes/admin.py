@@ -124,17 +124,20 @@ async def grant_credits(
     request: CreditGrantRequest,
     admin: AdminUser,
 ) -> CreditGrantOut:
-    """Give a user credits, or take them back (AUTH-11, AUTH-13, ADR-0016).
+    """Give a user credit, in US dollars, or take it back (AUTH-11, AUTH-13, ADR-0052).
 
-    The only way a balance goes up. New accounts hold zero and there is no request flow in the
-    product, so this is the whole granting mechanism during the testing phase — deliberately, to
-    keep an unattended account from consuming provider spend.
+    The only way a balance goes up until a payment processor is wired in. New accounts hold zero,
+    so this is the whole granting mechanism during the testing phase — deliberately, to keep an
+    unattended account from consuming provider spend.
 
     `user` is whatever you have: an email, a Clerk id, or ours. It used to be our internal UUID
-    alone, which meant granting credits began with a database query.
+    alone, which meant granting credit began with a database query.
 
-    A negative `credits` removes them, clamped at zero: a negative balance would be a debt to work
-    off before playing again, which is not what anyone means by taking credits away.
+    A negative `amount_usd` removes credit, stopping at zero: a negative balance would be a debt,
+    which is not what anyone means by taking credit away. A balance already below zero — the one
+    turn a game overran by — is left where it is rather than raised.
+
+    Adding credit is also what resumes a game paused for it: the reconciler asks every tick.
 
     Every movement is recorded against the administrator who made it (AUTH-13), so a balance can be
     explained afterwards rather than merely observed.
@@ -142,12 +145,12 @@ async def grant_credits(
     user = await _resolve_user(session, request.user)
 
     balance = await grant(
-        session, user.id, request.credits, actor_user_id=admin.id, note=request.note
+        session, user.id, request.amount_usd, actor_user_id=admin.id, note=request.note
     )
     await session.commit()
 
     return CreditGrantOut(
-        user_id=user.id, email=user.email, credit_balance=balance, granted=request.credits
+        user_id=user.id, email=user.email, balance_usd=balance, granted_usd=request.amount_usd
     )
 
 

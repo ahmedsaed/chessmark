@@ -27,9 +27,9 @@ async def get_me(session: SessionDep, user: CurrentUser) -> MeOut:
         email=user.email,
         display_name=user.display_name,
         is_admin=user.is_admin,
-        # A balance, not a daily remainder (ADR-0016). It does not refill, so a reader who sees
-        # zero needs to know that asking is the only way it changes — hence the copy in the UI.
-        credit_balance=user.credit_balance,
+        # Dollars, spent at each turn's actual cost (ADR-0052). It does not refill, so a reader
+        # who sees zero needs to know how it changes — hence the copy in the UI.
+        balance_usd=user.balance_usd,
         games_started_today=usage.games_started,
         usd_spent_today=Decimal(usage.usd_spent),
     )

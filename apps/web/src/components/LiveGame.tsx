@@ -12,16 +12,18 @@
  * means an out-of-order or duplicated event cannot desync the board.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chess } from "chess.js";
 
 import { Board } from "@/components/Board";
 import { EventStream } from "@/components/EventStream";
 import { GameLayout } from "@/components/GameLayout";
+import { OwnerControls } from "@/components/OwnerControls";
 import { PlayerBar } from "@/components/PlayerBar";
 import { StatsRail } from "@/components/StatsRail";
 import { legalTargets } from "@/lib/board";
 import { captures } from "@/lib/captures";
+import { announceSpend, modelMoveCharged } from "@/lib/credit";
 import { useGameDetail } from "@/hooks/useGameDetail";
 import { useGameStream } from "@/hooks/useGameStream";
 import { foldEvents, withLiveTurn } from "@/lib/turns";
@@ -37,6 +39,7 @@ export function LiveGame({
   seat,
   onMove,
   controls,
+  pays = false,
 }: {
   game: GameDetail;
   apiUrl: string;
@@ -56,6 +59,11 @@ export function LiveGame({
   onMove?: (san: string, expectedPly: number) => void;
   /** Resign, draw, and chat controls. Rendered under the board so they sit near the action. */
   controls?: React.ReactNode;
+  /**
+   * Whether this game's turns are charged to the viewer (ADR-0052). When they are, each model move
+   * tells the header to read the balance again — the one moment it can have changed.
+   */
+  pays?: boolean;
 }) {
   /* Subscribe from the last event we actually hold, not from the cursor on the game record.
      The page fetches the record and the event list as two requests, so an event appended between
@@ -102,14 +110,16 @@ export function LiveGame({
     statusSeq: paused?.seq ?? 0,
   });
 
-  const { fen, lastMove, toMove } = useMemo(() => {
+  const { fen, lastMove, toMove, mover } = useMemo(() => {
     const board = new Chess(initial.start_fen);
     let last: { from: string; to: string } | null = null;
+    let moved: "white" | "black" | null = null;
 
     for (const san of moves) {
       try {
         const move = board.move(san);
         last = { from: move.from, to: move.to };
+        moved = move.color === "w" ? "white" : "black";
       } catch {
         // A move we cannot replay means our view has drifted from the server's. Stop here rather
         // than render a position that never existed; the next page load re-syncs from Postgres.
@@ -121,8 +131,19 @@ export function LiveGame({
       fen: board.fen(),
       lastMove: last,
       toMove: board.isGameOver() ? null : (board.turn() === "w" ? "white" : "black"),
+      mover: moved,
     } as const;
   }, [moves, initial.start_fen]);
+
+  /* A model move in a game the viewer pays for has just been charged to them, so the header reads
+     the balance again. Counted from the moves this page has seen, so the history it loaded with
+     asks nothing — only a ply that arrives while watching does. */
+  const seenPlies = useRef(moves.length);
+  useEffect(() => {
+    const before = seenPlies.current;
+    seenPlies.current = moves.length;
+    if (modelMoveCharged({ pays, before, after: moves.length, mover, seat })) announceSpend();
+  }, [moves.length, mover, pays, seat]);
 
   const outcome = ended ?? terminalFrom(game);
   const yourMove = Boolean(seat && onMove && !outcome && toMove === seat);
@@ -245,7 +266,18 @@ export function LiveGame({
           /* Why it is paused *now*, from the server. Only the live pause row reads it; a replay
              passes nothing, so a finished game's pause rows stay quiet. */
           waitingOn={game.waiting_on}
-          footer={controls}
+          footer={
+            controls ??
+            /* A game between two models that this reader pays for: theirs to pause (ADR-0052). A
+               game they play has its own controls, and pausing it would stop nothing. */
+            (pays && !seat ? (
+              <OwnerControls
+                gameId={game.id}
+                status={game.status}
+                heldByOwner={game.waiting_on?.kind === "owner"}
+              />
+            ) : undefined)
+          }
           emptyMessage={paused ? `Paused — ${paused.text}` : undefined}
         />
       }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ensure the browser suite's test account exists, in Clerk and here, with credits to spend.
+"""Ensure the browser suite's test account exists, in Clerk and here, with credit to spend.
 
     make seed-e2e-user
 
@@ -27,6 +27,7 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from decimal import Decimal
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -84,7 +85,7 @@ def ensure_clerk_user(secret: str) -> str:
     return str(created["id"])
 
 
-async def top_up(clerk_user_id: str, target: int) -> int | None:
+async def top_up(clerk_user_id: str, target: Decimal) -> Decimal | None:
     """Bring the local balance up to `target`. None if the user row does not exist yet."""
     sessionmaker = get_sessionmaker()
     try:
@@ -93,7 +94,7 @@ async def top_up(clerk_user_id: str, target: int) -> int | None:
             if user is None:
                 return None
 
-            shortfall = target - user.credit_balance
+            shortfall = target - user.balance_usd
             if shortfall > 0:
                 await grant(
                     session,
@@ -104,14 +105,16 @@ async def top_up(clerk_user_id: str, target: int) -> int | None:
                 )
                 await session.commit()
                 return target
-            return user.credit_balance
+            return user.balance_usd
     finally:
         await dispose_engine()
 
 
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--credits", type=int, default=50, help="balance to top the account up to")
+    parser.add_argument(
+        "--credit", type=Decimal, default=Decimal(5), help="dollars to top the account up to"
+    )
     args = parser.parse_args()
 
     secret = os.environ.get("CLERK_SECRET_KEY") or get_settings().clerk_secret_key
@@ -125,10 +128,17 @@ async def main() -> int:
         print(f"Clerk refused: {error.code} {error.read().decode()[:400]}", file=sys.stderr)
         return 1
 
-    balance = await top_up(clerk_user_id, args.credits)
+    balance = await top_up(clerk_user_id, args.credit)
 
     print(
-        json.dumps({"email": E2E_EMAIL, "clerkUserId": clerk_user_id, "credits": balance}, indent=2)
+        json.dumps(
+            {
+                "email": E2E_EMAIL,
+                "clerkUserId": clerk_user_id,
+                "balanceUsd": None if balance is None else float(balance),
+            },
+            indent=2,
+        )
     )
     return 0
 

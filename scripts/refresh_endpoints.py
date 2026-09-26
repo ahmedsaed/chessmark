@@ -53,7 +53,7 @@ async def main() -> int:
         for model in models:
             try:
                 endpoints = await fetch_endpoints(client, model.openrouter_id)
-            except Exception as exc:  # noqa: BLE001 - one bad model must not stop the sweep
+            except Exception as exc:
                 print(f"  ✗ {model.openrouter_id}: {type(exc).__name__}")
                 continue
 

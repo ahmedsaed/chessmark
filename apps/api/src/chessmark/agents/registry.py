@@ -91,7 +91,7 @@ def to_registry_entry(model: dict[str, Any]) -> dict[str, Any]:
         "context_length": model.get("context_length"),
         "prompt_usd_per_token": prompt,
         "completion_usd_per_token": completion,
-        "credit_cost": credit_cost_for(prompt, completion),
+        "price_tier": price_tier_for(prompt, completion),
         "supports_reasoning": "reasoning" in supported,
         "supports_tools": "tools" in supported,
         "runtime": ModelRuntime.DECISION if is_decision_model(model) else ModelRuntime.LLM,
@@ -103,42 +103,37 @@ def to_registry_entry(model: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-#: Credit price per tier, and the ceiling each tier allows (ADR-0016).
+#: The price bands, and the ceiling each allows (ADR-0016). **A band is not a charge** — a game is
+#: paid for at what its turns actually cost (ADR-0052). The bands survive to choose a field with:
+#: `--max-tier 1` is "the cheap models", and the boundaries sit on prices dozens of models share.
 #:
-#: Read as: a model costs `credits` if **both** its prices fit under the two ceilings. The last
-#: entry is open-ended — anything above the third tier lands there.
-#:
-#: Ordered cheapest first and evaluated in order, so the first tier a model fits is its tier.
-CREDIT_TIERS: tuple[tuple[int, Decimal, Decimal], ...] = (
+#: Read as: a model is in `tier` if **both** its prices fit under the two ceilings. Ordered
+#: cheapest first and evaluated in order, so the first band a model fits is its band.
+PRICE_TIERS: tuple[tuple[int, Decimal, Decimal], ...] = (
     (1, Decimal("0.30"), Decimal("1.50")),
     (2, Decimal("2.00"), Decimal("8.00")),
     (3, Decimal("10.00"), Decimal("40.00")),
 )
 
-#: What a model above every tier costs. Seventeen models sit here, up to $30/M in and $180/M out —
-#: one game against one of them can cost more than everything else on the site put together.
-TOP_TIER_CREDITS = 6
+#: The band above every ceiling — up to $30/M in and $180/M out when it was measured.
+TOP_TIER = 4
 
 PER_MILLION = Decimal(1_000_000)
 
 
-def credit_cost_for(prompt_usd_per_token: Decimal, completion_usd_per_token: Decimal) -> int:
-    """What a seat against this model costs, in credits (ADR-0016).
+def price_tier_for(prompt_usd_per_token: Decimal, completion_usd_per_token: Decimal) -> int:
+    """Which price band a model's own prices put it in, 1 to 4.
 
-    **The worse of the two prices decides.** A model that is cheap to prompt and ruinous to
-    generate is still a model that can hurt, and the failure is asymmetric: pricing one too low
-    costs real money, pricing one too high costs a user a credit.
-
-    A free model is tier 1 rather than free: it still occupies a seat, and the free tier is slow
-    and verbose enough that unlimited games against it are their own problem.
+    **The worse of the two prices decides.** A model that is cheap to prompt and expensive to
+    generate is an expensive model to play: a turn writes as much as it reads.
     """
     prompt = Decimal(prompt_usd_per_token) * PER_MILLION
     completion = Decimal(completion_usd_per_token) * PER_MILLION
 
-    for credits, max_prompt, max_completion in CREDIT_TIERS:
+    for tier, max_prompt, max_completion in PRICE_TIERS:
         if prompt <= max_prompt and completion <= max_completion:
-            return credits
-    return TOP_TIER_CREDITS
+            return tier
+    return TOP_TIER
 
 
 def _price(raw: object) -> Decimal:
@@ -303,13 +298,12 @@ async def sync_model_registry(
             "runtime": ModelRuntime(entry.get("runtime", ModelRuntime.LLM)),
             "is_free": bool(entry.get("is_free", slug.endswith(":free"))),
             "hugging_face_id": entry.get("hugging_face_id"),
-            # Derived, and rewritten on every sync so a vendor's price change moves the tier with
-            # it. `credit_cost_override` is deliberately absent from this dict: an administrator's
-            # exception must survive a refresh (ADR-0016).
-            "credit_cost": int(
+            # Derived, and rewritten on every sync so a vendor's price change moves the band with
+            # it.
+            "price_tier": int(
                 entry.get(
-                    "credit_cost",
-                    credit_cost_for(
+                    "price_tier",
+                    price_tier_for(
                         Decimal(str(entry.get("prompt_usd_per_token", 0))),
                         Decimal(str(entry.get("completion_usd_per_token", 0))),
                     ),

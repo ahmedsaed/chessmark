@@ -8,6 +8,7 @@ the test would write to one connection and the API read from another.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from decimal import Decimal
 from typing import Any
 
 import pytest
@@ -86,18 +87,18 @@ def as_user(
     return {"authorization": f"Bearer {token}"}
 
 
-async def fund(db: AsyncSession, clerk_user_id: str = "user_test", *, credits: int = 100) -> None:
-    """Give a test user credits.
+async def fund(db: AsyncSession, clerk_user_id: str = "user_test", *, usd: str = "100") -> None:
+    """Give a test user credit, in dollars.
 
     Explicit rather than a fixture default, because holding nothing is the real behaviour of a
-    new account (ADR-0016): a test that creates a game has to say it can afford one, the same way
-    a person has to be granted credits before they can play.
+    new account (ADR-0052): a test that starts a paid game has to say it can pay for one, the
+    same way a person has to be granted credit before they can play.
     """
     statement = (
         pg_insert(User)
-        .values(clerk_user_id=clerk_user_id, credit_balance=credits)
+        .values(clerk_user_id=clerk_user_id, balance_usd=Decimal(usd))
         .on_conflict_do_update(
-            index_elements=[User.clerk_user_id], set_={"credit_balance": credits}
+            index_elements=[User.clerk_user_id], set_={"balance_usd": Decimal(usd)}
         )
     )
     await db.execute(statement)

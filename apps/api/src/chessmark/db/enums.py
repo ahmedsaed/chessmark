@@ -131,15 +131,21 @@ class CreditReason(StrEnum):
     the three questions anyone auditing a balance actually has.
     """
 
-    #: Spent to start a game. Carries the game it paid for.
+    #: Spent on one model turn, at what it actually cost (ADR-0052). Carries the game and the turn.
+    TURN = "turn"
+    #: Spent to start a game, when a credit was a unit of play (ADR-0016). No longer written.
     GAME_START = "game_start"
     #: An administrator adding credits. Carries who.
     ADMIN_GRANT = "admin_grant"
     #: An administrator taking them back.
     ADMIN_REVOKE = "admin_revoke"
-    #: Given back for a game that never ran. Distinct from a grant because it undoes rather than
-    #: decides — a refund is our mistake being corrected, not a decision about a person.
+    #: Given back for a game that never ran, under ADR-0016. No longer written: a game is charged
+    #: for the turns it played and a turn that is rolled back is never charged, so there is nothing
+    #: left to give back (ADR-0052).
     REFUND = "refund"
+    #: The closing row of a balance held in credits, written once by the migration that made the
+    #: balance dollars. Credits did not convert — the owner reset every balance to zero (ADR-0052).
+    RETIRED = "retired"
 
 
 class TournamentStatus(StrEnum):

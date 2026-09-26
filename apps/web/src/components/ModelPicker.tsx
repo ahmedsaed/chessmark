@@ -12,8 +12,8 @@
  * **This was a native `<select>` and could not stay one.** It listed two models when the catalogue
  * was unseeded; the real catalogue is 330 across 36 providers, with `openai` alone holding 86. A
  * flat dropdown of 330 options cannot be searched, cannot be grouped in a way anyone can read, and
- * cannot show what a model costs — and cost is now the thing you choose on, since a seat runs from
- * 1 to 6 credits (ADR-0016).
+ * cannot show what a model costs — and cost is a thing you choose on, since the catalogue spans a
+ * 300-fold price range and a game is charged what its turns actually cost (ADR-0052).
  *
  * So: a disclosure with a search box and providers collapsed. Collapsed is the default because 36
  * rows fit on a screen and 330 do not; a provider carries its model count and its cheapest price,
@@ -182,7 +182,7 @@ function Dropdown({
         <span className={`min-w-0 flex-1 truncate ${chosen ? "text-ink" : "text-ink-faint"}`}>
           {chosen ? chosen.openrouter_id : "choose a model…"}
         </span>
-        {chosen && <CreditBadge credits={chosen.credit_cost} />}
+        {chosen && <PriceBadge tier={chosen.price_tier} free={chosen.is_free} />}
         <span aria-hidden className="flex-none text-label text-ink-faint">
           {open ? "▲" : "▼"}
         </span>
@@ -241,7 +241,7 @@ function Dropdown({
                     {group.models.length}
                   </span>
                   {/* The cheapest price decides whether opening a provider is worth it. */}
-                  <CreditBadge credits={group.cheapest} muted />
+                  <PriceBadge tier={group.cheapest} free={group.hasFree} muted />
                 </button>
 
                 {isExpanded(group.provider) && (
@@ -269,7 +269,7 @@ function Dropdown({
                               {usdPerMillion(model.prompt_usd_per_token)}
                             </span>
                             <RuntimeBadge runtime={model.runtime} />
-                            <CreditBadge credits={model.credit_cost} />
+                            <PriceBadge tier={model.price_tier} free={model.is_free} />
                           </button>
                         </li>
                       );
@@ -286,31 +286,55 @@ function Dropdown({
 }
 
 /**
- * What a seat costs, in credits.
+ * A model's price band, `$` to `$$$$`, from its own per-token prices.
  *
- * On the face of the picker rather than in a tooltip: the catalogue spans a 300-fold price range
- * (ADR-0016), so with 330 models to choose between, a name alone is not something a person can
- * choose on. The tiers are coloured because the number alone reads as trivia — gold for the
- * expensive end is the same signal the rest of the site uses for "this costs something".
+ * **Not what a game costs.** A game is charged what each of its turns actually cost (ADR-0052),
+ * which nothing knows before it is played — a reasoning model can write fifty times what a plain
+ * one does. The band is for choosing: with 330 models spanning a 300-fold price range, a name alone
+ * is not something a person can choose on. Coloured because the symbol alone reads as trivia — gold
+ * for the expensive end is the same signal the rest of the site uses for "this costs something".
+ * A `:free` model says so, since its turns cost nothing at all.
  */
-export function CreditBadge({ credits, muted = false }: { credits: number; muted?: boolean }) {
-  const text = credits >= 6 ? "text-bad" : credits >= 3 ? "text-accent" : "text-ink-dim";
-  /* Muted recedes by its border, not by `opacity`: 70% took the red tier to 3.2:1 on a raised
-     surface, under AA for text this small. The tier colour stays whole — it is the information. */
+export function PriceBadge({
+  tier,
+  free = false,
+  muted = false,
+}: {
+  tier: number;
+  free?: boolean;
+  muted?: boolean;
+}) {
+  const text = free
+    ? "text-good"
+    : tier >= 4
+      ? "text-bad"
+      : tier >= 3
+        ? "text-accent"
+        : "text-ink-dim";
+  /* Muted recedes by its border, not by `opacity`: 70% took the red band to 3.2:1 on a raised
+     surface, under AA for text this small. The colour stays whole — it is the information. */
   const border = muted
     ? "border-line-soft"
-    : credits >= 6
-      ? "border-bad-deep"
-      : credits >= 3
-        ? "border-accent-deep"
-        : "border-line";
+    : free
+      ? "border-line"
+      : tier >= 4
+        ? "border-bad-deep"
+        : tier >= 3
+          ? "border-accent-deep"
+          : "border-line";
 
   return (
     <span
-      title={`${credits} credit${credits === 1 ? "" : "s"} to start a game against this model`}
-      className={`tabular flex-none border px-1 py-px font-mono text-label uppercase tracking-wider ${text} ${border}`}
+      title={
+        free
+          ? "Free: its turns cost nothing"
+          : `Price band ${tier} of 4, from its per-token prices. A game is charged what its turns actually cost.`
+      }
+      /* One width for every band. `$` and `$$$$` are different lengths, and a badge that grows
+         with the price pushes every column beside it out of line, row by row. */
+      className={`tabular w-[3.25rem] flex-none border py-px text-center font-mono text-label uppercase tracking-wider ${text} ${border}`}
     >
-      {credits} cr
+      {free ? "free" : "$".repeat(Math.min(Math.max(tier, 1), 4))}
     </span>
   );
 }

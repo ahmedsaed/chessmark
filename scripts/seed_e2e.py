@@ -104,6 +104,17 @@ FALLBACK_CATALOGUE = [
         "completion_usd_per_token": "0.000015",
     },
     {
+        # The widest price in the real catalogue, `$30.00 / $180.00`. Here so the models table is
+        # measured against it: three cheap models fit any column, and a price that wrapped onto two
+        # lines in production passed every check written against them.
+        "openrouter_id": "openai/gpt-5.5-pro",
+        "display_name": "OpenAI: GPT-5.5 Pro",
+        "context_length": 400_000,
+        "supports_tools": True,
+        "prompt_usd_per_token": "0.00003",
+        "completion_usd_per_token": "0.00018",
+    },
+    {
         "openrouter_id": "moonshotai/kimi-k2.5",
         "display_name": "MoonshotAI: Kimi K2.5",
         "context_length": 256_000,

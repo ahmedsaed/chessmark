@@ -125,8 +125,9 @@ class FieldFilter:
     providers: tuple[str, ...] = ()
     free_only: bool | None = None
     open_weights: bool | None = None
-    min_credit_cost: int | None = None
-    max_credit_cost: int | None = None
+    #: Price bands, 1 to 4, from the models' own prices (`ModelRegistry.price_tier`).
+    min_price_tier: int | None = None
+    max_price_tier: int | None = None
     min_context_tokens: int | None = None
     requires_reasoning: bool | None = None
     #: Cap on how many models enter, applied after ordering. `None` means everything that matches.
@@ -158,10 +159,10 @@ class FieldFilter:
             parts.append("open weights")
         elif self.open_weights is False:
             parts.append("closed weights")
-        if self.min_credit_cost is not None:
-            parts.append(f"≥{self.min_credit_cost} credits")
-        if self.max_credit_cost is not None:
-            parts.append(f"≤{self.max_credit_cost} credits")
+        if self.min_price_tier is not None:
+            parts.append(f"price tier ≥{self.min_price_tier}")
+        if self.max_price_tier is not None:
+            parts.append(f"price tier ≤{self.max_price_tier}")
         if self.runtime == "decision":
             parts.append("decision models")
         if self.requires_reasoning:

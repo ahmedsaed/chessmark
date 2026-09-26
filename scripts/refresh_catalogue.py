@@ -9,9 +9,9 @@ One command, because the two halves are useless apart: `seed-models` registers w
 contestants and cannot be picked. Running only the first is how this environment ended up
 offering two models out of three hundred.
 
-Built to be scheduled rather than remembered. Prices set the spend caps **and** what users are
-charged in credits (ADR-0016), so a stale catalogue is a wrong cap and a wrong price — which is
-exactly what a committed snapshot did for months without anything noticing.
+Built to be scheduled rather than remembered. Prices set the spend caps **and** each model's price
+band (ADR-0052), so a stale catalogue is a wrong cap and a wrong band — which is exactly what a
+committed snapshot did for months without anything noticing.
 
 **`--every` is the schedule, and it lives here rather than in a crontab.** A timer on the host is
 one more thing that exists nowhere in this repository, that a rebuilt server loses silently, and

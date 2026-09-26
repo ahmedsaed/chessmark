@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from decimal import Decimal
 from typing import Annotated, Any
 
 import sqlalchemy as sa
@@ -23,6 +22,7 @@ from chessmark.api.deps import (
     CurrentUser,
     GameDep,
     QueueDep,
+    RedisDep,
     SessionDep,
     SettingsDep,
     enforce_rate_limit,
@@ -43,6 +43,7 @@ from chessmark.api.schemas import (
     IllegalMoveResponse,
     MessageOut,
     MyGameSummary,
+    OwnerActionResponse,
     PlyOut,
     RawCallOut,
     SeatOut,
@@ -50,8 +51,9 @@ from chessmark.api.schemas import (
     TurnDetail,
     WaitingOn,
 )
+from chessmark.core.pause_requests import PauseRequests
 from chessmark.db.archive import ArchiveKind, ArchiveOutcome, ArchiveSort, archive_query
-from chessmark.db.credits import InsufficientCreditsError, charge, cost_of
+from chessmark.db.credits import InsufficientCreditError, require_credit
 from chessmark.db.enums import EventType, GameStatus, ModelRuntime, ModerationStatus, PlayerKind
 from chessmark.db.models import (
     Game,
@@ -65,16 +67,19 @@ from chessmark.db.models import (
     Tournament,
     TournamentGame,
     Turn,
+    User,
 )
 from chessmark.db.quotas import note_game_started
 from chessmark.db.repositories import load_events, rebuild_referee
 from chessmark.game import Colour, GameResult, IllegalMoveError, Termination
 from chessmark.game.pgn import PgnMetadata, to_pgn
 from chessmark.orchestration import human as human_play
+from chessmark.orchestration import owner
 from chessmark.orchestration.match import Seat, create_match, start_match
 from chessmark.orchestration.queue import AdvanceTurn
 from chessmark.orchestration.reconciler import what_it_waits_for
 from chessmark.orchestration.revalidation import notify_web
+from chessmark.orchestration.worker import publish_events
 
 router = APIRouter(prefix="/games", tags=["games"])
 
@@ -372,19 +377,38 @@ async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
     # that is not paused, and one query for one that is.
     waiting = await what_it_waits_for(session, game)
 
+    tournament = await _tournament_of(session, game.id)
+
     return GameDetail.from_model(
         game,
         await _players(session, game.id),
         moves=referee.board.history_san(),
         current_fen=referee.board.fen,
         served_by=await _served_by(session, game.id),
-        tournament=await _tournament_of(session, game.id),
+        tournament=tournament,
+        started_by=None if tournament is not None else await _started_by(session, game),
         waiting_on=(
             WaitingOn(kind=waiting.kind, until=waiting.until, tournament=waiting.tournament)
             if waiting
             else None
         ),
     )
+
+
+#: Said when the person who started a game has not set a name. Never their email: a game page is
+#: public, and an address is not something anyone agreed to publish by starting a game.
+UNNAMED_OWNER = "a player"
+
+
+async def _started_by(session: AsyncSession, game: Game) -> str | None:
+    """Who started this game, as the page may name them. One query, and none for a game nobody
+    started."""
+    if game.created_by_user_id is None:
+        return None
+    name = await session.scalar(
+        sa.select(User.display_name).where(User.id == game.created_by_user_id)
+    )
+    return name or UNNAMED_OWNER
 
 
 @router.get("/{game_id}/plies", response_model=list[PlyOut])
@@ -672,15 +696,16 @@ async def create_game_endpoint(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"{slug!r} cannot play: {reason}."
             )
 
-    # A game costs the sum of its seats (ADR-0016). Charged before it exists, atomically, so two
-    # concurrent requests cannot both spend the last credit.
-    price = await cost_of(session, [request.white, request.black])
+    # **Nothing is charged here.** A game is paid for turn by turn at what each turn actually cost
+    # (ADR-0052); starting one needs only a balance above zero. Two free models still need it: a
+    # game between machines is something a person runs, not something they play, and only playing
+    # a free model is open to an account holding nothing.
     try:
-        entry = await charge(session, user.id, price)
-    except InsufficientCreditsError as error:
+        await require_credit(session, user.id)
+    except InsufficientCreditError as error:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"{error} Credits are granted by an administrator.",
+            detail=f"{error} Credit is granted by an administrator.",
         ) from error
 
     # No longer a limit — kept because the admin spend view reads it (ADR-0016).
@@ -690,11 +715,10 @@ async def create_game_endpoint(
     if request.start_fen:
         kwargs["start_fen"] = request.start_fen
 
-    # The per-game cap is never left to the caller alone: a request asking for more than the
-    # server's ceiling is clamped rather than refused, so an ambitious `max_usd` cannot become the
-    # budget. This is layer 3 of ADR-0011.
-    ceiling = Decimal(str(settings.max_usd_per_game))
-    max_usd = min(request.max_usd, ceiling) if request.max_usd else ceiling
+    # **The limit is the player's, and there need not be one** (ADR-0052). The server's ceiling
+    # existed because every game spent the operator's money; this one spends the caller's, turn by
+    # turn, and stops when their balance does. A tournament sets its own per-game limit.
+    max_usd = request.max_usd
 
     try:
         match = await create_match(
@@ -720,11 +744,6 @@ async def create_game_endpoint(
         # The caller named a precision nobody serves. That is a bad request, not a server fault —
         # and seating them at a different precision would quietly measure another contestant.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
-
-    # The charge happened before the game existed; name the game on it now. Same transaction, so
-    # a failure after this point rolls the charge back with everything else.
-    if entry is not None:
-        entry.game_id = match.game.id
 
     job = await start_match(session, queue, game_id=match.game.id)
     await session.commit()
@@ -838,27 +857,22 @@ async def create_human_game(
             detail=f"{request.model!r} cannot play: {reason}.",
         )
 
-    # Only the machine seat is charged: a person plays for free as themselves (ADR-0016).
-    #
-    # **And a free model costs nothing at all.** Credits bound spend, and a `:free` model spends
-    # nothing — charging a person to sit down against the cheapest thing on the site was charging
-    # for the wrong thing. Scoped to this endpoint rather than to the price itself: making
-    # `ModelRegistry.credits` return 0 for free models opened `POST /games` to any signed-in
-    # account, because credits are also what AUTH-11 uses to gate an unfunded user, and two tests
-    # said so immediately.
-    price = 0 if model.is_free else await cost_of(session, [request.model])
-    try:
-        entry = await charge(session, user.id, price)
-    except InsufficientCreditsError as error:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"{error} Credits are granted by an administrator.",
-        ) from error
+    # A person plays for free as themselves; only the machine's turns are charged, as they happen
+    # (ADR-0052). **Against a free model nothing is ever charged, so nothing is asked** — an
+    # account holding $0 can sit down against one. A paid model needs a balance above zero; what
+    # the game will cost is not known until it has been played.
+    if not model.is_free:
+        try:
+            await require_credit(session, user.id)
+        except InsufficientCreditError as error:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f"{error} Credit is granted by an administrator.",
+            ) from error
 
     await note_game_started(session, user.id)
 
-    ceiling = Decimal(str(settings.max_usd_per_game))
-    max_usd = min(request.max_usd, ceiling) if request.max_usd else ceiling
+    max_usd = request.max_usd  # the player's own limit, or none — see `create_game_endpoint`
 
     you = Seat(
         display_name=user.display_name or "You",
@@ -887,11 +901,6 @@ async def create_human_game(
         )
     except NoEndpointError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
-
-    # The charge happened before the game existed; name the game on it now. Same transaction, so
-    # a failure after this point rolls the charge back with everything else.
-    if entry is not None:
-        entry.game_id = match.game.id
 
     job = await start_match(session, queue, game_id=match.game.id)
 
@@ -954,6 +963,59 @@ async def play_human_move(
         ) from error
 
     return await _settle(session, queue, game, action)
+
+
+async def _owner_settles(
+    session: SessionDep,
+    queue: QueueDep,
+    redis: RedisDep,
+    game: Game,
+    act: Any,
+) -> OwnerActionResponse:
+    """Run a pause or a resume, then commit, publish and enqueue — in that order, for `_settle`'s
+    reason: nothing may hear of a state the database has not accepted."""
+    try:
+        action = await act(session, PauseRequests(redis), game)
+    except owner.NotYourGameError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    except (owner.CannotPauseError, owner.CannotResumeError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except InsufficientCreditError as error:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"{error} Credit is granted by an administrator.",
+        ) from error
+
+    await session.commit()
+    await publish_events(redis, game.id, action.events)
+    if action.job is not None:
+        await queue.enqueue(action.job)
+    return OwnerActionResponse(status=action.status, pausing=action.pausing)
+
+
+@router.post("/{game_id}/pause", response_model=OwnerActionResponse)
+async def pause_game(
+    session: SessionDep, queue: QueueDep, redis: RedisDep, game: GameDep, user: CurrentUser
+) -> OwnerActionResponse:
+    """Stop a game you started from spending, before its next turn (ADR-0052).
+
+    Only between two models: in a game you play, the model moves only after you do. The turn in
+    progress, if there is one, finishes and is charged; `pausing` says the pause is still on its
+    way. Nothing ends — resume plays on from the same position.
+    """
+    return await _owner_settles(
+        session, queue, redis, game, lambda s, r, g: owner.pause(s, r, g, user.id)
+    )
+
+
+@router.post("/{game_id}/resume", response_model=OwnerActionResponse)
+async def resume_game(
+    session: SessionDep, queue: QueueDep, redis: RedisDep, game: GameDep, user: CurrentUser
+) -> OwnerActionResponse:
+    """Play on a game you paused. A paid game needs credit, as starting one does."""
+    return await _owner_settles(
+        session, queue, redis, game, lambda s, r, g: owner.resume(s, r, g, user.id)
+    )
 
 
 @router.post("/{game_id}/resign", response_model=HumanActionResponse)
@@ -1044,14 +1106,18 @@ async def my_seat(
     game: GameDep,
     user: CurrentUser,
 ) -> SeatOut:
-    """Which colour, if any, the caller is playing in this game.
+    """Which colour, if any, the caller is playing in this game, and whether they pay for it.
 
     A dedicated endpoint rather than a field on the game, because the game is public and the
     answer is not: putting `user_id` on the player payload would publish who plays what to every
-    spectator, to save one request.
+    spectator, to save one request. A game names who started it by display name (`started_by`),
+    which is not the account: `pays` is how the owner's own page learns the game is theirs, so the
+    header can refresh the balance as it spends and the owner's pause control can show. Nobody
+    else's page is told (ADR-0052).
     """
+    pays = game.created_by_user_id == user.id
     try:
         player = await human_play.seat_of(session, game.id, user.id)
     except human_play.NotYourGameError:
-        return SeatOut(colour=None)
-    return SeatOut(colour=Colour(player.colour))
+        return SeatOut(colour=None, pays=pays)
+    return SeatOut(colour=Colour(player.colour), pays=pays)

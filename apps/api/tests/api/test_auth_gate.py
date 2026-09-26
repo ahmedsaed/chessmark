@@ -171,34 +171,62 @@ async def test_the_game_records_who_started_it(
 # ====================================================================== the spend controls
 
 
-async def test_a_user_out_of_credits_is_refused_with_a_reason(
+async def test_a_user_out_of_credit_is_refused_with_a_reason(
     client: AsyncClient, db: AsyncSession, redis: Any
 ) -> None:
-    """ADR-0016. Spent through the API, so the test exercises the real charging path."""
+    """ADR-0052. Starting a game needs a balance above zero, and the refusal says what it is."""
     white, black = await _playable(db)
     header = as_user("user_at_quota")
+    await fund(db, "user_at_quota", usd="0")
 
-    # Both models are tier 1 here, so each game costs two credits — one per seat.
-    await fund(db, "user_at_quota", credits=4)
+    refused = await client.post("/games", json=_create_body(white, black), headers=header)
+
+    assert refused.status_code == 402
+    assert "credit" in refused.text.lower()
+    # The refusal has to say what is held and how a balance changes, or it is a dead end.
+    assert "$0.00" in refused.text
+    assert "administrator" in refused.text.lower()
+
+
+async def test_starting_a_game_charges_nothing(
+    client: AsyncClient, db: AsyncSession, redis: Any
+) -> None:
+    """ADR-0052. The turns are charged as they are played; the door costs nothing. A balance of
+    one cent opens as many games as the rate limit allows, and every one of them is still paid for
+    turn by turn."""
+    white, black = await _playable(db)
+    await fund(db, "user_cent", usd="0.01")
+    header = as_user("user_cent")
 
     for _ in range(2):
         assert (
             await client.post("/games", json=_create_body(white, black), headers=header)
         ).status_code == 201
 
-    refused = await client.post("/games", json=_create_body(white, black), headers=header)
+    db.expunge_all()
+    user = await db.scalar(sa.select(User).where(User.clerk_user_id == "user_cent"))
+    assert user is not None
+    assert user.balance_usd == Decimal("0.01")
+
+
+async def test_a_balance_below_zero_is_refused_too(
+    client: AsyncClient, db: AsyncSession, redis: Any
+) -> None:
+    """A game can overrun a balance by the turn in flight. That is not credit to start another."""
+    white, black = await _playable(db)
+    await fund(db, "user_overrun", usd="-0.002")
+
+    refused = await client.post(
+        "/games", json=_create_body(white, black), headers=as_user("user_overrun")
+    )
 
     assert refused.status_code == 402
-    assert "credit" in refused.text.lower()
-    # The refusal has to say both numbers and how a balance changes, or it is a dead end.
-    assert "you have 0" in refused.text.lower()
-    assert "administrator" in refused.text.lower()
 
 
 async def test_a_new_account_cannot_start_a_game(
     client: AsyncClient, db: AsyncSession, redis: Any
 ) -> None:
-    """Zero by default is the point of the change: nobody plays until someone grants credits."""
+    """Zero by default: nobody starts a paid game until someone grants credit."""
     white, black = await _playable(db)
 
     refused = await client.post(
@@ -243,35 +271,52 @@ async def test_the_kill_switch_does_not_stop_spectating(
     assert (await client.get(f"/games/{game.game.id}")).status_code == 200
 
 
-async def test_the_per_game_cap_is_clamped_to_the_server_ceiling(
-    client: AsyncClient, db: AsyncSession, redis: Any, monkeypatch: Any
+async def test_the_per_game_limit_is_the_players_own(
+    client: AsyncClient, db: AsyncSession, redis: Any
 ) -> None:
-    """Layer 3 must not be settable by the caller. A request asking for a $500 cap is clamped, not
-    honoured and not refused."""
-    from chessmark.core.config import get_settings
-
+    """ADR-0052. The game spends the caller's credit, so the limit is theirs to set — and to leave
+    off. There is no server ceiling to clamp it to any more."""
     white, black = await _playable(db)
-    await fund(db, "user_greedy")
-    monkeypatch.setattr(get_settings(), "max_usd_per_game", 0.25)
+    await fund(db, "user_limits")
+    header = as_user("user_limits")
 
-    body = (
+    limited = (
         await client.post(
-            "/games",
-            json={**_create_body(white, black), "max_usd": "500.00"},
-            headers=as_user("user_greedy"),
+            "/games", json={**_create_body(white, black), "max_usd": "25.00"}, headers=header
         )
+    ).json()
+    unlimited = (
+        await client.post("/games", json=_create_body(white, black), headers=header)
     ).json()
 
     db.expunge_all()
-    stored = await db.get(Game, uuid.UUID(body["id"]))
-    assert stored is not None
-    assert stored.max_usd == Decimal("0.25")
+    first = await db.get(Game, uuid.UUID(limited["id"]))
+    second = await db.get(Game, uuid.UUID(unlimited["id"]))
+    assert first is not None and second is not None
+    assert first.max_usd == Decimal("25.00")
+    assert second.max_usd is None
+
+
+async def test_a_limit_of_nothing_is_refused(
+    client: AsyncClient, db: AsyncSession, redis: Any
+) -> None:
+    """A $0 limit would end the game before its first turn; it is a mistake, not a setting."""
+    white, black = await _playable(db)
+    await fund(db, "user_zero_limit")
+
+    response = await client.post(
+        "/games",
+        json={**_create_body(white, black), "max_usd": "0"},
+        headers=as_user("user_zero_limit"),
+    )
+
+    assert response.status_code == 422
 
 
 async def test_rapid_requests_are_rate_limited(
     client: AsyncClient, db: AsyncSession, redis: Any, monkeypatch: Any
 ) -> None:
-    """AUTH-06. A balance alone would let someone spend every credit they hold in one second."""
+    """AUTH-06. A balance alone would let someone open any number of games in one second."""
     from chessmark.core.config import get_settings
 
     white, black = await _playable(db)
@@ -313,22 +358,22 @@ async def test_me_requires_a_token(client: AsyncClient) -> None:
     assert (await client.get("/me")).status_code == 401
 
 
-async def test_me_reports_the_credit_balance(client: AsyncClient, db: AsyncSession) -> None:
+async def test_me_reports_the_balance(client: AsyncClient, db: AsyncSession) -> None:
     """So the UI can say what you hold rather than letting you find out by being refused."""
     body = (await client.get("/me", headers=as_user("user_curious"))).json()
 
-    # A new account holds nothing (ADR-0016).
-    assert body["credit_balance"] == 0
+    # A new account holds nothing (ADR-0052).
+    assert Decimal(body["balance_usd"]) == 0
     assert body["games_started_today"] == 0
     assert body["is_admin"] is False
 
 
 async def test_me_reflects_a_grant(client: AsyncClient, db: AsyncSession) -> None:
-    await fund(db, "user_granted", credits=7)
+    await fund(db, "user_granted", usd="7.5")
 
     body = (await client.get("/me", headers=as_user("user_granted"))).json()
 
-    assert body["credit_balance"] == 7
+    assert Decimal(body["balance_usd"]) == Decimal("7.5")
 
 
 async def test_a_read_only_request_still_provisions_the_user(

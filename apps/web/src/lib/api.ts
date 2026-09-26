@@ -512,6 +512,8 @@ export function createHumanGame(
     colour: "white" | "black";
     model_quantization?: string | null;
     trash_talk_enabled?: boolean;
+    /** The player's own limit on what the game may cost, or none (ADR-0052). */
+    max_usd?: string | null;
   },
 ): Promise<{ id: string }> {
   return post<{ id: string }>("/games/human", token, body);
@@ -555,6 +557,21 @@ export function sendMove(
     move,
     expected_ply: expectedPly,
   });
+}
+
+/** A game after its owner paused or resumed it (ADR-0052). */
+export interface OwnerActionResult {
+  status: GameStatus;
+  /** The pause is asked for and lands before the next turn; the one in progress finishes first. */
+  pausing: boolean;
+}
+
+export function pauseGame(id: string, token: string | null): Promise<OwnerActionResult> {
+  return post<OwnerActionResult>(`/games/${id}/pause`, token);
+}
+
+export function resumeGame(id: string, token: string | null): Promise<OwnerActionResult> {
+  return post<OwnerActionResult>(`/games/${id}/resume`, token);
 }
 
 export function resignGame(id: string, token: string | null): Promise<HumanActionResult> {

@@ -111,6 +111,9 @@ export interface GameDetail extends GameSummary {
   moves: string[];
   /** Null for a game started by hand, which is most of them. */
   tournament: TournamentRef | null;
+  /** Who started a game that is not a tournament's, by display name — never an email. Null for a
+   *  game nobody started, and for a tournament game, which names its event instead. */
+  started_by?: string | null;
 }
 
 /** Which event a game was played for — enough to say so and to link there. */
@@ -142,8 +145,9 @@ export interface ModelInfo {
   endpoint_count: number;
   /** Points at different weights over time, so it can never be ranked. */
   is_floating_alias: boolean;
-  /** What one seat against this model costs to start, in credits (ADR-0016). */
-  credit_cost: number;
+  /** Price band, 1 to 4, from the model's own prices. Not a charge — a game is charged what its
+   *  turns actually cost (ADR-0052). */
+  price_tier: number;
 }
 
 /**
@@ -434,7 +438,7 @@ export interface TurnView {
  * Null unless the game is paused. Only ever on `GameDetail` — a list would pay a query per row.
  */
 export interface WaitingOn {
-  /** `clock` · `halt` · `concurrency` · `due`. */
+  /** `clock` · `halt` · `owner` · `credit` · `concurrency` · `due`. */
   kind: string;
   /** When the wait ends, for `clock`. */
   until: string | null;
@@ -521,8 +525,9 @@ export interface Me {
   email: string | null;
   display_name: string | null;
   is_admin: boolean;
-  /** Credits held. Granted by an administrator, spent to start a game (ADR-0016). */
-  credit_balance: number;
+  /** Credit held, in US dollars, as a decimal string; spent at what each turn actually cost
+   *  (ADR-0052). Can sit a turn's cost below zero. */
+  balance_usd: string;
   games_started_today: number;
   usd_spent_today: string;
 }

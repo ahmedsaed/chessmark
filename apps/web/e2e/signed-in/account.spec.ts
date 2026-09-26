@@ -131,13 +131,13 @@ test.describe("an account, from creation to signing out", () => {
     await expect(page.getByRole("heading", { name: "Profile", level: 1 })).toBeVisible();
     await expect(page.getByText(EMAIL)).toBeVisible();
 
-    /* **Zero credits, and the readout has to reach zero rather than stop at the placeholder.**
-       New accounts are granted nothing (AUTH-11) — an administrator does that — so `0` here is
+    /* **No credit, and the readout has to reach zero rather than stop at the placeholder.**
+       New accounts are granted nothing (AUTH-11) — an administrator does that — so `$0.00` here is
        both the correct answer and proof that `/me` was called with a real token and answered.
        `—` is what the page shows before the fetch lands, and asserting "not —" is what tells the
        two apart. */
-    const credits = page.locator("dl div", { has: page.getByText("credits", { exact: true }) });
-    await expect(credits.locator("dd")).toHaveText("0");
+    const credit = page.locator("dl div", { has: page.getByText("credit", { exact: true }) });
+    await expect(credit.locator("dd")).toHaveText("$0.00");
 
     /* **An empty history, said as one.** `null` and `[]` render differently on purpose: a failed
        read must not look like a person who has never played. This account was created seconds

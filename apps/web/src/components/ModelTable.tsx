@@ -16,7 +16,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import { CreditBadge } from "@/components/ModelPicker";
+import { PriceBadge } from "@/components/ModelPicker";
 import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { browseModels, countModels } from "@/lib/models";
 import type { ModelInfo } from "@/lib/types";
@@ -79,7 +79,7 @@ export function ModelTable({ models }: { models: ModelInfo[] }) {
                      inside a collapsed provider group and are never visible in bulk. FRONTEND.md. */
                   prefetch={false}
                   href={`/models/${model.openrouter_id}`}
-                  className="grid grid-cols-[1fr_auto] items-center gap-3 bg-surface px-3 py-2 transition-colors hover:bg-surface-2 sm:grid-cols-[1fr_5rem_5rem_4rem_auto]"
+                  className="grid grid-cols-[1fr_auto] items-center gap-3 bg-surface px-3 py-2 transition-colors hover:bg-surface-2 sm:grid-cols-[1fr_8.5rem_4rem_4rem_auto]"
                 >
                   <span className="min-w-0 truncate font-mono text-xs text-ink">
                     {model.openrouter_id.split("/").slice(1).join("/") || model.openrouter_id}
@@ -87,8 +87,11 @@ export function ModelTable({ models }: { models: ModelInfo[] }) {
 
                   {/* UI-07: cost, context window, reasoning support — the three facts that decide
                       whether a model is worth playing, and whether it can finish. */}
+                  {/* Sized for the widest price in the catalogue, `$30.00 / $180.00`, and kept to
+                      one line: at 5rem every two-digit price broke in two, and a wrapped row stood
+                      taller than its neighbours. */}
                   <span
-                    className="tabular hidden font-mono text-meta text-ink-faint sm:block"
+                    className="tabular hidden whitespace-nowrap font-mono text-meta text-ink-faint sm:block"
                     title="input / output per million tokens"
                   >
                     {usdPerMillion(model.prompt_usd_per_token)} /{" "}
@@ -112,7 +115,7 @@ export function ModelTable({ models }: { models: ModelInfo[] }) {
                     )}
                   </span>
 
-                  <CreditBadge credits={model.credit_cost} />
+                  <PriceBadge tier={model.price_tier} free={model.is_free} />
                 </Link>
               </li>
             ))}

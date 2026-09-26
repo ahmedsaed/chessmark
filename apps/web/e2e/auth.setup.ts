@@ -10,7 +10,7 @@ import { STORAGE_STATE } from "../playwright.config";
 export const E2E_EMAIL = "chessmark-e2e+clerk_test@example.com";
 
 /**
- * Signs the suite's test account in, for real, and gives it credits to spend.
+ * Signs the suite's test account in, for real, and gives it credit to spend.
  *
  * This is a genuine Clerk sign-in against a real development instance, producing a real session
  * JWT that the API verifies against real JWKS with the algorithm pinned. Nothing about auth is
@@ -48,8 +48,8 @@ setup("sign in", async ({ page }) => {
     encoding: "utf8",
     env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}` },
   });
-  const account = JSON.parse(stdout) as { credits: number | null };
-  expect(account.credits, "the test account should have been provisioned and funded").toBeGreaterThan(0);
+  const account = JSON.parse(stdout) as { balanceUsd: number | null };
+  expect(account.balanceUsd, "the test account should have been provisioned and funded").toBeGreaterThan(0);
 
   mkdirSync(path.dirname(STORAGE_STATE), { recursive: true });
   await page.context().storageState({ path: STORAGE_STATE });

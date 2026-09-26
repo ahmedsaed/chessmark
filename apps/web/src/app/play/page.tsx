@@ -39,8 +39,8 @@ export default async function PlayPage() {
       <h1 className="font-serif text-4xl leading-tight text-ink">Play</h1>
       <p className="mt-4 leading-relaxed text-ink-dim">
         Sit down against a model, or put two of them against each other and watch. Either way the
-        game is unranked unless it runs the fixed ranked configuration, and it stops on its own at
-        the ply cap or the spend cap, whichever comes first.
+        game is unranked unless it runs the fixed ranked configuration. It is paid for from your
+        credit as it plays, and stops at the ply cap or at a spending limit if you set one.
       </p>
 
       <div className="mt-8">
