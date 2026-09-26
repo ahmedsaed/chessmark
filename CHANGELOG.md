@@ -15,6 +15,18 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-09-26
+
+**Decision models play, every game has an archive, and a pool can stop.** 39 commits since
+`v0.4.0`. OpenRouter's decision models join the leaderboard through a harness of their own, `/games`
+files every game behind filters that are each a link, and a pool can be told how many games a pair
+owes it. Around those: pages that arrive whole instead of assembling behind skeletons, our own auth
+screens with Clerk off every page that does not need it, a lobby rebuilt around a podium and one
+real turn, and every public page at 100 for accessibility against production's data.
+
+Three migrations, all additive: `runtime` and `decision_version` columns, a nullable
+`games_per_pair`, and a trigram index on `players.display_name`, which creates `pg_trgm`.
+
 ### Added
 
 - **A pool can stop.** `--games-per-pair N` gives a pool a target: each pair plays N decided games
@@ -44,6 +56,231 @@ file is only the record of *what shipped when*.
   and stays two statements whatever it is asked. The name search is backed by a trigram index,
   which needs `pg_trgm`; the migration creates it. Linked from the header, the lobby, each model
   and each tournament. (UI-12, [ADR-0048](docs/adr/0048-the-archive-filters-on-the-server-and-pages-by-keyset.md))
+
+- **An account menu in the header, and a profile worth visiting** (UI-09, HUMAN-03). The header
+  showed a bare `profile` link: neither who held the session nor a way out of it. It is now a
+  picture, a name and a menu with the two things a person wants — the profile, and signing out.
+
+  Built from `useUser` and `useClerk`, not from `<UserButton />`. A prebuilt Clerk component
+  anywhere puts 285 KiB of `@clerk/ui` on every route, so the menu being ours is what keeps
+  `/about` free of it. The balance appears exactly once at any width: the header chip above `sm`,
+  the menu below it, because discovering your allowance by being refused is a bad way to learn it
+  (ADR-0016) and twice on one screen reads as two numbers.
+
+  `/profile` gained a record and every game behind it, in the shapes the model page already uses —
+  a person holding a seat is a player, and the page describing one should not be a different kind
+  of page. The record counts **decided games only**: a game the harness stopped is not a draw and
+  not a loss (invariant 11), so it is counted apart rather than folded into either, and the four
+  columns are asserted to add up to the total. No new endpoint — `/games/mine` already returned
+  every field the arithmetic needs, and a second place to compute W/D/L is a second answer.
+
+  **It re-introduces a trap that had been deleted.** The account control is a collapsed disclosure
+  that sorts first in the document on every signed-in page, so a selector written against the first
+  `aria-expanded="false"` finds it and not the turn it meant. `docs/TESTING.md` carries it again.
+
+- **The auth screens are asserted, not eyeballed** (UI-09). `account.spec.ts` walks a throwaway
+  identity through sign-up, the profile, a display name, signing out and signing back in — the two
+  bugs above are what it found on the day it was written. A fresh Clerk user rather than the
+  suite's own: `signOut` ends the sessions of the *client*, and every context restores the same
+  client cookie, so signing out on the shared account would revoke the session the play tests are
+  still using. It is deleted again afterwards.
+
+  `auth.setup.ts` does not cover any of this. It drives `window.Clerk` directly, which is the right
+  way to get a session for the play tests and goes nowhere near our form.
+
+- **Our own sign-in, sign-up and profile** — and `/profile` is a page the site did not have. Clerk's
+  `<UserButton />` knew nothing about credits, spend or games, which are the three things a person
+  comes to an account page to check.
+
+- **Lighthouse budgets run in CI** (NFR-12). The ROADMAP gap said "no Lighthouse in this
+  environment"; that was stale — Chrome is installed and it runs. So it was run, and Phase 7's
+  unverified exit criterion turned out to be **failing on both halves**: performance 87 and
+  accessibility 88 against a target of 90.
+
+  **What the suite refuses to assert is the design.** This repository has already deleted two
+  wall-clock tests, and ROADMAP says why: a timing assertion that fails on a busy machine and
+  passes on a quiet one teaches people to rerun CI, and the next real regression is rerun away with
+  it. A Lighthouse performance score is that assertion wearing a different hat. So accessibility,
+  best practices, SEO, contrast, accessible names, tap targets and page weight are **asserted** —
+  all DOM and network facts, identical on a loaded machine — while the performance score and every
+  timing metric are **recorded and uploaded, never gated**.
+
+  It measures a build with **no Clerk**, deliberately: a development tenant is 370 KiB, 55% of the
+  page, plus a 1.8 s handshake and a console error, and best practices measured 100 on production
+  against 74 locally for reasons entirely outside this repository.
+
+- **A social card for every page** (UI-06). Seven routes had **no `og:image` at all** —
+  `/leaderboard`, `/models`, `/about`, `/methodology`, `/play` and both tournament routes unfurled
+  as bare text links anywhere they were shared.
+
+  `pageMetadata` did it. Metadata keys are inherited wholesale, so setting `openGraph` replaces the
+  parent's whole block — including the `images` that `app/opengraph-image.tsx` injects through the
+  file convention. The helper written to stop every page sharing the root's card deleted the card
+  instead. `/sign-in` is what identified the mechanism: it sets no metadata, replaced nothing, and
+  was the only page besides `/` that kept an image.
+
+  The new cards show the page rather than the site: the leaderboard's is the top five with their
+  ratings, a tournament's is its table and what the event cost, a model's is its rating, its record
+  and a position from one of its own ranked games — a board only when there is a real game behind
+  it, because a card about one player showing a board is read as *that player's* game.
+
+  Three constraints found by hitting them, all now in [FRONTEND.md](docs/FRONTEND.md): a card
+  cannot live inside a catch-all segment, so the model's is a Route Handler at `/og/model/<slug>`;
+  a config redirect runs before routing and `/leaderboard/:slug → /models/:slug` was serving the
+  *models* card for the leaderboard, 200 and valid PNG and the wrong picture; and the two cards
+  that already existed had drifted onto different palettes.
+
+  Cards revalidate on one shared clock rather than rendering per request. `site.spec.ts` asserts
+  every public route has exactly one `og:image` and that each renders **without following a
+  redirect** — following one lands on a perfectly good card and proves nothing.
+
+### Changed
+
+- **"Recent games" is gone from the lobby.** It and the replay row were two answers to one
+  question: both listed finished games, one at random with the clean endings and a board playing
+  itself, the other in time order as text. The only thing the second carried alone was a game that
+  ended badly — a ply cap, a forfeit, an abandonment — and `/leaderboard` already lists every game
+  the ranking excluded, grouped by reason and linked. 250px of page, and one fewer band saying
+  something the one above it had said.
+- **Three questions answered at the foot of the lobby**, each in a sentence with a door to the page
+  that owns the long version: whether the games are real, why a model is not on the board, and
+  whether the numbers can be checked. Deliberately not an FAQ — `/about` and `/methodology` hold
+  nine sections between them, and a second copy on the lobby is one nobody remembers to update. A
+  browser test follows all three links, because a strip whose whole design is *not repeating* those
+  pages breaks silently the day one is renamed.
+- **One real turn, on the front page.** The lobby claimed every request, reasoning trace and tool
+  call was recorded and then showed nothing but boards and numbers. It now shows a turn from a
+  finished game: what the model thought, how long for and in how many tokens, the tool it called,
+  the move the referee refused if there was one, and the move it played. Folded by `foldEvents` —
+  the same function the game page's conversation is built from — so it cannot drift into a shape
+  the real view never produces.
+
+  **A bounded, cached read of 40 events, which is a measurement rather than a guess**: on
+  `21d2867b` the log costs 14 KB at 40 events, 90 KB at 120 and **728 KB** at 300, because
+  reasoning text dominates it. `listEvents` follows the cursor to the end and never caches, which
+  is right for the game page and wrong for a quotation.
+
+  The first build of this put `</role>` on the front page — two tokens of "reasoning" that were a
+  fragment of a provider's own prompt template, picked because the rule was "non-empty". A thought
+  now has to be at least 120 characters, and `spotlight.test.ts` has that turn in it.
+- **The lobby invites you to play, and says what you are up against.** A section under the
+  tournaments: on one side the whole human-versus-model record as a scoreboard, with the caption
+  this project would insist on — *one game. provisional, obviously* — and on the other what the
+  opponent has been caught doing in ranked games. Every line is measured, so the section is funny
+  for exactly as long as the models keep being bad at chess: 375 illegal moves attempted in 19
+  ranked games, 8 forfeits, and a worst offender at **4.12 illegal attempts per move** — 70 of them
+  across 17 moves.
+
+  `GET /games/human-record` is new and is the only read it adds: four integers in one statement,
+  with a query-count test, because tallying them in Python is a full scan of the archive on a route
+  the landing page calls. An unfinished game is not a defeat — only games that reached a result are
+  counted (invariant 11). The charge sheet is summed from the ranking the page already held.
+
+  It says nothing about credits, deliberately: a seat is granted while the site is in testing
+  (ADR-0016), and `/play` is where a signed-in reader learns that, because the lobby is the same
+  page for everybody and cannot tell who is asking.
+- **The lobby says what a tournament is.** A section under the ranking: the concept in two
+  paragraphs — a field, a format and a set of bounds, and a pool that never ends because it
+  re-checks its field every tick — beside up to three events, running ones first. Each card carries
+  the field and its entrants, a bar of played / live / paused / abandoned pairings against the
+  total, and what came out of it: decisive against draws, mean length, tokens, illegal attempts and
+  cost.
+
+  **The concept is a cell of the grid rather than a paragraph above it**, and the grid is as wide
+  as it has cells. There is one tournament today: a row built for three would have rendered one
+  card beside two holes, which is the whole reason the section reads as deliberate at one event. It
+  adds one cached read (`/tournaments`, tagged) and asks for no standings — the podium above it
+  already answers who is winning.
+- **A pool called itself a "round robin".** `formatLabel` knew two formats and fell through to the
+  second, so the one event on the site was labelled the opposite of what it is. It pairs like a
+  round robin — greedy and incremental (ADR-0041) — but what a reader needs from the word is that
+  it never ends and its field is not fixed.
+- **The lobby's ranking is a podium and a chasing pack, not five rows in a column.** The front page
+  showed the top five as a list sharing a row with "Recent games" — it said who was ahead without
+  ever saying this was a *contest*, which is the whole pitch. The top three now stand on plinths of
+  descending height, 2 · 1 · 3, each carrying the rating and its deviation, the W/D/L and the
+  illegal-move rate; places four to ten run down a list beside them. It stays a podium on a phone —
+  shorter plinths, the name wrapped over three lines, and the two figures that will not fit in
+  113px waiting for `sm` — because stacking the three into a list there is the thing this section
+  replaced. "Recent games" takes the full width underneath, three cards across.
+
+  The section adds no request: it renders the ranking the lobby already awaited (ADR-0032).
+- **The landing page is the same page for everybody.** It carried a "Your games" strip and read the
+  session cookie to decide whether to draw it, which made the first page every visitor loads the one
+  page on the site that could not be reasoned about without knowing who was asking. `/profile` now
+  owns a person's own games and is a better home for them. Nothing on `/` reads a cookie, a header
+  or anything else about the request any more.
+- **Six replays instead of three**, so the row is two full ranks on a wide screen rather than one
+  and a gap.
+
+- **The pages arrive whole, and the skeletons are gone** (ADR-0046). Every page route was
+  `force-dynamic`, so a click produced no feedback until the whole server render finished — and the
+  fix for that had been a `loading.tsx` skeleton on four routes plus five `<Suspense>` boundaries on
+  the lobby. The lobby sent its first byte at 4.4ms and did not finish until 43.1ms: thirty-nine
+  milliseconds of assembling itself in front of the reader, behind a skeleton that did not match the
+  shape it stood in for.
+
+  The premise underneath it — "a live game and a leaderboard are both wrong the moment they are
+  cached" — was doing too much work. A running game's board does not come from the server render at
+  all; `EventStream` corrects it over SSE within milliseconds. A finished game can never change
+  again. And the leaderboard, the catalogue and the tournament tables change on exactly one
+  occasion, which the API knows and a clock can only guess at.
+
+  So every public read is now cached and tagged, and the worker names the stale tags the moment a
+  game writes a `game_events` row — `orchestration/revalidation.py` to `POST /api/revalidate`, from
+  inside `publish_events`. The `revalidate` seconds are a backstop for a lost notification, not the
+  mechanism.
+
+  Measured on 106 games, median time to the *last* byte: `/` 43.1 → 14.2ms, `/leaderboard`
+  20.4 → 4.4ms, `/about` 18.6 → 3.9ms, `/methodology` 16.6 → 4.1ms, `/models` 26.1 → 11.9ms,
+  `/tournaments` 15.1 → 3.9ms, `/play` 21.5 → 6.7ms. Five consecutive loads of `/leaderboard` cause
+  zero reads of `/leaderboard` on the API, against five before. First and last byte have converged,
+  which is the point: nothing streams any more.
+
+  Cache Components (PPR) was tried and reverted — it reintroduces the streaming, breaks the 404
+  contract site-wide, and costs the 87 KiB Clerk saving. ADR-0046 records why; ROADMAP's *Known
+  gaps* records what is left on the table.
+
+- **Clerk's prebuilt UI is gone, and with it 285 KiB from every route.** `@clerk/ui` was loading on
+  `/about` and `/leaderboard` — pages where nobody signs in — because *one* prebuilt component
+  anywhere forces it site-wide. `prefetchUI` is documented as `false` *"for custom UIs using Control
+  Components"*, and that parenthesis is load-bearing: it throws with no lazy fallback if any
+  prebuilt component renders, so it was never a flag to flip. It is the reward for owning the
+  screens.
+
+  Clerk: **372 KiB → 87 KiB**. The page: **619 KiB → 337 KiB**. What still renders from Clerk is
+  control components only — `Show` and `AuthenticateWithRedirectCallback`, both explicitly
+  supported. Adding a prebuilt component re-breaks it silently and site-wide, so the browser suite
+  asserts `@clerk/ui` is never requested, and that assertion was verified to fail when the flag is
+  removed.
+
+  Scope is Google and an emailed code, which is what the instance enables. Every other branch Clerk
+  supports surfaces as an error a person can read rather than being half-implemented — hand-rolled
+  auth fails by locking somebody out, so the flows that are not covered say so.
+
+- **Clerk is not loaded at all for a signed-out reader.** The provider mounts only when Clerk's own
+  `__client_uat` cookie shows a session or the route is about identity — neither of which needs
+  Clerk to read. A signed-out visitor to `/leaderboard` now downloads **3 KiB** of Clerk instead of
+  87, and the page is **258 KiB** where it was 619 before any of this.
+
+  The header draws its signed-out bar from that cookie rather than a hook, and `/play`,
+  `/games/[id]` and the landing page take the same flag as a prop. That last part is not optional:
+  `useAuth` *throws* without a provider, so a component that asks a hook what a cookie already
+  answered is a **500 on a public page** — which is exactly what the first attempt shipped, caught
+  by the browser suite.
+
+- **`--color-bad` failed WCAG AA too** — 4.25:1 on `surface-2`, 3.76:1 on `surface-3`. It is the
+  colour of "abandoned", "paused" and an illegal-move count, so it only surfaced once the budgets
+  ran against a database that had those states. `#d8836d` clears 4.5:1 everywhere.
+
+- **The Lighthouse suite measures the whole public site, with Clerk** (NFR-12). Twelve routes
+  instead of four, including a real game and a real tournament from the browser suite's fixtures.
+  It used to build with the Clerk keys cleared because a dev tenant was 55% of the page; owning the
+  auth screens removed the reason to look away.
+
+  Widening it found two things on the first run: an audit asserted that no longer exists in this
+  Lighthouse version, and `/sign-in` scoring 0.63 on SEO — which is `robots.txt` working, so the
+  auth pages now carry a per-URL exemption rather than the audit being switched off everywhere.
 
 ### Fixed
 
@@ -143,87 +380,6 @@ file is only the record of *what shipped when*.
   32px for the signed-in account card, each derived from its own padding and contents. Plainly
   visible side by side on a phone. `CONTROL_HEIGHT` states it once.
 
-### Changed
-
-- **"Recent games" is gone from the lobby.** It and the replay row were two answers to one
-  question: both listed finished games, one at random with the clean endings and a board playing
-  itself, the other in time order as text. The only thing the second carried alone was a game that
-  ended badly — a ply cap, a forfeit, an abandonment — and `/leaderboard` already lists every game
-  the ranking excluded, grouped by reason and linked. 250px of page, and one fewer band saying
-  something the one above it had said.
-- **Three questions answered at the foot of the lobby**, each in a sentence with a door to the page
-  that owns the long version: whether the games are real, why a model is not on the board, and
-  whether the numbers can be checked. Deliberately not an FAQ — `/about` and `/methodology` hold
-  nine sections between them, and a second copy on the lobby is one nobody remembers to update. A
-  browser test follows all three links, because a strip whose whole design is *not repeating* those
-  pages breaks silently the day one is renamed.
-- **One real turn, on the front page.** The lobby claimed every request, reasoning trace and tool
-  call was recorded and then showed nothing but boards and numbers. It now shows a turn from a
-  finished game: what the model thought, how long for and in how many tokens, the tool it called,
-  the move the referee refused if there was one, and the move it played. Folded by `foldEvents` —
-  the same function the game page's conversation is built from — so it cannot drift into a shape
-  the real view never produces.
-
-  **A bounded, cached read of 40 events, which is a measurement rather than a guess**: on
-  `21d2867b` the log costs 14 KB at 40 events, 90 KB at 120 and **728 KB** at 300, because
-  reasoning text dominates it. `listEvents` follows the cursor to the end and never caches, which
-  is right for the game page and wrong for a quotation.
-
-  The first build of this put `</role>` on the front page — two tokens of "reasoning" that were a
-  fragment of a provider's own prompt template, picked because the rule was "non-empty". A thought
-  now has to be at least 120 characters, and `spotlight.test.ts` has that turn in it.
-- **The lobby invites you to play, and says what you are up against.** A section under the
-  tournaments: on one side the whole human-versus-model record as a scoreboard, with the caption
-  this project would insist on — *one game. provisional, obviously* — and on the other what the
-  opponent has been caught doing in ranked games. Every line is measured, so the section is funny
-  for exactly as long as the models keep being bad at chess: 375 illegal moves attempted in 19
-  ranked games, 8 forfeits, and a worst offender at **4.12 illegal attempts per move** — 70 of them
-  across 17 moves.
-
-  `GET /games/human-record` is new and is the only read it adds: four integers in one statement,
-  with a query-count test, because tallying them in Python is a full scan of the archive on a route
-  the landing page calls. An unfinished game is not a defeat — only games that reached a result are
-  counted (invariant 11). The charge sheet is summed from the ranking the page already held.
-
-  It says nothing about credits, deliberately: a seat is granted while the site is in testing
-  (ADR-0016), and `/play` is where a signed-in reader learns that, because the lobby is the same
-  page for everybody and cannot tell who is asking.
-- **The lobby says what a tournament is.** A section under the ranking: the concept in two
-  paragraphs — a field, a format and a set of bounds, and a pool that never ends because it
-  re-checks its field every tick — beside up to three events, running ones first. Each card carries
-  the field and its entrants, a bar of played / live / paused / abandoned pairings against the
-  total, and what came out of it: decisive against draws, mean length, tokens, illegal attempts and
-  cost.
-
-  **The concept is a cell of the grid rather than a paragraph above it**, and the grid is as wide
-  as it has cells. There is one tournament today: a row built for three would have rendered one
-  card beside two holes, which is the whole reason the section reads as deliberate at one event. It
-  adds one cached read (`/tournaments`, tagged) and asks for no standings — the podium above it
-  already answers who is winning.
-- **A pool called itself a "round robin".** `formatLabel` knew two formats and fell through to the
-  second, so the one event on the site was labelled the opposite of what it is. It pairs like a
-  round robin — greedy and incremental (ADR-0041) — but what a reader needs from the word is that
-  it never ends and its field is not fixed.
-- **The lobby's ranking is a podium and a chasing pack, not five rows in a column.** The front page
-  showed the top five as a list sharing a row with "Recent games" — it said who was ahead without
-  ever saying this was a *contest*, which is the whole pitch. The top three now stand on plinths of
-  descending height, 2 · 1 · 3, each carrying the rating and its deviation, the W/D/L and the
-  illegal-move rate; places four to ten run down a list beside them. It stays a podium on a phone —
-  shorter plinths, the name wrapped over three lines, and the two figures that will not fit in
-  113px waiting for `sm` — because stacking the three into a list there is the thing this section
-  replaced. "Recent games" takes the full width underneath, three cards across.
-
-  The section adds no request: it renders the ranking the lobby already awaited (ADR-0032).
-- **The landing page is the same page for everybody.** It carried a "Your games" strip and read the
-  session cookie to decide whether to draw it, which made the first page every visitor loads the one
-  page on the site that could not be reasoned about without knowing who was asking. `/profile` now
-  owns a person's own games and is a better home for them. Nothing on `/` reads a cookie, a header
-  or anything else about the request any more.
-- **Six replays instead of three**, so the row is two full ranks on a wide screen rather than one
-  and a gap.
-
-### Fixed
-
 - **A model thinking now says how long it has been thinking.** A finished block already read
   `reasoned for 12s`, from the event's `duration_ms`; one still being written said a flat
   "reasoning" and nothing else — which is precisely the stretch a reader watching a board not move
@@ -304,38 +460,6 @@ file is only the record of *what shipped when*.
   an unindexed ADR, an index row pointing at nothing, a non-standard header, or any dead relative
   link or heading anchor. All five were live in `docs/` when it was written.
 
-### Changed
-
-- **The pages arrive whole, and the skeletons are gone** (ADR-0046). Every page route was
-  `force-dynamic`, so a click produced no feedback until the whole server render finished — and the
-  fix for that had been a `loading.tsx` skeleton on four routes plus five `<Suspense>` boundaries on
-  the lobby. The lobby sent its first byte at 4.4ms and did not finish until 43.1ms: thirty-nine
-  milliseconds of assembling itself in front of the reader, behind a skeleton that did not match the
-  shape it stood in for.
-
-  The premise underneath it — "a live game and a leaderboard are both wrong the moment they are
-  cached" — was doing too much work. A running game's board does not come from the server render at
-  all; `EventStream` corrects it over SSE within milliseconds. A finished game can never change
-  again. And the leaderboard, the catalogue and the tournament tables change on exactly one
-  occasion, which the API knows and a clock can only guess at.
-
-  So every public read is now cached and tagged, and the worker names the stale tags the moment a
-  game writes a `game_events` row — `orchestration/revalidation.py` to `POST /api/revalidate`, from
-  inside `publish_events`. The `revalidate` seconds are a backstop for a lost notification, not the
-  mechanism.
-
-  Measured on 106 games, median time to the *last* byte: `/` 43.1 → 14.2ms, `/leaderboard`
-  20.4 → 4.4ms, `/about` 18.6 → 3.9ms, `/methodology` 16.6 → 4.1ms, `/models` 26.1 → 11.9ms,
-  `/tournaments` 15.1 → 3.9ms, `/play` 21.5 → 6.7ms. Five consecutive loads of `/leaderboard` cause
-  zero reads of `/leaderboard` on the API, against five before. First and last byte have converged,
-  which is the point: nothing streams any more.
-
-  Cache Components (PPR) was tried and reverted — it reintroduces the streaming, breaks the 404
-  contract site-wide, and costs the 87 KiB Clerk saving. ADR-0046 records why; ROADMAP's *Known
-  gaps* records what is left on the table.
-
-### Fixed
-
 - **`sign in` sometimes said "That did not load."** — and it was the site's own sign-in button. The
   root layout mounts `ClerkProvider` from the request path and the session cookie, but the App
   Router preserves a shared layout across a client-side navigation, so the layout never re-ran and
@@ -353,31 +477,6 @@ file is only the record of *what shipped when*.
   its segment, so signing in and landing on `/play` would throw there instead. The 87 KiB stays off
   the routes that do not need it: the import is dynamic, and `auth-navigation.spec.ts` asserts both
   halves — clicking through loads Clerk, and reading `/leaderboard` does not.
-
-### Added
-
-- **An account menu in the header, and a profile worth visiting** (UI-09, HUMAN-03). The header
-  showed a bare `profile` link: neither who held the session nor a way out of it. It is now a
-  picture, a name and a menu with the two things a person wants — the profile, and signing out.
-
-  Built from `useUser` and `useClerk`, not from `<UserButton />`. A prebuilt Clerk component
-  anywhere puts 285 KiB of `@clerk/ui` on every route, so the menu being ours is what keeps
-  `/about` free of it. The balance appears exactly once at any width: the header chip above `sm`,
-  the menu below it, because discovering your allowance by being refused is a bad way to learn it
-  (ADR-0016) and twice on one screen reads as two numbers.
-
-  `/profile` gained a record and every game behind it, in the shapes the model page already uses —
-  a person holding a seat is a player, and the page describing one should not be a different kind
-  of page. The record counts **decided games only**: a game the harness stopped is not a draw and
-  not a loss (invariant 11), so it is counted apart rather than folded into either, and the four
-  columns are asserted to add up to the total. No new endpoint — `/games/mine` already returned
-  every field the arithmetic needs, and a second place to compute W/D/L is a second answer.
-
-  **It re-introduces a trap that had been deleted.** The account control is a collapsed disclosure
-  that sorts first in the document on every signed-in page, so a selector written against the first
-  `aria-expanded="false"` finds it and not the turn it meant. `docs/TESTING.md` carries it again.
-
-### Fixed
 
 - **Nobody could create an account through our sign-up form.** The Clerk instance requires a
   password; the form asked for an email and a code and nothing else, so every email sign-up
@@ -403,86 +502,6 @@ file is only the record of *what shipped when*.
   its steps rather than on the click — the assertions that follow are about something being
   **absent**, and against a turn that never opened they could not have failed.
 
-### Added
-
-- **The auth screens are asserted, not eyeballed** (UI-09). `account.spec.ts` walks a throwaway
-  identity through sign-up, the profile, a display name, signing out and signing back in — the two
-  bugs above are what it found on the day it was written. A fresh Clerk user rather than the
-  suite's own: `signOut` ends the sessions of the *client*, and every context restores the same
-  client cookie, so signing out on the shared account would revoke the session the play tests are
-  still using. It is deleted again afterwards.
-
-  `auth.setup.ts` does not cover any of this. It drives `window.Clerk` directly, which is the right
-  way to get a session for the play tests and goes nowhere near our form.
-
-- **Our own sign-in, sign-up and profile** — and `/profile` is a page the site did not have. Clerk's
-  `<UserButton />` knew nothing about credits, spend or games, which are the three things a person
-  comes to an account page to check.
-
-### Changed
-
-- **Clerk's prebuilt UI is gone, and with it 285 KiB from every route.** `@clerk/ui` was loading on
-  `/about` and `/leaderboard` — pages where nobody signs in — because *one* prebuilt component
-  anywhere forces it site-wide. `prefetchUI` is documented as `false` *"for custom UIs using Control
-  Components"*, and that parenthesis is load-bearing: it throws with no lazy fallback if any
-  prebuilt component renders, so it was never a flag to flip. It is the reward for owning the
-  screens.
-
-  Clerk: **372 KiB → 87 KiB**. The page: **619 KiB → 337 KiB**. What still renders from Clerk is
-  control components only — `Show` and `AuthenticateWithRedirectCallback`, both explicitly
-  supported. Adding a prebuilt component re-breaks it silently and site-wide, so the browser suite
-  asserts `@clerk/ui` is never requested, and that assertion was verified to fail when the flag is
-  removed.
-
-  Scope is Google and an emailed code, which is what the instance enables. Every other branch Clerk
-  supports surfaces as an error a person can read rather than being half-implemented — hand-rolled
-  auth fails by locking somebody out, so the flows that are not covered say so.
-
-- **Clerk is not loaded at all for a signed-out reader.** The provider mounts only when Clerk's own
-  `__client_uat` cookie shows a session or the route is about identity — neither of which needs
-  Clerk to read. A signed-out visitor to `/leaderboard` now downloads **3 KiB** of Clerk instead of
-  87, and the page is **258 KiB** where it was 619 before any of this.
-
-  The header draws its signed-out bar from that cookie rather than a hook, and `/play`,
-  `/games/[id]` and the landing page take the same flag as a prop. That last part is not optional:
-  `useAuth` *throws* without a provider, so a component that asks a hook what a cookie already
-  answered is a **500 on a public page** — which is exactly what the first attempt shipped, caught
-  by the browser suite.
-
-- **`--color-bad` failed WCAG AA too** — 4.25:1 on `surface-2`, 3.76:1 on `surface-3`. It is the
-  colour of "abandoned", "paused" and an illegal-move count, so it only surfaced once the budgets
-  ran against a database that had those states. `#d8836d` clears 4.5:1 everywhere.
-
-- **The Lighthouse suite measures the whole public site, with Clerk** (NFR-12). Twelve routes
-  instead of four, including a real game and a real tournament from the browser suite's fixtures.
-  It used to build with the Clerk keys cleared because a dev tenant was 55% of the page; owning the
-  auth screens removed the reason to look away.
-
-  Widening it found two things on the first run: an audit asserted that no longer exists in this
-  Lighthouse version, and `/sign-in` scoring 0.63 on SEO — which is `robots.txt` working, so the
-  auth pages now carry a per-URL exemption rather than the audit being switched off everywhere.
-
-### Added
-
-- **Lighthouse budgets run in CI** (NFR-12). The ROADMAP gap said "no Lighthouse in this
-  environment"; that was stale — Chrome is installed and it runs. So it was run, and Phase 7's
-  unverified exit criterion turned out to be **failing on both halves**: performance 87 and
-  accessibility 88 against a target of 90.
-
-  **What the suite refuses to assert is the design.** This repository has already deleted two
-  wall-clock tests, and ROADMAP says why: a timing assertion that fails on a busy machine and
-  passes on a quiet one teaches people to rerun CI, and the next real regression is rerun away with
-  it. A Lighthouse performance score is that assertion wearing a different hat. So accessibility,
-  best practices, SEO, contrast, accessible names, tap targets and page weight are **asserted** —
-  all DOM and network facts, identical on a loaded machine — while the performance score and every
-  timing metric are **recorded and uploaded, never gated**.
-
-  It measures a build with **no Clerk**, deliberately: a development tenant is 370 KiB, 55% of the
-  page, plus a 1.8 s handshake and a console error, and best practices measured 100 on production
-  against 74 locally for reasons entirely outside this repository.
-
-### Fixed
-
 - **A board nobody can move is one image, not sixty-four unlabelled buttons** (UI-09).
   `react-chessboard` gives every square an interactive role whether or not anything is wired to it,
   so the landing page — a spectator's board and four replay thumbnails — handed axe **92 controls
@@ -503,33 +522,6 @@ file is only the record of *what shipped when*.
   analysable, and `export const revalidate = SOME_CONSTANT` typechecks, lints and runs in dev
   before failing `next build`. Three CI jobs went red on a branch where `make check` was green,
   which makes the gate a liar in the one direction that matters.
-
-### Added
-
-- **A social card for every page** (UI-06). Seven routes had **no `og:image` at all** —
-  `/leaderboard`, `/models`, `/about`, `/methodology`, `/play` and both tournament routes unfurled
-  as bare text links anywhere they were shared.
-
-  `pageMetadata` did it. Metadata keys are inherited wholesale, so setting `openGraph` replaces the
-  parent's whole block — including the `images` that `app/opengraph-image.tsx` injects through the
-  file convention. The helper written to stop every page sharing the root's card deleted the card
-  instead. `/sign-in` is what identified the mechanism: it sets no metadata, replaced nothing, and
-  was the only page besides `/` that kept an image.
-
-  The new cards show the page rather than the site: the leaderboard's is the top five with their
-  ratings, a tournament's is its table and what the event cost, a model's is its rating, its record
-  and a position from one of its own ranked games — a board only when there is a real game behind
-  it, because a card about one player showing a board is read as *that player's* game.
-
-  Three constraints found by hitting them, all now in [FRONTEND.md](docs/FRONTEND.md): a card
-  cannot live inside a catch-all segment, so the model's is a Route Handler at `/og/model/<slug>`;
-  a config redirect runs before routing and `/leaderboard/:slug → /models/:slug` was serving the
-  *models* card for the leaderboard, 200 and valid PNG and the wrong picture; and the two cards
-  that already existed had drifted onto different palettes.
-
-  Cards revalidate on one shared clock rather than rendering per request. `site.spec.ts` asserts
-  every public route has exactly one `og:image` and that each renders **without following a
-  redirect** — following one lands on a perfectly good card and proves nothing.
 
 ## [0.4.0] — 2026-09-17
 
@@ -1297,6 +1289,7 @@ flags the old code wrote.
 [ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
 [ADR-0044]: docs/adr/0044-the-ladder-resets-on-an-answered-call.md
 [ADR-0045]: docs/adr/0045-a-turn-keeps-the-rounds-it-completed.md
+[0.5.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.5.0
 [0.4.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.2.0
