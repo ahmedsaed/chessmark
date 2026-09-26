@@ -69,6 +69,7 @@ were live in this directory before it was written.
 | [0048](0048-the-archive-filters-on-the-server-and-pages-by-keyset.md) | The archive filters on the server, and pages by keyset | Accepted |
 | [0049](0049-decision-models-play-through-their-own-harness.md) | Decision models play through their own harness | Accepted |
 | [0050](0050-a-pool-saturates-per-pair.md) | A pool saturates per pair | Accepted |
+| [0051](0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md) | A decision model chooses its action, and is checked before it plays | Accepted |
 
 ## Template
 

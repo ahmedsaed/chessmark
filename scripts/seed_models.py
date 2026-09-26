@@ -29,6 +29,8 @@ sys.path.insert(0, str(API_ROOT / "src"))
 
 import httpx  # noqa: E402
 
+from chessmark.agents.decision_check import check_decision_models  # noqa: E402
+from chessmark.agents.decisions import DecisionGateway  # noqa: E402
 from chessmark.agents.registry import (  # noqa: E402
     fetch_catalogue,
     playable_models,
@@ -76,6 +78,16 @@ async def main() -> int:
             report = await sync_model_registry(
                 session, entries, disable_missing=args.disable_missing
             )
+
+        # A decision model is offered only once it has answered our request shape (ADR-0051).
+        if settings.openrouter_api_key:
+            async with session_scope() as session:
+                checked = await check_decision_models(
+                    session, DecisionGateway(api_key=settings.openrouter_api_key)
+                )
+            print(f"decisions : {checked}")
+
+        async with session_scope() as session:
             playable = await playable_models(session)
 
         print(f"registry  : {report}")

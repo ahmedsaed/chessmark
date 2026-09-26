@@ -28,10 +28,18 @@ registers what it returns as `runtime = decision`. `registry.model_is_playable` 
 agree. A decision model is asked through `POST /api/alpha/decisions`, not LiteLLM; its errors are
 classified by the same functions as a chat call's, so a 429 pauses and a 402 halts identically.
 
-Its gates — the probability at which it resigns, offers, accepts or claims — come from
-`make probe-decisions`, which runs every registered decision model over labelled positions and
-prints where its yeses and noes fall. **Run it for every new decision model**: a threshold does not
-carry from one model to another.
+**A decision model is checked once before it is offered**
+([ADR-0051](adr/0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md)).
+Nothing in the catalogue says which question types a model accepts: Span-01 lists the same metadata
+as Jev and refuses anything but yes/no questions. So the catalogue refresh sends each decision model
+not yet checked under the current `DECISION_VERSION` one tiny request in a turn's exact shape, and
+records `decisions_checked` and, on a refusal, `decisions_refusal` (the host's own sentence). Only a
+model that answered is playable. The check runs once per model per version, never on routine
+refreshes; a refusal isn't billed, and a rate limit or outage defers the check to the next refresh.
+
+There are no per-model thresholds to set. What a seat does with its turn is one `choice`, and a
+game-ending action needs a majority of the model's own ranking, which means the same thing on every
+model's scale. `make probe-decisions` is a diagnostic of how a model judges, not a step.
 
 ### The floor is 64k, and omitting it applies the policy
 

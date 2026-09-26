@@ -26,6 +26,7 @@ import httpx
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.decision_request import DECISION_VERSION
 from chessmark.agents.pricing import ModelPricing, PricingTable
 from chessmark.core.config import get_settings
 from chessmark.db.enums import ModelRuntime
@@ -378,7 +379,14 @@ def model_is_playable(min_context: int | None = None) -> Any:
         chat.append(
             sa.or_(ModelRegistry.context_length.is_(None), ModelRegistry.context_length >= floor)
         )
-    return sa.or_(ModelRegistry.runtime == ModelRuntime.DECISION, sa.and_(*chat))
+    # A decision model is playable once it has answered our request shape under the version being
+    # played (ADR-0051) — `decision_check.py`, run by the catalogue refresh.
+    decision = sa.and_(
+        ModelRegistry.runtime == ModelRuntime.DECISION,
+        ModelRegistry.decisions_checked == DECISION_VERSION,
+        ModelRegistry.decisions_refusal.is_(None),
+    )
+    return sa.or_(decision, sa.and_(*chat))
 
 
 async def playable_models(
@@ -594,9 +602,25 @@ def ineligible_reasons(
         against.append("floating alias — plays, but cannot say what played")
     if chat and not fits_a_game(row.context_length, floor):
         against.append(f"context {row.context_length:,} < {floor:,}")
+    if not chat and row.decisions_refusal:
+        against.append(f"its host refuses our decision requests: {row.decisions_refusal}")
+    elif not chat and row.decisions_checked != DECISION_VERSION:
+        against.append(f"not yet checked against decision harness {DECISION_VERSION}")
     if not has_endpoint:
         against.append("no active endpoint that can hold a game")
     return against
+
+
+def decision_unready(row: ModelRegistry) -> str | None:
+    """Why a decision model cannot be seated yet, or `None` — the per-row form of the check in
+    `model_is_playable`, for the two endpoints that seat a model a person named (ADR-0051)."""
+    if row.runtime != ModelRuntime.DECISION:
+        return None
+    if row.decisions_refusal:
+        return f"its host refuses the requests a turn sends: {row.decisions_refusal}"
+    if row.decisions_checked != DECISION_VERSION:
+        return "it has not been checked against the current decision harness yet"
+    return None
 
 
 def endpoint_is_playable(min_context: int | None = None) -> tuple[Any, ...]:

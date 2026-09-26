@@ -40,6 +40,8 @@ sys.path.insert(0, str(API_ROOT / "src"))
 
 import httpx  # noqa: E402
 
+from chessmark.agents.decision_check import check_decision_models  # noqa: E402
+from chessmark.agents.decisions import DecisionGateway  # noqa: E402
 from chessmark.agents.registry import (  # noqa: E402
     fetch_catalogue,
     fetch_endpoints,
@@ -78,6 +80,11 @@ async def refresh(*, skip_endpoints: bool = False) -> int:
                 report = await sync_model_registry(session, entries, disable_missing=True)
                 print(f"registry  : {report}")
 
+            # Before the endpoints, and whether or not they are swept: a new decision model is
+            # offered only once it has answered our request shape (ADR-0051), and that is one call
+            # per model per harness version, not a sweep.
+            await check_decisions(settings.openrouter_api_key)
+
             if skip_endpoints:
                 print("endpoints : skipped")
                 return 0
@@ -91,7 +98,7 @@ async def refresh(*, skip_endpoints: bool = False) -> int:
                 for model in models:
                     try:
                         found = await fetch_endpoints(client, model.openrouter_id)
-                    except Exception as exc:  # noqa: BLE001 — one bad model must not stop the sweep
+                    except Exception as exc:
                         failures[type(exc).__name__] += 1
                         continue
                     total += await sync_endpoints(session, model, found)
@@ -104,6 +111,18 @@ async def refresh(*, skip_endpoints: bool = False) -> int:
         return 0
     finally:
         await dispose_engine()
+
+
+async def check_decisions(api_key: str) -> None:
+    """Ask each decision model not yet checked whether it can answer what a turn asks."""
+    if not api_key:
+        print("decisions : skipped — no OPENROUTER_API_KEY to ask with")
+        return
+    async with session_scope() as session:
+        report = await check_decision_models(session, DecisionGateway(api_key=api_key))
+    print(f"decisions : {report}")
+    for slug in report.refused:
+        print(f"            {slug} cannot answer our requests and will not be offered")
 
 
 async def forever(*, every_hours: float, skip_endpoints: bool = False) -> int:
@@ -126,7 +145,7 @@ async def forever(*, every_hours: float, skip_endpoints: bool = False) -> int:
         try:
             if await refresh(skip_endpoints=skip_endpoints) != 0:
                 print("refresh changed nothing; will try again next interval", file=sys.stderr)
-        except Exception as exc:  # noqa: BLE001 — a scheduled sweep must outlive one bad night
+        except Exception as exc:
             print(f"refresh failed: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
         print(f"next refresh in {every_hours:g}h", flush=True)
         await asyncio.sleep(seconds)

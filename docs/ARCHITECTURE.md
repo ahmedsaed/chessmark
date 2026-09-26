@@ -194,18 +194,20 @@ is the difference between a viable public product and an unaffordable one.
 ### Decision models take a different turn
 
 A seat whose model is a **decision model** (`players.runtime = decision`) never enters the loop
-above ([ADR-0049](adr/0049-decision-models-play-through-their-own-harness.md)). The worker forks
+above ([ADR-0049](adr/0049-decision-models-play-through-their-own-harness.md),
+[ADR-0051](adr/0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md)). A model
+is seated only once the catalogue refresh has checked it can answer this request. The worker forks
 on the runtime and runs `agents/decision_turn.DecisionTurnRunner`:
 
 ```
 Worker job for (game, expected_ply)
   -> build one Decisions API request (agents/decision_request.py, DECISION_VERSION):
-       state:     position, pieces, material, pieces at risk, recent moves, open offer or claim
-       questions: move (choice over legal moves, each with game/facts.py facts),
-                  resign + offer_draw (noul, every turn), accept_draw / claim_draw (when open)
+       state:     position, pieces, material, recent moves, open offer or claim
+       questions: move   (choice over legal moves, each with game/facts.py facts)
+                  action (choice: play_on | offer_draw | resign | accept_draw | claim_draw)
   -> POST /api/alpha/decisions, pinned to the seat's endpoint (agents/decisions.py)
-  -> record the call verbatim in llm_calls, validate every answer
-  -> act in order: claim | accept | resign | move (+ offer) — through the referee
+  -> record the call verbatim in llm_calls, validate both answers
+  -> act on the action ranked first — an ending only on a majority (ADR-0051) — via the referee
   -> append one `decided` event, then the `move_made` / ending, and return a TurnResult
 ```
 

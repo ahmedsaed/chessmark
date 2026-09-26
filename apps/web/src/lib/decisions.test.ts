@@ -71,6 +71,15 @@ describe("a decision turn", () => {
     expect(block.confidence).toBeNull();
   });
 
+  it("carries an ending the majority rule overruled, and nothing when it did not", () => {
+    const overruled = decisionBlock(
+      { ...PAYLOAD, ranked_first: "resign", answers: { resign: 0.45, play_on: 0.38 } },
+      2,
+    );
+    expect(overruled.rankedFirst).toBe("resign");
+    expect(decisionBlock(PAYLOAD, 2).rankedFirst).toBeNull();
+  });
+
   it("reads a resignation as what the seat did", () => {
     const block = decisionBlock({ ...PAYLOAD, action: "resign" }, 2);
     expect(block.action).toBe("resign");

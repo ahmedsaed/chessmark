@@ -10,9 +10,10 @@ It has a version of its own, apart from `PROMPT_VERSION` and `TOOL_SCHEMA_VERSIO
 harnesses change for different reasons and must be able to do so without retiring each other's
 games: a new rule stated to the chat models is not a change to what a decision model is asked.
 
-**Everything a chat seat can do on a turn, a decision seat is asked about**: its move, and whether
-to resign, offer a draw, claim one, or accept one. The chat seat does these through tools; this seat
-answers a `noul` for each, and code acts on the answers in a fixed order (`DecisionTurnRunner`).
+**Everything a chat seat can do on a turn, a decision seat is asked about**: its move, and what it
+does with the turn — play on, offer a draw with the move, resign, accept an open offer or claim an
+open draw. The chat seat does these through tools; this seat ranks them in one `choice`, and the
+option it ranks first is what happens (`DecisionTurnRunner`).
 
 **What a board shows, spelled out; nothing a board does not.** A decision model reads state as
 data rather than as a board, so what a chat model sees at a glance — which piece a move uses, from
@@ -43,15 +44,26 @@ from chessmark.game.facts import (
 #: over the legal moves, each described; and a `noul` for every other thing a player may do on a
 #: turn — resign and offer a draw always, claim a draw when one is claimable, accept one when it is
 #: on offer. Everything a chat seat can do through its tools, a decision seat is asked about.
-DECISION_VERSION = "d1"
+#:
+#: `d2` on 2026-09-27: the four `noul`s become one `action` choice (ADR-0051). A `noul` needs a
+#: threshold, and a threshold does not carry between models — the same dead-drawn ending read 0.29
+#: to Jev and 0.53 to Kev — so one gate for every model decided some games by how well a model's
+#: scale lined up with our number. A choice is relative: the option a model ranks first happens, on
+#: its own scale, with nothing to tune per model.
+DECISION_VERSION = "d2"
 
 #: The question keys. Ours, not the model's — the API never sends a key to the model, which is why
 #: every instruction below carries its full meaning on its own.
 MOVE_QUESTION = "move"
-ACCEPT_DRAW_QUESTION = "accept_draw"
-CLAIM_DRAW_QUESTION = "claim_draw"
-OFFER_DRAW_QUESTION = "offer_draw"
-RESIGN_QUESTION = "resign"
+ACTION_QUESTION = "action"
+
+#: The options of the action question. `PLAY_ON` is always first, so an equal ranking — which a
+#: `choice` breaks by order — falls to the ordinary turn rather than to ending the game.
+PLAY_ON = "play_on"
+OFFER_DRAW = "offer_draw"
+RESIGN = "resign"
+ACCEPT_DRAW = "accept_draw"
+CLAIM_DRAW = "claim_draw"
 
 #: How many plies of history the state carries. Enough to see the shape of the last few moves and
 #: any repetition building; a whole 300-ply game would crowd out the position on an 8k window, and
@@ -92,6 +104,8 @@ class DecisionRequest:
     #: Criterion key → UCI. The key is plain SAN, which is what the model reads; the UCI is what the
     #: referee plays, so an answer is resolved without parsing anything the model returned.
     moves: dict[str, str]
+    #: The actions offered this turn, in the order the model was shown them.
+    actions: tuple[str, ...] = ()
 
     def body(self, *, model: str) -> dict[str, Any]:
         return {"model": model, "state": self.state, "questions": self.questions}
@@ -130,18 +144,17 @@ def _recent(board: chess.Board) -> list[str]:
     ]
 
 
-#: The one test every draw question applies, stated once so offering, accepting and claiming cannot
-#: drift apart. **About winning chances, not balance.** The first wording asked whether a draw was
-#: "a fair result" from a position "balanced or worse", which is honestly *yes* in any level
-#: position — and in the first real game both models sat between 0.3 and 0.5 on it from move one,
-#: and the game was agreed drawn at move seven in an open, level middlegame (ADR-0049).
-_DRAW_TEST = (
+#: How a draw and a resignation are judged, stated once in the action question's instructions.
+#: **About winning chances, not balance.** The first wording asked whether a draw was "a fair
+#: result" from a position "balanced or worse", which is honestly *yes* in any level position, and
+#: the first real game was agreed drawn at move seven in an open, level middlegame (ADR-0049).
+_ACTION_GUIDE = (
     "Take a draw only when you no longer expect to win by playing on: you stand clearly worse, or "
     "the position is a dead draw with no winning chances left for either side. A level position "
-    "that still has play in it is not a reason to draw — either side can still win it."
+    "that still has play in it is not a reason to draw. Resign only when the game is lost beyond "
+    "any doubt: a decisive material deficit with no counterplay, or a mate that cannot be "
+    "stopped. Standing worse, or being a pawn or two down, is never a reason to resign."
 )
-_TAKE_DRAW = "Yes: you stand clearly worse, or neither side has any real winning chances left."
-_PLAY_ON = "No: the position still has play in it, or you stand better."
 
 
 def _last_capture(board: chess.Board, last: chess.Move) -> tuple[str, str] | None:
@@ -180,10 +193,6 @@ def _standing(own: int, theirs: int) -> str:
     return "level"
 
 
-def _noul(instructions: str, yes: str, no: str) -> dict[str, Any]:
-    return {"type": "noul", "instructions": instructions, "criteria": {"true": yes, "false": no}}
-
-
 def build_request(
     board: chess.Board,
     *,
@@ -197,7 +206,7 @@ def build_request(
     draw may be claimed now (`THREEFOLD` or `FIFTY_MOVES`), or `None`. Both are the caller's to
     decide, because the referee and the event log own those facts and this module owns only how
     they are put. `may_offer_draw` is false while this seat's last offer still stands declined —
-    see `DecisionTurnRunner._may_offer`.
+    see `DecisionTurnRunner._may_offer`. Together they decide which actions are offered.
 
     `board` must carry its history — the referee's does — because repetition is read from it.
     Nothing here reads the clock, a counter or anything else that changes between two identical
@@ -260,58 +269,54 @@ def build_request(
             "criteria": {move.san: _describe(move) for move in moves},
         }
     }
-    # **Everything else a player may do on a turn, one `noul` each** — independent conditions, so
-    # each is its own question rather than options bundled into one choice, and code decides what
-    # to do when more than one says yes (`DecisionTurnRunner`).
+    # **What it does with the turn, as one choice among the actions open to it** (ADR-0051). The
+    # actions are mutually exclusive — a player does exactly one — which is what a `choice` is for,
+    # and a choice is relative, so the model's own ranking decides with no threshold of ours.
+    actions: dict[str, str] = {PLAY_ON: "Play your move and carry on with the game."}
     if draw_claimable is not None:
         state["draw_claim"] = _CLAIMABLE[draw_claimable]
-        questions[CLAIM_DRAW_QUESTION] = _noul(
-            f"You are playing chess as {you}, and you may claim a draw now (`draw_claim`). "
-            f"{_DRAW_TEST} Should you claim the draw?",
-            _TAKE_DRAW,
-            _PLAY_ON,
+        actions[CLAIM_DRAW] = (
+            "Claim the draw (`draw_claim`) instead of moving; the game ends drawn."
         )
     if draw_offered:
         state["draw_offer"] = f"{opponent.capitalize()} has offered a draw."
-        questions[ACCEPT_DRAW_QUESTION] = _noul(
-            f"You are playing chess as {you}, and your opponent has offered a draw "
-            f"(`draw_offer`). {_DRAW_TEST} Should you accept it?",
-            _TAKE_DRAW,
-            _PLAY_ON,
+        actions[ACCEPT_DRAW] = (
+            "Accept your opponent's draw offer (`draw_offer`); the game ends drawn."
         )
     elif may_offer_draw:
-        # Not asked while the opponent's own offer is open: the answer to that is accepting it.
-        questions[OFFER_DRAW_QUESTION] = _noul(
-            f"You are playing chess as {you}. {_DRAW_TEST} Should you offer your opponent a draw "
-            "now, while still playing your move?",
-            _TAKE_DRAW,
-            _PLAY_ON,
+        # Not offered while the opponent's own offer is open: the answer to that is accepting it.
+        actions[OFFER_DRAW] = (
+            "Play your move and offer your opponent a draw; they may accept it or play on."
         )
-    questions[RESIGN_QUESTION] = _noul(
-        f"You are playing chess as {you}. Is the game in `position` lost for you beyond any doubt, "
-        "so that you should resign? Resign only when nothing can save it: a decisive material "
-        "deficit with no counterplay, or a mate that cannot be stopped. Standing worse, or being "
-        "a pawn or two down, is never a reason to resign.",
-        "Resign: the game is lost beyond any doubt.",
-        "Play on: the game can still be saved, drawn or won.",
-    )
+    actions[RESIGN] = "Resign instead of moving; the game ends and you lose it."
+    questions[ACTION_QUESTION] = {
+        "type": "choice",
+        "instructions": (
+            f"You are playing chess as {you} against {opponent}, and it is your turn. What will you "
+            f"do with it? {_ACTION_GUIDE}"
+        ),
+        "criteria": actions,
+    }
 
     return DecisionRequest(
         state=state,
         questions=questions,
         moves={move.san: move.uci for move in moves},
+        actions=tuple(actions),
     )
 
 
 __all__ = [
-    "ACCEPT_DRAW_QUESTION",
-    "CLAIM_DRAW_QUESTION",
+    "ACCEPT_DRAW",
+    "ACTION_QUESTION",
+    "CLAIM_DRAW",
     "DECISION_VERSION",
     "FIFTY_MOVES",
     "MOVE_QUESTION",
-    "OFFER_DRAW_QUESTION",
+    "OFFER_DRAW",
+    "PLAY_ON",
     "RECENT_PLIES",
-    "RESIGN_QUESTION",
+    "RESIGN",
     "THREEFOLD",
     "DecisionRequest",
     "build_request",

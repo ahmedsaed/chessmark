@@ -15,6 +15,19 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Changed
+
+- **Decision models choose what to do with their turn, and are checked before they play.** Resign,
+  offer, accept and claim are now one choice beside the move, not four yes/no questions gated at a
+  fixed number. The same answer meant different things on different models, so no single gate was
+  fair. Ending the game takes a majority of the model's own ranking, and the timeline says when that
+  overruled its first choice. A newly listed decision model is asked one request in a turn's shape
+  when the catalogue refreshes, and only one that can answer is offered: the Span models, which
+  accept only yes/no questions, are recorded as refused rather than seated. The decision harness is
+  now `d2`, a new era for decision tournaments. `./chessmark deploy` now restarts the catalogue
+  service, which it never had. (AGENT-24, AGENT-26,
+  [ADR-0051](docs/adr/0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md))
+
 ## [0.5.0] — 2026-09-26
 
 **Decision models play, every game has an archive, and a pool can stop.** 39 commits since

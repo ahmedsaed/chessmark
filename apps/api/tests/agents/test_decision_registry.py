@@ -8,7 +8,9 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.decision_check import check_decision_models
 from chessmark.agents.decision_request import DECISION_VERSION
+from chessmark.agents.decisions import DecisionGateway
 from chessmark.agents.registry import (
     DECISION_MODELS_URL,
     MODELS_URL,
@@ -19,6 +21,7 @@ from chessmark.agents.registry import (
     select_endpoint,
     sync_model_registry,
 )
+from chessmark.agents.scripted_decisions import deciding
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import ModelRuntime
 from chessmark.db.models import ModelEndpoint, ModelRegistry, Tournament
@@ -83,6 +86,8 @@ async def _seed(db: AsyncSession) -> None:
     client = _Client()
     entries = await fetch_catalogue(client, min_context=64_000)  # type: ignore[arg-type]
     await sync_model_registry(db, entries)
+    # The catalogue refresh's own step, against a scripted host that answers (ADR-0051).
+    await check_decision_models(db, DecisionGateway(decide_fn=deciding()))
     rows = {r.openrouter_id: r for r in await db.scalars(sa.select(ModelRegistry))}
     db.add(
         ModelEndpoint(

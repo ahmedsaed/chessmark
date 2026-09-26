@@ -51,18 +51,26 @@ cmd_deploy() { # pull, drain the workers, migrate, restart, check /ready — the
   #
   # Stopping a worker mid-turn is safe by design: the turn is one transaction and rolls back whole,
   # and its job is redelivered (`expected_ply` idempotency, ADR-0007).
-  say "draining workers…"; "${COMPOSE[@]}" stop worker tournament
+  #
+  # `catalogue` too: it writes `model_registry` on every refresh, the table a registry migration
+  # alters, and it holds that write open across a whole sweep of OpenRouter.
+  say "draining workers…"; "${COMPOSE[@]}" stop worker tournament catalogue
 
   say "migrating…"
   if ! "${COMPOSE[@]}" run --rm migrate; then
     warn "migration failed — bringing the workers back on the old image"
-    "${COMPOSE[@]}" up -d worker tournament
+    "${COMPOSE[@]}" up -d worker tournament catalogue
     return 1
   fi
 
   # `WORKER_REPLICAS` is read from the environment or `.env`, so a deploy keeps whatever scale is
   # configured rather than quietly returning to one worker.
-  say "restarting…";     "${COMPOSE[@]}" up -d --remove-orphans api web worker tournament
+  #
+  # **`catalogue` is restarted with the rest.** It was left out, so it went on running the image it
+  # started on through every deploy — and it refreshes at start-up, which is what runs a new
+  # release's catalogue code (ADR-0051's capability check among it). The CD workflow never had the
+  # gap: it brings up every service, not a list.
+  say "restarting…";     "${COMPOSE[@]}" up -d --remove-orphans api web worker tournament catalogue
   cmd_ready
 }
 
