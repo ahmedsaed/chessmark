@@ -66,6 +66,15 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **A failed turn keeps the answers it paid for.** A rejected request, no room to answer, broken
+  token accounting, our own output ceiling and a garbled tool call each used to roll back the whole
+  turn: answers already billed vanished from the record, and the retry paid for them again. About
+  3.5% of successful answers since mid-September went this way, found by reconciling games against
+  OpenRouter's own per-session totals. Every classified failure now keeps its completed rounds and
+  the next attempt continues from them. Our own output ceiling is no longer retried five times.
+  A turn that crashes spends one of its five attempts, so a crash caused by the game's own state
+  ends the game unrated instead of looping for a day.
+  ([ADR-0053](docs/adr/0053-every-failure-keeps-its-rounds.md))
 - **A pause inside a turn folds only into the pause directly above it**, as it always has between
   turns. The in-turn fold searched the whole turn and joined the first matching row wherever it
   was, so `c4550202` drew a day of rate limits as one `×16` row above a halt from the night before,

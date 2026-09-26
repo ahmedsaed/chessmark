@@ -71,6 +71,7 @@ were live in this directory before it was written.
 | [0050](0050-a-pool-saturates-per-pair.md) | A pool saturates per pair | Accepted |
 | [0051](0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md) | A decision model chooses its action, and is checked before it plays | Accepted |
 | [0052](0052-credit-is-dollars-spent-at-actual-cost.md) | Credit is dollars, spent at what each turn actually cost | Accepted |
+| [0053](0053-every-failure-keeps-its-rounds.md) | Every failure keeps its rounds, and a crash spends an attempt | Accepted |
 
 ## Template
 

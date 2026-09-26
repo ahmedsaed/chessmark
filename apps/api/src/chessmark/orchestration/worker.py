@@ -417,9 +417,40 @@ class TurnWorker:
                     await self.failures.record(
                         delivery.job.game_id, delivery.job.expected_ply, error
                     )
+            with contextlib.suppress(Exception):
+                return await self._after_crash(delivery.job, error)
             return HandledJob(CRASHED, delivery.job.game_id, delivery.job.expected_ply)
         finally:
             await self.queue.ack(delivery.message_id)
+
+    async def _after_crash(self, job: AdvanceTurn, error: Exception) -> HandledJob:
+        """Spend one of the job's attempts on a crash, and end the game when they run out.
+
+        **A crash used to cost nothing, so it never stopped.** The game was left for the stall
+        sweep, which requeued it at attempt one forty-five minutes later — and a crash that follows
+        from the game's own state happens again on every attempt. `c4550202` did that for a day,
+        each attempt paying for an answer the rollback then discarded. Counted like a provider
+        failure, a deterministic crash ends the game after the retry budget instead: abandoned,
+        never forfeited, because a bug of ours is not a finding about a player (invariant 11).
+        """
+        if job.attempt < MAX_JOB_ATTEMPTS:
+            await self.queue.enqueue(job.next_attempt())
+            return HandledJob(CRASHED, job.game_id, job.expected_ply)
+
+        async with self.sessionmaker() as session, session.begin():
+            game = await get_game(session, job.game_id)
+            if game.status is not GameStatus.RUNNING:
+                return HandledJob(CRASHED, job.game_id, job.expected_ply)
+            before = game.event_seq
+            await self._abandon(
+                session,
+                game,
+                f"Abandoned after {job.attempt} attempts that crashed: {type(error).__name__}",
+            )
+            events = await load_events(session, game.id, after_seq=before)
+        await self._publish(job.game_id, events)
+        log.error("abandoning %s after %s crashed attempts", job.game_id, job.attempt)
+        return HandledJob(ABORTED, job.game_id, job.expected_ply)
 
     # ------------------------------------------------------------------ one turn
 
