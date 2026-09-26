@@ -16,7 +16,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 
-import { CreditBadge } from "@/components/ModelPicker";
+import { PriceBadge } from "@/components/ModelPicker";
 import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { browseModels, countModels } from "@/lib/models";
 import type { ModelInfo } from "@/lib/types";
@@ -112,7 +112,7 @@ export function ModelTable({ models }: { models: ModelInfo[] }) {
                     )}
                   </span>
 
-                  <CreditBadge credits={model.credit_cost} />
+                  <PriceBadge tier={model.price_tier} free={model.is_free} />
                 </Link>
               </li>
             ))}

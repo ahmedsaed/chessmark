@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { GameCard } from "@/components/GameCard";
-import { CreditBadge } from "@/components/ModelPicker";
+import { PriceBadge } from "@/components/ModelPicker";
 import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { getModel, listGamesByModel } from "@/lib/api";
 import { parseArchive, withFilter } from "@/lib/archive";
@@ -107,7 +107,7 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
 
       <div className="mt-4 flex flex-wrap items-baseline gap-3">
         <h1 className="font-serif text-4xl leading-tight text-ink">{model.display_name}</h1>
-        <CreditBadge credits={model.credit_cost} />
+        <PriceBadge tier={model.price_tier} free={model.is_free} />
         <RuntimeBadge runtime={model.runtime} />
       </div>
       <p className="mt-1 font-mono text-xs text-ink-faint">

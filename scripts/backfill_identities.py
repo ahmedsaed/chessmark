@@ -45,9 +45,7 @@ async def main() -> int:
 
     try:
         async with session_scope() as session:
-            rows = list(
-                await session.scalars(sa.select(User).where(User.email.is_(None)))
-            )
+            rows = list(await session.scalars(sa.select(User).where(User.email.is_(None))))
             print(f"{len(rows)} user(s) without an email")
 
             filled = 0
@@ -57,7 +55,9 @@ async def main() -> int:
                     print(f"  ? {user.clerk_user_id} — Clerk had nothing")
                     continue
 
-                print(f"  {'would fill' if args.dry_run else 'filled'} {user.clerk_user_id} → {email}")
+                print(
+                    f"  {'would fill' if args.dry_run else 'filled'} {user.clerk_user_id} → {email}"
+                )
                 if not args.dry_run:
                     user.email = email or user.email
                     user.display_name = display_name or user.display_name

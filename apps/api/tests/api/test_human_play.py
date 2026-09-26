@@ -403,14 +403,10 @@ async def test_an_oversized_message_is_refused(client: AsyncClient, db: AsyncSes
     assert response.status_code == 422
 
 
-async def test_a_free_model_costs_no_credits(db: AsyncSession, client: AsyncClient) -> None:
-    """Credits bound spend, and a `:free` model spends nothing — so charging a person to sit down
-    against the cheapest thing on the site was charging for the wrong thing.
-
-    Scoped to this endpoint. Pricing free models at zero in `ModelRegistry.credits` also opened
-    `POST /games` to any signed-in account, because credits are what AUTH-11 uses to gate an
-    unfunded user; two tests said so immediately.
-    """
+async def test_a_free_model_needs_no_credit(db: AsyncSession, client: AsyncClient) -> None:
+    """A `:free` model's turns cost nothing, so an account holding $0 can sit down against one
+    (ADR-0052). Scoped to this endpoint: a game between two machines still needs a balance, since
+    only *playing* a free model is open to everyone."""
     await sync_model_registry(
         db,
         [
@@ -431,3 +427,32 @@ async def test_a_free_model_costs_no_credits(db: AsyncSession, client: AsyncClie
     )
 
     assert response.status_code == 201, response.text
+
+
+async def test_a_paid_model_needs_a_balance_above_zero(
+    db: AsyncSession, client: AsyncClient
+) -> None:
+    """The one check at the door (ADR-0052): nothing is charged here, but a person with no credit
+    cannot start a game whose every model turn will cost something."""
+    await sync_model_registry(
+        db,
+        [
+            {
+                "openrouter_id": "test/opponent-paid",
+                "display_name": "Paid Opponent",
+                "context_length": 200_000,
+                "prompt_usd_per_token": "0.000001",
+                "completion_usd_per_token": "0.000002",
+            }
+        ],
+    )
+    await db.commit()
+
+    response = await client.post(
+        "/games/human",
+        json={"model": "test/opponent-paid", "colour": "white"},
+        headers=as_user("user_unfunded_paid", email="unfunded-paid@chessmark.test"),
+    )
+
+    assert response.status_code == 402, response.text
+    assert "$0.00" in response.text

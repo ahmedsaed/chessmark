@@ -18,7 +18,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
-import { CreditBadge, ModelPicker } from "@/components/ModelPicker";
+import { ModelPicker } from "@/components/ModelPicker";
 import { ApiError, createHumanGame } from "@/lib/api";
 import type { Colour, ModelInfo } from "@/lib/types";
 
@@ -44,9 +44,6 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
   const [chat, setChat] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  /* Only the machine seat is charged — a person plays for free as themselves (ADR-0016). */
-  const price = playable.find((m) => m.openrouter_id === opponent)?.credit_cost ?? 0;
 
   async function start() {
     setBusy(true);
@@ -156,14 +153,10 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
         >
           {busy ? "seating…" : "sit down"}
         </button>
-        {opponent && (
-          <span className="flex items-center gap-1.5">
-            <CreditBadge credits={price} />
-          </span>
-        )}
         <p className="font-mono text-meta text-ink-faint">
           Never ranked — a person is not a contestant. No clock; an idle game expires after two
-          hours.
+          hours. Your moves are free; the model&apos;s turns are charged what they cost, and a free
+          model costs nothing.
         </p>
       </div>
 

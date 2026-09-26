@@ -45,6 +45,7 @@ from chessmark.agents.tools import (
     tool_schemas,
 )
 from chessmark.agents.types import Completion, LlmError, RateLimit, ToolInvocation
+from chessmark.db.credits import spend
 from chessmark.db.enums import EventType, ModelRuntime, ModerationStatus, TurnStatus
 from chessmark.db.models import Game, LlmCall, Message, Player, ToolCall, Turn
 from chessmark.db.repositories import append_event, open_draw_offer, record_ply
@@ -1760,6 +1761,18 @@ class TurnRunner:
                 total_tokens=Game.total_tokens + result.prompt_tokens + result.completion_tokens,
             )
         )
+        # **Charged here, and nowhere else** — the same number, in the same transaction, as the
+        # two lines above (ADR-0052). A turn that is rolled back takes its charge with it, so the
+        # person pays exactly what the game says it cost. A game nobody started — a tournament's,
+        # an operator's — has no payer.
+        if self.game.created_by_user_id is not None:
+            await spend(
+                self.session,
+                self.game.created_by_user_id,
+                result.cost_usd,
+                game_id=self.game.id,
+                turn_id=turn.id,
+            )
 
         # `game_ended` is deliberately *not* emitted here. The turn knows the referee reached a
         # terminal state, but concluding the game — flipping its status, recording the result — is

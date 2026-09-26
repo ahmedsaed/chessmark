@@ -18,7 +18,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
-import { CreditBadge, ModelPicker } from "@/components/ModelPicker";
+import { ModelPicker } from "@/components/ModelPicker";
 import type { ModelInfo } from "@/lib/types";
 
 const DEFAULT_WHITE = "google/gemini-3.7-flash";
@@ -47,12 +47,6 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
   const [blackQuant, setBlackQuant] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  /* A game costs the sum of its seats (ADR-0016) — two frontier models is a real decision, and
-     the total is the number that makes it one. */
-  const priceOf = (slug: string) =>
-    playable.find((m) => m.openrouter_id === slug)?.credit_cost ?? 0;
-  const price = priceOf(white) + priceOf(black);
 
   async function start() {
     setBusy(true);
@@ -126,12 +120,6 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           onQuantizationChange={setBlackQuant}
         />
 
-        {white && black && (
-          <span className="flex items-end gap-1.5 pb-2">
-            <CreditBadge credits={price} />
-          </span>
-        )}
-
         <button
           type="button"
           onClick={start}
@@ -141,6 +129,13 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           {busy ? "starting…" : "play"}
         </button>
       </div>
+
+      {/* Said before the button is pressed, because there is no price to show: a game is charged
+          what each turn actually cost, and nothing knows that until it is played (ADR-0052). */}
+      <p className="font-mono text-meta text-ink-faint">
+        Paid for as it plays: each model turn is charged what it cost. A game pauses if your credit
+        runs out, and resumes when more is added.
+      </p>
 
       {error && (
         <p className="border border-bad-deep bg-surface px-3 py-2 text-xs leading-relaxed text-bad">

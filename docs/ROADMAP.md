@@ -42,6 +42,7 @@ flowchart LR
     P18 --> P20[20 Models + matchmaking]
     P9 --> P21[21 Credits]
     P21 --> P22[22 Accountability]
+    P22 --> P28[28 Credit at cost]
     P22 --> P17
     P7 --> P23[23 Browser suite]
     P18 --> P24[24 Game archive]
@@ -77,7 +78,8 @@ launch.
 
 | **A 402 may not always mean the account is empty.** OpenRouter is reported — by users, not by their docs — to check a key's remaining budget against `max_tokens`, the maximum *possible* output, so a large request can be refused against a balance that would serve a smaller one. `worker._halt_on_credits` handles it by consulting the balance first and pausing only that game when the account visibly has money, but the better answer would be to retry with a smaller ceiling. Never yet observed here. | Phase 5 |
 | **Two endpoints advertise an output ceiling they do not honour.** OpenRouter reports `max_completion_tokens: 65536` for Nvidia's `nemotron-3-nano-omni` and the endpoint stops at 32,768 — 47 times out of 47 — and Poolside's `laguna-s-2.1` does the same. We ask for what the catalogue says and are truncated below it. Deliberately not corrected by discovery: clamping to the true ceiling would not stop the truncation (the model emits what it emits) and attribution is already correct on both branches (ADR-0024). The residual risk is an endpoint that *rejects* an over-large `max_tokens` rather than truncating, which the reactive rung catches. | Phase 5 |
-| **A game we fail keeps its credits.** A game is charged when it is created (ADR-0016), and `db/credits.refund()` exists with its own ledger reason, but nothing calls it, so a game abandoned by a harness failure is never refunded. Harmless while credits are granted; a prerequisite before they are sold ([PAYMENTS.md](PAYMENTS.md#prerequisites-in-our-own-product)). | Phase 21 |
+| **The header balance is a reading, not a live meter.** Credit is spent turn by turn (ADR-0052) and the header refetches `/me` on navigation, so a game in progress moves the balance underneath the number shown. Polling would fix it and would touch every page, so it waits for a decision. | Phase 28 |
+| **`MAX_USD_PER_GAME` has not been set from real game costs.** It is still $1.00, the harness's own bound (ADR-0011), and a game somebody pays for ends `budget_exceeded` when it meets it. It should sit above what a normal game costs, which needs production's per-game costs to measure (`make dev-pull`). | Phase 28 |
 | **Nothing reports how much of the free allowance is left**, and nothing can (ADR-0023). We deleted our own count because it was an over-count that stopped play while OpenRouter was still serving us; the cost is that `status` can say the harness is halted but never how close it is to being. A header would fix it if one ever appears. | Phase 5 |
 
 Deliberate limitations, not gaps: no clock, and human draw offers are advisory only.
@@ -1539,6 +1541,34 @@ and no game started against a model that cannot answer a turn
 
 ---
 
+## Phase 28 — Credit at cost
+
+**Goal:** credit is money, spent at what play actually costs, so it can be sold
+([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)).
+
+**Objectives**
+1. A balance in US dollars, granted by an administrator; every credit balance reset to zero
+2. Each model turn charged its actual cost, in the turn's own transaction, one ledger row per turn
+3. Out of credit, a game pauses before its next turn and resumes when credit is added
+4. The price band kept as a band — shown to choose by, used to select fields, never charged
+
+**Exit criteria**
+- [x] What a game says it cost is what its owner paid, row for row, turn for turn —
+      `tests/orchestration/test_credit_at_cost.py`, for chat and decision seats
+- [x] A game whose owner holds nothing pauses before any provider call (a spy raises if reached);
+      a balance overruns by one turn and the next pauses; a `:free` seat is never paused; adding
+      credit resumes the game on the next sweep — each mutated, and each failed
+- [x] The ledger sums to the balance through grants, turns, a turn past zero and a revocation the
+      floor stops; the credit-era rows do not count toward dollars — `tests/db/test_credits.py`
+- [x] The migration runs both ways, closes every credit balance with one `retired` row, and
+      rewrites stored tournament fields and their descriptions onto the price bands
+- [ ] Checked against production's data — the migration on real balances, and real per-game
+      costs against `MAX_USD_PER_GAME`. Waits on the owner running `make dev-pull`.
+
+**Covers:** AUTH-10, AUTH-11, AUTH-13; supersedes AUTH-12
+
+---
+
 ## Phase 17 — Production hardening & launch
 
 **Goal:** it's public, and it stays up.
@@ -1607,7 +1637,7 @@ Not deploy steps — things that must be *true* before anyone else can reach the
 | Item | Requirement | Why deferred |
 | --- | --- | --- |
 | Bring-your-own API key | AUTH-09 | Server keys plus caps are sufficient until cost actually becomes the binding constraint |
-| Selling credits | — | Research only: a merchant of record (Paddle) would let a person without a company sell worldwide and pay out to Egypt, but credits must be priced by cost and a failed game must refund first ([PAYMENTS.md](PAYMENTS.md)) |
+| Selling credit | — | Research done: a merchant of record (Paddle) would let a person without a company sell worldwide and pay out to Egypt. Credit is priced at cost since Phase 28; what remains is the processor, legal pages and onboarding ([PAYMENTS.md](PAYMENTS.md)) |
 | Spectator chat | TALK-07 | Moderation burden far exceeds the value |
 | Chess variants | — | Standard chess first; variants dilute the benchmark |
 | Multi-agent teams | — | Interesting, but a different benchmark |

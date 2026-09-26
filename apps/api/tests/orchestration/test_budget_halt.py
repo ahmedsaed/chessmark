@@ -171,7 +171,8 @@ async def test_spend_is_attributed_to_the_user_who_started_the_game(
     from chessmark.orchestration.match import Seat, create_match, start_match
     from tests.support import both_sides
 
-    user = User(clerk_user_id=f"user_{uuid.uuid4().hex[:8]}")
+    # Funded, or the worker pauses the game for credit before it spends anything (ADR-0052).
+    user = User(clerk_user_id=f"user_{uuid.uuid4().hex[:8]}", balance_usd=Decimal(1))
     db.add(user)
     await db.flush()
 

@@ -41,7 +41,7 @@ everything inside a container: no uv, no node, and no remembering which compose 
 | `latency <game-id>` `resume <game-id>` `repair` `repair-forfeits` | one game, and the records behind it |
 | `halt` | stop every model call, or resume; `--clear` lifts it |
 | `tournament …` `standings <slug>` | events |
-| `credits` | grant or revoke; `--show` prints a balance with its ledger |
+| `credits` | grant or revoke credit, in dollars (`credits you@x.com 5`); `--show` prints a balance with its ledger |
 | `psql` `sql` `backup` `migrate` | the database |
 
 Four details that are deliberate rather than incidental:
@@ -152,8 +152,8 @@ tournament pages.
 the two halves are useless apart, because a model with no endpoint rows has no contestants and
 cannot be picked. It opens with *"built to be scheduled rather than remembered"*, and for a long
 time **nothing scheduled it** (OPS-23): it ran when somebody typed the command. Prices set the
-spend caps *and* what a user is charged in credits (ADR-0016), so every day nobody remembered was a
-day of wrong caps and wrong prices.
+spend caps *and* each model's price band (ADR-0052), so every day nobody remembered was a
+day of wrong caps and wrong bands.
 
 The `catalogue` service is the schedule. It refreshes at start-up and then every
 `CATALOGUE_INTERVAL_HOURS` (12 by default), and it spends nothing — `/models` and `/endpoints` are
@@ -547,8 +547,8 @@ uses and stays unproven until a server exists.
 3. `docker compose run --rm api python /app/scripts/seed_models.py` — the registry starts empty.
 4. `docker compose run --rm api python /app/scripts/refresh_endpoints.py` — a model has no
    contestants, and so cannot be played, until its endpoints are known.
-5. Grant yourself credits: new accounts hold none by design (AUTH-11).
+5. Grant yourself credit, in dollars: new accounts hold none by design (AUTH-11).
 
 **Clerk production is a different instance from Clerk development.** Different user table,
-different JWKS. Every account in your dev instance — including yours, and its credits — does not
+different JWKS. Every account in your dev instance — including yours, and its credit — does not
 exist there. The first sign-in starts from an empty `users` table.

@@ -1,10 +1,11 @@
 # Payments — selling credits, if we ever do
 
-**Status: research, not a decision.** Nothing here is built. Credits are granted by an
-administrator and have no cash price ([ADR-0016](adr/0016-credits-as-a-granted-balance.md)). This
-file holds what was found about *how* they could be sold, so that when the owner decides whether
-to sell them, the processor, logistical and legal constraints are already written down rather than
-re-researched. Once that decision is made, it gets an ADR, and this file becomes the guide to it.
+**Status: research, not a decision.** Nothing here is built. Credit is granted by an
+administrator, in dollars, and spent at what each turn actually cost
+([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)). This file holds what was found
+about *how* it could be sold, so that when the owner decides whether to sell it, the processor,
+logistical and legal constraints are already written down rather than re-researched. Once that
+decision is made, it gets an ADR, and this file becomes the guide to it.
 
 Researched 2026-09-26. **Every provider fact below is a claim from the provider's own pages as of
 that date.** Seller-country lists and onboarding rules change without notice, so re-check them at
@@ -72,18 +73,15 @@ approving them:
 
 ## Prerequisites in our own product
 
-Before a credit has a cash price, the following must be settled:
+Before credit has a cash price, the following must be settled:
 
-1. **A game we fail must give its credits back.** Credits are charged when a game is created
-   (ADR-0016), and `db/credits.refund()` exists with its own ledger reason, but **nothing calls
-   it.** A game abandoned by a harness failure keeps its charge. With granted credits that is
-   invisible; with paid ones, it charges a customer for our fault and invites the chargebacks
-   above. This is invariant 11's reasoning applied to money.
-2. **A credit's price has to cover what a game can cost.** Today it cannot: credits are access
-   control, not cost accounting (ADR-0016). A tier spans up to a threefold range of provider
-   prices, so a cash price per credit either overcharges most games in a tier or loses money on
-   some. `MAX_USD_PER_GAME` ($1.00) bounds the loss but does not remove it. This is the next
-   discussion: how credits should be priced.
+1. ~~**A game we fail must give its credits back.**~~ **Settled by ADR-0052, without refunds.** A
+   game is charged turn by turn, and a turn rolled back by a provider failure is never charged. The
+   owner decided that the turns a person watched played are what they paid for, whether or not the
+   game reached a result. The refund policy has to say exactly that.
+2. ~~**A credit's price has to cover what a game can cost.**~~ **Settled by ADR-0052.** A dollar of
+   credit is a dollar of play at cost, so no price band can under-charge. The margin that pays the
+   processor's fee is taken when credit is bought, not hidden in the token prices.
 3. **Terms of service, a refund policy and a privacy policy**, published before onboarding.
 
 ## Sources

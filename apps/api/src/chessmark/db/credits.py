@@ -1,124 +1,105 @@
-"""Credits — a granted balance, spent to start a game (ADR-0016, AUTH-10).
+"""Credit — a balance in US dollars, spent at what each turn actually cost (ADR-0052, AUTH-10).
 
-This replaces layer 2 of ADR-0011, which was a *daily* allowance that regenerated at UTC midnight.
-A balance does not regenerate: it is granted by an administrator, spent, and then gone. New
-accounts hold zero, so nobody plays until someone says so.
+ADR-0016 made a credit a unit of play: a game cost one to six of them at the door, by the price
+band of its models. That was access control, not accounting, and it could not become money — two
+games in one band cost an order of magnitude apart. So a balance is now dollars, and a game draws
+on it **turn by turn, at the cost the provider's own token counts give** (invariant 4). There is
+no estimate, no hold, and nothing to refund: a turn that is rolled back was never charged.
 
-**The charge is a single statement, not a read followed by a write.** `SELECT` the balance,
-compare it, then `UPDATE` is the obvious shape and it is wrong: two requests from the same user
-arriving together both read the old balance, both find room, and both proceed. That is not a
-theoretical race — firing concurrent requests is exactly what someone trying to spend a credit
-twice would do. Postgres decides it instead, via an `UPDATE ... WHERE credit_balance >= :cost`
-whose `WHERE` clause *is* the check: a row comes back only if the update actually happened.
+**The debit is never refused.** The money for a turn is spent by the time its cost is known, so
+`spend` records what happened rather than asking permission. What stops play is the check before a
+turn — `can_play`, `balance > 0` — and a game whose payer is out pauses until credit is added. The
+balance can therefore sit below zero by the one turn in flight per running game, and never more.
 
-The same reasoning ran the game-count quota this supersedes; only the counter changed.
+**The debit rides in the turn's own transaction**, beside the lines that add the same number to
+`players.total_cost_usd` and `games.total_cost_usd`. They commit together or not at all, so what a
+game says it cost and what its owner was charged cannot disagree.
 """
 
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.db.enums import CreditReason
-from chessmark.db.models import CreditLedger, ModelRegistry, User
+from chessmark.db.models import CreditLedger, User
+
+ZERO = Decimal(0)
 
 
-class InsufficientCreditsError(Exception):
-    """Not enough credits to start this game.
+class InsufficientCreditError(Exception):
+    """The caller holds nothing to play with.
 
-    Carries both numbers so the API can say what it cost and what the caller holds — "insufficient
-    credits" alone is a dead end for the person reading it, who cannot tell whether they are one
-    short or twenty.
+    Carries the balance so the API can say it — "insufficient credit" alone does not tell somebody
+    at $0.00 from somebody the one turn below it.
     """
 
-    def __init__(self, *, needed: int, held: int) -> None:
-        super().__init__(
-            f"This game costs {needed} credit{'s' if needed != 1 else ''} and you have {held}."
-        )
-        self.needed = needed
+    def __init__(self, *, held: Decimal) -> None:
+        super().__init__(f"You have ${held:.2f} of credit. A game against a paid model needs more.")
         self.held = held
 
 
-async def cost_of(session: AsyncSession, model_slugs: list[str]) -> int:
-    """What a game against these models costs, in credits.
+async def balance_of(session: AsyncSession, user_id: uuid.UUID) -> Decimal:
+    balance = await session.scalar(sa.select(User.balance_usd).where(User.id == user_id))
+    return Decimal(balance or 0)
 
-    A game costs the **sum of its seats** — two models means two prices added. A model missing
-    from the registry costs the top tier rather than nothing: an unknown price is not a free one,
-    and the caller is about to be refused for a bad slug anyway.
+
+async def can_play(session: AsyncSession, user_id: uuid.UUID) -> bool:
+    """Whether this person's balance can pay for another turn: anything above zero.
+
+    Not "enough for a game" — nothing knows what a game will cost until it has been played, and
+    guessing is exactly what ADR-0052 replaced.
     """
-    if not model_slugs:
-        return 0
-
-    rows = await session.scalars(
-        sa.select(ModelRegistry).where(ModelRegistry.openrouter_id.in_(set(model_slugs)))
-    )
-    prices = {row.openrouter_id: row.credits for row in rows}
-
-    from chessmark.agents.registry import TOP_TIER_CREDITS
-
-    return sum(prices.get(slug, TOP_TIER_CREDITS) for slug in model_slugs)
+    return await balance_of(session, user_id) > ZERO
 
 
-def _entry(
-    *,
-    user_id: uuid.UUID,
-    delta: int,
-    balance_after: int,
-    reason: CreditReason,
-    game_id: uuid.UUID | None = None,
-    actor_user_id: uuid.UUID | None = None,
-    note: str | None = None,
-) -> CreditLedger:
-    return CreditLedger(
-        user_id=user_id,
-        delta=delta,
-        balance_after=balance_after,
-        reason=reason,
-        game_id=game_id,
-        actor_user_id=actor_user_id,
-        note=note,
-    )
+async def require_credit(session: AsyncSession, user_id: uuid.UUID) -> None:
+    """Refuse to start a paid game for someone with nothing to pay with."""
+    held = await balance_of(session, user_id)
+    if held <= ZERO:
+        raise InsufficientCreditError(held=held)
 
 
-async def charge(
+async def spend(
     session: AsyncSession,
     user_id: uuid.UUID,
-    credits: int,
+    cost: Decimal,
     *,
-    game_id: uuid.UUID | None = None,
+    game_id: uuid.UUID,
+    turn_id: int | None,
 ) -> CreditLedger | None:
-    """Spend credits, or raise `InsufficientCreditsError`. Returns the ledger row it wrote.
+    """Charge one turn's actual cost to the person who started the game. Never refused.
 
-    Charged *before* the game is created, not after. Counting on completion would let a user open
-    any number of games at once and discover the price when the money was already committed — which
-    is also why `game_id` is usually unknown here and set on the returned row once the game exists.
-    Both happen in one transaction, so a failure anywhere rolls back the charge with it.
-
-    A charge of zero — a game with no machine seat — succeeds without touching anything, and writes
-    no row: a ledger of no-ops is a ledger nobody reads.
+    One statement, so two games of the same person finishing turns together cannot lose either
+    debit to the other's read. A turn that cost nothing — a `:free` model — writes nothing: a
+    ledger of zero rows is a ledger nobody reads.
     """
-    if credits <= 0:
+    if cost <= ZERO:
         return None
 
-    statement = (
-        sa.update(User)
-        .where(User.id == user_id, User.credit_balance >= credits)
-        .values(credit_balance=User.credit_balance - credits)
-        .returning(User.credit_balance)
-    )
-
-    remaining = (await session.execute(statement)).scalar_one_or_none()
+    remaining = (
+        await session.execute(
+            sa.update(User)
+            .where(User.id == user_id)
+            .values(balance_usd=User.balance_usd - cost)
+            .returning(User.balance_usd)
+        )
+    ).scalar_one_or_none()
     if remaining is None:
-        raise InsufficientCreditsError(needed=credits, held=await balance_of(session, user_id))
+        # The account was deleted while its game played on. Nobody left to charge, and the turn
+        # itself is real and must still be recorded — so this is not an error.
+        return None
 
-    entry = _entry(
+    entry = CreditLedger(
         user_id=user_id,
-        delta=-credits,
-        balance_after=int(remaining),
-        reason=CreditReason.GAME_START,
+        delta=-cost,
+        balance_after=Decimal(remaining),
+        reason=CreditReason.TURN,
         game_id=game_id,
+        turn_id=turn_id,
     )
     session.add(entry)
     return entry
@@ -127,44 +108,49 @@ async def charge(
 async def grant(
     session: AsyncSession,
     user_id: uuid.UUID,
-    credits: int,
+    amount: Decimal,
     *,
     actor_user_id: uuid.UUID | None = None,
     note: str | None = None,
     reason: CreditReason | None = None,
-) -> int:
-    """Add credits to a balance and return the new total (AUTH-11, AUTH-13).
+) -> Decimal:
+    """Add credit to a balance, or take it away, and return the new balance (AUTH-11, AUTH-13).
 
-    Also used to take them away, with a negative amount — clamped at zero, because a negative
-    balance would have to be worked off before play resumed, which is a debt rather than a
-    revocation and not what anyone means by removing credits.
+    **Taking it away stops at zero, and never lifts a balance that is already below it.** A
+    negative balance is the one turn a game overran by (see the module note); revoking from it
+    would otherwise *raise* it to zero, which is a grant wearing a revocation's reason. So the floor
+    is the lower of zero and where the balance already was.
 
-    **The clamp is why `balance_after` is recorded rather than derived.** Revoking 10 from a
-    balance of 2 moves it by 2, not 10, so a ledger that stored only the requested delta would not
-    sum to the balance. The row records what actually happened.
+    **The floor is why `balance_after` is recorded rather than derived.** Revoking $10 from a
+    balance of $2 moves it by $2, not $10, so a ledger that stored only the requested amount would
+    not sum to the balance. The row records what actually happened.
     """
     before = await balance_of(session, user_id)
 
-    statement = (
-        sa.update(User)
-        .where(User.id == user_id)
-        .values(credit_balance=sa.func.greatest(User.credit_balance + credits, 0))
-        .returning(User.credit_balance)
-    )
-
-    total = (await session.execute(statement)).scalar_one_or_none()
+    total = (
+        await session.execute(
+            sa.update(User)
+            .where(User.id == user_id)
+            .values(
+                balance_usd=sa.func.greatest(
+                    User.balance_usd + amount, sa.func.least(User.balance_usd, 0)
+                )
+            )
+            .returning(User.balance_usd)
+        )
+    ).scalar_one_or_none()
     if total is None:
         raise LookupError(f"no user with id {user_id}")
 
-    after = int(total)
+    after = Decimal(total)
     if after != before:
         session.add(
-            _entry(
+            CreditLedger(
                 user_id=user_id,
                 delta=after - before,
                 balance_after=after,
                 reason=reason
-                or (CreditReason.ADMIN_GRANT if credits > 0 else CreditReason.ADMIN_REVOKE),
+                or (CreditReason.ADMIN_GRANT if amount > 0 else CreditReason.ADMIN_REVOKE),
                 actor_user_id=actor_user_id,
                 note=note,
             )
@@ -172,22 +158,10 @@ async def grant(
     return after
 
 
-async def refund(
-    session: AsyncSession, user_id: uuid.UUID, credits: int, *, note: str | None = None
-) -> int:
-    """Give credits back for a game that never ran.
-
-    Distinct from `grant` only in the reason it records, and that is the point: a refund is an
-    accident being undone, a grant is a decision about a person. Anyone auditing a balance needs
-    to tell them apart.
-    """
-    return await grant(session, user_id, credits, note=note, reason=CreditReason.REFUND)
-
-
 async def history_of(
     session: AsyncSession, user_id: uuid.UUID, *, limit: int = 100
 ) -> list[CreditLedger]:
-    """A balance's history, newest first."""
+    """A balance's history, newest first — both units, so the credits era stays visible."""
     rows = await session.scalars(
         sa.select(CreditLedger)
         .where(CreditLedger.user_id == user_id)
@@ -197,20 +171,16 @@ async def history_of(
     return list(rows)
 
 
-async def ledger_total(session: AsyncSession, user_id: uuid.UUID) -> int:
-    """What the history says the balance should be.
+async def ledger_total(session: AsyncSession, user_id: uuid.UUID) -> Decimal:
+    """What the dollar history says the balance should be.
 
-    `users.credit_balance` is the enforcement point and this is the account of it; they must agree,
-    and a test replays every ledger to prove it.
+    `users.balance_usd` is the enforcement point and this is the account of it; they must agree,
+    and a test replays every ledger to prove it. Only `usd` rows count: the `credit` rows before
+    ADR-0052 are closed to zero by their own `retired` row and were never dollars.
     """
     total = await session.scalar(
         sa.select(sa.func.coalesce(sa.func.sum(CreditLedger.delta), 0)).where(
-            CreditLedger.user_id == user_id
+            CreditLedger.user_id == user_id, CreditLedger.unit == "usd"
         )
     )
-    return int(total or 0)
-
-
-async def balance_of(session: AsyncSession, user_id: uuid.UUID) -> int:
-    balance = await session.scalar(sa.select(User.credit_balance).where(User.id == user_id))
-    return int(balance or 0)
+    return Decimal(total or 0)
