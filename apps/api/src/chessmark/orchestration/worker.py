@@ -43,6 +43,7 @@ from chessmark.core.budget import GlobalBudget
 from chessmark.core.config import get_settings
 from chessmark.core.cooldown import ProviderCooldown, resume_at
 from chessmark.core.credits import fetch_balance
+from chessmark.core.failures import FailureLog
 from chessmark.core.halt import SCOPE_FREE, SOURCE_CREDITS, SOURCE_FREE_TIER, Halt, HaltState
 from chessmark.db.enums import EventType, GameStatus, ModelRuntime, PlayerKind, TurnStatus
 from chessmark.db.models import Game, GameEvent, ModelRegistry, Player, Turn
@@ -129,6 +130,9 @@ ABORTED = TurnOutcome("aborted")
 #: dropped and nothing is re-enqueued, because the owner enqueues the next ply when it commits
 #: (ADR-0022).
 IN_FLIGHT = TurnOutcome("in_flight")
+#: Something `handle` has no rule for raised — a bug, a constraint violation. Recorded for the
+#: operator (`core/failures.py`) and the job dropped; the stall sweep rescues the game.
+CRASHED = TurnOutcome("crashed")
 #: The provider asked us to come back later. The game is paused with a time to resume at, holds no
 #: concurrency slot while it waits, and is picked up again by the reconciler.
 PAUSED = TurnOutcome("paused")
@@ -290,6 +294,8 @@ class TurnWorker:
         #: the other; a worker with neither simply does not stream, and plays an identical game.
         self.live: LiveChannel = live or (RedisLive(redis) if redis is not None else NullLive())
         self.consumer = consumer or f"worker-{uuid.uuid4().hex[:8]}"
+        #: Where a crashed turn is written for `./chessmark status`. Follows `redis` like `live`.
+        self.failures = FailureLog(redis) if redis is not None else None
         self._stopping = asyncio.Event()
 
     # ------------------------------------------------------------------ loop
@@ -319,6 +325,23 @@ class TurnWorker:
         """
         try:
             return await self.handle(delivery.job)
+        except Exception as error:
+            # **A crash is recorded for the operator, and the worker carries on.** Anything
+            # `handle` has no rule for used to escape `run_forever` and end the process — and the
+            # job was acked on the way out, so the game sat silent until the stall sweep requeued
+            # it forty-five minutes later, with nothing but a scrolled-away traceback to say why.
+            # The game is left exactly as the rollback left it: the sweep still rescues it, and
+            # nothing is written to its event log, because a stack trace is not something a
+            # spectator can act on. `./chessmark status` is where it is read.
+            log.exception(
+                "turn crashed for %s at ply %s", delivery.job.game_id, delivery.job.expected_ply
+            )
+            if self.failures is not None:
+                with contextlib.suppress(Exception):
+                    await self.failures.record(
+                        delivery.job.game_id, delivery.job.expected_ply, error
+                    )
+            return HandledJob(CRASHED, delivery.job.game_id, delivery.job.expected_ply)
         finally:
             await self.queue.ack(delivery.message_id)
 

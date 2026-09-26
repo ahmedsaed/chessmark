@@ -15,6 +15,16 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Added
+
+- **`./chessmark status` lists turns that crashed.** A turn that raised something the worker had no
+  rule for, such as a constraint violation, used to end the worker process. Its job had already
+  been acknowledged, so the game sat silent until the stall sweep requeued it 45 minutes later, and
+  the traceback had usually scrolled out of `./chessmark logs` before anybody looked. The worker
+  now records the crash (game, ply, error, message), keeps running, and leaves the game for the
+  sweep. The crash is never written to the game's own log: it is for the operator, not the reader.
+  (OPS-21)
+
 ### Changed
 
 - **Decision models choose what to do with their turn, and are checked before they play.** Resign,
