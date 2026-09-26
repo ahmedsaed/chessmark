@@ -28,6 +28,13 @@ file is only the record of *what shipped when*.
   service, which it never had. (AGENT-24, AGENT-26,
   [ADR-0051](docs/adr/0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md))
 
+### Fixed
+
+- **A tournament's entrant count matches its table.** It counted every entrant ever seated,
+  withdrawn ones included, so the Decision Cup said "4 entrants" above a table of two. Both the
+  list and the event page now count the rows the standings show: models still in the field, and
+  ones that left after playing.
+
 ## [0.5.0] — 2026-09-26
 
 **Decision models play, every game has an archive, and a pool can stop.** 39 commits since
