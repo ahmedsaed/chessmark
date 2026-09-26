@@ -77,6 +77,7 @@ launch.
 
 | **A 402 may not always mean the account is empty.** OpenRouter is reported — by users, not by their docs — to check a key's remaining budget against `max_tokens`, the maximum *possible* output, so a large request can be refused against a balance that would serve a smaller one. `worker._halt_on_credits` handles it by consulting the balance first and pausing only that game when the account visibly has money, but the better answer would be to retry with a smaller ceiling. Never yet observed here. | Phase 5 |
 | **Two endpoints advertise an output ceiling they do not honour.** OpenRouter reports `max_completion_tokens: 65536` for Nvidia's `nemotron-3-nano-omni` and the endpoint stops at 32,768 — 47 times out of 47 — and Poolside's `laguna-s-2.1` does the same. We ask for what the catalogue says and are truncated below it. Deliberately not corrected by discovery: clamping to the true ceiling would not stop the truncation (the model emits what it emits) and attribution is already correct on both branches (ADR-0024). The residual risk is an endpoint that *rejects* an over-large `max_tokens` rather than truncating, which the reactive rung catches. | Phase 5 |
+| **A game we fail keeps its credits.** A game is charged when it is created (ADR-0016), and `db/credits.refund()` exists with its own ledger reason, but nothing calls it, so a game abandoned by a harness failure is never refunded. Harmless while credits are granted; a prerequisite before they are sold ([PAYMENTS.md](PAYMENTS.md#prerequisites-in-our-own-product)). | Phase 21 |
 | **Nothing reports how much of the free allowance is left**, and nothing can (ADR-0023). We deleted our own count because it was an over-count that stopped play while OpenRouter was still serving us; the cost is that `status` can say the harness is halted but never how close it is to being. A header would fix it if one ever appears. | Phase 5 |
 
 Deliberate limitations, not gaps: no clock, and human draw offers are advisory only.
@@ -1606,6 +1607,7 @@ Not deploy steps — things that must be *true* before anyone else can reach the
 | Item | Requirement | Why deferred |
 | --- | --- | --- |
 | Bring-your-own API key | AUTH-09 | Server keys plus caps are sufficient until cost actually becomes the binding constraint |
+| Selling credits | — | Research only: a merchant of record (Paddle) would let a person without a company sell worldwide and pay out to Egypt, but credits must be priced by cost and a failed game must refund first ([PAYMENTS.md](PAYMENTS.md)) |
 | Spectator chat | TALK-07 | Moderation burden far exceeds the value |
 | Chess variants | — | Standard chess first; variants dilute the benchmark |
 | Multi-agent teams | — | Interesting, but a different benchmark |
