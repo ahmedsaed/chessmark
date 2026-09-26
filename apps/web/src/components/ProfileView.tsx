@@ -17,8 +17,8 @@
  * A person holding a seat is a player here, and the page that describes one should not be a
  * different kind of page depending on whether it is a person or a model.
  *
- * The allowance comes from *our* API, not from Clerk — credits are a Chessmark concept
- * (ADR-0016), granted by an administrator and spent to start a game.
+ * The balance comes from *our* API, not from Clerk — credit is a Chessmark concept (ADR-0052),
+ * granted by an administrator and spent at what each model turn actually cost.
  */
 
 import { useAuth, useClerk, useUser } from "@clerk/nextjs";
@@ -31,6 +31,7 @@ import { GameCard } from "@/components/GameCard";
 import { listMyGames } from "@/lib/api";
 import { orderMyGames, recordOf } from "@/lib/mine";
 import type { Me, MyGameSummary } from "@/lib/types";
+import { formatBalance } from "@/lib/credit";
 
 /** The server's ceiling on `/games/mine`. This page is a history, so it asks for all of it. */
 const EVERY_GAME = 200;
@@ -192,14 +193,15 @@ function Profile({ apiUrl }: { apiUrl: string }) {
       </section>
 
       <section className="mt-12">
-        <Heading>Allowance</Heading>
+        <Heading>Credit</Heading>
         <p className="mt-2 text-sm text-ink-dim">
-          A credit is one game you can start. Credits are granted by an administrator and do not
-          refill, so the number below is the whole of what you have.
+          Credit is dollars, spent as your games play: each model turn is charged what it actually
+          cost, and a free model costs nothing. When it runs out, a game pauses where it is and
+          resumes once more is added. Credit is granted by an administrator and does not refill.
         </p>
 
         <dl className="mt-5 flex flex-wrap gap-10">
-          <Stat label="credits" value={me ? String(me.credit_balance) : "—"} />
+          <Stat label="credit" value={me ? formatBalance(me.balance_usd) : "—"} />
           <Stat label="games today" value={me ? String(me.games_started_today) : "—"} />
           <Stat
             label="spent today"
@@ -278,7 +280,7 @@ function Played({ games }: { games: MyGameSummary[] | null }) {
           <Link className="text-accent underline underline-offset-4" href="/play">
             Sit down against a model
           </Link>{" "}
-          — watching needs no account, but playing spends a credit.
+          — watching needs no account, and a free model costs nothing to play.
         </p>
       </section>
     );

@@ -99,9 +99,9 @@ class ModelOut(Schema):
     #: Floating aliases point at different weights over time, so a rating across one rates nothing.
     is_floating_alias: bool = False
 
-    #: What a seat against this model costs to start (ADR-0016). The picker shows it, because with
-    #: 330 models spanning a 300-fold price range a name alone is not enough to choose on.
-    credit_cost: int = 1
+    #: The model's price band, 1 to 4, from its own prices. Not a charge — a game is paid for at
+    #: what its turns actually cost (ADR-0052).
+    price_tier: int = 1
 
     @classmethod
     def from_model(
@@ -153,7 +153,7 @@ class ModelOut(Schema):
             contestants=contestants,
             endpoint_count=len(endpoints),
             is_floating_alias=is_floating_alias(row.openrouter_id),
-            credit_cost=row.credits,
+            price_tier=row.price_tier,
         )
 
 
@@ -588,9 +588,12 @@ class HumanActionResponse(Schema):
 
 
 class SeatOut(Schema):
-    """Which colour the caller plays here, or `null` for a spectator."""
+    """Which colour the caller plays here, or `null` for a spectator — and whether they pay for it."""
 
     colour: Colour | None
+    #: Whether this game's turns are charged to the caller: they started it (ADR-0052). Lets the
+    #: page refresh their balance as the game spends it, without publishing who started a game.
+    pays: bool = False
 
 
 class IllegalMoveResponse(Schema):
@@ -790,16 +793,20 @@ class ReadinessResponse(Schema):
 
 
 class CreditGrantRequest(BaseModel):
-    """Who to grant to, and how many. Negative takes them away (ADR-0016)."""
+    """Who to grant to, and how much. Negative takes it away (ADR-0052)."""
 
     user: str = Field(
         description=(
             "An email address, a Clerk user id, or a Chessmark user id — whichever you have. "
-            "An email Chessmark does not know is looked up with Clerk, so credits can be granted "
+            "An email Chessmark does not know is looked up with Clerk, so credit can be granted "
             "to someone who has not signed in yet."
         )
     )
-    credits: int = Field(description="Credits to add; negative removes them.")
+    amount_usd: Decimal = Field(
+        description="US dollars of credit to add; negative removes it.",
+        max_digits=16,
+        decimal_places=8,
+    )
     note: str | None = Field(
         default=None,
         description="Why. Recorded on the ledger row, because a reason code cannot carry it.",
@@ -810,20 +817,23 @@ class CreditGrantOut(Schema):
     user_id: uuid.UUID
     #: Echoed so an operator can see *who* they just granted to, not only that it worked.
     email: str | None = None
-    #: The balance after the grant.
-    credit_balance: int
+    #: The balance after the grant, in US dollars.
+    balance_usd: Decimal
     #: What was just applied, echoed so an operator can see the change they made took effect.
-    granted: int
+    granted_usd: Decimal
 
 
 class CreditEntryOut(Schema):
     """One movement of a balance (AUTH-13)."""
 
     id: int
-    delta: int
-    balance_after: int
+    delta: Decimal
+    balance_after: Decimal
+    #: `usd`, or `credit` for a row from before a balance was dollars (ADR-0052).
+    unit: str
     reason: CreditReason
     game_id: uuid.UUID | None = None
+    turn_id: int | None = None
     actor_user_id: uuid.UUID | None = None
     note: str | None = None
     created_at: dt.datetime
@@ -834,8 +844,10 @@ class CreditEntryOut(Schema):
             id=row.id,
             delta=row.delta,
             balance_after=row.balance_after,
+            unit=row.unit,
             reason=CreditReason(row.reason),
             game_id=row.game_id,
+            turn_id=row.turn_id,
             actor_user_id=row.actor_user_id,
             note=row.note,
             created_at=row.created_at,
@@ -872,8 +884,9 @@ class MeOut(Schema):
     email: str | None
     display_name: str | None
     is_admin: bool
-    #: Credits held. Granted by an administrator and spent to start a game (ADR-0016).
-    credit_balance: int
+    #: Credit held, in US dollars, spent at each turn's actual cost (ADR-0052). Can sit below zero
+    #: by the one turn a game overran by.
+    balance_usd: Decimal
 
     #: Kept for the admin spend view; no longer a limit on anything.
     games_started_today: int

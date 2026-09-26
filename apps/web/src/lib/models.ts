@@ -15,11 +15,13 @@ export interface ProviderGroup {
   provider: string;
   models: ModelInfo[];
   /**
-   * The lowest credit cost in the group. Shown on the collapsed row so a provider can be judged
-   * without opening it — with 36 to scan, "cheapest here is 6 credits" is the fact that decides
-   * whether it is worth expanding at all.
+   * The lowest price band in the group. Shown on the collapsed row so a provider can be judged
+   * without opening it — with 36 to scan, "nothing here is cheap" is the fact that decides whether
+   * it is worth expanding at all.
    */
   cheapest: number;
+  /** Whether any of its models is `:free`, which the collapsed row says instead of a band. */
+  hasFree: boolean;
 }
 
 /**
@@ -57,7 +59,8 @@ export function browseModels(models: ModelInfo[], query: string): ProviderGroup[
     .map(([provider, group]) => ({
       provider,
       models: [...group].sort((a, b) => a.openrouter_id.localeCompare(b.openrouter_id)),
-      cheapest: Math.min(...group.map((model) => model.credit_cost)),
+      cheapest: Math.min(...group.map((model) => model.price_tier)),
+      hasFree: group.some((model) => model.is_free),
     }))
     .sort((a, b) => a.provider.localeCompare(b.provider));
 }

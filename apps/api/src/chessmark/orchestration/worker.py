@@ -44,6 +44,7 @@ from chessmark.core.config import get_settings
 from chessmark.core.cooldown import ProviderCooldown, resume_at
 from chessmark.core.credits import fetch_balance
 from chessmark.core.halt import SCOPE_FREE, SOURCE_CREDITS, SOURCE_FREE_TIER, Halt, HaltState
+from chessmark.db.credits import can_play
 from chessmark.db.enums import EventType, GameStatus, ModelRuntime, PlayerKind, TurnStatus
 from chessmark.db.models import Game, GameEvent, ModelRegistry, Player, Turn
 from chessmark.db.quotas import record_spend
@@ -100,6 +101,11 @@ async def publish_events(redis: Any, game_id: uuid.UUID, events: list[GameEvent]
             await redis.publish(channel, json.dumps(payload))
 
 
+def _is_our_stop(payload: dict[str, Any] | None) -> bool:
+    """Whether a pause was the harness's doing — a halt, or a payer out of credit."""
+    return payload is not None and ("halt_source" in payload or "credit_of" in payload)
+
+
 class TurnOutcome(str):
     """Why the worker stopped handling a job. Used for logging and tests."""
 
@@ -120,6 +126,10 @@ GLOBAL_BUDGET = TurnOutcome("global_budget_halted")
 #: and invisible on the page: a game stopped by the daily free cap goes on pulsing "live" until UTC
 #: midnight, and somebody sits watching it.
 HALTED = TurnOutcome("halted")
+#: The person who started this game has no credit left (ADR-0052). Like `HALTED`, the turn is not
+#: run and the game is **paused** where it can be seen; the reconciler resumes it once their
+#: balance is above zero again. Nothing about the model or the position is at fault.
+NO_CREDIT = TurnOutcome("no_credit")
 #: The side to move is a person. The worker does nothing and enqueues nothing — the game waits in
 #: RUNNING until the human's move endpoint commits a ply and enqueues the model's reply. Anything
 #: else would run an LLM turn on a human's behalf and play their move for them.
@@ -232,6 +242,24 @@ class HarnessHaltedError(Exception):
         self.state = state
 
 
+#: How a pause for credit begins its `pause_reason`, so the reconciler and the page can tell it
+#: from a provider's refusal without a lookup. The payload carries `credit_of` for the same purpose,
+#: structurally — see `_halted_for`.
+CREDIT_PREFIX = "out of credit:"
+
+
+class OutOfCreditError(Exception):
+    """Raised to abandon a turn its payer cannot fund, and pause the game where it can be seen.
+
+    Raised rather than returned for `HarnessHaltedError`'s reason: the check runs inside the
+    transaction that claimed the row, and the pause is written by a transaction of its own.
+    """
+
+    def __init__(self, payer: uuid.UUID) -> None:
+        super().__init__(f"{payer} has no credit")
+        self.payer = payer
+
+
 @dataclass(slots=True)
 class HandledJob:
     outcome: TurnOutcome
@@ -336,6 +364,8 @@ class TurnWorker:
             # owner dies the queue's `XAUTOCLAIM` and the reconciler both still cover it.
             log.info("dropping job for %s: another worker is advancing it", job.game_id)
             return HandledJob(IN_FLIGHT, job.game_id, job.expected_ply)
+        except OutOfCreditError as unfunded:
+            return await self._pause_for_credit(job, unfunded.payer)
         except HarnessHaltedError as halted:
             # The turn never started, so there is nothing to roll back and nothing to retry. The
             # game is paused so the page can say why it stopped instead of simply stopping.
@@ -441,6 +471,19 @@ class TurnWorker:
             # think. The move endpoint enqueues the model's turn when the ply lands (HUMAN-02).
             if PlayerKind(player.kind) is not PlayerKind.MODEL:
                 return HandledJob(AWAITING_HUMAN, game.id, referee.ply)
+
+            # **The payer's balance, checked before the money is spent** (ADR-0052). Only for a
+            # paid seat: a `:free` turn costs nothing, so it is never stopped for credit. Above zero
+            # is enough — the turn's cost is not known until it is played, and the debit that
+            # follows is never refused, so a balance can end one turn below zero and the *next*
+            # turn is the one that stops here.
+            payer = game.created_by_user_id
+            if (
+                payer is not None
+                and not model_for(player).endswith(":free")
+                and not await can_play(session, payer)
+            ):
+                raise OutOfCreditError(payer)
 
             # Route by *this player's* resolved policy. Per player rather than per game because
             # `only` names providers and providers are model-specific: one vendor's endpoint list
@@ -702,6 +745,48 @@ class TurnWorker:
         await self._publish(job.game_id, events)
         return HandledJob(HALTED, job.game_id, job.expected_ply, result=result)
 
+    async def _pause_for_credit(self, job: AdvanceTurn, payer: uuid.UUID) -> HandledJob:
+        """Stop the board because its owner is out of credit, and say so (ADR-0052).
+
+        The shape of `_pause_for_halt`, for the same reasons: `PAUSED` is the state the whole read
+        path already understands, one notice is written per pause, and a game that has ended stays
+        ended. `resume_after` is left empty — nothing about a clock will bring the credit back, and
+        `find_resumable` reads an empty one as due, so the reconciler asks every tick and resumes
+        the game on the first one after the balance rises above zero.
+
+        **Never abandoned for it.** An empty balance is not the model's failure; `_halted_for` keeps
+        these hours off the abandonment clock exactly as it does a halt's.
+        """
+        async with self.sessionmaker() as session, session.begin():
+            game = await get_game(session, job.game_id)
+            if game.status in TERMINAL_STATUSES or game.status is GameStatus.PAUSED:
+                return HandledJob(NO_CREDIT, game.id, job.expected_ply)
+
+            player = await self._seat_to_play(session, job)
+            reason = f"{CREDIT_PREFIX} play resumes when credit is added"
+
+            game.status = GameStatus.PAUSED
+            game.resume_after = None
+            game.pause_reason = reason
+            log.info("pausing %s at ply %s: its owner is out of credit", game.id, job.expected_ply)
+            await append_event(
+                session,
+                game_id=game.id,
+                type=EventType.GAME_PAUSED,
+                payload={
+                    "reason": reason,
+                    "player_id": str(player.id),
+                    "colour": player.colour.value,
+                    "model": model_for(player),
+                    "credit_of": str(payer),
+                    "resume_after": None,
+                },
+            )
+            events = await load_events(session, game.id, after_seq=game.event_seq - 1)
+
+        await self._publish(job.game_id, events)
+        return HandledJob(NO_CREDIT, job.game_id, job.expected_ply)
+
     async def _pause(self, job: AdvanceTurn, result: TurnResult) -> HandledJob:
         """Stop the game until the provider will serve it again.
 
@@ -958,7 +1043,8 @@ class TurnWorker:
         for event_type, created_at, payload in rows:
             at = created_at.replace(tzinfo=dt.UTC) if created_at.tzinfo is None else created_at
             if EventType(event_type) is EventType.GAME_PAUSED:
-                if started is None and "halt_source" in (payload or {}):
+                # A halt and a pause for credit are both ours, not the model's (ADR-0052).
+                if started is None and _is_our_stop(payload):
                     started = at
             elif started is not None:
                 total += at - started

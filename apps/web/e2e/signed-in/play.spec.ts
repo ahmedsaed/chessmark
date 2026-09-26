@@ -98,6 +98,30 @@ test("a person sits down, moves, and the model answers", async ({ page }) => {
   expect(url).toContain("/games/");
 });
 
+test("the header reads the balance again when the model's move is charged", async ({ page }) => {
+  /* ADR-0052. The model's turns are charged to the person who sat down, so its move is the moment
+     the balance changes — and the page says so, rather than the header polling. Asserted as the
+     request it causes: the scripted provider costs nothing, so the number itself would not move,
+     but a `/me` that is never asked again is exactly the failure, whatever the cost. Counted from
+     after the page settles, so the reads on arrival do not satisfy it. */
+  await sitDown(page);
+  const board = page.locator("[data-fen]").first();
+  await expect(board).toHaveAttribute("data-fen", START);
+  // The balance on arrival has been read and shown, so no read still in flight can be counted.
+  await expect(page.locator("header").getByText(/^\$\d/)).toBeVisible();
+
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  let reads = 0;
+  page.on("request", (request) => {
+    if (request.url() === `${api}/me`) reads += 1;
+  });
+
+  await move(page, "e2", "e4");
+  await expect(board).toHaveAttribute("data-fen", MODEL_HAS_REPLIED, { timeout: 45_000 });
+
+  await expect.poll(() => reads, { timeout: 10_000 }).toBeGreaterThan(0);
+});
+
 test("a game reloaded mid-play restores the exact position, history and costs", async ({
   page,
 }) => {

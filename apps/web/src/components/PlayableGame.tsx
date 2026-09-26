@@ -34,6 +34,7 @@ export function PlayableGame({
   actions,
   seat,
   drawOffered,
+  pays = false,
 }: {
   game: GameDetail;
   apiUrl: string;
@@ -42,6 +43,8 @@ export function PlayableGame({
   seat: "white" | "black";
   /** True when the model has an open draw offer for this position. */
   drawOffered: boolean;
+  /** Whether the model's turns are charged to this player (ADR-0052). */
+  pays?: boolean;
 }) {
   const { getToken } = useAuth();
   const router = useRouter();
@@ -84,6 +87,7 @@ export function PlayableGame({
       initialEvents={initialEvents}
       actions={actions}
       seat={seat}
+      pays={pays}
       onMove={handleMove}
       controls={
         <Controls

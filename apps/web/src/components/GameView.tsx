@@ -37,7 +37,12 @@ export function GameView(props: {
    * where the provider exists by construction.
    */
   const hasHumanSeat = props.game.players.some((player) => player.kind === "human");
-  if (!clerkEnabled || !props.signedIn || !hasHumanSeat) {
+  /* **A live game is asked about too, seat or none** (ADR-0052). A signed-in viewer may have
+     started a game between two models, and its turns are charged to them as it plays; only the
+     seat endpoint can say so, since who started a game is not public. One request per page load,
+     for signed-in viewers of a game still in progress — a finished game spends nothing more. */
+  const live = !["finished", "aborted"].includes(props.game.status);
+  if (!clerkEnabled || !props.signedIn || !(hasHumanSeat || live)) {
     return <LiveGame {...props} />;
   }
   return <Resolved {...props} />;
@@ -51,6 +56,7 @@ function Resolved(props: {
 }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [seat, setSeat] = useState<"white" | "black" | null>(null);
+  const [pays, setPays] = useState(false);
 
   useEffect(() => {
     if (!isSignedIn) return;
@@ -63,8 +69,12 @@ function Resolved(props: {
           headers: { authorization: `Bearer ${token}`, accept: "application/json" },
         });
         if (!response.ok || cancelled) return;
-        const body = (await response.json()) as { colour: "white" | "black" | null };
+        const body = (await response.json()) as {
+          colour: "white" | "black" | null;
+          pays?: boolean;
+        };
         setSeat(body.colour);
+        setPays(Boolean(body.pays));
       } catch {
         // Failing to resolve a seat means spectating, which is the safe answer: the worst case is
         // a player who has to reload, not a spectator who can move someone else's pieces.
@@ -77,12 +87,13 @@ function Resolved(props: {
   }, [isSignedIn, getToken, props.apiUrl, props.game.id]);
 
   if (!isLoaded || seat === null) {
-    return <LiveGame {...props} />;
+    return <LiveGame {...props} pays={pays} />;
   }
 
   return (
     <PlayableGame
       {...props}
+      pays={pays}
       seat={seat}
       drawOffered={openDrawOffer(props.initialEvents, props.game.ply_count) === "opponent"}
     />

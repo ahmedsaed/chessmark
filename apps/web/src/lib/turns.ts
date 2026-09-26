@@ -917,6 +917,10 @@ export function waitText(
        board that will not move. An operator halt has no end, and still says so. */
     case "halt":
       return holdEnds(waitingOn.until, now) ?? "held until the harness is resumed";
+    /* Its owner's balance ran out (ADR-0052). Said to whoever is watching, who may not be the
+       owner — so it names what brings it back rather than telling the reader to pay. */
+    case "credit":
+      return "waiting for its owner to add credit";
     case "concurrency":
       return waitingOn.tournament
         ? `waiting for a slot in ${waitingOn.tournament}`

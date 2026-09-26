@@ -93,7 +93,7 @@ was written, both of them unreachable from the signed-out state anyone had been 
   replay has something finished to scrub. Idempotent, and it seeds a minimal catalogue only when the
   registry is empty, which is CI — a developer's real models are left alone. It runs in
   `global-setup.ts` **before** the worker starts, and that order is load-bearing.
-- `scripts/seed_e2e_user.py` — creates and funds the test account. New users get no credits by
+- `scripts/seed_e2e_user.py` — creates and funds the test account. New users get no credit by
   design (AUTH-11), so an unattended suite could otherwise not start a game.
 
 ### Rules that cost a debugging pass each

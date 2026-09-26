@@ -34,7 +34,7 @@ were live in this directory before it was written.
 | [0013](0013-design-system.md) | Design system: Board & Amber, dark only, conversation-led | Accepted |
 | [0014](0014-provider-routing-and-quantization.md) | Pin provider routing and exclude sub-8-bit quantization | Superseded in part by [0015](0015-quantization-as-identity-and-pinned-endpoints.md) |
 | [0015](0015-quantization-as-identity-and-pinned-endpoints.md) | Quantization identifies the contestant; endpoints are pinned per match | Amended by [0019](0019-harness-bounds-are-not-findings.md), [0027](0027-a-pool-is-ranked-by-its-own-rating.md) |
-| [0016](0016-credits-as-a-granted-balance.md) | Credits are a granted balance, priced per model | Accepted |
+| [0016](0016-credits-as-a-granted-balance.md) | Credits are a granted balance, priced per model | Superseded by [0052](0052-credit-is-dollars-spent-at-actual-cost.md) |
 | [0017](0017-rate-limits-pause-games.md) | A rate limit pauses the game; endpoints cool down between games | Amended by [0025](0025-finishing-a-game-beats-starting-one.md) |
 | [0018](0018-context-compaction.md) | The model summarises its own history when the window fills | Amended by [0021](0021-measured-windows-and-the-compaction-ladder.md) |
 | [0019](0019-harness-bounds-are-not-findings.md) | A harness bound is not a finding about a player | Amended by [0021](0021-measured-windows-and-the-compaction-ladder.md), [0026](0026-a-repeated-question-gets-a-different-answer.md) |
@@ -70,6 +70,7 @@ were live in this directory before it was written.
 | [0049](0049-decision-models-play-through-their-own-harness.md) | Decision models play through their own harness | Accepted |
 | [0050](0050-a-pool-saturates-per-pair.md) | A pool saturates per pair | Accepted |
 | [0051](0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md) | A decision model chooses its action, and is checked before it plays | Accepted |
+| [0052](0052-credit-is-dollars-spent-at-actual-cost.md) | Credit is dollars, spent at what each turn actually cost | Accepted |
 
 ## Template
 

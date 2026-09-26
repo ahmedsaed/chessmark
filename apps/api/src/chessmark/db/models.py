@@ -64,10 +64,14 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(sa.Text)
     is_admin: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
 
-    #: Credits held, spent to start a game (ADR-0016). **Zero by default and granted by an
-    #: administrator** — it does not regenerate, so a new account cannot play until someone says
-    #: so. Deliberate for the testing phase; a signup grant changes this default and nothing else.
-    credit_balance: Mapped[int] = mapped_column(default=0, server_default="0")
+    #: Credit held, in US dollars, spent at what each turn actually cost (ADR-0052). **Zero by
+    #: default** — a new account plays nothing paid until credit is added.
+    #:
+    #: **It can sit slightly below zero, and that is by construction.** A turn's cost is known only
+    #: once the provider answers, so the debit lands after the money is spent and is never refused:
+    #: the check that stops play is the one before a turn, `balance > 0`. The overshoot is at most
+    #: the one turn in flight per running game, and the next turn pauses.
+    balance_usd: Mapped[Decimal] = mapped_column(USD, default=Decimal(0), server_default="0")
 
     created_at: Mapped[dt.datetime] = created_at()
     updated_at: Mapped[dt.datetime] = updated_at()
@@ -120,26 +124,11 @@ class ModelRegistry(Base):
     #: than a hand-maintained list that rots.
     hugging_face_id: Mapped[str | None] = mapped_column(sa.Text)
 
-    #: What a seat against this model costs to start, in credits (ADR-0016). **Derived** from the
-    #: model's own prices at catalogue sync, so it is rewritten on every `make seed-models`.
-    credit_cost: Mapped[int] = mapped_column(default=1, server_default="1")
-
-    #: An administrator's price for this model, which wins over the derived one. Separate column
-    #: precisely so re-seeding cannot silently undo a deliberate exception.
-    credit_cost_override: Mapped[int | None] = mapped_column(sa.Integer)
-
-    @property
-    def credits(self) -> int:
-        """What this model actually costs. The override if there is one, else the derived tier.
-
-        A `:free` model still has a price here, and that is deliberate: credits are what stops an
-        unfunded account starting games at all (AUTH-11), and pricing free models at zero opened
-        `POST /games` to anyone signed in. Where free genuinely means free is a person playing one
-        themselves — see `routes/games.py`, which is the only place that exempts it.
-        """
-        return (
-            self.credit_cost_override if self.credit_cost_override is not None else self.credit_cost
-        )
+    #: Which of four price bands the model's own prices put it in, 1 to 4, derived at catalogue
+    #: sync (`agents/registry.price_tier_for`). **Not what anyone is charged** — that is each turn's
+    #: actual cost (ADR-0052). It survives as a way to choose a field: a tournament of the cheap
+    #: models is a filter on this, and the bands sit on real price clusters (ADR-0016).
+    price_tier: Mapped[int] = mapped_column(default=1, server_default="1")
 
     created_at: Mapped[dt.datetime] = created_at()
     updated_at: Mapped[dt.datetime] = updated_at()
@@ -770,11 +759,11 @@ class AnalysisJob(Base):
 
 
 class CreditLedger(Base):
-    """Every movement of a credit balance, append-only (AUTH-13, ADR-0016).
+    """Every movement of a credit balance, append-only (AUTH-13, ADR-0016, ADR-0052).
 
-    `users.credit_balance` stays the enforcement point — the charge has to be one statement whose
-    `WHERE` clause is the check, and a balance summed from history on every request could not do
-    that. This is the *account* of how it got there, and the two are asserted to agree.
+    `users.balance_usd` stays the enforcement point — it is what the check before every turn reads,
+    and a balance summed from history on every turn would be a query per ply. This is the
+    *account* of how it got there, and the two are asserted to agree.
 
     Append-only in the same sense the game event log is: a revocation is a negative row, never an
     edit, so a balance's history cannot be rewritten to hide a mistake. Rows outlive the thing they
@@ -791,18 +780,30 @@ class CreditLedger(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(_fk("users.id", ondelete="CASCADE"), index=True)
 
     #: Signed. Negative spends, positive grants — so the balance is the plain sum of the column.
-    delta: Mapped[int] = mapped_column(sa.Integer)
+    delta: Mapped[Decimal] = mapped_column(USD)
 
     #: The balance immediately after this row, recorded rather than derived. It makes a divergence
-    #: between the ledger and `users.credit_balance` visible at the row that caused it, instead of
+    #: between the ledger and `users.balance_usd` visible at the row that caused it, instead of
     #: only in the total.
-    balance_after: Mapped[int] = mapped_column(sa.Integer)
+    balance_after: Mapped[Decimal] = mapped_column(USD)
+
+    #: What `delta` counts. `usd` for everything since ADR-0052; `credit` for the rows written while
+    #: a credit was a unit of play (ADR-0016), kept rather than rewritten because the ledger is
+    #: append-only and those rows are the true record of what testers were granted and spent. They
+    #: are closed to zero by the migration that retired them, so no balance depends on them.
+    unit: Mapped[str] = mapped_column(sa.Text, default="usd", server_default="usd")
 
     reason: Mapped[CreditReason] = mapped_column(enum_column(CreditReason), index=True)
 
     #: The game this paid for, when the reason is a charge.
     game_id: Mapped[uuid.UUID | None] = mapped_column(
         _fk("games.id", ondelete="SET NULL"), index=True
+    )
+
+    #: The turn this paid for, for a `turn` row. A game is charged a row per model turn, so the
+    #: ledger can say which move cost what — the same number the turn's own row carries.
+    turn_id: Mapped[int | None] = mapped_column(
+        sa.BigInteger, _fk("turns.id", ondelete="SET NULL"), index=True
     )
 
     #: The administrator who did it, when a person did. Null for a charge, which nobody decides.

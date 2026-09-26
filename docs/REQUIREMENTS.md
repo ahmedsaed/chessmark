@@ -137,10 +137,10 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | AUTH-06 | Rate limiting on game creation and all model-triggering endpoints. | M |
 | AUTH-07 | Server-held API keys only; keys are never sent to the client. | M |
 | AUTH-08 | An admin surface to inspect spend, cancel games, and reset quotas. | S |
-| AUTH-10 | A user holds a **credit balance**, granted rather than accrued, spent to start a game and not regenerating. New accounts hold zero. | M |
-| AUTH-11 | An administrator can grant and revoke credits. It is the only way a balance rises. | M |
-| AUTH-12 | Each model carries a credit price in four tiers, derived from its own token prices and overridable per model. A game costs the sum of its seats. | M |
-| AUTH-13 | Every credit movement is recorded append-only: who, how many, why, and by which administrator. A balance must be reconstructible from its history. | M |
+| AUTH-10 | A user holds a **credit balance in US dollars**, granted rather than accrued and not regenerating. A game draws on it turn by turn at each turn's actual cost; a game whose owner has nothing left pauses, and resumes when credit is added. New accounts hold zero ([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)). | M |
+| AUTH-11 | An administrator can grant and revoke credit, in dollars. It is the only way a balance rises. | M |
+| AUTH-12 | ~~Each model carries a credit price in four tiers, derived from its own token prices and overridable per model. A game costs the sum of its seats.~~ **Superseded** by AUTH-10's charge at actual cost. Each model keeps a **price band**, 1 to 4, from its own prices — shown to choose by and used to select tournament fields, never charged ([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)). | M |
+| AUTH-13 | Every credit movement is recorded append-only: who, how much, why, by which administrator, and for a charge, which game and turn it paid for. A balance must be reconstructible from its history. | M |
 | AUTH-14 | A user carries an identifier an administrator can act on — an email or equivalent — captured at provisioning, not only an opaque provider id. | M |
 | AUTH-09 | Bring-your-own OpenRouter key to unlock expensive models. | W |
 

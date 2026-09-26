@@ -4,11 +4,11 @@
  * Sign-in state and today's allowance.
  *
  * Watching needs no account (AUTH-02), so this is a quiet corner of the header rather than a wall:
- * signed out, it offers a sign-in; signed in, it shows the credit balance. A credit is a unit of
- * granted play, spent to start a game, and it does **not** refill (ADR-0016) — so a reader at zero
- * needs to know that asking is the only thing that changes it, which is what the tooltip says. Showing the allowance *before* it is spent matters: discovering your limit
- * by being refused is a bad way to learn it, especially when the refusal costs you the game you
- * were trying to start.
+ * signed out, it offers a sign-in; signed in, it shows the credit balance. Credit is dollars,
+ * spent as a game plays at what each turn actually cost, and it does **not** refill (ADR-0052) —
+ * so a reader at zero needs to know how it changes, which is what the tooltip says. Showing the
+ * balance *before* it is spent matters: discovering your limit by being refused is a bad way to
+ * learn it, especially when the refusal costs you the game you were trying to start.
  *
  * Renders nothing when Clerk is not configured, which is how the project runs locally.
  */
@@ -22,6 +22,7 @@ import { AccountMenu } from "@/components/AccountMenu";
 import { clerkEnabled } from "@/components/AuthProvider";
 import { useClerkMounted } from "@/components/ClerkGate";
 import type { Me } from "@/lib/types";
+import { BALANCE_MAY_HAVE_CHANGED, canPay, formatBalance } from "@/lib/credit";
 
 /**
  * The height every control in the header shares.
@@ -84,16 +85,28 @@ function Bar({ apiUrl }: { apiUrl: string }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const [me, setMe] = useState<Me | null>(null);
 
-  /* Refetched on every navigation, because the balance is stale the moment a game starts and this
-     component never unmounts to notice. It lives in the root layout, so a client-side push to
-     `/games/{id}` re-renders the page under it and leaves the header showing a number read at
-     first paint — a person spent two credits, watched the game open, and the header still said
-     ten until they reloaded.
-
-     Keyed on the path rather than pushed to from the form: starting a game is the only thing that
-     spends credits and it always navigates, so the navigation *is* the signal, and the header
-     stays right without the two components having to know about each other. */
+  /* Refetched on every navigation, because this component lives in the root layout and never
+     unmounts to notice a change — and, below, whenever something says the balance may have moved.
+     Credit is spent turn by turn while a game plays (ADR-0052). */
   const pathname = usePathname();
+
+  /* **Read again when the balance may have moved, and at no other time.** A model move in a game
+     this person pays for is announced by that game's page; coming back to the tab covers a game
+     they left playing in another. Nothing polls — a header on every open page asking `/me` on a
+     timer would be traffic for a number that, for almost every reader, is not changing (ADR-0052). */
+  const [stale, setStale] = useState(0);
+  useEffect(() => {
+    const again = () => setStale((count) => count + 1);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") again();
+    };
+    window.addEventListener(BALANCE_MAY_HAVE_CHANGED, again);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener(BALANCE_MAY_HAVE_CHANGED, again);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isSignedIn) return;
@@ -117,7 +130,7 @@ function Bar({ apiUrl }: { apiUrl: string }) {
     return () => {
       cancelled = true;
     };
-  }, [isSignedIn, getToken, apiUrl, pathname]);
+  }, [isSignedIn, getToken, apiUrl, pathname, stale]);
 
   if (!isLoaded) return null;
 
@@ -159,17 +172,16 @@ function Bar({ apiUrl }: { apiUrl: string }) {
                one click away is worse than in front of you. */
             className="tabular hidden font-mono text-meta text-ink-faint sm:inline"
             title={
-              me.credit_balance === 0
-                ? "No credits. An administrator grants them."
-                : `$${Number(me.usd_spent_today).toFixed(4)} spent today`
+              canPay(me.balance_usd)
+                ? `$${Number(me.usd_spent_today).toFixed(4)} spent today`
+                : "No credit. An administrator grants it."
             }
           >
-            {me.credit_balance} credit
-            {me.credit_balance === 1 ? "" : "s"}
+            {formatBalance(me.balance_usd)}
           </span>
         )}
         {/* Was `<UserButton />`, whose menu offered account management this site does not use and
-            knew nothing about credits, and then a bare `profile` link that showed neither who you
+            knew nothing about credit, and then a bare `profile` link that showed neither who you
             were signed in as nor a way out. `AccountMenu` is ours, built from hooks rather than
             from a prebuilt component, so it costs nothing on the routes nobody signs in on. */}
         <AccountMenu me={me} />

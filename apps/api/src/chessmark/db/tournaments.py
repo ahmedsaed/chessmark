@@ -118,19 +118,16 @@ async def resolve_field(
     if field.min_context_tokens is not None:
         query = query.where(ModelRegistry.context_length >= field.min_context_tokens)
 
-    # The effective price is the override when an administrator has set one (ADR-0016), so the
-    # filter must read the same number the picker charges rather than the derived tier.
-    cost = sa.func.coalesce(ModelRegistry.credit_cost_override, ModelRegistry.credit_cost)
-    if field.min_credit_cost is not None:
-        query = query.where(cost >= field.min_credit_cost)
-    if field.max_credit_cost is not None:
-        query = query.where(cost <= field.max_credit_cost)
+    if field.min_price_tier is not None:
+        query = query.where(ModelRegistry.price_tier >= field.min_price_tier)
+    if field.max_price_tier is not None:
+        query = query.where(ModelRegistry.price_tier <= field.max_price_tier)
 
     # Seeding by price is a stand-in for strength before anyone has played: expensive models are
     # generally stronger, and a Swiss first round pairs on seed. It is a guess, and it stops
     # mattering the moment there are results.
     order = (
-        (cost.desc(), ModelRegistry.openrouter_id)
+        (ModelRegistry.price_tier.desc(), ModelRegistry.openrouter_id)
         if seeded_by_cost
         else (ModelRegistry.openrouter_id,)
     )
@@ -205,8 +202,8 @@ def _filter_as_json(field: FieldFilter) -> dict[str, Any]:
         "providers": list(field.providers),
         "free_only": field.free_only,
         "open_weights": field.open_weights,
-        "min_credit_cost": field.min_credit_cost,
-        "max_credit_cost": field.max_credit_cost,
+        "min_price_tier": field.min_price_tier,
+        "max_price_tier": field.max_price_tier,
         "min_context_tokens": field.min_context_tokens,
         "requires_reasoning": field.requires_reasoning,
         "limit": field.limit,
@@ -284,8 +281,8 @@ def filter_from_json(stored: dict[str, Any]) -> FieldFilter:
         providers=tuple(stored.get("providers") or ()),
         free_only=stored.get("free_only"),
         open_weights=stored.get("open_weights"),
-        min_credit_cost=stored.get("min_credit_cost"),
-        max_credit_cost=stored.get("max_credit_cost"),
+        min_price_tier=stored.get("min_price_tier"),
+        max_price_tier=stored.get("max_price_tier"),
         min_context_tokens=stored.get("min_context_tokens"),
         requires_reasoning=stored.get("requires_reasoning"),
         limit=stored.get("limit"),

@@ -50,12 +50,12 @@ from chessmark.core.credits import fetch_balance
 from chessmark.core.halt import Halt, HaltState
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import EventType, GameStatus, PlayerKind
-from chessmark.db.models import Game, GameEvent, Player, Tournament, TournamentGame
+from chessmark.db.models import Game, GameEvent, Player, Tournament, TournamentGame, User
 from chessmark.db.repositories import append_event, finish_game, load_events, rebuild_referee
 from chessmark.game import Colour, GameResult, Outcome, Termination
 from chessmark.orchestration.match import model_for
 from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
-from chessmark.orchestration.worker import publish_events
+from chessmark.orchestration.worker import CREDIT_PREFIX, publish_events
 
 log = logging.getLogger(__name__)
 
@@ -313,13 +313,14 @@ class Waiting:
     said "rate-limited by Poolside · retrying shortly" for the whole of it: the first half stale,
     the second half wrong.
 
-    The order below mirrors `reconcile` exactly — clock, then halt, then concurrency — because a
+    The order below mirrors `reconcile` exactly — clock, halt, credit, concurrency — because a
     page that disagreed with the sweep about why a game is sitting still would be a second bug
     wearing the first one's clothes.
     """
 
-    #: `clock` — the wait has not elapsed. `halt` — the harness is stopped. `concurrency` — due, but
-    #: its event is at its bound. `due` — nothing is in the way; the next sweep takes it.
+    #: `clock` — the wait has not elapsed. `halt` — the harness is stopped. `credit` — its owner's
+    #: balance is not above zero (ADR-0052). `concurrency` — due, but its event is at its bound.
+    #: `due` — nothing is in the way; the next sweep takes it.
     kind: str
     until: dt.datetime | None = None
     #: The event holding the slot, for `concurrency`. Its name, because that is what the page shows.
@@ -347,6 +348,9 @@ async def what_it_waits_for(
     # reporting a slot it is not competing for would be a fiction.
     if (game.pause_reason or "").startswith(HALT_PREFIX):
         return Waiting(kind="halt", until=await _halt_lifts_at(session, game))
+
+    if game.id in await unfunded_games(session, [game]):
+        return Waiting(kind="credit")
 
     pairing = await session.scalar(
         sa.select(TournamentGame).where(TournamentGame.game_id == game.id)
@@ -480,6 +484,24 @@ async def halted_games(
     return {player.game_id for player in players if state.covers(model_for(player))}
 
 
+async def unfunded_games(session: AsyncSession, games: list[Game]) -> set[uuid.UUID]:
+    """Of these, the ids paused for credit whose owner still has none.
+
+    One query for every payer at once, and only for games whose pause says credit — a provider
+    pause is resumed as before, and if its owner has run dry meanwhile the worker's own check
+    pauses it for credit instead, at the cost of one job and no provider call.
+    """
+    waiting = [g for g in games if (g.pause_reason or "").startswith(CREDIT_PREFIX)]
+    payers = {g.created_by_user_id for g in waiting if g.created_by_user_id is not None}
+    if not payers:
+        return set()
+
+    funded = set(
+        await session.scalars(sa.select(User.id).where(User.id.in_(payers), User.balance_usd > 0))
+    )
+    return {g.id for g in waiting if g.created_by_user_id not in funded}
+
+
 async def lift_credit_halt(halt: Halt, *, api_key: str, redis: Any = None) -> bool:
     """Lift a halt set by a 402, once the account has credit again. True when it was lifted.
 
@@ -588,7 +610,12 @@ async def reconcile(
                             (game.id, await load_events(session, game.id, after_seq=before))
                         )
 
-        playable = [game for game in due if game.id not in held]
+        # **A game paused for credit waits for credit, and nothing else brings it back** (ADR-0052).
+        # Held here rather than resumed into a worker that would only pause it again; resumed on
+        # the first tick after its owner's balance rises above zero, which is what makes adding
+        # credit enough — nothing has to find the game and restart it.
+        unfunded = await unfunded_games(session, due)
+        playable = [game for game in due if game.id not in held and game.id not in unfunded]
         for game in await with_room_to_run(session, playable):
             log.info("resuming %s at ply %s: %s", game.id, game.ply_count, game.pause_reason)
             before = game.event_seq

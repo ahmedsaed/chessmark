@@ -327,7 +327,7 @@ async def test_granting_credits_needs_an_admin(client: AsyncClient, db: AsyncSes
 
     response = await client.post(
         "/admin/credits",
-        json={"user": "user_nobody", "credits": 5},
+        json={"user": "user_nobody", "amount_usd": "5"},
         headers=as_user("user_nobody"),
     )
 
@@ -340,12 +340,12 @@ async def test_an_admin_can_grant_by_our_own_id(client: AsyncClient, db: AsyncSe
 
     response = await client.post(
         "/admin/credits",
-        json={"user": str(target.id), "credits": 5},
+        json={"user": str(target.id), "amount_usd": "5"},
         headers=as_user("user_admin_uuid"),
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["credit_balance"] == 5
+    assert Decimal(response.json()["balance_usd"]) == 5
 
 
 async def test_an_admin_can_grant_by_clerk_id(client: AsyncClient, db: AsyncSession) -> None:
@@ -354,12 +354,12 @@ async def test_an_admin_can_grant_by_clerk_id(client: AsyncClient, db: AsyncSess
 
     response = await client.post(
         "/admin/credits",
-        json={"user": "user_target_clerk", "credits": 3},
+        json={"user": "user_target_clerk", "amount_usd": "3"},
         headers=as_user("user_admin_clerk"),
     )
 
     assert response.status_code == 200, response.text
-    assert response.json()["credit_balance"] == 3
+    assert Decimal(response.json()["balance_usd"]) == 3
 
 
 async def test_an_admin_can_grant_by_email(client: AsyncClient, db: AsyncSession) -> None:
@@ -372,13 +372,13 @@ async def test_an_admin_can_grant_by_email(client: AsyncClient, db: AsyncSession
 
     response = await client.post(
         "/admin/credits",
-        json={"user": "player@chessmark.test", "credits": 7, "note": "beta invite"},
+        json={"user": "player@chessmark.test", "amount_usd": "7", "note": "beta invite"},
         headers=as_user("user_admin_email"),
     )
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["credit_balance"] == 7
+    assert Decimal(body["balance_usd"]) == 7
     assert body["email"] == "player@chessmark.test"
 
 
@@ -389,7 +389,7 @@ async def test_an_unknown_identifier_is_a_404_not_a_guess(
 
     response = await client.post(
         "/admin/credits",
-        json={"user": "nobody-at-all", "credits": 5},
+        json={"user": "nobody-at-all", "amount_usd": "5"},
         headers=as_user("user_admin_unknown"),
     )
 
@@ -403,12 +403,14 @@ async def test_credits_can_be_taken_back(client: AsyncClient, db: AsyncSession) 
     target = await _plain_user(db, "user_target_revoke")
 
     header = as_user("user_admin_revoke")
-    await client.post("/admin/credits", json={"user": str(target.id), "credits": 5}, headers=header)
+    await client.post(
+        "/admin/credits", json={"user": str(target.id), "amount_usd": "5"}, headers=header
+    )
     response = await client.post(
-        "/admin/credits", json={"user": str(target.id), "credits": -3}, headers=header
+        "/admin/credits", json={"user": str(target.id), "amount_usd": "-3"}, headers=header
     )
 
-    assert response.json()["credit_balance"] == 2
+    assert Decimal(response.json()["balance_usd"]) == 2
 
 
 async def test_the_history_names_the_administrator_who_granted(
@@ -421,15 +423,16 @@ async def test_the_history_names_the_administrator_who_granted(
 
     await client.post(
         "/admin/credits",
-        json={"user": str(target.id), "credits": 9, "note": "for testing"},
+        json={"user": str(target.id), "amount_usd": "9", "note": "for testing"},
         headers=header,
     )
 
     rows = (await client.get(f"/admin/users/{target.id}/credits", headers=header)).json()
 
     assert len(rows) == 1
-    assert rows[0]["delta"] == 9
-    assert rows[0]["balance_after"] == 9
+    assert Decimal(rows[0]["delta"]) == 9
+    assert Decimal(rows[0]["balance_after"]) == 9
+    assert rows[0]["unit"] == "usd"
     assert rows[0]["reason"] == "admin_grant"
     assert rows[0]["actor_user_id"] == str(admin.id)
     assert rows[0]["note"] == "for testing"

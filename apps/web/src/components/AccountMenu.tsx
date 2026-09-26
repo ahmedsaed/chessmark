@@ -6,7 +6,7 @@
  * **Built from hooks, not from `<UserButton />`.** Clerk's own menu is a prebuilt component, and
  * one of those anywhere puts 285 KiB of `@clerk/ui` on every route — `/about` included, where
  * nobody is signed in. `useUser` and `useClerk` are hooks and cost nothing beyond the core, so the
- * picture and the name are free; the menu is ours, in our type, and knows about credits, which
+ * picture and the name are free; the menu is ours, in our type, and knows about credit, which
  * Clerk's never did.
  *
  * **The trap it re-introduces, written down because it was written down once before and removed.**
@@ -26,6 +26,7 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 import { displayNameOf, initialsOf } from "@/lib/identity";
 import type { Me } from "@/lib/types";
+import { formatBalance } from "@/lib/credit";
 
 export function AccountMenu({ me }: { me: Me | null }) {
   const { user } = useUser();
@@ -137,10 +138,10 @@ export function AccountMenu({ me }: { me: Me | null }) {
             {/* Shown *instead of* the header chip, not beside it: the chip is hidden below `sm`
                 and this is hidden above it, so the balance appears exactly once at every width.
                 It has to appear somewhere — discovering your allowance by being refused is a bad
-                way to learn it (ADR-0016) — and twice on one screen reads as two numbers. */}
+                way to learn it (ADR-0052) — and twice on one screen reads as two numbers. */}
             {me && (
               <p className="tabular mt-1 font-mono text-label text-ink-faint sm:hidden">
-                {me.credit_balance} credit{me.credit_balance === 1 ? "" : "s"}
+                {formatBalance(me.balance_usd)} credit
               </p>
             )}
           </div>

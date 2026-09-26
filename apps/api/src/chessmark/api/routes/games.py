@@ -51,7 +51,7 @@ from chessmark.api.schemas import (
     WaitingOn,
 )
 from chessmark.db.archive import ArchiveKind, ArchiveOutcome, ArchiveSort, archive_query
-from chessmark.db.credits import InsufficientCreditsError, charge, cost_of
+from chessmark.db.credits import InsufficientCreditError, require_credit
 from chessmark.db.enums import EventType, GameStatus, ModelRuntime, ModerationStatus, PlayerKind
 from chessmark.db.models import (
     Game,
@@ -672,15 +672,16 @@ async def create_game_endpoint(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"{slug!r} cannot play: {reason}."
             )
 
-    # A game costs the sum of its seats (ADR-0016). Charged before it exists, atomically, so two
-    # concurrent requests cannot both spend the last credit.
-    price = await cost_of(session, [request.white, request.black])
+    # **Nothing is charged here.** A game is paid for turn by turn at what each turn actually cost
+    # (ADR-0052); starting one needs only a balance above zero. Two free models still need it: a
+    # game between machines is something a person runs, not something they play, and only playing
+    # a free model is open to an account holding nothing.
     try:
-        entry = await charge(session, user.id, price)
-    except InsufficientCreditsError as error:
+        await require_credit(session, user.id)
+    except InsufficientCreditError as error:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"{error} Credits are granted by an administrator.",
+            detail=f"{error} Credit is granted by an administrator.",
         ) from error
 
     # No longer a limit — kept because the admin spend view reads it (ADR-0016).
@@ -720,11 +721,6 @@ async def create_game_endpoint(
         # The caller named a precision nobody serves. That is a bad request, not a server fault —
         # and seating them at a different precision would quietly measure another contestant.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
-
-    # The charge happened before the game existed; name the game on it now. Same transaction, so
-    # a failure after this point rolls the charge back with everything else.
-    if entry is not None:
-        entry.game_id = match.game.id
 
     job = await start_match(session, queue, game_id=match.game.id)
     await session.commit()
@@ -838,22 +834,18 @@ async def create_human_game(
             detail=f"{request.model!r} cannot play: {reason}.",
         )
 
-    # Only the machine seat is charged: a person plays for free as themselves (ADR-0016).
-    #
-    # **And a free model costs nothing at all.** Credits bound spend, and a `:free` model spends
-    # nothing — charging a person to sit down against the cheapest thing on the site was charging
-    # for the wrong thing. Scoped to this endpoint rather than to the price itself: making
-    # `ModelRegistry.credits` return 0 for free models opened `POST /games` to any signed-in
-    # account, because credits are also what AUTH-11 uses to gate an unfunded user, and two tests
-    # said so immediately.
-    price = 0 if model.is_free else await cost_of(session, [request.model])
-    try:
-        entry = await charge(session, user.id, price)
-    except InsufficientCreditsError as error:
-        raise HTTPException(
-            status_code=status.HTTP_402_PAYMENT_REQUIRED,
-            detail=f"{error} Credits are granted by an administrator.",
-        ) from error
+    # A person plays for free as themselves; only the machine's turns are charged, as they happen
+    # (ADR-0052). **Against a free model nothing is ever charged, so nothing is asked** — an
+    # account holding $0 can sit down against one. A paid model needs a balance above zero; what
+    # the game will cost is not known until it has been played.
+    if not model.is_free:
+        try:
+            await require_credit(session, user.id)
+        except InsufficientCreditError as error:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f"{error} Credit is granted by an administrator.",
+            ) from error
 
     await note_game_started(session, user.id)
 
@@ -887,11 +879,6 @@ async def create_human_game(
         )
     except NoEndpointError as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
-
-    # The charge happened before the game existed; name the game on it now. Same transaction, so
-    # a failure after this point rolls the charge back with everything else.
-    if entry is not None:
-        entry.game_id = match.game.id
 
     job = await start_match(session, queue, game_id=match.game.id)
 
@@ -1044,14 +1031,17 @@ async def my_seat(
     game: GameDep,
     user: CurrentUser,
 ) -> SeatOut:
-    """Which colour, if any, the caller is playing in this game.
+    """Which colour, if any, the caller is playing in this game, and whether they pay for it.
 
     A dedicated endpoint rather than a field on the game, because the game is public and the
     answer is not: putting `user_id` on the player payload would publish who plays what to every
-    spectator, to save one request.
+    spectator, to save one request. **Who started a game is private for the same reason**, and
+    `pays` is how its owner's page learns it — so the header can refresh the balance as the game
+    spends it, and nobody else's page asks at all (ADR-0052).
     """
+    pays = game.created_by_user_id == user.id
     try:
         player = await human_play.seat_of(session, game.id, user.id)
     except human_play.NotYourGameError:
-        return SeatOut(colour=None)
-    return SeatOut(colour=Colour(player.colour))
+        return SeatOut(colour=None, pays=pays)
+    return SeatOut(colour=Colour(player.colour), pays=pays)

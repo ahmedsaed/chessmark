@@ -18,16 +18,16 @@ function model(openrouter_id: string, overrides: Partial<ModelInfo> = {}): Model
     contestants: [],
     endpoint_count: 1,
     is_floating_alias: false,
-    credit_cost: 1,
+    price_tier: 1,
     ...overrides,
   } as ModelInfo;
 }
 
 const CATALOGUE = [
-  model("openai/gpt-5-nano", { credit_cost: 1 }),
-  model("openai/gpt-5.5-pro", { credit_cost: 6 }),
-  model("anthropic/claude-haiku-4.5", { credit_cost: 2 }),
-  model("google/gemini-3.7-flash", { credit_cost: 2 }),
+  model("openai/gpt-5-nano", { price_tier: 1 }),
+  model("openai/gpt-5.5-pro", { price_tier: 4 }),
+  model("anthropic/claude-haiku-4.5", { price_tier: 2 }),
+  model("google/gemini-3.7-flash", { price_tier: 2 }),
 ];
 
 describe("browseModels", () => {
@@ -53,6 +53,16 @@ describe("browseModels", () => {
 
     expect(groups.find((g) => g.provider === "openai")?.cheapest).toBe(1);
     expect(groups.find((g) => g.provider === "google")?.cheapest).toBe(2);
+  });
+
+  it("says when a group has a free model, which the row shows instead of a band", () => {
+    const groups = browseModels(
+      [...CATALOGUE, model("google/gemma-4:free", { is_free: true })],
+      "",
+    );
+
+    expect(groups.find((g) => g.provider === "google")?.hasFree).toBe(true);
+    expect(groups.find((g) => g.provider === "openai")?.hasFree).toBe(false);
   });
 
   it("returns everything for an empty query", () => {

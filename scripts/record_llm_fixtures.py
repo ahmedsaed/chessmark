@@ -52,8 +52,7 @@ OPENING_MESSAGES: list[dict[str, Any]] = [
     {
         "role": "system",
         "content": (
-            "You are playing chess as White. Use the make_move tool to play. "
-            "Do not reply in prose."
+            "You are playing chess as White. Use the make_move tool to play. Do not reply in prose."
         ),
     },
     {
@@ -84,7 +83,7 @@ async def record(name: str, model: str, *, gateway: LlmGateway) -> bool:
             tools=[MOVE_TOOL],
             max_tokens=2000,
         )
-    except Exception as exc:  # noqa: BLE001 - a failed recording is reported, not fatal
+    except Exception as exc:
         print(f"  ✗ {type(exc).__name__}: {str(exc)[:160]}", flush=True)
         return False
 

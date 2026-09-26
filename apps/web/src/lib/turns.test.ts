@@ -1452,6 +1452,13 @@ describe("what a paused game says it is waiting for", () => {
     ).toBe("waiting for a slot in Free Models");
   });
 
+  it("says a game paused for credit is waiting for its owner, not retrying", () => {
+    /* ADR-0052. The reader may be a spectator, so it names what brings the game back. */
+    expect(waitText(null, { kind: "credit", until: null, tournament: null })).toBe(
+      "waiting for its owner to add credit",
+    );
+  });
+
   it("says a halt is a halt, not a retry", () => {
     /* A halt that states its end says it: the free-model allowance is the one that happens, and it
        ends at `X-RateLimit-Reset` or the next UTC midnight. */

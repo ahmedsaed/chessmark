@@ -3,7 +3,7 @@
 A tournament is a **format, a field, and a set of bounds**. Phase 13.
 
 The field is a `FieldFilter`, never a list, so every bracket is the same machinery: `--free`,
-`--open-weights`, `--provider anthropic`, `--max-credits 1` all resolve through one query.
+`--open-weights`, `--provider anthropic`, `--max-tier 1` all resolve through one query.
 
 ```
 make tournament ARGS="field --free"                 # who would enter; costs nothing
