@@ -255,3 +255,12 @@ async def test_a_decision_model_s_turn_is_charged_the_same_way(
         assert stored is not None
         assert stored.total_cost_usd == Decimal("0.004")
     assert await _balance(sessionmaker, owner) == Decimal("0.996")
+
+
+def test_the_budget_line_reads_like_money() -> None:
+    """The end of a capped game said "Stopped after $0.01048980 of a $0.01000000 budget"."""
+    from chessmark.orchestration.worker import _dollars
+
+    assert _dollars(Decimal("0.01048980")) == "$0.0104898"
+    assert _dollars(Decimal("0.01000000")) == "$0.01"
+    assert _dollars(Decimal("2")) == "$2.00"

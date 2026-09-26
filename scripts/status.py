@@ -407,9 +407,7 @@ async def show_billing(report: Report, session: Any) -> None:
         .select_from(UnrecordedGeneration)
         .where(UnrecordedGeneration.found_at >= day)
     )
-    line = (
-        f"{reconciled} game(s) reconciled in 24h, {lost} lost request(s) found, ${gap:.6f} settled"
-    )
+    line = f"{reconciled} game(s) in 24h · {lost} lost request(s) · ${gap:.6f} beyond the record"
     (report.warn if lost else report.ok)("reconciled", line)
 
     month = _now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)

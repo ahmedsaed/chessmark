@@ -37,8 +37,10 @@ class InsufficientCreditError(Exception):
     at $0.00 from somebody the one turn below it.
     """
 
-    def __init__(self, *, held: Decimal) -> None:
-        super().__init__(f"You have ${held:.2f} of credit. A game against a paid model needs more.")
+    def __init__(
+        self, *, held: Decimal, needs: str = "A game against a paid model needs more."
+    ) -> None:
+        super().__init__(f"You have ${held:.2f} of credit. {needs}")
         self.held = held
 
 
@@ -56,11 +58,14 @@ async def can_play(session: AsyncSession, user_id: uuid.UUID) -> bool:
     return await balance_of(session, user_id) > ZERO
 
 
-async def require_credit(session: AsyncSession, user_id: uuid.UUID) -> None:
-    """Refuse to start a paid game for someone with nothing to pay with."""
+async def require_credit(
+    session: AsyncSession, user_id: uuid.UUID, *, needs: str | None = None
+) -> None:
+    """Refuse to start a paid game for someone with nothing to pay with. `needs` says what the
+    refused thing needs, in the words of the form that asked for it."""
     held = await balance_of(session, user_id)
     if held <= ZERO:
-        raise InsufficientCreditError(held=held)
+        raise InsufficientCreditError(held=held, **({"needs": needs} if needs else {}))
 
 
 async def spend(

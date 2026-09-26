@@ -275,6 +275,7 @@ export function LiveGame({
                 gameId={game.id}
                 status={game.status}
                 heldByOwner={game.waiting_on?.kind === "owner"}
+                outOfCredit={game.waiting_on?.kind === "credit"}
               />
             ) : undefined)
           }

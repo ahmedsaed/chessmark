@@ -103,6 +103,17 @@ async def publish_events(redis: Any, game_id: uuid.UUID, events: list[GameEvent]
             await redis.publish(channel, json.dumps(payload))
 
 
+def _dollars(amount: Decimal) -> str:
+    """An amount as a reader writes it: cents at least, and no trailing zeros past them.
+
+    The money columns hold eight places, and the budget line printed them all — "Stopped after
+    $0.01048980 of a $0.01000000 budget" — on the game's own header.
+    """
+    text = f"{Decimal(amount):.8f}".rstrip("0")
+    whole, _, cents = text.partition(".")
+    return f"${whole}.{cents.ljust(2, '0')}"
+
+
 def _is_our_stop(payload: dict[str, Any] | None) -> bool:
     """Whether a pause was nothing the model did — a halt, a payer out of credit, or its owner."""
     return payload is not None and any(
@@ -1443,7 +1454,7 @@ class TurnWorker:
 
         outcome = referee.adjudicate(
             GameResult.DRAW,
-            f"Stopped after ${game.total_cost_usd} of a ${game.max_usd} budget.",
+            f"Stopped after {_dollars(game.total_cost_usd)} of a {_dollars(game.max_usd)} budget.",
             termination=Termination.BUDGET_EXCEEDED,
         )
         await self._conclude(session, game, outcome)

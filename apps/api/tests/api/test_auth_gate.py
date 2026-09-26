@@ -185,6 +185,7 @@ async def test_a_user_out_of_credit_is_refused_with_a_reason(
     assert "credit" in refused.text.lower()
     # The refusal has to say what is held and how a balance changes, or it is a dead end.
     assert "$0.00" in refused.text
+    assert "between two models" in refused.text
     assert "administrator" in refused.text.lower()
 
 

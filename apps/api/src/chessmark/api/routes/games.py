@@ -712,7 +712,9 @@ async def create_game_endpoint(
     # game between machines is something a person runs, not something they play, and only playing
     # a free model is open to an account holding nothing.
     try:
-        await require_credit(session, user.id)
+        await require_credit(
+            session, user.id, needs="A game between two models needs credit, free models included."
+        )
     except InsufficientCreditError as error:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,
