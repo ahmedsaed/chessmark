@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.agents.registry import NoEndpointError
+from chessmark.agents.registry import NoEndpointError, decision_unready
 from chessmark.api.deps import (
     BudgetDep,
     CurrentUser,
@@ -667,6 +667,10 @@ async def create_game_endpoint(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"{slug!r} is disabled."
             )
+        if (reason := decision_unready(model)) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"{slug!r} cannot play: {reason}."
+            )
 
     # A game costs the sum of its seats (ADR-0016). Charged before it exists, atomically, so two
     # concurrent requests cannot both spend the last credit.
@@ -827,6 +831,11 @@ async def create_human_game(
     if not model.enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"{request.model!r} is disabled."
+        )
+    if (reason := decision_unready(model)) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{request.model!r} cannot play: {reason}.",
         )
 
     # Only the machine seat is charged: a person plays for free as themselves (ADR-0016).

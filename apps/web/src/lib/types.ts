@@ -317,6 +317,8 @@ export interface DecisionBlock {
   /** How many legal moves it was offered. */
   options: number;
   offersDraw: boolean;
+  /** An ending the model ranked first on less than a majority, which was not taken (ADR-0051). */
+  rankedFirst: string | null;
   /** Every legal move, most likely first. */
   probabilities: [string, number][] | null;
   confidence: number | null;
@@ -356,6 +358,7 @@ export type LiveFrame =
       choice?: string;
       options?: number;
       offers_draw?: boolean;
+      ranked_first?: string;
       probabilities?: [string, number][];
       confidence?: number | null;
       answers?: Record<string, number>;

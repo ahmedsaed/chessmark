@@ -8,6 +8,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from chessmark.agents.decision_request import DECISION_VERSION
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import ModelRuntime
 from chessmark.db.models import Game, ModelEndpoint, ModelRegistry, Player, Tournament
@@ -28,6 +29,7 @@ async def _decision_models(db: AsyncSession, count: int) -> list[str]:
             supports_tools=False,
             context_length=8_192,
             runtime=ModelRuntime.DECISION,
+            decisions_checked=DECISION_VERSION,
         )
         db.add(row)
         await db.flush()

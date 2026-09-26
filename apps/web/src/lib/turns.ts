@@ -130,6 +130,7 @@ export function decisionBlock(payload: Record<string, unknown>, seq: number): De
     choice: asString(payload.choice),
     options: asNumber(payload.options),
     offersDraw: payload.offers_draw === true,
+    rankedFirst: typeof payload.ranked_first === "string" ? payload.ranked_first : null,
     probabilities: ranked,
     confidence: typeof payload.confidence === "number" ? payload.confidence : null,
     answers,

@@ -99,6 +99,15 @@ class ModelRegistry(Base):
     runtime: Mapped[ModelRuntime] = mapped_column(
         enum_column(ModelRuntime), default=ModelRuntime.LLM, server_default=ModelRuntime.LLM.value
     )
+
+    #: Decision models only: the `DECISION_VERSION` this model was last checked against, and what
+    #: its host said if it refused (ADR-0051). **Nothing in the catalogue says which question types
+    #: a decision model accepts** — Span-01 and Jev list identical metadata, and Span answers only
+    #: yes-or-no questions — so a model is asked one tiny request in our real shape when it is first
+    #: registered, and only a model that answered it under the current version is offered. Checked
+    #: once per model per version, never on routine refreshes.
+    decisions_checked: Mapped[str | None] = mapped_column(sa.Text)
+    decisions_refusal: Mapped[str | None] = mapped_column(sa.Text)
     is_free: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     enabled: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
 

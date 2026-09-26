@@ -14,9 +14,10 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.decision_request import (
-    CLAIM_DRAW_QUESTION,
+    ACTION_QUESTION,
+    CLAIM_DRAW,
     DECISION_VERSION,
-    OFFER_DRAW_QUESTION,
+    OFFER_DRAW,
 )
 from chessmark.agents.decisions import DecisionHttpError
 from chessmark.agents.prompts import PROMPT_VERSION
@@ -59,6 +60,7 @@ async def _register(db: AsyncSession) -> None:
             context_length=32_000 if slug == JEV else 8_192,
             supports_tools=False,
             runtime=ModelRuntime.DECISION,
+            decisions_checked=DECISION_VERSION,
         )
         db.add(row)
         await db.flush()
@@ -206,7 +208,7 @@ class TestATurn:
         assert (payload["action"], payload["choice"], payload["options"]) == ("move", "d4", 20)
         assert payload["probabilities"][0][0] == "d4"
         assert len(payload["probabilities"]) == 20
-        assert set(payload["answers"]) == {"resign", "offer_draw"}
+        assert set(payload["answers"]) == {"play_on", "resign", "offer_draw"}
         assert payload["offers_draw"] is False
 
     async def test_the_spend_reaches_the_seat_and_the_game(
@@ -251,14 +253,43 @@ class TestEndings:
         (decided,) = await _events(db, game.id, EventType.DECIDED)
         assert decided.payload["action"] == "resign"
 
-    async def test_just_under_the_gate_plays_on(
+    async def test_the_models_ranking_decides_not_a_threshold(
         self, db: AsyncSession, queue: Any, make_worker: Any
     ) -> None:
-        """The gate is the boundary, not a vibe: 0.49 moves, and the game goes on."""
+        """**No per-model gate** (ADR-0051): a non-ending action happens when the model ranks it
+        first, whatever its scale. 0.4 to resign plays on when playing on is ranked higher."""
         game = await _start(db, queue)
-        await run_next(make_worker(plays([]), decide_fn=deciding(answers={"resign": 0.49})), queue)
+        await run_next(make_worker(plays([]), decide_fn=deciding(answers={"resign": 0.4})), queue)
         reloaded = await _game(db, game.id)
         assert (reloaded.status, reloaded.ply_count) == (GameStatus.RUNNING, 1)
+
+    async def test_ending_the_game_takes_a_majority(
+        self, db: AsyncSession, queue: Any, make_worker: Any
+    ) -> None:
+        """**Kev's resignation, replayed.** Ranked first on 0.45 against 0.38 — a plurality, not a
+        majority — so the turn is played instead, and the record says what the model ranked
+        first. Stockfish had the position at +7.7 for the side that resigned."""
+        game = await _start(db, queue)
+        narrow = deciding(answers={"resign": 0.45, "play_on": 0.38, "offer_draw": 0.17})
+        await run_next(make_worker(plays([]), decide_fn=narrow), queue)
+
+        reloaded = await _game(db, game.id)
+        assert (reloaded.status, reloaded.ply_count) == (GameStatus.RUNNING, 1)
+        (decided,) = await _events(db, game.id, EventType.DECIDED)
+        assert decided.payload["action"] == "move"
+        assert decided.payload["ranked_first"] == "resign"
+        # Its best non-ending action was to play on, not to offer, so no offer rides with the move.
+        assert decided.payload["offers_draw"] is False
+
+    async def test_a_majority_to_resign_resigns(
+        self, db: AsyncSession, queue: Any, make_worker: Any
+    ) -> None:
+        game = await _start(db, queue)
+        await run_next(make_worker(plays([]), decide_fn=deciding(answers={"resign": 0.51})), queue)
+        reloaded = await _game(db, game.id)
+        assert reloaded.termination is Termination.RESIGNATION
+        (decided,) = await _events(db, game.id, EventType.DECIDED)
+        assert "ranked_first" not in decided.payload
 
     async def test_an_offer_rides_with_the_move_and_the_other_seat_can_take_it(
         self, db: AsyncSession, queue: Any, make_worker: Any
@@ -275,7 +306,7 @@ class TestEndings:
         assert reloaded.ply_count == 1
         # Black was asked to accept, and not also to offer — that would be answering itself.
         black_request = decide.calls[1]  # type: ignore[attr-defined]
-        assert OFFER_DRAW_QUESTION not in black_request["questions"]
+        assert OFFER_DRAW not in black_request["questions"][ACTION_QUESTION]["criteria"]
 
     async def test_a_declined_offer_is_not_repeated_until_the_position_changes(
         self, db: AsyncSession, queue: Any, make_worker: Any
@@ -291,7 +322,7 @@ class TestEndings:
         await _play(make_worker(plays([]), decide_fn=decide), queue, turns=7)
 
         asked = {
-            index + 1: OFFER_DRAW_QUESTION in call["questions"]
+            index + 1: OFFER_DRAW in call["questions"][ACTION_QUESTION]["criteria"]
             for index, call in enumerate(decide.calls)  # type: ignore[attr-defined]
             if index % 2 == 0  # White's turns
         }
@@ -312,7 +343,10 @@ class TestEndings:
         reloaded = await _game(db, game.id)
         assert reloaded.termination is Termination.THREEFOLD_REPETITION
         assert reloaded.ply_count == 8
-        asked = [CLAIM_DRAW_QUESTION in c["questions"] for c in decide.calls]  # type: ignore[attr-defined]
+        asked = [
+            CLAIM_DRAW in c["questions"][ACTION_QUESTION]["criteria"]
+            for c in decide.calls  # type: ignore[attr-defined]
+        ]  # type: ignore[attr-defined]
         assert asked == [False] * 8 + [True]
 
     async def test_a_seat_that_declines_the_claim_plays_on(

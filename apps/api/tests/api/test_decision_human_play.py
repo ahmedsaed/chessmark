@@ -17,7 +17,7 @@ from chessmark.agents.registry import sync_model_registry
 from chessmark.agents.scripted import plays
 from chessmark.agents.scripted_decisions import deciding
 from chessmark.db.enums import ModelRuntime
-from chessmark.db.models import Game, TranscriptMessage
+from chessmark.db.models import Game, ModelRegistry, TranscriptMessage
 from chessmark.game import Termination
 from tests.api.conftest import as_user, fund
 from tests.orchestration.conftest import run_next
@@ -38,6 +38,12 @@ async def _new_game(client: AsyncClient, db: AsyncSession) -> str:
                 "runtime": ModelRuntime.DECISION,
             }
         ],
+    )
+    # As the catalogue refresh leaves a decision model that answered its check (ADR-0051).
+    await db.execute(
+        sa.update(ModelRegistry)
+        .where(ModelRegistry.openrouter_id == MODEL)
+        .values(decisions_checked=DECISION_VERSION)
     )
     await db.commit()
     await fund(db)
@@ -91,7 +97,7 @@ async def test_the_models_answer_is_withheld_while_the_person_is_playing(
     await client.post(f"/games/{game_id}/resign", headers=as_user())
     (after,) = _decided((await client.get(f"/games/{game_id}/events")).json())
     assert after["probabilities"][0][0] == "e5"
-    assert set(after["answers"]) == {"resign", "offer_draw"}
+    assert set(after["answers"]) == {"play_on", "resign", "offer_draw"}
 
 
 async def test_a_decision_models_offer_can_be_accepted_by_the_person(
@@ -126,7 +132,8 @@ async def test_a_persons_offer_is_put_to_the_decision_model(
     while await run_next(worker, queue) is not None:
         pass
 
-    assert "accept_draw" in decide.calls[0]["questions"]  # type: ignore[attr-defined]
+    first = decide.calls[0]  # type: ignore[attr-defined]
+    assert "accept_draw" in first["questions"]["action"]["criteria"]
     # The offer reached it as a question, and not as prose into a transcript it does not have.
     written = await db.scalar(
         sa.select(sa.func.count())

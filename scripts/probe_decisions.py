@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""Probe decision models on labelled positions, and print what they answer (ADR-0049).
+"""Probe decision models on labelled positions, and print what they choose (ADR-0049, ADR-0051).
 
     make probe-decisions                       # every decision model in the registry
     make probe-decisions ARGS="--model typesafe/jev-1.13"
 
 **Spends money** — a fraction of a cent: one Decisions API call per position per model, each
-about 1,500 input tokens at $0.042 per million. Run by hand, never by a suite.
+about 1,500 input tokens at $0.02-0.05 per million. Run by hand, never by a suite.
 
-The gates in `agents/decision_turn.py` are set from what this prints, not from a default. A
-decision model's `noul` near 0.5 means yes and no are similarly likely, not "somewhat yes", so
-0.5 is a guess until a probe says where a model's clear yes and clear no actually fall — and the
-first real game showed the guess drawing a level game at move seven. Run it again whenever
-`DECISION_VERSION` changes or a new decision model is listed: a threshold does not carry from one
-model to another, or from one wording to the next.
+**A diagnostic, not a step.** Under `d1` this set the gates a `noul` needed, and it had to be run
+for every new model because a threshold does not carry between models. `d2` asks what to do with
+the turn as one `choice`, and the option a model ranks first is what happens — there is no
+threshold left to set, and a new model plays as soon as it passes its capability check
+(`agents/decision_check.py`). This is for a person who wants to see how a model judges.
 
-Each position states what a sound player would answer. The output puts the model's number beside
-that expectation, so a gate can be placed between the yeses and the noes it actually produced.
+Each position names the actions a sound player could take there, and the output marks whether the
+model's first-ranked action is one of them.
 """
 
 from __future__ import annotations
@@ -33,11 +32,13 @@ import chess  # noqa: E402
 import sqlalchemy as sa  # noqa: E402
 
 from chessmark.agents.decision_request import (  # noqa: E402
-    ACCEPT_DRAW_QUESTION,
-    CLAIM_DRAW_QUESTION,
+    ACCEPT_DRAW,
+    ACTION_QUESTION,
+    CLAIM_DRAW,
     MOVE_QUESTION,
-    OFFER_DRAW_QUESTION,
-    RESIGN_QUESTION,
+    OFFER_DRAW,
+    PLAY_ON,
+    RESIGN,
     THREEFOLD,
     build_request,
 )
@@ -53,82 +54,34 @@ from chessmark.db.session import dispose_engine, session_scope  # noqa: E402
 class Probe:
     name: str
     fen: str
-    #: What a sound player answers to each yes-or-no question asked here. Absent means "not asked".
-    expect: dict[str, bool]
+    #: The actions a sound player could take here. More than one where more than one is sound.
+    sound: frozenset[str]
     #: The move a sound player finds, when there is one clear answer.
     best: str | None = None
     offered: bool = False
     claimable: bool = False
 
 
+LEVEL = "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3"
+MATE_IN_ONE = "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4"
+QUEEN_UP = "4k3/8/8/8/8/8/3Q4/4K3 w - - 0 1"
+LOST = "4k3/8/8/8/8/8/3qr3/4K3 w - - 0 1"
+DEAD_DRAW = "8/5k2/8/8/8/8/1r3K2/7R w - - 0 60"
+PAWN_DOWN = "r1bq1rk1/ppp2ppp/2np1n2/4p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - 0 8"
+
 PROBES = [
-    Probe(
-        "level opening",
-        "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
-        {OFFER_DRAW_QUESTION: False, RESIGN_QUESTION: False},
-    ),
-    Probe(
-        "level opening, offered",
-        "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
-        {ACCEPT_DRAW_QUESTION: False, RESIGN_QUESTION: False},
-        offered=True,
-    ),
-    Probe(
-        "mate in one",
-        "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4",
-        {OFFER_DRAW_QUESTION: False, RESIGN_QUESTION: False},
-        best="Qxf7",
-    ),
-    Probe(
-        "a queen up",
-        "4k3/8/8/8/8/8/3Q4/4K3 w - - 0 1",
-        {OFFER_DRAW_QUESTION: False, RESIGN_QUESTION: False},
-    ),
-    Probe(
-        "a queen up, offered",
-        "4k3/8/8/8/8/8/3Q4/4K3 w - - 0 1",
-        {ACCEPT_DRAW_QUESTION: False, RESIGN_QUESTION: False},
-        offered=True,
-    ),
-    Probe(
-        "a queen and rook down",
-        "4k3/8/8/8/8/8/3qr3/4K3 w - - 0 1",
-        {OFFER_DRAW_QUESTION: True, RESIGN_QUESTION: True},
-    ),
-    Probe(
-        "a queen and rook down, offered",
-        "4k3/8/8/8/8/8/3qr3/4K3 w - - 0 1",
-        {ACCEPT_DRAW_QUESTION: True, RESIGN_QUESTION: True},
-        offered=True,
-    ),
-    Probe(
-        "dead drawn rook ending",
-        "8/5k2/8/8/8/8/1r3K2/7R w - - 0 60",
-        {OFFER_DRAW_QUESTION: True, RESIGN_QUESTION: False},
-    ),
-    Probe(
-        "dead drawn rook ending, offered",
-        "8/5k2/8/8/8/8/1r3K2/7R w - - 0 60",
-        {ACCEPT_DRAW_QUESTION: True, RESIGN_QUESTION: False},
-        offered=True,
-    ),
-    Probe(
-        "a queen up, threefold claimable",
-        "4k3/8/8/8/8/8/3Q4/4K3 w - - 0 1",
-        {CLAIM_DRAW_QUESTION: False, RESIGN_QUESTION: False},
-        claimable=True,
-    ),
-    Probe(
-        "a queen and rook down, threefold claimable",
-        "4k3/8/8/8/8/8/3qr3/4K3 w - - 0 1",
-        {CLAIM_DRAW_QUESTION: True},
-        claimable=True,
-    ),
-    Probe(
-        "a pawn down, open middlegame",
-        "r1bq1rk1/ppp2ppp/2np1n2/4p3/2B1P3/2NP1N2/PPP2PPP/R1BQ1RK1 w - - 0 8",
-        {RESIGN_QUESTION: False},
-    ),
+    Probe("level opening", LEVEL, frozenset({PLAY_ON})),
+    Probe("level opening, offered", LEVEL, frozenset({PLAY_ON}), offered=True),
+    Probe("mate in one", MATE_IN_ONE, frozenset({PLAY_ON}), best="Qxf7"),
+    Probe("a queen up", QUEEN_UP, frozenset({PLAY_ON})),
+    Probe("a queen up, offered", QUEEN_UP, frozenset({PLAY_ON}), offered=True),
+    Probe("a queen up, threefold claimable", QUEEN_UP, frozenset({PLAY_ON}), claimable=True),
+    Probe("a queen and rook down", LOST, frozenset({RESIGN, OFFER_DRAW})),
+    Probe("a queen and rook down, offered", LOST, frozenset({ACCEPT_DRAW}), offered=True),
+    Probe("a queen and rook down, claimable", LOST, frozenset({CLAIM_DRAW}), claimable=True),
+    Probe("dead drawn rook ending", DEAD_DRAW, frozenset({OFFER_DRAW, PLAY_ON})),
+    Probe("dead drawn rook ending, offered", DEAD_DRAW, frozenset({ACCEPT_DRAW}), offered=True),
+    Probe("a pawn down, open middlegame", PAWN_DOWN, frozenset({PLAY_ON})),
 ]
 
 
@@ -166,8 +119,7 @@ async def main() -> int:
     spent = 0.0
     for model in models:
         print(f"\n{model}")
-        yes: dict[str, list[float]] = {}
-        no: dict[str, list[float]] = {}
+        sound = asked = 0
         for probe in PROBES:
             request = build_request(
                 chess.Board(probe.fen),
@@ -180,24 +132,22 @@ async def main() -> int:
                 # One refused position is a gap in the table, not a reason to lose the rest of it:
                 # Kev's host rate-limits on tokens per minute, and a probe run straight after a game
                 # meets that limit part-way through.
-                print(f"  {probe.name:<44} refused: {str(error)[:80]}")
+                print(f"  {probe.name:<42} refused: {str(error)[:80]}")
                 continue
             spent += float(decision.cost_usd)
+            asked += 1
             chosen, _ = decision.choice(MOVE_QUESTION, set(request.moves))
+            action, ranked = decision.choice(ACTION_QUESTION, set(request.actions))
             found = "" if probe.best is None else (" ✓" if chosen == probe.best else " ✗")
-            answers = []
-            for question, expected in probe.expect.items():
-                value = decision.noul(question)
-                (yes if expected else no).setdefault(question, []).append(value)
-                answers.append(f"{question}={value:.2f}{'(yes)' if expected else '(no)'}")
-            print(f"  {probe.name:<44} {chosen:<6}{found:<3} " + "  ".join(answers))
-
-        print("  where a gate can go — highest 'no' against lowest 'yes', per question:")
-        for question in sorted(set(yes) | set(no)):
-            high_no = max(no.get(question, [0.0]))
-            low_yes = min(yes.get(question, [1.0]))
-            verdict = "separable" if high_no < low_yes else "OVERLAP"
-            print(f"    {question:<12} no ≤ {high_no:.2f}   yes ≥ {low_yes:.2f}   {verdict}")
+            ok = action in probe.sound
+            sound += ok
+            spread = "  ".join(
+                f"{a} {p:.2f}" for a, p in sorted(ranked.items(), key=lambda kv: -kv[1])
+            )
+            print(
+                f"  {probe.name:<42} {chosen:<6}{found:<3} {'✓' if ok else '✗'} {action:<12} {spread}"
+            )
+        print(f"  sound actions: {sound} of {asked}")
 
     print(f"\nspent ${spent:.6f}")
     return 0

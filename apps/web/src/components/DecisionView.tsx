@@ -14,8 +14,10 @@ const ACTION_TEXT: Record<string, string> = {
   accept_draw: "accepted the draw",
 };
 
-/** The other questions it is asked, in the words a reader would use. */
+/** Its options for the turn, in the words a reader would use — `d2`'s action choice, and the
+ *  keys `d1` asked as separate questions, which read the same (ADR-0051). */
 const QUESTION_TEXT: Record<string, string> = {
+  play_on: "play on",
   resign: "resign",
   offer_draw: "offer draw",
   claim_draw: "claim draw",
@@ -58,8 +60,17 @@ export function DecisionView({ block, edge }: { block: DecisionBlock; edge: stri
       <p className="font-mono text-meta text-ink-faint">{head}</p>
 
       {(acted || block.offersDraw) && (
-        <p className="font-mono text-meta text-accent">
-          {acted ?? "offered a draw with its move"}
+        <p className="font-mono text-meta text-accent">{acted ?? "offered a draw with its move"}</p>
+      )}
+
+      {/* **The rule acting, said rather than hidden.** Ending the game takes a majority of the
+          model's own ranking (ADR-0051); a reader who sees "resign 45%" ranked first beside a move
+          being played deserves the reason on the same line. */}
+      {block.rankedFirst && block.answers && (
+        <p className="font-mono text-meta text-ink-dim">
+          ranked {QUESTION_TEXT[block.rankedFirst] ?? block.rankedFirst} first at{" "}
+          {percent(block.answers[block.rankedFirst] ?? 0)}; ending the game takes a majority, so it
+          played on
         </p>
       )}
 
@@ -111,7 +122,10 @@ export function DecisionView({ block, edge }: { block: DecisionBlock; edge: stri
       {block.answers && Object.keys(block.answers).length > 0 && (
         <p className="font-mono text-meta text-ink-faint">
           {Object.entries(block.answers)
-            .map(([question, probability]) => `${QUESTION_TEXT[question] ?? question} ${percent(probability)}`)
+            .map(
+              ([question, probability]) =>
+                `${QUESTION_TEXT[question] ?? question} ${percent(probability)}`,
+            )
             .join(" · ")}
         </p>
       )}

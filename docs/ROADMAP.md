@@ -68,7 +68,6 @@ launch.
 | **Cache Components (PPR) is not enabled**, so no page is prerendered — every route is still server-rendered per request, just from cached data (ADR-0046). Turning it on would make the fully-cached pages static, but it also makes *every* dynamic route stream a shell first, which is the behaviour ADR-0046 removed; it needs the three `notFound()` checks moved into `proxy` (an API round trip in middleware) and the root layout's Clerk decision restructured, which is auth on every page with no CI coverage. Measured headroom over today: single-digit milliseconds of server render. | Phase 23 |
 | **A lost revalidation POST leaves a page stale for up to five minutes.** Best-effort by design (it must not be able to fail a committed turn), bounded by `FALLBACK_REVALIDATE`, and logged as a warning — but nothing alerts on a run of them, so a wrong `REVALIDATE_SECRET` in production would show up as numbers that lag rather than as an error. | Phase 23 |
 | **A decision model's rating sits beside chat ratings on a nearly identical task.** It sees what a chat model's board shows and no more, but it is offered only legal moves, so it cannot lose a game to illegal moves the way a chat model can. Marked by a badge wherever a model is named; whether a separate board would read better is open until there are enough decision games (ADR-0049). | Phase 25 |
-| **The decision gates were probed on two models and twelve positions.** Enough to replace a guess with a measurement, not enough to call calibrated; Jev's dead-drawn ending already falls under the gate (ADR-0049). Re-run `make probe-decisions` on every new decision model. | Phase 25 |
 | **A closed event cannot be resumed cleanly.** Abandoning its last pairing completes it, `advance` returns *already over*, and no later tick settles anything. A pool never finishes, so this has not bitten. | Phase 13 |
 | **Standings and ratings are one decision, and human tournaments make two.** FIDE records a forfeit as a loss in the crosstable and excludes it from the rating: the table must be complete, the rating should only reflect games actually played. `db/tournaments.settle` and `bench/ratable.judge` make the same call in both places. Splitting them would give a third answer for endings like `truncated` — score it, do not rate it. **This row asserted that agreement for a month while it was false**: `settle` read `GameStatus.ABORTED`, which only `ABANDONED` produces, so a `ply_cap`, a `budget_exceeded` or an `adjudication` finished as a real `GameResult` and was scored like any other draw. `pool-free` round 175 showed it — a 300-ply cap drew a game White was winning with `g8=Q` on the move, and the pool's table put `0.5` beside `unrated`. It now asks `HARNESS_TERMINATIONS`, so the claim holds; the decision of whether to *split* them is still open. | Phase 13 |
 
@@ -1509,6 +1508,33 @@ the Decision Cup's shape, and what `pool-free` needs to stop spending on well-me
 - [x] `GET /tournaments/{slug}` reports the target and whether the pool is saturated
 
 **Covers:** BENCH-14
+
+---
+
+## Phase 27 — Decision models choose, and are checked
+
+**Goal:** a newly listed decision model plays correctly with no per-model step — no gates to tune,
+and no game started against a model that cannot answer a turn
+([ADR-0051](adr/0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md)).
+
+**Objectives**
+1. `d2`: what to do with the turn is one `choice`; a game-ending action needs a majority
+2. A capability check at registration, once per model per version, in the catalogue refresh
+3. The timeline says when the majority rule overruled a model's first choice
+
+**Exit criteria**
+- [x] The request asks two choices and no yes/no questions — the `d2` recording pins it
+- [x] A non-ending action happens when ranked first; an ending needs more than half; the record
+      names an overruled first choice — `tests/orchestration/test_decision_games.py`, mutated
+- [x] A model that answers is offered; a refusing host is recorded and never offered; a rate limit
+      defers; a checked model is not asked again until the version changes —
+      `tests/agents/test_decision_check.py`
+- [x] Checked against the live catalogue: Jev and Kev answer, all three Span models are refused
+      with Respan's own message
+- [x] Four real games scored by Stockfish: a plurality resigned a won position (+7.7), and under
+      the majority rule the same position was played on; no draw offers in level positions
+
+**Covers:** AGENT-24, AGENT-26
 
 ---
 

@@ -22,12 +22,13 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.decision_request import (
-    ACCEPT_DRAW_QUESTION,
-    CLAIM_DRAW_QUESTION,
+    ACCEPT_DRAW,
+    ACTION_QUESTION,
+    CLAIM_DRAW,
     FIFTY_MOVES,
     MOVE_QUESTION,
-    OFFER_DRAW_QUESTION,
-    RESIGN_QUESTION,
+    OFFER_DRAW,
+    RESIGN,
     THREEFOLD,
     DecisionRequest,
     build_request,
@@ -44,36 +45,24 @@ from chessmark.db.models import Game, GameEvent, LlmCall, Player, Turn
 from chessmark.db.repositories import append_event, open_draw_offer, record_ply
 from chessmark.game import Colour, MoveOutcome, Referee
 
-#: The gates, one per yes-or-no question, **and one for every model** (ADR-0049).
+#: **There are no gates** (ADR-0051). `d1` asked a `noul` per action and acted at 0.5, and a
+#: `noul` is an absolute probability whose scale differs between models: in the same dead-drawn
+#: ending Jev offered a draw at 0.29 and Kev at 0.53, so one gate for every model decided some turns
+#: by how a model's scale happened to meet our number, and a gate per model would have meant tuning
+#: each contestant. `d2` asks one `choice` among the actions open to the seat, and the option it
+#: ranks first is what happens — on its own scale, with nothing of ours in between.
 #:
-#: Set from `scripts/probe_decisions.py`, not from a default — and the first default was wrong in a
-#: way only a real game showed: asked whether a draw was "a fair result" from a "balanced" position,
-#: both models sat at 0.3-0.5 from move one and agreed a draw at move seven of a level middlegame.
-#: Reworded around winning chances, and with the facts cut back to what a board shows, the probe on
-#: 2026-09-26 separated every labelled "no" from every labelled "yes", per question, for both models
-#: (Kev's twelve positions over two runs — its host rate-limits on tokens per minute):
-#:
-#:                 kev-4b  no ≤  yes ≥    jev-1.13  no ≤  yes ≥
-#:   resign               0.35   0.65               0.12   0.83
-#:   claim_draw           0.34   0.86               0.07   0.89
-#:   offer_draw           0.33   0.53               0.06   0.29
-#:   accept_draw          0.30   0.53               0.07   0.37
-#:
-#: 0.5 sits between the two columns everywhere except Jev's dead-drawn rook ending, which it offers
-#: and accepts at 0.29 and 0.37 — so Jev plays that ending on, and the game is drawn by the
-#: fivefold or seventy-five-move rule instead: the same result, later. Lowering the gate to catch it
-#: would sit inside Kev's "no" band, and a gate per model would be the harness tuning each
-#: contestant's answers for it. One number, the plain reading of the question, re-probed whenever
-#: `DECISION_VERSION` or the field of models changes.
-#:
-#: What a mistake costs, per gate: claiming or accepting a draw in a won position gives away half a
-#: point, and declining one in a lost position loses the game it thought was lost; resigning a
-#: saveable position loses it for good, and playing on in a lost one costs only time; offering
-#: costs nothing by itself, since the opponent decides and the seat still moves.
-CLAIM_DRAW_AT = 0.5
-ACCEPT_DRAW_AT = 0.5
-RESIGN_AT = 0.5
-OFFER_DRAW_AT = 0.5
+#: **With one exception: ending the game takes a majority.** Resigning, accepting a draw and
+#: claiming one cannot be taken back, so each happens only when the model puts more than half of
+#: its action probability on it; below that the turn is played as the model's best non-ending
+#: action. Unlike `d1`'s gates this is the same statement for every model — a `choice`'s
+#: probabilities sum to one, so "more than half" means "most of its belief", whatever its scale —
+#: and nothing is tuned per model. It exists because a plurality resigned a won game: Kev, in check
+#: with a free rook to take and Stockfish at +7.7 for it, resigned on 0.45 against 0.38 to play on.
+#: Playing on when it should have resigned costs only time, since mate or the draw rules still end
+#: the game; resigning when it should not loses one that was won.
+ENDING_MAJORITY = 0.5
+ENDING_ACTIONS = frozenset({RESIGN, ACCEPT_DRAW, CLAIM_DRAW})
 
 
 class DecisionTurnRunner:
@@ -169,8 +158,8 @@ class DecisionTurnRunner:
             may_offer_draw=await self._may_offer(),
         )
 
-        # **Asked even with one legal move.** The move is then settled, but resigning, claiming and
-        # offering are not, and a seat skipped on a forced move would be one never asked whether
+        # **Asked even with one legal move.** The move is then settled, but what to do with the turn
+        # is not, and a seat skipped on a forced move would be one never asked whether
         # to resign in the positions most likely to deserve it.
         decision = await self.gateway.decide(
             request.body(model=self.model), session_id=session_for_game(self.game.id)
@@ -183,34 +172,23 @@ class DecisionTurnRunner:
         result.completion_tokens = decision.usage.completion
         result.cost_usd = decision.cost_usd
 
-        # Every answer is read — and so validated — before anything is acted on, so a malformed
+        # Both answers are read — and so validated — before anything is acted on, so a malformed
         # one fails the turn cleanly rather than half-way through ending the game.
         chosen, probabilities = decision.choice(MOVE_QUESTION, set(request.moves))
-        answers = {
-            key: decision.noul(key)
-            for key in (
-                CLAIM_DRAW_QUESTION,
-                ACCEPT_DRAW_QUESTION,
-                RESIGN_QUESTION,
-                OFFER_DRAW_QUESTION,
-            )
-            if key in request.questions
-        }
+        picked, answers = decision.choice(ACTION_QUESTION, set(request.actions))
 
-        # **One action per turn, in a fixed order, the way a player at a board would take them.**
-        # A draw on the table — claimable by right, or offered — is taken before resigning, since
-        # a seat that thinks it is lost prefers the half point. Resigning comes before the move,
-        # because a resigned player does not move. The offer rides with the move, as it does over
-        # a board and as `offer_draw` does for a chat seat (ADR-0040).
-        if answers.get(CLAIM_DRAW_QUESTION, 0.0) >= CLAIM_DRAW_AT:
-            action = "claim_draw"
-        elif answers.get(ACCEPT_DRAW_QUESTION, 0.0) >= ACCEPT_DRAW_AT:
-            action = "accept_draw"
-        elif answers.get(RESIGN_QUESTION, 0.0) >= RESIGN_AT:
-            action = "resign"
-        else:
-            action = "move"
-        offers = action == "move" and answers.get(OFFER_DRAW_QUESTION, 0.0) >= OFFER_DRAW_AT
+        # **The action the model ranked first is what happens** (ADR-0051) — unless it ends the
+        # game on less than a majority, when its best non-ending action is played instead
+        # (`ENDING_MAJORITY`). Playing on and offering a draw both play the move; the offer rides
+        # with it, as it does over a board and as `offer_draw` does for a chat seat (ADR-0040).
+        taken = picked
+        if picked in ENDING_ACTIONS and answers.get(picked, 0.0) <= ENDING_MAJORITY:
+            taken = max(
+                (a for a in request.actions if a not in ENDING_ACTIONS),
+                key=lambda a: (answers.get(a, 0.0), -request.actions.index(a)),
+            )
+        offers = taken == OFFER_DRAW
+        action = taken if taken in ENDING_ACTIONS else "move"
 
         await self._record_decision(
             decision,
@@ -220,16 +198,17 @@ class DecisionTurnRunner:
             answers=answers,
             action=action,
             offers=offers,
+            ranked_first=picked,
         )
 
         result.status = TurnStatus.COMPLETED
-        if action == "claim_draw":
+        if action == CLAIM_DRAW:
             result.outcome = self.referee.claim_draw()
             return
-        if action == "accept_draw":
+        if action == ACCEPT_DRAW:
             result.outcome = self.referee.agree_draw()
             return
-        if action == "resign":
+        if action == RESIGN:
             result.outcome = self.referee.resign(self.colour)
             return
 
@@ -322,8 +301,10 @@ class DecisionTurnRunner:
         answers: dict[str, float],
         action: str,
         offers: bool,
+        ranked_first: str,
     ) -> None:
         """The answer, as an event the pages can draw and a frame a spectator sees at once."""
+        overruled = ranked_first in ENDING_ACTIONS and action == "move"
         payload: dict[str, Any] = {
             "player_id": str(self.player.id),
             "colour": self.colour.value,
@@ -332,6 +313,9 @@ class DecisionTurnRunner:
             "duration_ms": decision.latency_ms,
             # What the seat did — public the moment it happens, so never withheld.
             "action": action,
+            # What the model ranked first, when that is not what happened — an ending it chose on
+            # less than a majority. Said, so the record shows the rule acting rather than hiding it.
+            **({"ranked_first": ranked_first} if overruled else {}),
             "choice": chosen,
             "offers_draw": offers,
             "options": len(request.moves),
@@ -344,7 +328,8 @@ class DecisionTurnRunner:
                 )
             ],
             "confidence": decision.confidence(MOVE_QUESTION),
-            # The yes-probability of every other question it was asked this turn.
+            # How it ranked every action open to it this turn — `play_on` included, since how close
+            # it came to resigning is only readable against how much it wanted to play on.
             "answers": answers,
         }
         await append_event(
@@ -435,4 +420,4 @@ class DecisionTurnRunner:
         await self.session.flush()
 
 
-__all__ = ["ACCEPT_DRAW_AT", "DecisionTurnRunner"]
+__all__ = ["DecisionTurnRunner"]

@@ -10,14 +10,16 @@ import chess
 import pytest
 
 from chessmark.agents.decision_request import (
-    ACCEPT_DRAW_QUESTION,
-    CLAIM_DRAW_QUESTION,
+    ACCEPT_DRAW,
+    ACTION_QUESTION,
+    CLAIM_DRAW,
     DECISION_VERSION,
     FIFTY_MOVES,
     MOVE_QUESTION,
-    OFFER_DRAW_QUESTION,
+    OFFER_DRAW,
+    PLAY_ON,
     RECENT_PLIES,
-    RESIGN_QUESTION,
+    RESIGN,
     THREEFOLD,
     build_request,
 )
@@ -104,30 +106,44 @@ def test_the_rules_that_decide_a_game_are_stated() -> None:
         assert rule in instructions
 
 
-def test_resigning_and_offering_are_asked_every_turn() -> None:
-    questions = build_request(chess.Board()).questions
-    assert questions[RESIGN_QUESTION]["type"] == "noul"
-    assert questions[OFFER_DRAW_QUESTION]["type"] == "noul"
-    assert CLAIM_DRAW_QUESTION not in questions
-    assert ACCEPT_DRAW_QUESTION not in questions
+def _actions(request: object) -> list[str]:
+    return list(request.questions[ACTION_QUESTION]["criteria"])  # type: ignore[attr-defined]
 
 
-def test_a_claim_is_asked_only_when_one_is_open_and_says_which() -> None:
+def test_what_to_do_with_the_turn_is_one_choice_with_no_yes_or_no_questions() -> None:
+    """**`d2`: a choice, not gates** (ADR-0051). A `noul` needs a threshold and a threshold does
+    not carry between models; a choice is decided by the model's own ranking."""
+    request = build_request(chess.Board())
+    assert request.questions[ACTION_QUESTION]["type"] == "choice"
+    assert [q["type"] for q in request.questions.values()] == ["choice", "choice"]
+    # Playing on comes first, so an even ranking falls to the ordinary turn.
+    assert _actions(request) == [PLAY_ON, OFFER_DRAW, RESIGN]
+    assert request.actions == (PLAY_ON, OFFER_DRAW, RESIGN)
+
+
+def test_the_action_question_says_how_to_judge_a_draw_and_a_resignation() -> None:
+    instructions = build_request(chess.Board()).questions[ACTION_QUESTION]["instructions"]
+    assert "no longer expect to win" in instructions
+    assert "a pawn or two down, is never a reason to resign" in instructions
+
+
+def test_a_claim_is_offered_only_when_one_is_open_and_says_which() -> None:
     board = chess.Board()
     threefold = build_request(board, draw_claimable=THREEFOLD)
     fifty = build_request(board, draw_claimable=FIFTY_MOVES)
-    assert threefold.questions[CLAIM_DRAW_QUESTION]["type"] == "noul"
+    assert CLAIM_DRAW in _actions(threefold)
     assert "three times" in threefold.state["draw_claim"]
     assert "Fifty moves" in fifty.state["draw_claim"]
     assert "draw_claim" not in build_request(board).state
+    assert CLAIM_DRAW not in _actions(build_request(board))
 
 
 def test_an_open_offer_is_answered_rather_than_countered() -> None:
     request = build_request(_played("e4"), draw_offered=True)
-    assert request.questions[ACCEPT_DRAW_QUESTION]["type"] == "noul"
+    assert ACCEPT_DRAW in _actions(request)
     assert request.state["draw_offer"] == "White has offered a draw."
     # Offering back while the opponent's own offer is open would be asking to accept it twice.
-    assert OFFER_DRAW_QUESTION not in request.questions
+    assert OFFER_DRAW not in _actions(request)
 
 
 def test_every_named_field_is_one_the_questions_can_read() -> None:
@@ -201,5 +217,4 @@ def test_a_quiet_last_move_adds_nothing() -> None:
 
 def test_a_seat_that_may_not_offer_is_not_asked_to() -> None:
     request = build_request(chess.Board(), may_offer_draw=False)
-    assert OFFER_DRAW_QUESTION not in request.questions
-    assert RESIGN_QUESTION in request.questions
+    assert _actions(request) == [PLAY_ON, RESIGN]

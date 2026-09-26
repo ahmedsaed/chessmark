@@ -296,13 +296,17 @@ first.
 A decision model's turn is one `decided` event — no reasoning, no tool calls
 ([ADR-0049](adr/0049-decision-models-play-through-their-own-harness.md)). `DecisionView` draws it
 **open**: the moves it weighed highest as bars with their percentages, what it did if it did more
-than move (resigned, claimed or accepted a draw, offered one), and the yes-probability of each other
-question. Reasoning is closed by default because it runs to thousands of tokens; a decision is five
+than move (resigned, claimed or accepted a draw, offered one), and how it ranked every action open
+to it (`d1` events show the four yes-probabilities instead, and read the same way). Reasoning is closed by default because it runs to thousands of tokens; a decision is five
 rows and the only view there is into what the model weighed.
 
 - **Withheld is not empty.** A person playing the model is sent the event without `probabilities`,
   `confidence` or `answers` (invariant 8); `decisionBlock` reads their absence as `null`, and the
   view says the weighing is shown when the game ends rather than drawing nothing.
+- **An ending overruled by the majority rule is said, not hidden** (ADR-0051). When the model ranked
+  resigning or a draw first on less than half its ranking, the event carries `ranked_first`, and
+  the view says so on its own line: *ranked resign first at 42%; ending the game takes a majority,
+  so it played on*.
 - **The chosen move is marked only when it was played.** A seat that resigned still ranked a move
   first; highlighting it would claim a move the board never saw.
 - **`RuntimeBadge` marks a decision model wherever a model is named** — leaderboard, catalogue,

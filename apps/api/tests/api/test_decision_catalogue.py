@@ -8,6 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.decision_request import DECISION_VERSION
 from chessmark.api.routes.events import _visible_frame
 from chessmark.db.enums import GameStatus, ModelRuntime
 from chessmark.db.models import ModelEndpoint, ModelRegistry
@@ -28,6 +29,8 @@ async def _model(db: AsyncSession, slug: str, *, decision: bool) -> ModelRegistr
         # A decision model declares no parameters at all, tools included.
         supports_tools=not decision,
         runtime=ModelRuntime.DECISION if decision else ModelRuntime.LLM,
+        # As the catalogue refresh leaves a decision model that answered its check (ADR-0051).
+        decisions_checked=DECISION_VERSION if decision else None,
         context_length=32_000 if decision else 200_000,
     )
     db.add(model)
@@ -135,3 +138,22 @@ def test_a_decision_frame_is_dropped_from_a_person_mid_game() -> None:
     frame = {"frame": "block", "kind": "decision", "choice": "e5", "probabilities": [["e5", 0.6]]}
     assert _visible_frame(frame, withhold=True) is None
     assert _visible_frame(frame, withhold=False) == frame
+
+
+async def test_a_decision_model_that_has_not_answered_its_check_cannot_be_seated(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Named by hand, it still has to have passed (ADR-0051) — or the first move is a 400."""
+    unchecked = await _model(db, "respan/span-01", decision=True)
+    unchecked.decisions_checked = None
+    await _model(db, "vendor/chat", decision=False)
+    await db.commit()
+    await fund(db, "user_unchecked")
+
+    response = await client.post(
+        "/games",
+        json={"white": "vendor/chat", "black": "respan/span-01"},
+        headers=as_user("user_unchecked"),
+    )
+    assert response.status_code == 400
+    assert "not been checked" in response.json()["detail"]
