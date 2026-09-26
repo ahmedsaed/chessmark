@@ -65,6 +65,30 @@ test("the models page filters in the browser, without a request per keystroke", 
   expect(requests.filter((url) => url.startsWith(api))).toEqual([]);
 });
 
+test("every model row is one line, the widest price included", async ({ page }) => {
+  /* 640px is the narrowest width the price column shows at, so it is where it is tightest. At
+     5rem every two-digit price broke in two — `$10.00 /` over `$50.00` — and those rows stood
+     taller than their neighbours. Asserted structurally: every row the same height, and no price
+     wider than its box. The seed carries the catalogue's widest price for exactly this. */
+  await page.setViewportSize({ width: 640, height: 900 });
+  await page.goto("/models");
+  await page.getByLabel("Search models").fill("pro");
+
+  const rows = page.locator('a[href^="/models/"]');
+  await expect(rows.first()).toBeVisible();
+
+  const heights = await rows.evaluateAll((links) =>
+    links.map((link) => Math.round(link.getBoundingClientRect().height)),
+  );
+  expect(new Set(heights).size, `row heights ${heights.join(", ")}`).toBe(1);
+
+  const prices = page.locator('[title="input / output per million tokens"]');
+  const overflowing = await prices.evaluateAll((cells) =>
+    cells.filter((cell) => cell.scrollWidth > cell.clientWidth).map((cell) => cell.textContent),
+  );
+  expect(overflowing).toEqual([]);
+});
+
 test("a model page reaches the games behind its numbers", async ({ page }) => {
   await page.goto("/models");
   await page.getByLabel("Search models").fill("gemini");
