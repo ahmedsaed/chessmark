@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents.scripted import prose, scripted, step, tool_call
 from chessmark.agents.turn import TurnLimits
 from chessmark.db.enums import TurnStatus
-from chessmark.db.models import GameEvent, LlmCall, Player, TranscriptMessage
+from chessmark.db.models import GameEvent, LlmCall, Player, ToolCall, TranscriptMessage
 from chessmark.db.models import Turn as TurnRow
 from chessmark.game import Colour
 from tests.agents.conftest import Table, play_turn
@@ -477,3 +477,47 @@ class TestAnInterruptedTurnKeepsItsWork:
         assert [t.status for t in turns] != [TurnStatus.INTERRUPTED], (
             "an interrupted turn carrying a ply can be resumed for a different one"
         )
+
+    async def test_a_resumed_turn_numbers_its_tool_calls_after_an_unknown_one(
+        self, db: AsyncSession, table: Table
+    ) -> None:
+        """**The row's counter is not the table's sequence.** `c4550202`, turn 10385.
+
+        The model called `get_legal_moves><tool_call>get_legal_moves` — a mangled name — and was
+        then refused. The unknown tool was written to `tool_calls` at sequence 1, but an unknown
+        tool is not counted in `tool_call_count`, so the turn was kept saying it had made none.
+        The retry seeded its sequence from that count, called `get_legal_moves`, and wrote sequence
+        1 again: a unique-constraint violation on every resume, and a game that sat silent for
+        forty-five minutes at a time until the stall sweep came round.
+        """
+        served = {"calls": 0}
+
+        async def mangles_then_stops(**_kwargs: object) -> object:
+            served["calls"] += 1
+            if served["calls"] == 1:
+                return step(tool_call("get_legal_moves><tool_call>get_legal_moves"))
+            raise RefusedError
+
+        first = await play_turn(db, table, mangles_then_stops, colour=Colour.WHITE)
+        assert first.keep_rounds, "the refusal should keep the round before it"
+
+        second = await play_turn(
+            db,
+            table,
+            scripted(
+                step(tool_call("get_legal_moves")),
+                step(tool_call("make_move", move="e4")),
+                prose("done"),
+            ),
+            colour=Colour.WHITE,
+        )
+        assert second.move is not None, "the resumed turn should reach its move"
+
+        sequences = list(
+            await db.scalars(
+                sa.select(ToolCall.sequence)
+                .where(ToolCall.game_id == table.game.id)
+                .order_by(ToolCall.sequence)
+            )
+        )
+        assert sequences == [1, 2, 3]
