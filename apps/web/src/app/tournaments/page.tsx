@@ -64,6 +64,12 @@ export function formatLabel(tournament: TournamentSummary): string {
      the second. It pairs *like* one — greedy and incremental, every pair before any repeat
      (ADR-0041) — but what a reader needs from the word is that it never ends and its field is not
      fixed, which "round robin" states the opposite of. */
+  /* A pool with a per-pair target does end its pairs — it plays each one that many times and then
+     waits for a newcomer (ADR-0050) — so "never ends" would now be untrue of it. */
+  if (tournament.format === "pool" && tournament.games_per_pair) {
+    const n = tournament.games_per_pair;
+    return `pool · ${n} game${n === 1 ? "" : "s"} a pair`;
+  }
   if (tournament.format === "pool") return "pool · never ends";
   return tournament.double ? "double round robin" : "round robin";
 }

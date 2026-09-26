@@ -93,6 +93,11 @@ docker compose run --rm tournament create --name 'Free Models' --slug pool-free 
     --free --format pool --active-from 06:00 --active-until 20:00
 docker compose run --rm tournament standings pool-free
 docker compose run --rm tournament pause pool-free --abort-live
+
+# a pool that plays each pair twice, then idles until a newcomer (ADR-0050)
+./chessmark tournament set pool-free --games-per-pair 2
+./chessmark tournament create --name 'Decision Cup' --slug decision-cup --decision \
+    --format pool --games-per-pair 2 --max-usd 1
 ```
 
 The long-running `tournament` container ticks **every unfinished event**, discovered from the

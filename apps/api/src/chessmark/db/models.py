@@ -855,6 +855,12 @@ class Tournament(Base):
     #: game generates it.
     max_concurrent: Mapped[int] = mapped_column(default=1, server_default="1")
 
+    #: Pools only: how many games each pair plays before the pool stops pairing them, or null for
+    #: an open-ended pool (ADR-0050). A pool with a target saturates and idles, and wakes when a
+    #: newcomer brings pairs that have not met — the way an engine rating list gauntlets each new
+    #: engine rather than playing everyone for ever.
+    games_per_pair: Mapped[int | None] = mapped_column(sa.Integer)
+
     #: The event's own ceiling, independent of any user's quota — this is the harness spending on
     #: its own initiative rather than a person spending theirs (ADR-0011).
     max_usd: Mapped[Decimal | None] = mapped_column(USD)

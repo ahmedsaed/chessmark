@@ -17,6 +17,11 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **A pool can stop.** `--games-per-pair N` gives a pool a target: each pair plays N decided games
+  per era, and once every pair has, the pool idles until a new model is admitted. Then it plays
+  only the newcomer's pairs. Set it on a running pool with `tournament set <slug> --games-per-pair
+  N` (`0` clears it). Abandoned games don't count, and the tournament page says when a pool is idle
+  for this reason. (BENCH-14, [ADR-0050](docs/adr/0050-a-pool-saturates-per-pair.md))
 - **Decision models play.** OpenRouter's decision models — TypeSafe's Jev 1.13 and Kev 4B today —
   are registered from their own catalogue listing and play through the Decisions API: one request
   per turn with the position and every legal move described, and a probability back for each. They

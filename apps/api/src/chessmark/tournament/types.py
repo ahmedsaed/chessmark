@@ -188,6 +188,10 @@ class TournamentConfig:
     #: Swiss only. Ignored for round robin, whose length is decided by the field.
     rounds: int = 5
     max_concurrent: int = 1
+    #: Pools only: how many games each pair plays before the pool stops pairing them (ADR-0050).
+    #: `None` is the open-ended pool, pairing for ever. With a target the pool **saturates** — every
+    #: pair has met that often — and idles until a newcomer brings pairs that have not.
+    games_per_pair: int | None = None
     max_usd: Decimal | None = None
     max_plies_per_game: int = 300
     max_usd_per_game: Decimal | None = None
@@ -197,6 +201,10 @@ class TournamentConfig:
     def __post_init__(self) -> None:
         if self.max_concurrent < 1:
             raise ValueError("max_concurrent must be at least 1")
+        if self.games_per_pair is not None and self.games_per_pair < 1:
+            raise ValueError("games_per_pair must be at least 1, or None for no target")
+        if self.games_per_pair is not None and self.format is not Format.POOL:
+            raise ValueError("games_per_pair is a pool's target; a closed event's field decides")
         if self.format is Format.SWISS and self.rounds < 1:
             raise ValueError("a Swiss tournament needs at least one round")
         if self.max_usd is not None and self.max_usd <= 0:

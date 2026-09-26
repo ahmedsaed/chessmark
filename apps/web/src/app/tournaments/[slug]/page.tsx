@@ -102,6 +102,15 @@ export default async function TournamentPage({
         <StatusChip status={tournament.status} />
         <EraMenu tournament={tournament} slug={slug} />
       </div>
+      {/* **Idle is not stuck.** A saturated pool starts nothing because every pair has played its
+          games, and a page that just stopped showing new ones would read as broken (ADR-0050). */}
+      {tournament.saturated && tournament.status === "running" && (
+        <p className="mt-2 font-mono text-meta text-ink-dim" data-testid="saturated">
+          Every pair has played its {tournament.games_per_pair}{" "}
+          {tournament.games_per_pair === 1 ? "game" : "games"}. Idle until a new model enters the
+          field.
+        </p>
+      )}
       <p className="mt-1 font-mono text-xs text-ink-faint">
         {tournament.field_description} · {tournament.entrant_count} entrants ·{" "}
         {formatLabel(tournament)}

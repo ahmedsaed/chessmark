@@ -51,7 +51,7 @@ comparisons differ, which is the whole reason this is a policy rather than a sec
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -178,6 +178,8 @@ def matchmake(
     unavailable: frozenset[str] | set[str] = frozenset(),
     attempts: Sequence[Pairing] = (),
     policy: Policy = Policy.BALANCE,
+    games_per_pair: int | None = None,
+    pair_games: Mapping[frozenset[str], int] | None = None,
 ) -> list[Pairing]:
     """The next `count` games to play.
 
@@ -198,6 +200,13 @@ def matchmake(
 
     Fewer than two available entrants returns no games rather than pairing regardless. The pool
     holds for a tick, which is correct: there is no game worth starting.
+
+    `games_per_pair` is the pool's target (ADR-0050): a pair that has had that many games in this
+    era is not paired again, and an entrant with no such opponent left is not chosen at all. When
+    every pair has reached it the pool is **saturated** and this returns nothing — the pool idles
+    until a newcomer brings pairs that have not met. `pair_games` is what each pair already has,
+    counted by the caller because only the database knows which pairings were abandoned (those do
+    not count: a game the harness stopped is replayed, not scored). `None` is the open-ended pool.
 
     `policy` chooses between the two questions in `Policy`. It defaults to `BALANCE`, which is what
     a public leaderboard needs: `INFORMATION` ran `pool-free` to 44% pair coverage with one entrant
@@ -222,13 +231,26 @@ def matchmake(
 
     available = set(field) - set(unavailable)
     games: list[Pairing] = []
+    #: What each pair has, updated as this batch is chosen, so a batch cannot overshoot the target.
+    had: dict[frozenset[str], int] = dict(pair_games or {})
+
+    def open_pair(a: str, b: str) -> bool:
+        return games_per_pair is None or had.get(frozenset((a, b)), 0) < games_per_pair
 
     for _ in range(count):
-        if len(available) < 2:
+        # Only entrants that still have somebody left to play. Without the cap that is everyone,
+        # and the choice below is exactly what it was.
+        candidates = {
+            key for key in available if any(open_pair(key, other) for other in available - {key})
+        }
+        if len(candidates) < 2:
             break
 
-        home = min(available, key=lambda key: home_key(board, key))
-        away = min(available - {home}, key=lambda key: away_key(board, home, key))
+        home = min(candidates, key=lambda key: home_key(board, key))
+        away = min(
+            (key for key in candidates - {home} if open_pair(home, key)),
+            key=lambda key: away_key(board, home, key),
+        )
 
         white, black = _colours(home, away, balance, whites)
         # **One round number per game, not per batch.** Every game in a batch used to carry
@@ -250,6 +272,7 @@ def matchmake(
         # The pair ledger too, for the same reason: a batch that paired the same two twice would
         # otherwise read its own first game as never having happened and repeat the colours.
         whites[(white, black)] = whites.get((white, black), 0) + 1
+        had[frozenset((home, away))] = had.get(frozenset((home, away)), 0) + 1
         available -= {home, away}
 
     return games

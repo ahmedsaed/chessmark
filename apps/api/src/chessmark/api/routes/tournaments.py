@@ -185,6 +185,7 @@ def _summary_fields(
         "rounds": tournament.rounds,
         "is_ranked": tournament.is_ranked,
         "max_concurrent": tournament.max_concurrent,
+        "games_per_pair": tournament.games_per_pair,
         "max_usd": tournament.max_usd,
         "entrant_count": entrants,
         "field_description": str(tournament.field_filter.get("describes") or "the whole field"),
@@ -318,6 +319,13 @@ async def get_tournament(
         **_summary_fields(tournament, len(entrant_rows), stats),
         era=showing,
         eras=eras,
+        # Over the entrants the field still admits: a departed model's unplayed pairs are not
+        # something the pool is waiting to play (ADR-0050).
+        saturated=await repo.is_saturated(
+            session,
+            tournament,
+            [e.key for e in entrants if not playable or e.key in playable],
+        ),
         standings=[
             StandingOut(
                 place=s.place,
