@@ -134,7 +134,6 @@ class Settings(BaseSettings):
     clerk_webhook_secret: str = ""
 
     # --- Cost & abuse controls ---
-    max_usd_per_game: float = 1.00
     max_games_per_user_per_day: int = 20
     #: Per-user daily spend ceiling. 0 disables it, leaving the game-count quota in charge.
     max_usd_per_user_per_day: float = 5.00

@@ -271,29 +271,46 @@ async def test_the_kill_switch_does_not_stop_spectating(
     assert (await client.get(f"/games/{game.game.id}")).status_code == 200
 
 
-async def test_the_per_game_cap_is_clamped_to_the_server_ceiling(
-    client: AsyncClient, db: AsyncSession, redis: Any, monkeypatch: Any
+async def test_the_per_game_limit_is_the_players_own(
+    client: AsyncClient, db: AsyncSession, redis: Any
 ) -> None:
-    """Layer 3 must not be settable by the caller. A request asking for a $500 cap is clamped, not
-    honoured and not refused."""
-    from chessmark.core.config import get_settings
-
+    """ADR-0052. The game spends the caller's credit, so the limit is theirs to set — and to leave
+    off. There is no server ceiling to clamp it to any more."""
     white, black = await _playable(db)
-    await fund(db, "user_greedy")
-    monkeypatch.setattr(get_settings(), "max_usd_per_game", 0.25)
+    await fund(db, "user_limits")
+    header = as_user("user_limits")
 
-    body = (
+    limited = (
         await client.post(
-            "/games",
-            json={**_create_body(white, black), "max_usd": "500.00"},
-            headers=as_user("user_greedy"),
+            "/games", json={**_create_body(white, black), "max_usd": "25.00"}, headers=header
         )
+    ).json()
+    unlimited = (
+        await client.post("/games", json=_create_body(white, black), headers=header)
     ).json()
 
     db.expunge_all()
-    stored = await db.get(Game, uuid.UUID(body["id"]))
-    assert stored is not None
-    assert stored.max_usd == Decimal("0.25")
+    first = await db.get(Game, uuid.UUID(limited["id"]))
+    second = await db.get(Game, uuid.UUID(unlimited["id"]))
+    assert first is not None and second is not None
+    assert first.max_usd == Decimal("25.00")
+    assert second.max_usd is None
+
+
+async def test_a_limit_of_nothing_is_refused(
+    client: AsyncClient, db: AsyncSession, redis: Any
+) -> None:
+    """A $0 limit would end the game before its first turn; it is a mistake, not a setting."""
+    white, black = await _playable(db)
+    await fund(db, "user_zero_limit")
+
+    response = await client.post(
+        "/games",
+        json={**_create_body(white, black), "max_usd": "0"},
+        headers=as_user("user_zero_limit"),
+    )
+
+    assert response.status_code == 422
 
 
 async def test_rapid_requests_are_rate_limited(

@@ -78,7 +78,7 @@ launch.
 
 | **A 402 may not always mean the account is empty.** OpenRouter is reported — by users, not by their docs — to check a key's remaining budget against `max_tokens`, the maximum *possible* output, so a large request can be refused against a balance that would serve a smaller one. `worker._halt_on_credits` handles it by consulting the balance first and pausing only that game when the account visibly has money, but the better answer would be to retry with a smaller ceiling. Never yet observed here. | Phase 5 |
 | **Two endpoints advertise an output ceiling they do not honour.** OpenRouter reports `max_completion_tokens: 65536` for Nvidia's `nemotron-3-nano-omni` and the endpoint stops at 32,768 — 47 times out of 47 — and Poolside's `laguna-s-2.1` does the same. We ask for what the catalogue says and are truncated below it. Deliberately not corrected by discovery: clamping to the true ceiling would not stop the truncation (the model emits what it emits) and attribution is already correct on both branches (ADR-0024). The residual risk is an endpoint that *rejects* an over-large `max_tokens` rather than truncating, which the reactive rung catches. | Phase 5 |
-| **`MAX_USD_PER_GAME` has not been decided for games a person pays for.** It is still $1.00, the harness's own bound (ADR-0011), and a paid game ends `budget_exceeded` when it meets it, credit or no credit. Production's four paid games are all in the cheapest band, the dearest $0.38 in 53 plies, so a `$$$$` model would meet the cap within a few moves. Whether a paid game keeps it, and at what, is the owner's call. | Phase 28 |
+| **The replay slider test fails under `next dev` when its whole spec runs.** `replay.spec.ts` › "the slider seeks to an arbitrary ply" reads `ply 7 of 7` after seeking to 3, every time the file runs, and passes run alone. Reproduced with Phase 28's changes stashed, so it predates them; CI's production build has not shown it. | Phase 23 |
 | **Nothing reports how much of the free allowance is left**, and nothing can (ADR-0023). We deleted our own count because it was an over-count that stopped play while OpenRouter was still serving us; the cost is that `status` can say the harness is halted but never how close it is to being. A header would fix it if one ever appears. | Phase 5 |
 
 Deliberate limitations, not gaps: no clock, and human draw offers are advisory only.
@@ -1550,6 +1550,7 @@ and no game started against a model that cannot answer a turn
 2. Each model turn charged its actual cost, in the turn's own transaction, one ledger row per turn
 3. Out of credit, a game pauses before its next turn and resumes when credit is added
 4. The price band kept as a band — shown to choose by, used to select fields, never charged
+5. The limit on a game is its player's; its owner can pause and resume it; it names who started it
 
 **Exit criteria**
 - [x] What a game says it cost is what its owner paid, row for row, turn for turn —
@@ -1565,11 +1566,14 @@ and no game started against a model that cannot answer a turn
       timer — `e2e/signed-in/play.spec.ts`, which fails with the announcement removed
 - [x] The migration checked against production's data (`make dev-pull`): both balances closed to
       zero, the credit history summing to zero, and neither stored field using a price bound
-- [ ] `MAX_USD_PER_GAME` set for games a person pays for. Production holds four paid games, all in
-      the cheapest band, the dearest $0.38 in 53 plies — too few to set it from, and whether a
-      paid game keeps the cap at all is the owner's decision
+- [x] No server-wide per-game limit on a game a person starts: the limit is theirs, optional —
+      `tests/api/test_auth_gate.py`
+- [x] The owner pauses a game between two models before its next turn, the reconciler never
+      resumes it, and resuming a paid game needs credit — `tests/api/test_owner_pause.py`, each of
+      six safeguards mutated and caught; in a browser, `e2e/signed-in/play.spec.ts`
+- [x] A game outside a tournament names who started it, by display name and never by email
 
-**Covers:** AUTH-10, AUTH-11, AUTH-13; supersedes AUTH-12
+**Covers:** AUTH-10, AUTH-11, AUTH-13, AUTH-15, AUTH-16, AUTH-17; supersedes AUTH-12
 
 ---
 

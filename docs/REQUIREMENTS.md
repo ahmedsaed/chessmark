@@ -142,6 +142,9 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | AUTH-12 | ~~Each model carries a credit price in four tiers, derived from its own token prices and overridable per model. A game costs the sum of its seats.~~ **Superseded** by AUTH-10's charge at actual cost. Each model keeps a **price band**, 1 to 4, from its own prices — shown to choose by and used to select tournament fields, never charged ([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)). | M |
 | AUTH-13 | Every credit movement is recorded append-only: who, how much, why, by which administrator, and for a charge, which game and turn it paid for. A balance must be reconstructible from its history. | M |
 | AUTH-14 | A user carries an identifier an administrator can act on — an email or equivalent — captured at provisioning, not only an opaque provider id. | M |
+| AUTH-15 | The limit on what a game a person starts may cost is theirs: optional, set when it is started, none by default. There is no server-wide per-game limit on such a game; a tournament sets its own ([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)). | M |
+| AUTH-16 | The person paying for a game between two models can pause it before its next turn and resume it. A game its owner paused is never resumed for them, and a paid game needs credit to resume ([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)). | M |
+| AUTH-17 | A game outside any tournament names who started it, by display name and never by email ([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)). | S |
 | AUTH-09 | Bring-your-own OpenRouter key to unlock expensive models. | W |
 
 ## 9. Platform & operations (OPS)

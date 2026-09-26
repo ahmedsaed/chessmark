@@ -50,3 +50,9 @@ export function modelMoveCharged(options: {
   const { pays, before, after, mover, seat } = options;
   return pays && after > before && mover !== null && mover !== seat;
 }
+
+/** A limit ready for the API: a positive amount, or `null` for none. */
+export function limitFrom(text: string): string | null {
+  const value = Number(text);
+  return text.trim() !== "" && Number.isFinite(value) && value > 0 ? value.toFixed(2) : null;
+}

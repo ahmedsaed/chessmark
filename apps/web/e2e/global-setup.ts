@@ -76,12 +76,20 @@ function startWorker(logDir: string): void {
   // absent daemon. The log is the first place to look when the board never moves.
   const log = openSync(path.join(logDir, "worker.log"), "a");
 
-  const child = spawn("uv", ["run", "python", "../../scripts/worker.py", "--scripted"], {
-    cwd: path.join(repoRoot(), "apps", "api"),
-    env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}` },
-    detached: true,
-    stdio: ["ignore", log, log],
-  });
+  /* **Paced at half a second a round.** Unpaced, a scripted game between two models ran to a
+     fivefold repetition in 18 plies — under a second — so a person's pause (ADR-0052) could not
+     land before the game was over, and the test of it measured the race instead. A person's own
+     game still gets its reply within a couple of seconds. */
+  const child = spawn(
+    "uv",
+    ["run", "python", "../../scripts/worker.py", "--scripted", "--delay", "0.5"],
+    {
+      cwd: path.join(repoRoot(), "apps", "api"),
+      env: { ...process.env, PATH: `${process.env.HOME}/.local/bin:${process.env.PATH}` },
+      detached: true,
+      stdio: ["ignore", log, log],
+    },
+  );
   child.unref();
 
   if (!child.pid) throw new Error("could not start the scripted worker");

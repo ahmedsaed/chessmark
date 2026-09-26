@@ -19,6 +19,8 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { ModelPicker } from "@/components/ModelPicker";
+import { SpendLimit } from "@/components/SpendLimit";
+import { limitFrom } from "@/lib/credit";
 import { ApiError, createHumanGame } from "@/lib/api";
 import type { Colour, ModelInfo } from "@/lib/types";
 
@@ -42,6 +44,7 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
   const [quantization, setQuantization] = useState("");
   const [colour, setColour] = useState<Colour>("white");
   const [chat, setChat] = useState(false);
+  const [limit, setLimit] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,6 +59,7 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
         // Omitted means "the healthiest endpoint at whatever precision", which is then recorded.
         model_quantization: quantization || null,
         trash_talk_enabled: chat,
+        max_usd: limitFrom(limit),
       });
       router.push(`/games/${game.id}`);
     } catch (failure) {
@@ -126,6 +130,8 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
           </div>
         </div>
       </div>
+
+      <SpendLimit value={limit} onChange={setLimit} />
 
       <label className="flex items-start gap-2 text-xs text-ink-dim">
         <input

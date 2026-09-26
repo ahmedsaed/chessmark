@@ -18,6 +18,7 @@ import { Chess } from "chess.js";
 import { Board } from "@/components/Board";
 import { EventStream } from "@/components/EventStream";
 import { GameLayout } from "@/components/GameLayout";
+import { OwnerControls } from "@/components/OwnerControls";
 import { PlayerBar } from "@/components/PlayerBar";
 import { StatsRail } from "@/components/StatsRail";
 import { legalTargets } from "@/lib/board";
@@ -265,7 +266,18 @@ export function LiveGame({
           /* Why it is paused *now*, from the server. Only the live pause row reads it; a replay
              passes nothing, so a finished game's pause rows stay quiet. */
           waitingOn={game.waiting_on}
-          footer={controls}
+          footer={
+            controls ??
+            /* A game between two models that this reader pays for: theirs to pause (ADR-0052). A
+               game they play has its own controls, and pausing it would stop nothing. */
+            (pays && !seat ? (
+              <OwnerControls
+                gameId={game.id}
+                status={game.status}
+                heldByOwner={game.waiting_on?.kind === "owner"}
+              />
+            ) : undefined)
+          }
           emptyMessage={paused ? `Paused — ${paused.text}` : undefined}
         />
       }

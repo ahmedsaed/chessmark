@@ -1459,6 +1459,12 @@ describe("what a paused game says it is waiting for", () => {
     );
   });
 
+  it("says a game its owner paused is held by them", () => {
+    expect(waitText(null, { kind: "owner", until: null, tournament: null })).toBe(
+      "paused by its owner",
+    );
+  });
+
   it("says a halt is a halt, not a retry", () => {
     /* A halt that states its end says it: the free-model allowance is the one that happens, and it
        ends at `X-RateLimit-Reset` or the next UTC midnight. */

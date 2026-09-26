@@ -111,6 +111,9 @@ export interface GameDetail extends GameSummary {
   moves: string[];
   /** Null for a game started by hand, which is most of them. */
   tournament: TournamentRef | null;
+  /** Who started a game that is not a tournament's, by display name — never an email. Null for a
+   *  game nobody started, and for a tournament game, which names its event instead. */
+  started_by?: string | null;
 }
 
 /** Which event a game was played for — enough to say so and to link there. */
@@ -435,7 +438,7 @@ export interface TurnView {
  * Null unless the game is paused. Only ever on `GameDetail` — a list would pay a query per row.
  */
 export interface WaitingOn {
-  /** `clock` · `halt` · `credit` · `concurrency` · `due`. */
+  /** `clock` · `halt` · `owner` · `credit` · `concurrency` · `due`. */
   kind: string;
   /** When the wait ends, for `clock`. */
   until: string | null;

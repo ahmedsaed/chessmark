@@ -55,7 +55,7 @@ from chessmark.db.repositories import append_event, finish_game, load_events, re
 from chessmark.game import Colour, GameResult, Outcome, Termination
 from chessmark.orchestration.match import model_for
 from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
-from chessmark.orchestration.worker import CREDIT_PREFIX, publish_events
+from chessmark.orchestration.worker import CREDIT_PREFIX, OWNER_PAUSE, publish_events
 
 log = logging.getLogger(__name__)
 
@@ -313,13 +313,13 @@ class Waiting:
     said "rate-limited by Poolside · retrying shortly" for the whole of it: the first half stale,
     the second half wrong.
 
-    The order below mirrors `reconcile` exactly — clock, halt, credit, concurrency — because a
+    The order below mirrors `reconcile` exactly — clock, halt, owner, credit, concurrency — because a
     page that disagreed with the sweep about why a game is sitting still would be a second bug
     wearing the first one's clothes.
     """
 
-    #: `clock` — the wait has not elapsed. `halt` — the harness is stopped. `credit` — its owner's
-    #: balance is not above zero (ADR-0052). `concurrency` — due, but its event is at its bound.
+    #: `clock` — the wait has not elapsed. `halt` — the harness is stopped. `owner` — the person
+    #: paying for it paused it. `credit` — their balance is not above zero (ADR-0052). `concurrency` — due, but its event is at its bound.
     #: `due` — nothing is in the way; the next sweep takes it.
     kind: str
     until: dt.datetime | None = None
@@ -348,6 +348,9 @@ async def what_it_waits_for(
     # reporting a slot it is not competing for would be a fiction.
     if (game.pause_reason or "").startswith(HALT_PREFIX):
         return Waiting(kind="halt", until=await _halt_lifts_at(session, game))
+
+    if game.pause_reason == OWNER_PAUSE:
+        return Waiting(kind="owner")
 
     if game.id in await unfunded_games(session, [game]):
         return Waiting(kind="credit")
@@ -615,7 +618,13 @@ async def reconcile(
         # the first tick after its owner's balance rises above zero, which is what makes adding
         # credit enough — nothing has to find the game and restart it.
         unfunded = await unfunded_games(session, due)
-        playable = [game for game in due if game.id not in held and game.id not in unfunded]
+        # A game its owner paused waits for its owner, and nothing here second-guesses that.
+        owned = {game.id for game in due if game.pause_reason == OWNER_PAUSE}
+        playable = [
+            game
+            for game in due
+            if game.id not in held and game.id not in unfunded and game.id not in owned
+        ]
         for game in await with_room_to_run(session, playable):
             log.info("resuming %s at ply %s: %s", game.id, game.ply_count, game.pause_reason)
             before = game.event_seq

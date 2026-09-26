@@ -102,13 +102,25 @@ so the old history still sums correctly. The dollar balance sums only `usd` rows
   there is no number to show.
 * **The header balance follows play without polling.** It re-reads `/me` on navigation, when the
   tab comes back into view, and when the page of a game the reader pays for shows a model move.
-  That is the only event that changes a balance while someone watches. Who started a game is
-  private, so the seat endpoint tells the owner alone (`pays`). A signed-in viewer of a live game
-  makes one extra request per page load to learn it, and anonymous readers make none.
+  That is the only event that changes a balance while someone watches. The seat endpoint tells the
+  owner alone that the game is theirs (`pays`). A signed-in viewer of a live game makes one extra
+  request per page load to learn it, and anonymous readers make none.
 * **The per-turn ledger is one row per model turn.** It grows with play at the rate `turns` does,
   and it is what lets a balance be explained move by move.
-* **`MAX_USD_PER_GAME` still ends a game as `budget_exceeded`.** It is the harness's own bound
-  (ADR-0011, layer 3), not the user's balance. A game someone pays for can meet it. Its value
-  should be set from real per-game costs, which have not been measured against production yet.
+* **There is no server-wide per-game limit.** `MAX_USD_PER_GAME` existed because every game spent
+  the operator's money (ADR-0011, layer 3). A game a person starts spends theirs, so the owner
+  removed it. The limit on such a game is the one its player sets when starting it, or none.
+  Reached, the game ends `budget_exceeded` as before. A tournament keeps its own per-game and
+  per-event limits, and the global daily kill switch still stands over everything.
+* **The person paying can pause a game between two models, and resume it.** Pausing lands before
+  the next turn, because a running turn holds the game's row. The request waits in Redis for the
+  worker, the turn in progress finishes and is charged, and the page says "pausing" until it
+  lands. A game its owner paused is never resumed by the reconciler, and it is kept off the
+  abandonment clock. Resuming a paid game needs credit, as starting one does. A game a person
+  plays needs no pause, since the model moves only after they do. There is deliberately no "end
+  game": the owner declined it.
+* **A game names who started it.** Outside a tournament, the game page says "Started by" and the
+  person's display name, as a tournament game names its event. Never an email: a person with no
+  name is "a player".
 * **This is the credit system a payment processor needs.** A purchase is a grant with its own
   reason, and a dollar bought is a dollar spent at cost ([PAYMENTS.md](../PAYMENTS.md)).

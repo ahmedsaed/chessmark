@@ -919,6 +919,9 @@ export function waitText(
       return holdEnds(waitingOn.until, now) ?? "held until the harness is resumed";
     /* Its owner's balance ran out (ADR-0052). Said to whoever is watching, who may not be the
        owner — so it names what brings it back rather than telling the reader to pay. */
+    /* Held by the person paying for it (ADR-0052). Nothing brings it back but them. */
+    case "owner":
+      return "paused by its owner";
     case "credit":
       return "waiting for its owner to add credit";
     case "concurrency":

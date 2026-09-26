@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from decimal import Decimal
 from typing import Annotated, Any
 
 import sqlalchemy as sa
@@ -23,6 +22,7 @@ from chessmark.api.deps import (
     CurrentUser,
     GameDep,
     QueueDep,
+    RedisDep,
     SessionDep,
     SettingsDep,
     enforce_rate_limit,
@@ -43,6 +43,7 @@ from chessmark.api.schemas import (
     IllegalMoveResponse,
     MessageOut,
     MyGameSummary,
+    OwnerActionResponse,
     PlyOut,
     RawCallOut,
     SeatOut,
@@ -50,6 +51,7 @@ from chessmark.api.schemas import (
     TurnDetail,
     WaitingOn,
 )
+from chessmark.core.pause_requests import PauseRequests
 from chessmark.db.archive import ArchiveKind, ArchiveOutcome, ArchiveSort, archive_query
 from chessmark.db.credits import InsufficientCreditError, require_credit
 from chessmark.db.enums import EventType, GameStatus, ModelRuntime, ModerationStatus, PlayerKind
@@ -65,16 +67,19 @@ from chessmark.db.models import (
     Tournament,
     TournamentGame,
     Turn,
+    User,
 )
 from chessmark.db.quotas import note_game_started
 from chessmark.db.repositories import load_events, rebuild_referee
 from chessmark.game import Colour, GameResult, IllegalMoveError, Termination
 from chessmark.game.pgn import PgnMetadata, to_pgn
 from chessmark.orchestration import human as human_play
+from chessmark.orchestration import owner
 from chessmark.orchestration.match import Seat, create_match, start_match
 from chessmark.orchestration.queue import AdvanceTurn
 from chessmark.orchestration.reconciler import what_it_waits_for
 from chessmark.orchestration.revalidation import notify_web
+from chessmark.orchestration.worker import publish_events
 
 router = APIRouter(prefix="/games", tags=["games"])
 
@@ -372,19 +377,38 @@ async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
     # that is not paused, and one query for one that is.
     waiting = await what_it_waits_for(session, game)
 
+    tournament = await _tournament_of(session, game.id)
+
     return GameDetail.from_model(
         game,
         await _players(session, game.id),
         moves=referee.board.history_san(),
         current_fen=referee.board.fen,
         served_by=await _served_by(session, game.id),
-        tournament=await _tournament_of(session, game.id),
+        tournament=tournament,
+        started_by=None if tournament is not None else await _started_by(session, game),
         waiting_on=(
             WaitingOn(kind=waiting.kind, until=waiting.until, tournament=waiting.tournament)
             if waiting
             else None
         ),
     )
+
+
+#: Said when the person who started a game has not set a name. Never their email: a game page is
+#: public, and an address is not something anyone agreed to publish by starting a game.
+UNNAMED_OWNER = "a player"
+
+
+async def _started_by(session: AsyncSession, game: Game) -> str | None:
+    """Who started this game, as the page may name them. One query, and none for a game nobody
+    started."""
+    if game.created_by_user_id is None:
+        return None
+    name = await session.scalar(
+        sa.select(User.display_name).where(User.id == game.created_by_user_id)
+    )
+    return name or UNNAMED_OWNER
 
 
 @router.get("/{game_id}/plies", response_model=list[PlyOut])
@@ -691,11 +715,10 @@ async def create_game_endpoint(
     if request.start_fen:
         kwargs["start_fen"] = request.start_fen
 
-    # The per-game cap is never left to the caller alone: a request asking for more than the
-    # server's ceiling is clamped rather than refused, so an ambitious `max_usd` cannot become the
-    # budget. This is layer 3 of ADR-0011.
-    ceiling = Decimal(str(settings.max_usd_per_game))
-    max_usd = min(request.max_usd, ceiling) if request.max_usd else ceiling
+    # **The limit is the player's, and there need not be one** (ADR-0052). The server's ceiling
+    # existed because every game spent the operator's money; this one spends the caller's, turn by
+    # turn, and stops when their balance does. A tournament sets its own per-game limit.
+    max_usd = request.max_usd
 
     try:
         match = await create_match(
@@ -849,8 +872,7 @@ async def create_human_game(
 
     await note_game_started(session, user.id)
 
-    ceiling = Decimal(str(settings.max_usd_per_game))
-    max_usd = min(request.max_usd, ceiling) if request.max_usd else ceiling
+    max_usd = request.max_usd  # the player's own limit, or none — see `create_game_endpoint`
 
     you = Seat(
         display_name=user.display_name or "You",
@@ -941,6 +963,59 @@ async def play_human_move(
         ) from error
 
     return await _settle(session, queue, game, action)
+
+
+async def _owner_settles(
+    session: SessionDep,
+    queue: QueueDep,
+    redis: RedisDep,
+    game: Game,
+    act: Any,
+) -> OwnerActionResponse:
+    """Run a pause or a resume, then commit, publish and enqueue — in that order, for `_settle`'s
+    reason: nothing may hear of a state the database has not accepted."""
+    try:
+        action = await act(session, PauseRequests(redis), game)
+    except owner.NotYourGameError as error:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+    except (owner.CannotPauseError, owner.CannotResumeError) as error:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+    except InsufficientCreditError as error:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"{error} Credit is granted by an administrator.",
+        ) from error
+
+    await session.commit()
+    await publish_events(redis, game.id, action.events)
+    if action.job is not None:
+        await queue.enqueue(action.job)
+    return OwnerActionResponse(status=action.status, pausing=action.pausing)
+
+
+@router.post("/{game_id}/pause", response_model=OwnerActionResponse)
+async def pause_game(
+    session: SessionDep, queue: QueueDep, redis: RedisDep, game: GameDep, user: CurrentUser
+) -> OwnerActionResponse:
+    """Stop a game you started from spending, before its next turn (ADR-0052).
+
+    Only between two models: in a game you play, the model moves only after you do. The turn in
+    progress, if there is one, finishes and is charged; `pausing` says the pause is still on its
+    way. Nothing ends — resume plays on from the same position.
+    """
+    return await _owner_settles(
+        session, queue, redis, game, lambda s, r, g: owner.pause(s, r, g, user.id)
+    )
+
+
+@router.post("/{game_id}/resume", response_model=OwnerActionResponse)
+async def resume_game(
+    session: SessionDep, queue: QueueDep, redis: RedisDep, game: GameDep, user: CurrentUser
+) -> OwnerActionResponse:
+    """Play on a game you paused. A paid game needs credit, as starting one does."""
+    return await _owner_settles(
+        session, queue, redis, game, lambda s, r, g: owner.resume(s, r, g, user.id)
+    )
 
 
 @router.post("/{game_id}/resign", response_model=HumanActionResponse)
@@ -1035,9 +1110,10 @@ async def my_seat(
 
     A dedicated endpoint rather than a field on the game, because the game is public and the
     answer is not: putting `user_id` on the player payload would publish who plays what to every
-    spectator, to save one request. **Who started a game is private for the same reason**, and
-    `pays` is how its owner's page learns it — so the header can refresh the balance as the game
-    spends it, and nobody else's page asks at all (ADR-0052).
+    spectator, to save one request. A game names who started it by display name (`started_by`),
+    which is not the account: `pays` is how the owner's own page learns the game is theirs, so the
+    header can refresh the balance as it spends and the owner's pause control can show. Nobody
+    else's page is told (ADR-0052).
     """
     pays = game.created_by_user_id == user.id
     try:

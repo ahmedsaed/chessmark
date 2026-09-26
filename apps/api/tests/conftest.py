@@ -231,6 +231,7 @@ def make_worker(sessionmaker: async_sessionmaker[AsyncSession], queue: Any, redi
     from chessmark.agents.decisions import DecisionGateway
     from chessmark.agents.llm import LlmGateway
     from chessmark.agents.scripted_decisions import deciding
+    from chessmark.core.pause_requests import PauseRequests
     from chessmark.orchestration.worker import TurnWorker
 
     def _make(
@@ -257,6 +258,9 @@ def make_worker(sessionmaker: async_sessionmaker[AsyncSession], queue: Any, redi
             decisions=DecisionGateway(
                 decide_fn=decide_fn or deciding(), retry=retry, sleep_fn=_instant
             ),
+            # Always wired, as in production: a pause asked for through the API has to reach the
+            # worker even in a test that does not publish.
+            pause_requests=PauseRequests(redis),
         )
 
     return _make

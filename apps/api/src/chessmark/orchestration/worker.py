@@ -44,6 +44,7 @@ from chessmark.core.config import get_settings
 from chessmark.core.cooldown import ProviderCooldown, resume_at
 from chessmark.core.credits import fetch_balance
 from chessmark.core.halt import SCOPE_FREE, SOURCE_CREDITS, SOURCE_FREE_TIER, Halt, HaltState
+from chessmark.core.pause_requests import PauseRequests
 from chessmark.db.credits import can_play
 from chessmark.db.enums import EventType, GameStatus, ModelRuntime, PlayerKind, TurnStatus
 from chessmark.db.models import Game, GameEvent, ModelRegistry, Player, Turn
@@ -102,8 +103,10 @@ async def publish_events(redis: Any, game_id: uuid.UUID, events: list[GameEvent]
 
 
 def _is_our_stop(payload: dict[str, Any] | None) -> bool:
-    """Whether a pause was the harness's doing — a halt, or a payer out of credit."""
-    return payload is not None and ("halt_source" in payload or "credit_of" in payload)
+    """Whether a pause was nothing the model did — a halt, a payer out of credit, or its owner."""
+    return payload is not None and any(
+        key in payload for key in ("halt_source", "credit_of", "by_owner")
+    )
 
 
 class TurnOutcome(str):
@@ -130,6 +133,9 @@ HALTED = TurnOutcome("halted")
 #: run and the game is **paused** where it can be seen; the reconciler resumes it once their
 #: balance is above zero again. Nothing about the model or the position is at fault.
 NO_CREDIT = TurnOutcome("no_credit")
+#: The person paying for this game asked for it to stop (ADR-0052). The turn is not run; the game
+#: is paused, and only they can resume it.
+OWNER_PAUSED = TurnOutcome("owner_paused")
 #: The side to move is a person. The worker does nothing and enqueues nothing — the game waits in
 #: RUNNING until the human's move endpoint commits a ply and enqueues the model's reply. Anything
 #: else would run an LLM turn on a human's behalf and play their move for them.
@@ -248,6 +254,44 @@ class HarnessHaltedError(Exception):
 CREDIT_PREFIX = "out of credit:"
 
 
+#: The whole `pause_reason` of a game its owner paused. The reconciler never resumes it; the owner's
+#: own request does.
+OWNER_PAUSE = "paused by its owner"
+
+
+async def hold_for_owner(session: AsyncSession, game: Game, player: Player) -> None:
+    """Pause a game because the person paying for it asked, and say so (ADR-0052).
+
+    Shared by the worker, which does it before a turn, and the API, which does it at once for a
+    game that is already paused and so has no turn in flight. `by_owner` is the structural marker,
+    as `credit_of` and `halt_source` are: it keeps the pause off the abandonment clock.
+    """
+    previous = game.pause_reason if game.status is GameStatus.PAUSED else None
+    game.status = GameStatus.PAUSED
+    game.resume_after = None
+    game.pause_reason = OWNER_PAUSE
+    await append_event(
+        session,
+        game_id=game.id,
+        type=EventType.GAME_PAUSED,
+        payload={
+            "reason": OWNER_PAUSE,
+            "player_id": str(player.id),
+            "colour": player.colour.value,
+            "model": model_for(player),
+            "by_owner": True,
+            "resume_after": None,
+            # What it was waiting for before, when it was already paused — a provider or credit.
+            "previous_reason": previous,
+        },
+    )
+
+
+class OwnerPauseRequestedError(Exception):
+    """Raised to skip a turn its owner asked not to run; the pause is written in its own
+    transaction, for `HarnessHaltedError`'s reason."""
+
+
 class OutOfCreditError(Exception):
     """Raised to abandon a turn its payer cannot fund, and pause the game where it can be seen.
 
@@ -284,6 +328,7 @@ class TurnWorker:
         halt: Halt | None = None,
         live: LiveChannel | None = None,
         decisions: DecisionGateway | None = None,
+        pause_requests: PauseRequests | None = None,
     ) -> None:
         self.sessionmaker = sessionmaker
         self.queue = queue
@@ -296,6 +341,9 @@ class TurnWorker:
             api_key=gateway.api_key, pricing=gateway.pricing, retry=gateway.retry
         )
         self.redis = redis
+        self.pause_requests = pause_requests or (
+            PauseRequests(redis) if redis is not None else None
+        )
         self.limits = limits
         #: Layer 1 of ADR-0011. Optional so scripted tests, which spend nothing, need not wire it.
         self.budget = budget
@@ -364,6 +412,8 @@ class TurnWorker:
             # owner dies the queue's `XAUTOCLAIM` and the reconciler both still cover it.
             log.info("dropping job for %s: another worker is advancing it", job.game_id)
             return HandledJob(IN_FLIGHT, job.game_id, job.expected_ply)
+        except OwnerPauseRequestedError:
+            return await self._pause_for_owner(job)
         except OutOfCreditError as unfunded:
             return await self._pause_for_credit(job, unfunded.payer)
         except HarnessHaltedError as halted:
@@ -471,6 +521,11 @@ class TurnWorker:
             # think. The move endpoint enqueues the model's turn when the ply lands (HUMAN-02).
             if PlayerKind(player.kind) is not PlayerKind.MODEL:
                 return HandledJob(AWAITING_HUMAN, game.id, referee.ply)
+
+            # **A pause its owner asked for, honoured before anything is spent** (ADR-0052). The
+            # request waits here rather than on the game row, which a running turn holds locked.
+            if self.pause_requests is not None and await self.pause_requests.pending(game.id):
+                raise OwnerPauseRequestedError
 
             # **The payer's balance, checked before the money is spent** (ADR-0052). Only for a
             # paid seat: a `:free` turn costs nothing, so it is never stopped for credit. Above zero
@@ -744,6 +799,25 @@ class TurnWorker:
         # the database has not accepted.
         await self._publish(job.game_id, events)
         return HandledJob(HALTED, job.game_id, job.expected_ply, result=result)
+
+    async def _pause_for_owner(self, job: AdvanceTurn) -> HandledJob:
+        """Pause the game its owner asked to pause, then withdraw the request it answered."""
+        async with self.sessionmaker() as session, session.begin():
+            game = await get_game(session, job.game_id)
+            if game.status in TERMINAL_STATUSES or game.pause_reason == OWNER_PAUSE:
+                events: list[GameEvent] = []
+            else:
+                before = game.event_seq
+                await hold_for_owner(session, game, await self._seat_to_play(session, job))
+                log.info("pausing %s at ply %s: its owner asked", game.id, job.expected_ply)
+                events = await load_events(session, game.id, after_seq=before)
+
+        # Withdrawn after the commit: a request cleared first and a pause then rolled back would
+        # leave the game running with nothing left asking it to stop.
+        if self.pause_requests is not None:
+            await self.pause_requests.clear(job.game_id)
+        await self._publish(job.game_id, events)
+        return HandledJob(OWNER_PAUSED, job.game_id, job.expected_ply)
 
     async def _pause_for_credit(self, job: AdvanceTurn, payer: uuid.UUID) -> HandledJob:
         """Stop the board because its owner is out of credit, and say so (ADR-0052).

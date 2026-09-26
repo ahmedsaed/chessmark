@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canPay, formatBalance, modelMoveCharged } from "@/lib/credit";
+import { canPay, formatBalance, limitFrom, modelMoveCharged } from "@/lib/credit";
 
 describe("formatBalance", () => {
   it("writes a balance in dollars and cents", () => {
@@ -45,5 +45,22 @@ describe("modelMoveCharged", () => {
 
   it("is nothing without a new ply", () => {
     expect(modelMoveCharged({ ...base, after: 4, mover: "white" })).toBe(false);
+  });
+});
+
+describe("limitFrom", () => {
+  it("is no limit when left empty", () => {
+    expect(limitFrom("")).toBeNull();
+    expect(limitFrom("   ")).toBeNull();
+  });
+
+  it("is dollars and cents when set", () => {
+    expect(limitFrom("5")).toBe("5.00");
+    expect(limitFrom("2.5")).toBe("2.50");
+  });
+
+  it("refuses a limit that would stop the game before it starts", () => {
+    expect(limitFrom("0")).toBeNull();
+    expect(limitFrom("-3")).toBeNull();
   });
 });

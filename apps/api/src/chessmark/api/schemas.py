@@ -468,6 +468,12 @@ class GameDetail(GameSummary):
     #: it was scheduled for.
     tournament: TournamentRef | None = None
 
+    #: For a game that is not a tournament's, the display name of the person who started it — the
+    #: owner's decision that a game says who ran it, as a tournament game says which event did.
+    #: A display name only, never an email or an id; null for a game nobody started (an operator's
+    #: or a script's), and for a tournament game, which names its event instead.
+    started_by: str | None = None
+
     #: Why a paused game has not resumed. Null unless the game is paused.
     waiting_on: WaitingOn | None = None
 
@@ -482,11 +488,13 @@ class GameDetail(GameSummary):
         served_by: dict[uuid.UUID, tuple[list[str], str | None]] | None = None,
         tournament: TournamentRef | None = None,
         waiting_on: WaitingOn | None = None,
+        started_by: str | None = None,
     ) -> GameDetail:
         summary = GameSummary.from_model(game, players, served_by=served_by)
         return cls(
             **summary.model_dump(),
             tournament=tournament,
+            started_by=started_by,
             waiting_on=waiting_on,
             start_fen=game.start_fen,
             current_fen=current_fen,
@@ -524,7 +532,9 @@ class CreateGameRequest(BaseModel):
     black_quantization: str | None = Field(default=None, description="Precision for Black.")
     is_ranked: bool = False
     trash_talk_enabled: bool = True
-    max_usd: Decimal | None = Field(default=Decimal("0.50"), ge=0)
+    #: The player's own limit on what this game may cost, or none (ADR-0052). Their money, their
+    #: call: the game ends `budget_exceeded` when it is reached.
+    max_usd: Decimal | None = Field(default=None, gt=0, max_digits=16, decimal_places=8)
     max_plies: int = Field(default=300, ge=2, le=1000)
     start_fen: str | None = None
 
@@ -546,7 +556,9 @@ class CreateHumanGameRequest(BaseModel):
     )
     colour: Colour = Field(default=Colour.WHITE, description="The colour *you* play.")
     trash_talk_enabled: bool = True
-    max_usd: Decimal | None = Field(default=Decimal("0.50"), ge=0)
+    #: The player's own limit on what this game may cost, or none (ADR-0052). Their money, their
+    #: call: the game ends `budget_exceeded` when it is reached.
+    max_usd: Decimal | None = Field(default=None, gt=0, max_digits=16, decimal_places=8)
     max_plies: int = Field(default=300, ge=2, le=1000)
 
 
@@ -573,6 +585,14 @@ class HumanSayRequest(BaseModel):
 
 class DrawResponseRequest(BaseModel):
     accept: bool
+
+
+class OwnerActionResponse(Schema):
+    """A game after its owner paused or resumed it (ADR-0052)."""
+
+    status: GameStatus
+    #: The pause is asked for and lands before the next turn — the one in progress finishes first.
+    pausing: bool = False
 
 
 class HumanActionResponse(Schema):

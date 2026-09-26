@@ -19,6 +19,8 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { ModelPicker } from "@/components/ModelPicker";
+import { SpendLimit } from "@/components/SpendLimit";
+import { limitFrom } from "@/lib/credit";
 import type { ModelInfo } from "@/lib/types";
 
 const DEFAULT_WHITE = "google/gemini-3.7-flash";
@@ -45,6 +47,7 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
   );
   const [whiteQuant, setWhiteQuant] = useState<string>("");
   const [blackQuant, setBlackQuant] = useState<string>("");
+  const [limit, setLimit] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -67,6 +70,8 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           white_quantization: whiteQuant || null,
           black_quantization: blackQuant || null,
           max_plies: 300,
+          // Theirs to set, or none: the game spends their credit (ADR-0052).
+          max_usd: limitFrom(limit),
         }),
       });
 
@@ -132,9 +137,11 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
 
       {/* Said before the button is pressed, because there is no price to show: a game is charged
           what each turn actually cost, and nothing knows that until it is played (ADR-0052). */}
+      <SpendLimit value={limit} onChange={setLimit} />
+
       <p className="font-mono text-meta text-ink-faint">
-        Paid for as it plays: each model turn is charged what it cost. A game pauses if your credit
-        runs out, and resumes when more is added.
+        Paid for as it plays: each model turn is charged what it cost. You can pause it at any time.
+        A game pauses if your credit runs out, and resumes when more is added.
       </p>
 
       {error && (

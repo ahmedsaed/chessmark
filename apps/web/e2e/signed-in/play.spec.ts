@@ -232,8 +232,11 @@ test("a game you finished is counted on your profile, and reachable from it", as
 
   await page.goto("/profile");
 
+  /* The value, not the note beneath it: a `Fact` with a note ("of 3 decided") holds two `dd`s,
+     and reading both failed on strict mode the day the note was added — unseen, because this is
+     the suite CI does not run. */
   const cell = (label: string) =>
-    page.locator("dl div", { has: page.getByText(label, { exact: true }) }).locator("dd");
+    page.locator("dl div", { has: page.getByText(label, { exact: true }) }).locator("dd").first();
 
   await expect(cell("Played")).not.toHaveText("0");
 
@@ -252,4 +255,45 @@ test("a game you finished is counted on your profile, and reachable from it", as
   await expect(page.getByRole("link", { name: /Chessmark/ }).first()).toBeVisible();
   await page.goto(url);
   await expect(page.getByRole("slider", { name: "Ply" })).toBeVisible();
+});
+
+test("a game between two models you started says so, and is yours to pause and resume", async ({
+  page,
+}) => {
+  /* ADR-0052. Its turns are charged to you, so you can stop it spending — and resume it, since a
+     game its owner paused never comes back by itself. The pause is honoured before the next turn,
+     so "pausing" is allowed to show first; what is asserted is where it settles. */
+  await page.goto("/play");
+  await page.getByRole("tab", { name: /two models/i }).click();
+  const form = page.locator("section", {
+    has: page.getByRole("heading", { name: /start a game/i }),
+  });
+  for (const picker of await form.locator('button[aria-haspopup="listbox"]').all()) {
+    await picker.click();
+    await page.getByPlaceholder("Search models or providers…").fill("gemini");
+    await page.getByRole("option").first().click();
+  }
+  await form.getByRole("button", { name: "play" }).click();
+  await page.waitForURL(/\/games\/[0-9a-f-]{36}/);
+
+  // Who ran it, by name — and never by the account's email.
+  const startedBy = page.getByText("Started by").locator("..");
+  await expect(startedBy).toBeVisible();
+  await expect(startedBy).not.toContainText("@");
+
+  await page.getByRole("button", { name: "pause", exact: true }).click();
+  await expect(page.getByText("Paused. Nothing is spent until you resume.")).toBeVisible({
+    timeout: 45_000,
+  });
+  const fen = await page.locator("[data-fen]").first().getAttribute("data-fen");
+
+  // Held: the board does not move while it is paused.
+  await page.waitForTimeout(3_000);
+  await expect(page.locator("[data-fen]").first()).toHaveAttribute("data-fen", fen ?? "");
+
+  await page.getByRole("button", { name: "resume" }).click();
+  await expect(page.getByRole("button", { name: "pause", exact: true })).toBeVisible();
+  await expect(page.locator("[data-fen]").first()).not.toHaveAttribute("data-fen", fen ?? "", {
+    timeout: 45_000,
+  });
 });
