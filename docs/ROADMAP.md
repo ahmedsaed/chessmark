@@ -1489,6 +1489,29 @@ the chat turn loop at all ([ADR-0049](adr/0049-decision-models-play-through-thei
 
 ---
 
+## Phase 26 — A pool that stops
+
+**Goal:** a pool plays each pair a known number of times, then idles until a newcomer arrives —
+the Decision Cup's shape, and what `pool-free` needs to stop spending on well-met pairs.
+
+**Objectives**
+1. `games_per_pair` on a pool, at `create` or with `set`, and `0` to clear it
+   ([ADR-0050](adr/0050-a-pool-saturates-per-pair.md))
+2. The matchmaker skips a pair at its target; a saturated pool starts nothing and stays running
+3. The page says when a pool is idle because it is saturated
+
+**Exit criteria**
+- [x] Two entrants with a target of two play exactly two games, one with each colour, then stop —
+      `tests/tournament/test_a_pool_saturates.py`
+- [x] A newcomer wakes a saturated pool and plays only its own pairs; the old pair is not replayed
+- [x] An abandoned pairing does not count toward the target — mutated and seen to fail
+- [x] A running pool can be given a target and have it cleared; a closed event refuses one
+- [x] `GET /tournaments/{slug}` reports the target and whether the pool is saturated
+
+**Covers:** BENCH-14
+
+---
+
 ## Phase 17 — Production hardening & launch
 
 **Goal:** it's public, and it stays up.

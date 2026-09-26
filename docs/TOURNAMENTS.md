@@ -13,6 +13,7 @@ make worker                                          # exactly one; run schedule
 make tournament ARGS="run x"                         # ticks until finished or paused
 make tournament ARGS="pause x --abort-live"          # stop; --abort-live frees queued jobs
 make tournament ARGS="resume x --max-usd 5"          # raise the ceiling that stopped it
+make tournament ARGS="set x --games-per-pair 2"      # each pair plays twice, then idle
 make tournament ARGS="withdraw x vendor/model:free"
 make tournament ARGS="standings x"
 ```
@@ -42,6 +43,19 @@ takes the default.
 
 Either way it pairs only what it can run: scheduling ahead would write a queue against a field that
 changes, and a pool never runs out of fixtures.
+
+### A pool can saturate
+
+`--games-per-pair N` (at `create`, or `set` on a running pool) gives a pool a target: a pair that
+has had N games this era is not paired again, and when every pair has, the pool is **saturated**.
+It stays `running` and starts nothing until a newcomer is admitted. Then it plays only the
+newcomer's pairs, N against each entrant, and goes quiet again. This is an engine rating list's
+gauntlet in pool form ([ADR-0050](adr/0050-a-pool-saturates-per-pair.md)).
+
+Every non-abandoned pairing counts toward N, whether settled, running or waiting, so a tick never
+schedules past the target. Abandoned ones don't count: a game the harness stopped is replayed, not
+scored. A target of 2 is one game with each colour. `set <slug> --games-per-pair 0` makes a pool
+open-ended again. The page says when a pool is idle because it is saturated, not stuck.
 
 ### A pool carries its eras
 

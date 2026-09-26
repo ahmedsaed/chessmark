@@ -12,8 +12,9 @@
     make tournament ARGS="run free-1"
     make tournament ARGS="standings free-1"
 
-    # the one setting worth changing once it is running
+    # the settings worth changing once it is running
     make tournament ARGS="set free-1 --max-concurrent 4"
+    make tournament ARGS="set pool-free --games-per-pair 2"    # 0 makes it open-ended again
 
 **This schedules; it does not play.** Turns are played by `scripts/worker.py`, which must be
 running separately — one of them, because a job goes to whichever worker reaches it first.
@@ -118,7 +119,16 @@ async def cmd_field(args: argparse.Namespace) -> int:
 
 async def cmd_create(args: argparse.Namespace) -> int:
     sessionmaker = get_sessionmaker()
-    config = TournamentConfig(
+    try:
+        config = _config_from(args)
+    except ValueError as error:
+        print(f"{RED}{error}{OFF}", file=sys.stderr)
+        return 1
+    return await _create(args, config, sessionmaker)
+
+
+def _config_from(args: argparse.Namespace) -> TournamentConfig:
+    return TournamentConfig(
         format=Format(args.format),
         double=args.double,
         rounds=args.rounds,
@@ -130,7 +140,11 @@ async def cmd_create(args: argparse.Namespace) -> int:
         # an unranked pool would play indefinitely and measure nothing.
         is_ranked=(args.format == str(Format.POOL) or args.ranked) and not args.unranked,
         field=field_from(args),
+        games_per_pair=args.games_per_pair,
     )
+
+
+async def _create(args: argparse.Namespace, config: TournamentConfig, sessionmaker: Any) -> int:
 
     # A pool has no end, so its ceiling is the only thing that will ever stop it. A free one
     # cannot spend, and is allowed to run uncapped; anything that touches paid models must say
@@ -168,7 +182,9 @@ async def cmd_create(args: argparse.Namespace) -> int:
     print(f"  format      : {config.format}{' (double)' if config.double else ''}")
     if config.format is Format.SWISS:
         print(f"  rounds      : {config.rounds}")
-    if config.format is Format.POOL:
+    if config.format is Format.POOL and config.games_per_pair:
+        print(f"  per pair    : {config.games_per_pair} games, then idle until a newcomer")
+    elif config.format is Format.POOL:
         print(f"  {DIM}a pool never ends; its budget is what stops it{OFF}")
     print(f"  ranked      : {'yes' if config.is_ranked else 'no'}")
     print(f"  concurrency : {config.max_concurrent}")
@@ -404,11 +420,26 @@ async def apply_concurrency(session: Any, *, slug: str, value: int) -> tuple[int
     return was, value
 
 
+async def apply_games_per_pair(
+    session: Any, *, slug: str, value: int
+) -> tuple[int | None, int | None]:
+    """Set a pool's per-pair target; 0 clears it. Returns what it was and what it now is.
+
+    **Pools only.** A closed event's schedule is written from its field at creation, so a target
+    on one would be a number nothing reads (ADR-0050).
+    """
+    tournament = await resolve_slug(session, slug)
+    if tournament.format != Format.POOL:
+        raise ValueError(f"{slug} is a {tournament.format}; only a pool has a per-pair target")
+    was = tournament.games_per_pair
+    tournament.games_per_pair = value or None
+    return was, tournament.games_per_pair
+
+
 async def cmd_set(args: argparse.Namespace) -> int:
     """Change a running event's concurrency bound.
 
-    Concurrency is the only knob here because it is the one whose right value is not knowable at
-    `create` time: it depends on how many workers are up, how hot the free pools are today, and how
+    Concurrency is a knob here because its right value is not knowable at `create` time: it depends on how many workers are up, how hot the free pools are today, and how
     long a turn is taking — none of which the operator knows before the event has run. Everything
     else `create` sets is either a statement about what is being measured (format, field, ranked)
     and must not drift under a running event, or already has its own command (`resume --max-usd`).
@@ -417,6 +448,9 @@ async def cmd_set(args: argparse.Namespace) -> int:
     already running does not stop anything — `_start_games` and the reconciler simply start nothing
     new until the count falls — which is the honest behaviour: a game in progress outranks a bound
     changed after it began (ADR-0025).
+
+    A pool's per-pair target is the other (ADR-0050): it decides when an open-ended event stops
+    spending, and the pools that most need one are the ones already running.
     """
     if args.max_concurrent is not None and args.max_concurrent < MIN_CONCURRENT:
         print(
@@ -426,11 +460,37 @@ async def cmd_set(args: argparse.Namespace) -> int:
         )
         return 1
 
+    if args.games_per_pair is not None and args.games_per_pair < 0:
+        print(f"{RED}--games-per-pair must be 1 or more, or 0 to clear it{OFF}", file=sys.stderr)
+        return 1
+
     sessionmaker = get_sessionmaker()
     async with sessionmaker() as session:
+        if args.games_per_pair is not None:
+            try:
+                before, after = await apply_games_per_pair(
+                    session, slug=args.slug, value=args.games_per_pair
+                )
+            except ValueError as error:
+                print(f"{RED}{error}{OFF}", file=sys.stderr)
+                return 1
+            await session.commit()
+            print(
+                f"{GREEN}{args.slug}{OFF}  per pair : {before or 'open-ended'} -> "
+                f"{after or 'open-ended'}"
+            )
+            # Said because it is the surprising half: a pool already past the target does not
+            # replay anything, it simply stops starting games between pairs that have met enough.
+            if after:
+                print(f"{DIM}pairs already at {after} games are not paired again this era{OFF}")
+            if args.max_concurrent is None:
+                return 0
+
         if args.max_concurrent is None:
             tournament = await resolve_slug(session, args.slug)
             print(f"{BOLD}{tournament.slug}{OFF}  concurrency : {tournament.max_concurrent}")
+            per_pair = tournament.games_per_pair
+            print(f"{BOLD}{tournament.slug}{OFF}  per pair    : {per_pair or 'open-ended'}")
             return 0
 
         was, now = await apply_concurrency(session, slug=args.slug, value=args.max_concurrent)
@@ -582,6 +642,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="feed the leaderboard. Implied by --format pool, whose whole point is ratings",
     )
     create.add_argument("--max-concurrent", type=int, default=1)
+    create.add_argument(
+        "--games-per-pair",
+        type=int,
+        help="pools only: games each pair plays, then the pool idles until a newcomer (ADR-0050)",
+    )
     create.add_argument("--max-usd", type=float, help="the event's own ceiling")
     create.add_argument("--max-usd-per-game", type=float)
     create.add_argument("--max-plies", type=int, default=300)
@@ -621,12 +686,19 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--max-usd", type=float, help="raise the ceiling that stopped it")
     resume.set_defaults(run=cmd_resume)
 
-    concurrency = sub.add_parser("set", help="change a running event's concurrency")
+    concurrency = sub.add_parser(
+        "set", help="change a running event's concurrency, or a pool's per-pair target"
+    )
     concurrency.add_argument("slug")
     concurrency.add_argument(
         "--max-concurrent",
         type=int,
         help="how many of this event's games may run at once; omit to print the current value",
+    )
+    concurrency.add_argument(
+        "--games-per-pair",
+        type=int,
+        help="pools only: games each pair plays before it is not paired again; 0 clears it",
     )
     concurrency.set_defaults(run=cmd_set)
 

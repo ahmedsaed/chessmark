@@ -161,6 +161,7 @@ async def create_tournament(
         rounds=config.rounds,
         field_filter=_filter_as_json(config.field),
         max_concurrent=config.max_concurrent,
+        games_per_pair=config.games_per_pair,
         max_usd=config.max_usd,
         max_plies_per_game=config.max_plies_per_game,
         max_usd_per_game=config.max_usd_per_game,
@@ -319,6 +320,53 @@ async def entrants_of(session: AsyncSession, tournament_id: uuid.UUID) -> list[E
         .order_by(TournamentEntrant.seed, TournamentEntrant.key)
     )
     return [Entrant(key=r.key, seed=r.seed, label=r.display_name) for r in rows]
+
+
+async def pair_games(
+    session: AsyncSession, tournament_id: uuid.UUID, *, era: str
+) -> dict[frozenset[str], int]:
+    """How many games each pair has had in this era, towards a pool's per-pair target (ADR-0050).
+
+    **Every pairing that was not abandoned** — settled, running, paused or waiting to start. The
+    ones not yet settled count because they will be: leaving them out would let the next tick
+    schedule past the target while the first games are still being played. The abandoned ones do
+    not, because an abandoned pairing produced no result (invariant 11) and a target of two games
+    means two games that were actually decided, not two attempts the harness failed to finish.
+    A bye has no pair.
+    """
+    rows = await session.execute(
+        sa.select(TournamentGame.white_key, TournamentGame.black_key).where(
+            TournamentGame.tournament_id == tournament_id,
+            TournamentGame.era == era,
+            TournamentGame.black_key.is_not(None),
+            TournamentGame.abandoned_reason.is_(None),
+        )
+    )
+    counts: dict[frozenset[str], int] = {}
+    for white, black in rows:
+        pair = frozenset((white, black))
+        counts[pair] = counts.get(pair, 0) + 1
+    return counts
+
+
+async def is_saturated(
+    session: AsyncSession, tournament: Tournament, keys: set[str] | list[str]
+) -> bool:
+    """Whether every pair among `keys` has reached the pool's per-pair target this era (ADR-0050).
+
+    What the page means by "idle, waiting for a newcomer". `False` for an event with no target —
+    an open-ended pool is never saturated, however long it has run.
+    """
+    target = tournament.games_per_pair
+    if target is None:
+        return False
+    counts = await pair_games(session, tournament.id, era=era_of(tournament))
+    field = sorted(keys)
+    return all(
+        counts.get(frozenset((a, b)), 0) >= target
+        for index, a in enumerate(field)
+        for b in field[index + 1 :]
+    )
 
 
 async def record_round(

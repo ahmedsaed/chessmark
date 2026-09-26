@@ -656,6 +656,12 @@ async def _schedule_pool(
         # `results_so_far`. Without them a fixture that cannot be played is permanently unmet, and
         # the rematch penalty — the one thing that would stop it being chosen again — never fires.
         attempts=await repo.attempted(session, tournament.id, era=era),
+        games_per_pair=tournament.games_per_pair,
+        pair_games=(
+            await repo.pair_games(session, tournament.id, era=era)
+            if tournament.games_per_pair is not None
+            else None
+        ),
     )
     if not games:
         return None

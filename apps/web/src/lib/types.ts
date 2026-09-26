@@ -677,6 +677,8 @@ export interface TournamentSummary {
   rounds: number;
   is_ranked: boolean;
   max_concurrent: number;
+  /** A pool's per-pair target, or null for an open-ended pool (ADR-0050). */
+  games_per_pair: number | null;
   max_usd: string | null;
   entrant_count: number;
   field_description: string;
@@ -696,6 +698,8 @@ export interface TournamentDetail extends TournamentSummary {
    */
   era: string | null;
   eras: string[];
+  /** Every pair has played `games_per_pair` games, so the pool is idle until a newcomer. */
+  saturated: boolean;
   standings: Standing[];
   pairings: TournamentPairing[];
   games: GameSummary[];

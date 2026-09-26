@@ -1114,6 +1114,8 @@ class TournamentSummary(Schema):
     rounds: int
     is_ranked: bool
     max_concurrent: int
+    #: A pool's per-pair target, or null for an open-ended pool (ADR-0050).
+    games_per_pair: int | None = None
     max_usd: Decimal | None
     entrant_count: int
     field_description: str
@@ -1129,6 +1131,9 @@ class TournamentDetail(TournamentSummary):
     #: `?era=` selects a past one.
     era: str | None = None
     eras: list[str] = Field(default_factory=list)
+    #: Every pair the field still admits has played `games_per_pair` games this era, so the pool is
+    #: idle until a newcomer arrives (ADR-0050). Always false for an open-ended pool.
+    saturated: bool = False
     standings: list[StandingOut] = Field(default_factory=list)
     pairings: list[TournamentPairingOut] = Field(default_factory=list)
     games: list[GameSummary] = Field(default_factory=list)
