@@ -19,8 +19,10 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { ModelPicker } from "@/components/ModelPicker";
-import { SpendLimit } from "@/components/SpendLimit";
+import { GameLimits } from "@/components/GameLimits";
+import { TalkToggle } from "@/components/TalkToggle";
 import { limitFrom } from "@/lib/credit";
+import { DEFAULT_PLIES, pliesFrom } from "@/lib/limits";
 import type { ModelInfo } from "@/lib/types";
 
 const DEFAULT_WHITE = "google/gemini-3.7-flash";
@@ -48,6 +50,9 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
   const [whiteQuant, setWhiteQuant] = useState<string>("");
   const [blackQuant, setBlackQuant] = useState<string>("");
   const [limit, setLimit] = useState("");
+  const [plies, setPlies] = useState(String(DEFAULT_PLIES));
+  /* On by default, as the API always had it: two models trading barbs is half the show. */
+  const [talk, setTalk] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -69,7 +74,8 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           // Omitted means "the healthiest endpoint at whatever precision", which is then recorded.
           white_quantization: whiteQuant || null,
           black_quantization: blackQuant || null,
-          max_plies: 300,
+          max_plies: pliesFrom(plies),
+          trash_talk_enabled: talk,
           // Theirs to set, or none: the game spends their credit (ADR-0052).
           max_usd: limitFrom(limit),
         }),
@@ -100,7 +106,7 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
         Start a game · {playable.length} playable models
       </h2>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr_auto]">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto_1fr]">
         <ModelPicker
           label="White"
           value={white}
@@ -125,23 +131,35 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           onQuantizationChange={setBlackQuant}
         />
 
+      </div>
+
+      <GameLimits
+        limit={limit}
+        onLimitChange={setLimit}
+        plies={plies}
+        onPliesChange={setPlies}
+        options={
+          <TalkToggle
+            checked={talk}
+            onChange={setTalk}
+            hint="Trash talk: the two models can message each other as they play, and every word is on the record. It never touches a rating — games started here are unranked."
+          />
+        }
+      >
         <button
           type="button"
           onClick={start}
           disabled={!ready}
-          className="self-end border border-accent-deep bg-accent px-4 py-2 font-mono text-data uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40"
+          className="border border-accent-deep bg-accent px-4 py-2 font-mono text-data uppercase tracking-[0.1em] text-on-accent transition-colors hover:bg-accent-dim disabled:opacity-40"
         >
           {busy ? "starting…" : "play"}
         </button>
-      </div>
+      </GameLimits>
 
       {/* Said before the button is pressed, because there is no price to show: a game is charged
           what each turn actually cost, and nothing knows that until it is played (ADR-0052). */}
-      <SpendLimit value={limit} onChange={setLimit} />
-
       <p className="font-mono text-meta text-ink-faint">
-        Paid for as it plays: each model turn is charged what it cost. You can pause it at any time.
-        A game pauses if your credit runs out, and resumes when more is added.
+        Paid from your credit as it plays. Pause it any time; out of credit, it waits for more.
       </p>
 
       {error && (

@@ -302,6 +302,15 @@ async def hold_for_owner(session: AsyncSession, game: Game, player: Player) -> N
     )
 
 
+class GameEndsHereError(Exception):
+    """The game is over, or over its budget, before this turn: it is ended by `_end_game`, in its
+    own transaction, so the ending can be published after it commits."""
+
+
+def _over_budget(game: Game) -> bool:
+    return game.max_usd is not None and Decimal(game.total_cost_usd) >= Decimal(game.max_usd)
+
+
 class OwnerPauseRequestedError(Exception):
     """Raised to skip a turn its owner asked not to run; the pause is written in its own
     transaction, for `HarnessHaltedError`'s reason."""
@@ -477,6 +486,8 @@ class TurnWorker:
             # owner dies the queue's `XAUTOCLAIM` and the reconciler both still cover it.
             log.info("dropping job for %s: another worker is advancing it", job.game_id)
             return HandledJob(IN_FLIGHT, job.game_id, job.expected_ply)
+        except GameEndsHereError:
+            return await self._end_game(job)
         except OwnerPauseRequestedError:
             return await self._pause_for_owner(job)
         except OutOfCreditError as unfunded:
@@ -532,13 +543,12 @@ class TurnWorker:
                 )
                 return HandledJob(STALE, game.id, referee.ply)
 
-            if referee.is_over:
-                await self._conclude(session, game, referee.outcome)
-                return HandledJob(GAME_OVER, game.id, referee.ply, game_outcome=referee.outcome)
-
-            over_budget = await self._enforce_budget(session, game, referee)
-            if over_budget is not None:
-                return HandledJob(BUDGET, game.id, referee.ply, game_outcome=over_budget)
+            # **Ended in a transaction of its own, so the ending is published.** Both used to
+            # conclude here and return, and nothing told the live page: its header read the new
+            # status on its next fetch while the event stream went on showing a game in progress,
+            # until a reload. A spending limit ends a game exactly this way (ADR-0052).
+            if referee.is_over or _over_budget(game):
+                raise GameEndsHereError
 
             # Layer 1, checked here rather than in the API because this is the last point before
             # money is actually spent — a game admitted an hour ago must not keep spending into a
@@ -864,6 +874,29 @@ class TurnWorker:
         # the database has not accepted.
         await self._publish(job.game_id, events)
         return HandledJob(HALTED, job.game_id, job.expected_ply, result=result)
+
+    async def _end_game(self, job: AdvanceTurn) -> HandledJob:
+        """End a game that is over, or over its budget, and publish the ending (ADR-0008)."""
+        async with self.sessionmaker() as session, session.begin():
+            try:
+                game = await get_game(session, job.game_id, claim=True)
+            except GameInFlightError:
+                return HandledJob(IN_FLIGHT, job.game_id, job.expected_ply)
+            if game.status is not GameStatus.RUNNING:
+                return HandledJob(NOT_RUNNING, game.id, game.ply_count)
+
+            referee = await rebuild_referee(session, game)
+            before = game.event_seq
+            if referee.is_over:
+                await self._conclude(session, game, referee.outcome)
+                handled = HandledJob(GAME_OVER, game.id, referee.ply, game_outcome=referee.outcome)
+            else:
+                outcome = await self._enforce_budget(session, game, referee)
+                handled = HandledJob(BUDGET, game.id, referee.ply, game_outcome=outcome)
+            events = await load_events(session, game.id, after_seq=before)
+
+        await self._publish(job.game_id, events)
+        return handled
 
     async def _pause_for_owner(self, job: AdvanceTurn) -> HandledJob:
         """Pause the game its owner asked to pause, then withdraw the request it answered."""

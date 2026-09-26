@@ -152,7 +152,7 @@ function Profile({ apiUrl }: { apiUrl: string }) {
   }
 
   return (
-    <main className="mx-auto w-full max-w-[760px] px-5 py-10">
+    <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       <h1 className="font-serif text-4xl text-ink">Profile</h1>
       <p className="mt-2 text-sm text-ink-dim">
         {user.primaryEmailAddress?.emailAddress ?? "No email on this account"}
@@ -165,7 +165,7 @@ function Profile({ apiUrl }: { apiUrl: string }) {
           by this.
         </p>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="mt-4 flex max-w-xl flex-wrap items-center gap-2">
           <label className="sr-only" htmlFor="display-name">
             Display name
           </label>
@@ -204,19 +204,11 @@ function Profile({ apiUrl }: { apiUrl: string }) {
 
       <section className="mt-12">
         <Heading>Credit</Heading>
-        <p className="mt-2 text-sm text-ink-dim">
-          Credit is dollars, spent as your games play: each model turn is charged what it actually
-          cost, and a free model costs nothing. When it runs out, a game pauses where it is and
-          resumes once more is added. Credit is granted by an administrator and does not refill.
-        </p>
 
         <dl className="mt-5 flex flex-wrap gap-10">
           <Stat label="credit" value={me ? formatBalance(me.balance_usd) : "—"} />
           <Stat label="games today" value={me ? String(me.games_started_today) : "—"} />
-          <Stat
-            label="spent today"
-            value={me ? `$${Number(me.usd_spent_today).toFixed(4)}` : "—"}
-          />
+          <Stat label="spent" value={me ? formatBalance(me.usd_spent_total) : "—"} />
         </dl>
       </section>
 
@@ -238,7 +230,7 @@ function Profile({ apiUrl }: { apiUrl: string }) {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto w-full max-w-[760px] px-5 py-10">
+    <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
       <h1 className="font-serif text-4xl text-ink">Profile</h1>
       <div className="mt-6">{children}</div>
     </main>
@@ -273,7 +265,7 @@ function Played({ games }: { games: MyGameSummary[] | null }) {
   if (games === null) {
     return (
       <section className="mt-12">
-        <Heading>Games</Heading>
+        <Heading>Games you played</Heading>
         <p className="mt-3 border border-bad-deep bg-surface px-4 py-3 text-sm text-bad">
           Your games could not be loaded. This is a failed request, not an empty history — reload
           to try again.
@@ -285,7 +277,7 @@ function Played({ games }: { games: MyGameSummary[] | null }) {
   if (games.length === 0) {
     return (
       <section className="mt-12">
-        <Heading>Games</Heading>
+        <Heading>Games you played</Heading>
         <p className="mt-3 text-sm text-ink-dim">
           You have not played yet.{" "}
           <Link className="text-accent underline underline-offset-4" href="/play">
@@ -334,12 +326,12 @@ function Played({ games }: { games: MyGameSummary[] | null }) {
       </section>
 
       <section className="mt-12">
-        <Heading>Your games</Heading>
+        <Heading>Games you played</Heading>
         <p className="mt-2 text-sm text-ink-dim">
           Waiting on you first, then what is still running, then what is finished.
         </p>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {ordered.map((game) => (
             <GameCard
               key={game.id}
@@ -348,7 +340,7 @@ function Played({ games }: { games: MyGameSummary[] | null }) {
               yourTurn={game.your_turn}
             />
           ))}
-        </div>
+        </ul>
       </section>
     </>
   );
@@ -380,7 +372,7 @@ function Started({ games }: { games: StartedGameSummary[] | null }) {
         was billed once it has been reconciled, and its running cost until then.
       </p>
 
-      <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+      <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {games.map((game) => (
           <GameCard key={game.id} game={game} cost={usd(costOf(game))} />
         ))}

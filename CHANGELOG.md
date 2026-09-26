@@ -17,6 +17,12 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **Starting a game has its settings on one row**: an optional spending limit, a ply cap (2–1000,
+  which the page mentioned and never offered), and **Talk**, explained in a tooltip. Talk is trash
+  talk for a game between two models (on by default, as the API always had it; the form never let
+  anyone turn it off) and chat for a game you play.
+- **Your profile lists the games between two models you started** ("Games you started"), with
+  what each cost and the total. It shows what you have spent in all rather than today.
 - **A game is charged what OpenRouter billed for it.** When a game ends, or is paused by its owner
   or for lack of credit, it is checked against OpenRouter's own bill for its session, about 5
   minutes, an hour and a day later. Its owner is settled to that figure, as a charge or a refund.
@@ -73,6 +79,11 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **A game ended by its spending limit says so on the live page.** The ending was written but never
+  published, so the header changed and the event stream did not until a reload.
+- **Costs and balances show enough decimal places to move and to add up.** A decision game took a
+  balance from $1.00 to $0.9962 and the header still read $1.00, and a game's seats read "$0.002"
+  and "$0.001" over a total of "$0.004".
 - **A failed turn keeps the answers it paid for.** A rejected request, no room to answer, broken
   token accounting, our own output ceiling and a garbled tool call each used to roll back the whole
   turn: answers already billed vanished from the record, and the retry paid for them again. About

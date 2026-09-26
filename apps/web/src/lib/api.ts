@@ -515,6 +515,8 @@ export function createHumanGame(
     trash_talk_enabled?: boolean;
     /** The player's own limit on what the game may cost, or none (ADR-0052). */
     max_usd?: string | null;
+    /** The ply cap, 2–1000. */
+    max_plies?: number;
   },
 ): Promise<{ id: string }> {
   return post<{ id: string }>("/games/human", token, body);

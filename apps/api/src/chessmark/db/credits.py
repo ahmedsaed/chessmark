@@ -151,6 +151,18 @@ async def charged_for(session: AsyncSession, game_id: uuid.UUID) -> Decimal:
     return -Decimal(total or 0)
 
 
+async def spent_by(session: AsyncSession, user_id: uuid.UUID) -> Decimal:
+    """Everything a person has been charged in dollars: their turns and their settlements."""
+    total = await session.scalar(
+        sa.select(sa.func.coalesce(sa.func.sum(CreditLedger.delta), 0)).where(
+            CreditLedger.user_id == user_id,
+            CreditLedger.unit == "usd",
+            CreditLedger.reason.in_((CreditReason.TURN, CreditReason.SETTLEMENT)),
+        )
+    )
+    return -Decimal(total or 0)
+
+
 async def grant(
     session: AsyncSession,
     user_id: uuid.UUID,

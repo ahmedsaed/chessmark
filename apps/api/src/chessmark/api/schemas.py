@@ -929,6 +929,10 @@ class MeOut(Schema):
     #: by the one turn a game overran by.
     balance_usd: Decimal
 
+    #: Everything this account has been charged, in dollars: every turn, and every settlement
+    #: against what OpenRouter billed (ADR-0052, ADR-0054).
+    usd_spent_total: Decimal = Decimal(0)
+
     #: Kept for the admin spend view; no longer a limit on anything.
     games_started_today: int
     usd_spent_today: Decimal

@@ -539,6 +539,8 @@ export interface Me {
   /** Credit held, in US dollars, as a decimal string; spent at what each turn actually cost
    *  (ADR-0052). Can sit a turn's cost below zero. */
   balance_usd: string;
+  /** Everything the account has been charged: every turn, every settlement (ADR-0054). */
+  usd_spent_total: string;
   games_started_today: number;
   usd_spent_today: string;
 }
