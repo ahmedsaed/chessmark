@@ -1031,14 +1031,17 @@ async def my_seat(
     game: GameDep,
     user: CurrentUser,
 ) -> SeatOut:
-    """Which colour, if any, the caller is playing in this game.
+    """Which colour, if any, the caller is playing in this game, and whether they pay for it.
 
     A dedicated endpoint rather than a field on the game, because the game is public and the
     answer is not: putting `user_id` on the player payload would publish who plays what to every
-    spectator, to save one request.
+    spectator, to save one request. **Who started a game is private for the same reason**, and
+    `pays` is how its owner's page learns it — so the header can refresh the balance as the game
+    spends it, and nobody else's page asks at all (ADR-0052).
     """
+    pays = game.created_by_user_id == user.id
     try:
         player = await human_play.seat_of(session, game.id, user.id)
     except human_play.NotYourGameError:
-        return SeatOut(colour=None)
-    return SeatOut(colour=Colour(player.colour))
+        return SeatOut(colour=None, pays=pays)
+    return SeatOut(colour=Colour(player.colour), pays=pays)

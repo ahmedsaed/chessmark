@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from typing import Any
 
 import pytest
 import sqlalchemy as sa
@@ -34,7 +35,7 @@ async def _seed_model(db: AsyncSession) -> None:
 
 async def _new_game(client: AsyncClient, db: AsyncSession, *, colour: str = "white", **body):
     await _seed_model(db)
-    # Sitting down costs credits now (ADR-0016); a test user holds none until granted.
+    # A paid opponent needs credit (ADR-0052); a test user holds none until granted.
     await fund(db)
     response = await client.post(
         "/games/human",
@@ -456,3 +457,43 @@ async def test_a_paid_model_needs_a_balance_above_zero(
 
     assert response.status_code == 402, response.text
     assert "$0.00" in response.text
+
+
+async def test_the_seat_says_who_pays_and_only_to_them(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """ADR-0052. The owner's page learns the game is theirs to pay for, so its header can follow
+    the balance; anyone else is told nothing about who started it."""
+    game_id = await _new_game(client, db)
+
+    mine = (await client.get(f"/games/{game_id}/seat", headers=as_user())).json()
+    theirs = (await client.get(f"/games/{game_id}/seat", headers=as_user("user_spectator"))).json()
+
+    assert mine == {"colour": "white", "pays": True}
+    assert theirs == {"colour": None, "pays": False}
+
+
+async def test_the_owner_of_a_model_game_is_told_they_pay(
+    client: AsyncClient, db: AsyncSession, redis: Any
+) -> None:
+    """No seat, and still theirs to pay for — the case a colour alone could not answer."""
+    await sync_model_registry(
+        db,
+        [
+            {"openrouter_id": "test/white", "display_name": "White", "context_length": 200_000},
+            {"openrouter_id": "test/black", "display_name": "Black", "context_length": 200_000},
+        ],
+    )
+    await fund(db, "user_runner")
+    created = await client.post(
+        "/games",
+        json={"white": "test/white", "black": "test/black"},
+        headers=as_user("user_runner"),
+    )
+    assert created.status_code == 201, created.text
+
+    seat = (
+        await client.get(f"/games/{created.json()['id']}/seat", headers=as_user("user_runner"))
+    ).json()
+
+    assert seat == {"colour": None, "pays": True}

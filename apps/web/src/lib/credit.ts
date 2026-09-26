@@ -20,3 +20,33 @@ export function formatBalance(usd: string | number): string {
 export function canPay(usd: string | number): boolean {
   return Number(usd) > 0;
 }
+
+/**
+ * The signal that a balance has probably moved, so the header should read it again.
+ *
+ * **Not a meter.** Credit is spent turn by turn (ADR-0052), and polling `/me` from every open page
+ * would ask a question whose answer changes only when a game the reader pays for plays a model
+ * turn. So the page that can see that happen says so, and nothing else asks: a window event
+ * rather than shared state, because the header lives in the root layout and the game in the page
+ * under it, and neither should have to know the other exists.
+ */
+export const BALANCE_MAY_HAVE_CHANGED = "chessmark:balance-may-have-changed";
+
+export function announceSpend(): void {
+  window.dispatchEvent(new Event(BALANCE_MAY_HAVE_CHANGED));
+}
+
+/**
+ * Whether the move that just landed cost the viewer anything: a new ply, in a game they pay for,
+ * made by a model rather than by them. Their own move is free, so it asks nothing.
+ */
+export function modelMoveCharged(options: {
+  pays: boolean;
+  before: number;
+  after: number;
+  mover: "white" | "black" | null;
+  seat: "white" | "black" | undefined;
+}): boolean {
+  const { pays, before, after, mover, seat } = options;
+  return pays && after > before && mover !== null && mover !== seat;
+}

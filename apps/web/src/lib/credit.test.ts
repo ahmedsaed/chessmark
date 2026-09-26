@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canPay, formatBalance } from "@/lib/credit";
+import { canPay, formatBalance, modelMoveCharged } from "@/lib/credit";
 
 describe("formatBalance", () => {
   it("writes a balance in dollars and cents", () => {
@@ -24,5 +24,26 @@ describe("canPay", () => {
     expect(canPay("0.0001")).toBe(true);
     expect(canPay("0E-8")).toBe(false);
     expect(canPay("-0.002")).toBe(false);
+  });
+});
+
+describe("modelMoveCharged", () => {
+  const base = { pays: true, before: 4, after: 5, seat: undefined } as const;
+
+  it("is a model's move in a game the viewer pays for", () => {
+    expect(modelMoveCharged({ ...base, mover: "white" })).toBe(true);
+  });
+
+  it("is not the viewer's own move, which costs nothing", () => {
+    expect(modelMoveCharged({ ...base, mover: "white", seat: "white" })).toBe(false);
+    expect(modelMoveCharged({ ...base, mover: "black", seat: "white" })).toBe(true);
+  });
+
+  it("is nothing in a game somebody else pays for", () => {
+    expect(modelMoveCharged({ ...base, pays: false, mover: "white" })).toBe(false);
+  });
+
+  it("is nothing without a new ply", () => {
+    expect(modelMoveCharged({ ...base, after: 4, mover: "white" })).toBe(false);
   });
 });

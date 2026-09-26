@@ -100,9 +100,11 @@ so the old history still sums correctly. The dollar balance sums only `usd` rows
 
 * **A game's price is known only when it ends.** The page says so before a game starts, because
   there is no number to show.
-* **The header balance is a reading, not a live meter.** It refreshes on navigation, and a game in
-  progress moves it underneath. Whether to poll is an open question, since it would touch every
-  page.
+* **The header balance follows play without polling.** It re-reads `/me` on navigation, when the
+  tab comes back into view, and when the page of a game the reader pays for shows a model move.
+  That is the only event that changes a balance while someone watches. Who started a game is
+  private, so the seat endpoint tells the owner alone (`pays`). A signed-in viewer of a live game
+  makes one extra request per page load to learn it, and anonymous readers make none.
 * **The per-turn ledger is one row per model turn.** It grows with play at the rate `turns` does,
   and it is what lets a balance be explained move by move.
 * **`MAX_USD_PER_GAME` still ends a game as `budget_exceeded`.** It is the harness's own bound

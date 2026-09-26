@@ -25,7 +25,9 @@ file is only the record of *what shipped when*.
   turn and resumes once more is added. A person playing a free model needs no credit at all.
   Existing balances were reset to zero. The picker shows each model's price band as `$`–`$$$$`,
   and tournament fields select on it with `--min-tier`/`--max-tier`, replacing
-  `--min-credits`/`--max-credits`. `./chessmark credits` grants dollars. (AUTH-10, AUTH-11,
+  `--min-credits`/`--max-credits`. `./chessmark credits` grants dollars. The header balance
+  refreshes when a model move in your own game is charged, and when you return to the tab. It does
+  not poll. (AUTH-10, AUTH-11,
   AUTH-13, [ADR-0052](docs/adr/0052-credit-is-dollars-spent-at-actual-cost.md))
 - **Decision models choose what to do with their turn, and are checked before they play.** Resign,
   offer, accept and claim are now one choice beside the move, not four yes/no questions gated at a

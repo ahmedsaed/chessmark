@@ -22,7 +22,7 @@ import { AccountMenu } from "@/components/AccountMenu";
 import { clerkEnabled } from "@/components/AuthProvider";
 import { useClerkMounted } from "@/components/ClerkGate";
 import type { Me } from "@/lib/types";
-import { canPay, formatBalance } from "@/lib/credit";
+import { BALANCE_MAY_HAVE_CHANGED, canPay, formatBalance } from "@/lib/credit";
 
 /**
  * The height every control in the header shares.
@@ -86,11 +86,27 @@ function Bar({ apiUrl }: { apiUrl: string }) {
   const [me, setMe] = useState<Me | null>(null);
 
   /* Refetched on every navigation, because this component lives in the root layout and never
-     unmounts to notice a change. **It is a reading, not a live meter**: credit is spent turn by
-     turn while a game plays (ADR-0052), so the number here is as of the last page a person opened,
-     and a game in progress moves it underneath. Keyed on the path so the header is right whenever
-     somebody goes to look at their games, without the two components knowing about each other. */
+     unmounts to notice a change — and, below, whenever something says the balance may have moved.
+     Credit is spent turn by turn while a game plays (ADR-0052). */
   const pathname = usePathname();
+
+  /* **Read again when the balance may have moved, and at no other time.** A model move in a game
+     this person pays for is announced by that game's page; coming back to the tab covers a game
+     they left playing in another. Nothing polls — a header on every open page asking `/me` on a
+     timer would be traffic for a number that, for almost every reader, is not changing (ADR-0052). */
+  const [stale, setStale] = useState(0);
+  useEffect(() => {
+    const again = () => setStale((count) => count + 1);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") again();
+    };
+    window.addEventListener(BALANCE_MAY_HAVE_CHANGED, again);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener(BALANCE_MAY_HAVE_CHANGED, again);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
 
   useEffect(() => {
     if (!isSignedIn) return;
@@ -114,7 +130,7 @@ function Bar({ apiUrl }: { apiUrl: string }) {
     return () => {
       cancelled = true;
     };
-  }, [isSignedIn, getToken, apiUrl, pathname]);
+  }, [isSignedIn, getToken, apiUrl, pathname, stale]);
 
   if (!isLoaded) return null;
 

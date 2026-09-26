@@ -78,8 +78,7 @@ launch.
 
 | **A 402 may not always mean the account is empty.** OpenRouter is reported — by users, not by their docs — to check a key's remaining budget against `max_tokens`, the maximum *possible* output, so a large request can be refused against a balance that would serve a smaller one. `worker._halt_on_credits` handles it by consulting the balance first and pausing only that game when the account visibly has money, but the better answer would be to retry with a smaller ceiling. Never yet observed here. | Phase 5 |
 | **Two endpoints advertise an output ceiling they do not honour.** OpenRouter reports `max_completion_tokens: 65536` for Nvidia's `nemotron-3-nano-omni` and the endpoint stops at 32,768 — 47 times out of 47 — and Poolside's `laguna-s-2.1` does the same. We ask for what the catalogue says and are truncated below it. Deliberately not corrected by discovery: clamping to the true ceiling would not stop the truncation (the model emits what it emits) and attribution is already correct on both branches (ADR-0024). The residual risk is an endpoint that *rejects* an over-large `max_tokens` rather than truncating, which the reactive rung catches. | Phase 5 |
-| **The header balance is a reading, not a live meter.** Credit is spent turn by turn (ADR-0052) and the header refetches `/me` on navigation, so a game in progress moves the balance underneath the number shown. Polling would fix it and would touch every page, so it waits for a decision. | Phase 28 |
-| **`MAX_USD_PER_GAME` has not been set from real game costs.** It is still $1.00, the harness's own bound (ADR-0011), and a game somebody pays for ends `budget_exceeded` when it meets it. It should sit above what a normal game costs, which needs production's per-game costs to measure (`make dev-pull`). | Phase 28 |
+| **`MAX_USD_PER_GAME` has not been decided for games a person pays for.** It is still $1.00, the harness's own bound (ADR-0011), and a paid game ends `budget_exceeded` when it meets it, credit or no credit. Production's four paid games are all in the cheapest band, the dearest $0.38 in 53 plies, so a `$$$$` model would meet the cap within a few moves. Whether a paid game keeps it, and at what, is the owner's call. | Phase 28 |
 | **Nothing reports how much of the free allowance is left**, and nothing can (ADR-0023). We deleted our own count because it was an over-count that stopped play while OpenRouter was still serving us; the cost is that `status` can say the harness is halted but never how close it is to being. A header would fix it if one ever appears. | Phase 5 |
 
 Deliberate limitations, not gaps: no clock, and human draw offers are advisory only.
@@ -1562,8 +1561,13 @@ and no game started against a model that cannot answer a turn
       floor stops; the credit-era rows do not count toward dollars — `tests/db/test_credits.py`
 - [x] The migration runs both ways, closes every credit balance with one `retired` row, and
       rewrites stored tournament fields and their descriptions onto the price bands
-- [ ] Checked against production's data — the migration on real balances, and real per-game
-      costs against `MAX_USD_PER_GAME`. Waits on the owner running `make dev-pull`.
+- [x] The header re-reads the balance when a model move is charged to the reader, and never on a
+      timer — `e2e/signed-in/play.spec.ts`, which fails with the announcement removed
+- [x] The migration checked against production's data (`make dev-pull`): both balances closed to
+      zero, the credit history summing to zero, and neither stored field using a price bound
+- [ ] `MAX_USD_PER_GAME` set for games a person pays for. Production holds four paid games, all in
+      the cheapest band, the dearest $0.38 in 53 plies — too few to set it from, and whether a
+      paid game keeps the cap at all is the owner's decision
 
 **Covers:** AUTH-10, AUTH-11, AUTH-13; supersedes AUTH-12
 

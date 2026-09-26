@@ -588,9 +588,12 @@ class HumanActionResponse(Schema):
 
 
 class SeatOut(Schema):
-    """Which colour the caller plays here, or `null` for a spectator."""
+    """Which colour the caller plays here, or `null` for a spectator — and whether they pay for it."""
 
     colour: Colour | None
+    #: Whether this game's turns are charged to the caller: they started it (ADR-0052). Lets the
+    #: page refresh their balance as the game spends it, without publishing who started a game.
+    pays: bool = False
 
 
 class IllegalMoveResponse(Schema):
