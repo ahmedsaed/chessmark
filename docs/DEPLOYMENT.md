@@ -34,7 +34,7 @@ everything inside a container: no uv, no node, and no remembering which compose 
 | | |
 | --- | --- |
 | `up` `down` `ready` `logs` `restart` | the stack |
-| `status` | containers, plus the halt, budgets, queue, live and paused games, and every event |
+| `status` | containers, plus the halt, budgets, queue, turns that crashed, live and paused games, and every event |
 | `deploy` | pull the published images, migrate, restart, check `/ready` |
 | `workers N` | how many turn workers to run (`WORKER_REPLICAS`) |
 | `catalogue` `endpoints` `models` `prune` | the model registry |

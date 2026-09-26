@@ -15,6 +15,16 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Added
+
+- **`./chessmark status` lists turns that crashed.** A turn that raised something the worker had no
+  rule for, such as a constraint violation, used to end the worker process. Its job had already
+  been acknowledged, so the game sat silent until the stall sweep requeued it 45 minutes later, and
+  the traceback had usually scrolled out of `./chessmark logs` before anybody looked. The worker
+  now records the crash (game, ply, error, message), keeps running, and leaves the game for the
+  sweep. The crash is never written to the game's own log: it is for the operator, not the reader.
+  (OPS-21)
+
 ### Changed
 
 - **Credit is dollars, spent at what each turn actually cost.** A game used to cost one to six
@@ -56,6 +66,17 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **A pause inside a turn folds only into the pause directly above it**, as it always has between
+  turns. The in-turn fold searched the whole turn and joined the first matching row wherever it
+  was, so `c4550202` drew a day of rate limits as one `×16` row above a halt from the night before,
+  and the last thing on the page was a halt that had long since lifted. A retry or a different
+  pause between two waits now starts a new row, and the newest wait is the last one drawn. (UI-10)
+- **A turn resumed after a call to an unknown tool no longer dies on its first tool call.** The
+  unknown call was written to `tool_calls` but not counted in `tool_call_count`, and the resumed
+  attempt numbered its calls from the count, so it reused a sequence and hit the unique constraint.
+  The job died without writing anything, and the game sat silent until the stall sweep requeued it
+  45 minutes later. `c4550202` did this on every resume for a day. A resumed turn now numbers its
+  calls from the rows it already wrote. (ADR-0045)
 - **A tournament's entrant count matches its table.** It counted every entrant ever seated,
   withdrawn ones included, so the Decision Cup said "4 entrants" above a table of two. Both the
   list and the event page now count the rows the standings show: models still in the field, and

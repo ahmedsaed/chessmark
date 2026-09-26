@@ -1019,17 +1019,12 @@ describe("a pause inside a turn is a step of it", () => {
     expect(block.kind === "paused" && block.resumeAfter).toBe("12:30");
   });
 
-  it("folds identical pauses that have real work between them", () => {
-    /* The production shape, and the one the adjacent-run test above cannot see. A provider that
-       keeps timing out does not pause twice in a row: the model *retries* between refusals, so the
-       turn reads reason, pause, reason, pause, reason, pause. Matching only `blocks.at(-1)` finds a
-       `reasoning` block there and starts a new row every time — `57e8a7bc` drew three byte-identical
-       "Nvidia did not answer in time" rows in one turn, which is exactly the run `foldPauses`
-       already collapses between turns.
-
-       The row stays where the wait *started* and carries the latest `resumeAfter`, matching
-       `foldPauses`'s `{ ...last, key: first.key }`: the count is the summary, and the reasoning
-       that happened between refusals keeps its own place below it. */
+  it("does not fold identical pauses that have real work between them", () => {
+    /* Only an adjacent pause folds, inside a turn as between turns. A provider that keeps timing
+       out while the model retries reads reason, pause, reason, pause — and each retry is a real
+       event that happened *between* the refusals. Folding across it once drew every pause as one
+       row at the first refusal, which is what put `c4550202`'s day of rate limits above a halt from
+       the night before. */
     seq = 0;
     const events = [
       event("turn_started", { ply: 1, colour: "white", player_id: "w", model: "m" }),
@@ -1038,25 +1033,52 @@ describe("a pause inside a turn is a step of it", () => {
       event("game_resumed", {}),
       event("thinking", { reasoning: "second try", tokens: 10 }),
       event("game_paused", { reason: "Nvidia did not answer in time", resume_after: "12:30" }),
-      event("game_resumed", {}),
-      event("thinking", { reasoning: "third try", tokens: 10 }),
-      event("game_paused", { reason: "Nvidia did not answer in time", resume_after: "13:00" }),
       event("move_made", { ply: 1, colour: "white", san: "e4" }),
     ];
 
     const [turn] = foldEvents(events, []).turns;
-    const pauses = turn.blocks.filter((b) => b.kind === "paused");
 
-    expect(pauses).toHaveLength(1);
-    expect(pauses[0].kind === "paused" && pauses[0].count).toBe(3);
-    expect(pauses[0].kind === "paused" && pauses[0].resumeAfter).toBe("13:00");
-    // The work between the refusals is real and keeps its own rows, below the wait that began.
     expect(turn.blocks.map((b) => b.kind)).toEqual([
       "reasoning",
       "paused",
       "reasoning",
-      "reasoning",
+      "paused",
     ]);
+  });
+
+  it("never folds a pause past a different one (c4550202)", () => {
+    /* The production log, from the game that exposed it: a rate limit, again, then the day's
+       free allowance ran out and the harness halted on top of it, then more rate limits after
+       midnight. The newest wait has to be the last row. */
+    const RL = "poolside/laguna-xs-2.1:free rate-limited by Poolside (upstream_provider_shared_pool)";
+    const HALT = "the harness is halted: the free-model allowance for the day is spent (429)";
+    const resumed = (reason: string) =>
+      event("game_resumed", { detail: `the wait is over: ${reason}`, reason });
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 55, colour: "white", player_id: "w", model: "m" }),
+      event("tool_called", { tool: "get_legal_moves", ok: true, args: {}, result: {} }),
+      event("game_paused", { reason: RL, resume_after: "16:40" }),
+      resumed(RL),
+      event("game_paused", { reason: RL, resume_after: "17:57" }),
+      event("game_paused", { reason: HALT, resume_after: "00:00" }),
+      resumed(HALT),
+      event("game_paused", { reason: RL, resume_after: "00:01" }),
+      resumed(RL),
+      event("game_paused", { reason: RL, resume_after: "14:44" }),
+      resumed(RL),
+    ];
+
+    const { turns, notices } = foldEvents(events, []);
+    const rows = turns[0].blocks.flatMap((b) =>
+      b.kind === "paused" ? [`${b.text === RL ? "rate-limit" : "halt"}×${b.count}`] : [],
+    );
+
+    expect(rows).toEqual(["rate-limit×2", "halt×1", "rate-limit×2"]);
+    const last = turns[0].blocks.at(-1);
+    expect(last?.kind === "paused" && last.resumeAfter).toBe("14:44");
+    expect(pauseCount(turns[0])).toBe(5);
+    expect(notices).toEqual([]);
   });
 
   it("keeps two different pauses apart even across a retry", () => {
@@ -1336,10 +1358,10 @@ describe("a resume is swallowed by the pause it answers (c2fd378a)", () => {
    * `game_resumed` rows, twelve of the pauses on the open turn alone. The page drew one folded
    * `PAUSED ×11` row and ten stray `RESUMED` rows stacked beneath the turn's tool calls.
    *
-   * Both sides of the pairing were already written and they disagreed. The pause fold *searches*
-   * the block list, because the model retries between refusals and the row deliberately stays where
-   * the wait began; the resume test peeked at `blocks.at(-1)`, found the retry, and let every
-   * resume after the first escape as its own notice.
+   * Both sides of the pairing were already written and they disagreed: the pause fold searched the
+   * block list while the resume test peeked at `blocks.at(-1)`, so every resume after the first
+   * escaped as its own notice. The pauses no longer fold across the retries between them — only an
+   * adjacent pause folds — but each resume must still be swallowed by the pause it answers.
    *
    * The resumes here carry the real payload — `detail: "the wait is over: <reason>"` — because
    * that is all a game already in the archive has. The `reason` field is new.
@@ -1366,13 +1388,13 @@ describe("a resume is swallowed by the pause it answers (c2fd378a)", () => {
     return out;
   }
 
-  it("draws one pause row and no stray resumes, for an archived game with no reason field", () => {
+  it("draws no stray resumes, for an archived game with no reason field", () => {
     seq = 0;
     const { turns, notices } = foldEvents(refusals(11, false), []);
     const pauses = turns[0].blocks.filter((b) => b.kind === "paused");
 
-    expect(pauses).toHaveLength(1);
-    expect(pauses[0].kind === "paused" && pauses[0].count).toBe(11);
+    // A retry sits between each refusal, so each is its own row.
+    expect(pauses).toHaveLength(11);
     // The assertion that was missing. Ten of these used to survive as their own rows.
     expect(notices.filter((n) => n.kind === "resumed")).toEqual([]);
   });
@@ -1382,7 +1404,7 @@ describe("a resume is swallowed by the pause it answers (c2fd378a)", () => {
     const { turns, notices } = foldEvents(refusals(11, true), []);
     const pauses = turns[0].blocks.filter((b) => b.kind === "paused");
 
-    expect(pauses[0].kind === "paused" && pauses[0].count).toBe(11);
+    expect(pauses).toHaveLength(11);
     expect(notices.filter((n) => n.kind === "resumed")).toEqual([]);
   });
 
@@ -1411,9 +1433,18 @@ describe("a resume is swallowed by the pause it answers (c2fd378a)", () => {
 
   it("counts pauses, not pause rows", () => {
     seq = 0;
-    const [turn] = foldEvents(refusals(11, false), []).turns;
+    seq = 0;
+    const events = [
+      event("turn_started", { ply: 13, colour: "white", player_id: "w", model: "m" }),
+      ...Array.from({ length: 11 }, () => [
+        event("game_paused", { reason: REASON }),
+        event("game_resumed", { detail: `the wait is over: ${REASON}`, reason: REASON }),
+      ]).flat(),
+    ];
+    const [turn] = foldEvents(events, []).turns;
 
     // The header said "1 pause" over a row reading `×11`.
+    expect(turn.blocks).toHaveLength(1);
     expect(pauseCount(turn)).toBe(11);
   });
 

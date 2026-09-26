@@ -682,22 +682,19 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
            pause would be filed under the turn above it — which is the bug this whole change is
            about, reintroduced from the other direction. */
         if (current && current.san === null) {
-          /* **Searched, not peeked at.** A provider that keeps refusing produces pause, resume,
-             pause, resume — but inside a turn the model *retries* between refusals, so what sits
-             between two pauses is a `reasoning` block rather than nothing. Matching only
-             `blocks.at(-1)` therefore found the retry and opened a new row every time, and
-             `57e8a7bc` drew three byte-identical "Nvidia did not answer in time" rows in one turn:
-             the run `foldPauses` collapses between turns, back again inside one.
+          /* **Only an adjacent pause folds — the rule `foldPauses` holds between turns.** A pause
+             joins the row directly above it when that row is the same wait; anything in between —
+             the model's retry, a different pause — starts a new row. Resumes are not blocks, so
+             pause, resume, pause is still adjacent.
 
-             Folding every time leaves at most one row per reason, so this finds that row wherever
-             it is. It keeps its place — where the wait began — and takes the newest `resumeAfter`,
-             which is `foldPauses`'s `{ ...last, key: first.key }` said the other way round. Matching
-             on `text` is the same rule too: a rate limit and a halt stay two rows, because one row
-             saying it happened twice would describe neither. */
-          const run = current.blocks.findLast(
-            (block) => block.kind === "paused" && block.text === reason,
-          );
-          if (run?.kind === "paused") {
+             This once searched the whole block list and folded into the matching row *wherever it
+             was*. `c4550202` drew its rate limits as one `×16` row anchored at the first refusal,
+             *above* a halt from the evening before — a day of waits hidden behind yesterday, and
+             the last row on the page was a halt that had long since lifted. A fold that reorders
+             the log is not a summary of it. Matching on `text` still keeps a rate limit and a halt
+             as two rows, because one row saying it happened twice would describe neither. */
+          const run = current.blocks.at(-1);
+          if (run?.kind === "paused" && run.text === reason) {
             run.count += 1;
             run.resumeAfter = resumeAfter;
           } else {
@@ -732,13 +729,11 @@ export function foldEvents(events: GameEvent[], initialMoves: string[]): StreamS
            made possible. A resume that ends a pause between turns still gets its row, because
            there is nothing else there to say the game came back.
 
-           **Searched, not peeked at — the same rule the pause above folds by.** This tested
-           `blocks.at(-1)`, and the pause fold deliberately leaves its row *where the wait began*
-           and updates it in place. So from the second refusal onwards the last block is the
-           model's retry, never the pause, and every resume after the first escaped as its own
-           notice. Game `c2fd378a` drew one `PAUSED ×11` row and ten stray `RESUMED` rows under it
-           for that reason: two predicates that had to agree, and did not. They are now the same
-           search.
+           **Searched, not peeked at.** A halt can be written on top of a provider pause, so the
+           pause a resume answers is not always the last block — the rate limit's resume arrives
+           with the halt's row beneath it. Game `c2fd378a` once drew ten stray `RESUMED` rows
+           because this peeked at `blocks.at(-1)` while the pause fold searched: two predicates
+           that had to agree, and did not.
 
            Matched on the reason, so a resume cannot swallow itself against an unrelated wait — a
            rate limit and a halt are two rows, and ending one must not silence the other. `reason`
