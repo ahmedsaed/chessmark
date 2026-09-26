@@ -411,6 +411,16 @@ class MyGameSummary(GameSummary):
     your_turn: bool
 
 
+class StartedGameSummary(GameSummary):
+    """A game between two models that the caller started and pays for (ADR-0052).
+
+    The billed figure is the game's own and is public on its page; it rides here so the profile can
+    say what the caller spent without a request per card.
+    """
+
+    billed_usd: Decimal | None = None
+
+
 class TournamentRef(Schema):
     """Which event a game was played for — enough to say so and to link there, and no more.
 

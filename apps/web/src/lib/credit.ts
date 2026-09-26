@@ -112,3 +112,13 @@ export function usd(value: string): string {
   if (amount < 0.01) return `$${amount.toFixed(6)}`;
   return amount < 1 ? `$${amount.toFixed(4)}` : `$${amount.toFixed(2)}`;
 }
+
+/** What a game you paid for cost: the billed figure once reconciled, the running one before. */
+export function costOf(game: { total_cost_usd: string; billed_usd?: string | null }): string {
+  return game.billed_usd ?? game.total_cost_usd;
+}
+
+/** The total of games you paid for, each at `costOf`. */
+export function spentOn(games: { total_cost_usd: string; billed_usd?: string | null }[]): number {
+  return games.reduce((total, game) => total + Number(costOf(game)), 0);
+}

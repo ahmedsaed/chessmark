@@ -47,6 +47,7 @@ from chessmark.api.schemas import (
     PlyOut,
     RawCallOut,
     SeatOut,
+    StartedGameSummary,
     TournamentRef,
     TurnDetail,
     WaitingOn,
@@ -275,6 +276,48 @@ async def get_human_record(session: SessionDep) -> HumanRecord:
     ).one()
 
     return HumanRecord(games=row.games, wins=row.wins, draws=row.draws, losses=row.losses)
+
+
+@router.get("/started", response_model=list[StartedGameSummary])
+async def list_started_games(
+    session: SessionDep,
+    user: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[StartedGameSummary]:
+    """The games between two models the caller started, newest first (ADR-0052).
+
+    They are paid from the caller's credit, and `/games/mine` lists only games the caller holds a
+    seat in — so a person could pay for a game and have no way back to it but its URL. A game they
+    play is already listed there and is left out here. Two queries whatever the count.
+    """
+    games = list(
+        await session.scalars(
+            sa.select(Game)
+            .where(
+                Game.created_by_user_id == user.id,
+                ~sa.exists().where(Player.game_id == Game.id, Player.kind == PlayerKind.HUMAN),
+            )
+            .order_by(Game.created_at.desc())
+            .limit(limit)
+        )
+    )
+    if not games:
+        return []
+
+    players = list(
+        await session.scalars(sa.select(Player).where(Player.game_id.in_([g.id for g in games])))
+    )
+    by_game: dict[uuid.UUID, list[Player]] = {}
+    for player in players:
+        by_game.setdefault(player.game_id, []).append(player)
+
+    return [
+        StartedGameSummary(
+            **GameSummary.from_model(game, by_game.get(game.id, [])).model_dump(),
+            billed_usd=game.billed_usd,
+        )
+        for game in games
+    ]
 
 
 @router.get("/mine", response_model=list[MyGameSummary])

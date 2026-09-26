@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { canPay, formatBalance, gameCost, limitFrom, modelMoveCharged, usd } from "@/lib/credit";
+import {
+  canPay,
+  costOf,
+  formatBalance,
+  gameCost,
+  limitFrom,
+  modelMoveCharged,
+  spentOn,
+  usd,
+} from "@/lib/credit";
 
 describe("formatBalance", () => {
   it("writes a balance in dollars and cents", () => {
@@ -112,5 +121,20 @@ describe("usd", () => {
   it("uses four places below a dollar and cents above", () => {
     expect(usd("0.418989")).toBe("$0.4190");
     expect(usd("12.3456")).toBe("$12.35");
+  });
+});
+
+describe("games you started", () => {
+  it("costs what was billed once reconciled, and what was recorded before", () => {
+    expect(costOf({ total_cost_usd: "0.0038", billed_usd: "0.0040" })).toBe("0.0040");
+    expect(costOf({ total_cost_usd: "0.0038", billed_usd: null })).toBe("0.0038");
+  });
+
+  it("totals each game at that figure", () => {
+    const games = [
+      { total_cost_usd: "0.0038406", billed_usd: "0.0038406" },
+      { total_cost_usd: "0.0104898", billed_usd: null },
+    ];
+    expect(spentOn(games)).toBeCloseTo(0.0143304, 9);
   });
 });

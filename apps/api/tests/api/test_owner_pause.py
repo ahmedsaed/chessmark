@@ -278,3 +278,66 @@ async def test_a_game_nobody_started_names_nobody(client: AsyncClient, game: Any
     body = (await client.get(f"/games/{game.match.game.id}")).json()
 
     assert body["started_by"] is None
+
+
+# ====================================================================== games you started
+
+
+async def test_the_games_you_started_are_listed_with_what_they_were_billed(
+    client: AsyncClient, db: AsyncSession, queue: Any
+) -> None:
+    """A game between two models is paid from your credit but gives you no seat, so `/games/mine`
+    never listed it: a person could pay for a game and have no way back to it but its URL."""
+    from decimal import Decimal
+
+    from tests.support import seat_human_match
+
+    owner = await _owner(db)
+    older = await _game(db, queue, owner)
+    newer = await _game(db, queue, owner)
+    await seat_human_match(db, queue, user=owner, created_by_user_id=owner.id)  # listed elsewhere
+    await _game(db, queue, await _other(db))  # somebody else's
+    stored = await db.get(Game, older.id)
+    assert stored is not None
+    stored.billed_usd = Decimal("0.0042")
+    await db.commit()
+
+    body = (await client.get("/games/started", headers=as_user(OWNER))).json()
+
+    assert [g["id"] for g in body] == [str(newer.id), str(older.id)]
+    assert body[1]["billed_usd"] == "0.00420000"
+    assert body[0]["billed_usd"] is None
+
+
+async def test_the_games_you_started_cost_the_same_queries_at_any_count(
+    client: AsyncClient, db: AsyncSession, queue: Any
+) -> None:
+    """A read endpoint returning a list is measured when it is written (CLAUDE.md)."""
+    owner = await _owner(db)
+    await _game(db, queue, owner)
+
+    statements: list[str] = []
+
+    def record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    sa.event.listen(db.bind.sync_engine, "before_cursor_execute", record)
+    try:
+        await client.get("/games/started", headers=as_user(OWNER))
+        one = len(statements)
+        for _ in range(5):
+            await _game(db, queue, owner)
+        statements.clear()
+        await client.get("/games/started", headers=as_user(OWNER))
+        six = len(statements)
+    finally:
+        sa.event.remove(db.bind.sync_engine, "before_cursor_execute", record)
+
+    assert six == one, f"grew from {one} queries at one game to {six} at six"
+
+
+async def _other(db: AsyncSession) -> User:
+    user = User(clerk_user_id="user_someone_else", email="else@chessmark.test")
+    db.add(user)
+    await db.commit()
+    return user

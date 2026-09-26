@@ -47,6 +47,7 @@ import type {
   ModelInfo,
   Leaderboard,
   MyGameSummary,
+  StartedGameSummary,
   TournamentDetail,
   TournamentSummary,
   TurnSummary,
@@ -545,6 +546,21 @@ export async function listMyGames(
     throw new ApiError(response.status, `Could not load your games (HTTP ${response.status}).`);
   }
   return (await response.json()) as MyGameSummary[];
+}
+
+/** Games between two models the caller started — theirs to pay for, with no seat to list them
+ *  under `/games/mine`. Never cached, for `listMyGames`'s reason. */
+export async function listStartedGames(token: string | null): Promise<StartedGameSummary[]> {
+  const response = await fetch(`${API_URL}/games/started`, {
+    headers: {
+      accept: "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, `Could not load your games (HTTP ${response.status}).`);
+  }
+  return (await response.json()) as StartedGameSummary[];
 }
 
 export function sendMove(

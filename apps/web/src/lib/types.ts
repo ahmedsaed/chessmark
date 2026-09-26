@@ -92,6 +92,12 @@ export interface MyGameSummary extends GameSummary {
   your_turn: boolean;
 }
 
+/** A game between two models the caller started and pays for (ADR-0052). */
+export interface StartedGameSummary extends GameSummary {
+  /** What OpenRouter billed for it, once reconciled (ADR-0054). */
+  billed_usd: string | null;
+}
+
 export interface GameDetail extends GameSummary {
   /** Why a paused game has not resumed. Null unless it is paused. */
   waiting_on: WaitingOn | null;

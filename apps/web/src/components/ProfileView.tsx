@@ -28,10 +28,10 @@ import { useCallback, useEffect, useState } from "react";
 
 import { clerkEnabled } from "@/components/AuthProvider";
 import { GameCard } from "@/components/GameCard";
-import { listMyGames } from "@/lib/api";
+import { listMyGames, listStartedGames } from "@/lib/api";
 import { orderMyGames, recordOf } from "@/lib/mine";
-import type { Me, MyGameSummary } from "@/lib/types";
-import { formatBalance } from "@/lib/credit";
+import type { Me, MyGameSummary, StartedGameSummary } from "@/lib/types";
+import { costOf, formatBalance, spentOn, usd } from "@/lib/credit";
 
 /** The server's ceiling on `/games/mine`. This page is a history, so it asks for all of it. */
 const EVERY_GAME = 200;
@@ -56,6 +56,7 @@ function Profile({ apiUrl }: { apiUrl: string }) {
      differently on purpose: an empty history invites you to start a game, and a failed read must
      not pretend to be one. The same distinction `reportFailure` exists for on the server. */
   const [games, setGames] = useState<MyGameSummary[] | null>(null);
+  const [started, setStarted] = useState<StartedGameSummary[] | null>(null);
   /* `null` means "not edited yet", so the field shows whatever Clerk currently holds without an
      effect writing state on every render of the user object. */
   const [draft, setDraft] = useState<string | null>(null);
@@ -90,6 +91,15 @@ function Profile({ apiUrl }: { apiUrl: string }) {
         if (!cancelled) setGames(mine);
       } catch {
         // Left as `null`, which renders as "could not be loaded" rather than as "none".
+      }
+
+      /* Games between two models you started. You hold no seat in them, so `/games/mine` never
+         listed them — and they are paid from your credit (ADR-0052). */
+      try {
+        const yours = await listStartedGames(await getToken());
+        if (!cancelled) setStarted(yours);
+      } catch {
+        // Left as `null`: the section says it could not be loaded.
       }
     })();
 
@@ -211,6 +221,7 @@ function Profile({ apiUrl }: { apiUrl: string }) {
       </section>
 
       <Played games={games} />
+      <Started games={started} />
 
       <section className="mt-12 border-t border-line-soft pt-8">
         <button
@@ -340,6 +351,41 @@ function Played({ games }: { games: MyGameSummary[] | null }) {
         </div>
       </section>
     </>
+  );
+}
+
+/**
+ * Games between two models this person started, newest first, each at what it cost them.
+ *
+ * Silent when there are none: most people only ever sit down against a model, and an empty section
+ * inviting them to run model-vs-model games would be advertising, not information.
+ */
+function Started({ games }: { games: StartedGameSummary[] | null }) {
+  if (games === null) {
+    return (
+      <section className="mt-12">
+        <Heading>Games you started</Heading>
+        <p className="mt-3 text-sm text-ink-dim">Your model-vs-model games could not be loaded.</p>
+      </section>
+    );
+  }
+  if (games.length === 0) return null;
+
+  return (
+    <section className="mt-12">
+      <Heading>Games you started</Heading>
+      <p className="mt-2 text-sm text-ink-dim">
+        Games between two models, paid from your credit: {games.length} game
+        {games.length === 1 ? "" : "s"}, {usd(String(spentOn(games)))} in all. A game shows what it
+        was billed once it has been reconciled, and its running cost until then.
+      </p>
+
+      <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+        {games.map((game) => (
+          <GameCard key={game.id} game={game} cost={usd(costOf(game))} />
+        ))}
+      </ul>
+    </section>
   );
 }
 
