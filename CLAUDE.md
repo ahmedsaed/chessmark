@@ -23,6 +23,7 @@ where a change belongs** — not here.
 | [PROVIDERS.md](docs/PROVIDERS.md) | OpenRouter reality, the catalogue, the free tier |
 | [FRONTEND.md](docs/FRONTEND.md) | Next.js 16, the design system, `EventStream` |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | containers, `./chessmark`, CD, backups |
+| [PAYMENTS.md](docs/PAYMENTS.md) | selling credits: processors, merchant of record, what it needs first |
 
 **An ADR is immutable.** A decision that changes gets a new ADR that supersedes or amends the old
 one, rather than an edit. The single exception is a *number* two ADRs both claim — that is a filing
