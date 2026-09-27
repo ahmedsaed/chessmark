@@ -15,6 +15,27 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-09-27
+
+**Credit is money now: dollars spent at what each turn cost, settled to what OpenRouter billed, and
+ready to be bought.** 24 commits since `v0.5.0`. A balance is US dollars, charged per model turn at
+its real cost and paused, not ended, when it runs out. Each game is reconciled against OpenRouter's
+own bill for its session and its owner settled to it, and a failed turn no longer throws away
+answers that were already paid for. Credit can be bought at `/credit` through Paddle, as merchant
+of record, in packs that show their arithmetic, and the site now has terms, a privacy policy and a
+refund policy. Around those: pause and resume for the games you pay for, your own spending limit,
+decision models that choose their action (harness `d2`), and crashed turns in `./chessmark status`.
+
+**Buying stays off until Paddle approves the live account**; `/credit` shows the packs as "not on
+sale yet" until the server has `PADDLE_WEBHOOK_SECRET` and `PADDLE_PRICE_IDS` and the web build a
+live client token ([DEPLOYMENT.md](docs/DEPLOYMENT.md#selling-credit)). Reconciliation needs
+`OPENROUTER_MANAGEMENT_KEY` on the server.
+
+Four migrations. Three are additive: the decision-check columns, the reconciliation columns and
+`unrecorded_generations`, and the `purchases` tables. **One is not:** `1b65e05c166c` made credit
+dollars and reset every balance to zero, closing the old credit balances with a `retired` ledger
+row — the owner's decision, recorded in ADR-0052. All four are already applied on production.
+
 ### Added
 
 - **Credit can be bought** at `/credit`, in packs of $5, $10 and $25 that grant $4.00, $8.50 and
@@ -44,6 +65,14 @@ file is only the record of *what shipped when*.
   now records the crash (game, ply, error, message), keeps running, and leaves the game for the
   sweep. The crash is never written to the game's own log: it is for the operator, not the reader.
   (OPS-21)
+- **Pause and resume a game between two models you started.** It pauses before its next turn
+  (the move in progress finishes and is charged), stays paused until you resume it, and needs
+  credit to resume. (AUTH-16)
+- **A game names who started it.** Outside a tournament, the game page shows "Started by" with the
+  person's display name, never their email. (AUTH-17)
+- **Research on selling credit without a company**, in
+  [docs/PAYMENTS.md](docs/PAYMENTS.md): a merchant of record would let a person sell worldwide and
+  be paid out in Egypt. It led to Paddle, and to buying credit above.
 
 ### Changed
 
@@ -72,17 +101,6 @@ file is only the record of *what shipped when*.
   now `d2`, a new era for decision tournaments. `./chessmark deploy` now restarts the catalogue
   service, which it never had. (AGENT-24, AGENT-26,
   [ADR-0051](docs/adr/0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md))
-
-### Added
-
-- **Pause and resume a game between two models you started.** It pauses before its next turn
-  (the move in progress finishes and is charged), stays paused until you resume it, and needs
-  credit to resume. (AUTH-16)
-- **A game names who started it.** Outside a tournament, the game page shows "Started by" with the
-  person's display name, never their email. (AUTH-17)
-- **Research on selling credit without a company**, in
-  [docs/PAYMENTS.md](docs/PAYMENTS.md): a merchant of record would let a person sell worldwide and
-  be paid out in Egypt. Nothing is built.
 
 ### Fixed
 
@@ -1390,6 +1408,7 @@ flags the old code wrote.
 [ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
 [ADR-0044]: docs/adr/0044-the-ladder-resets-on-an-answered-call.md
 [ADR-0045]: docs/adr/0045-a-turn-keeps-the-rounds-it-completed.md
+[0.6.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.6.0
 [0.5.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.5.0
 [0.4.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.4.0
 [0.3.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.3.0
