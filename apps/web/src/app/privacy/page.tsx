@@ -34,8 +34,9 @@ export default function PrivacyPage() {
     >
       <Clause title="Who is responsible">
         <p>
-          Chessmark is run by Ahmed Saed, an individual based in Egypt, who is responsible for the
-          personal data described here. Contact: <SupportEmail />.
+          Chessmark is made by Merope (merope.dev), the trading name of Ahmed Saed, an individual
+          based in Egypt, who is responsible for the personal data described here. Contact:{" "}
+          <SupportEmail />.
         </p>
       </Clause>
 

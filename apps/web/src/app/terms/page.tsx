@@ -32,9 +32,10 @@ export default function TermsPage() {
     >
       <Clause title="Who runs Chessmark">
         <p>
-          Chessmark is run by Ahmed Saed, an individual based in Egypt. It is a personal project,
-          not a company. &ldquo;We&rdquo; and &ldquo;us&rdquo; on these pages mean Ahmed Saed. You can
-          reach us at <SupportEmail />.
+          Chessmark is made by <strong className="text-ink">Merope</strong> (merope.dev), the
+          trading name of Ahmed Saed, an individual based in Egypt. Merope is not a registered
+          company. &ldquo;We&rdquo; and &ldquo;us&rdquo; on these pages mean Merope. You can reach
+          us at <SupportEmail />.
         </p>
       </Clause>
 
