@@ -72,6 +72,14 @@ a sandbox token pointed at production, or the reverse, fails in front of a buyer
   tax and a little less where there is — about 3.6% at the highest VAT rate (27%) — and never a
   loss. Accepted rather than priced per country, which would make the credit a pack grants depend
   on where its buyer lives. Each purchase records Paddle's actual `fee` and `earnings`.
+* **A refund costs us Paddle's fee.** Paddle keeps its fee when it refunds a payment
+  (`retained_fee`), measured on a full sandbox refund: the buyer got $5.70 back, the credit went
+  back to where it was, and we were $0.79 down. One refund undoes the margin of three to eight
+  sales, depending on pack and tax. Accepted by the owner: the refund policy keeps refunds rare —
+  only an untouched purchase within 14 days, which EU and UK law requires anyway, while a broken
+  game is made good in credit, which costs no fee. Refunding less than the full price would need a
+  second rule for EU and UK buyers, whose statutory refund is full. A chargeback can carry a fee of
+  its own on top, and is the rate Paddle watches.
 * **Selling needs the owner's steps in Paddle's dashboard**, which no API sets: the default payment
   link, the notification destination, and website approval on live.
 * The worst purchase failure is a paid, uncredited purchase. It is visible (the page tells the buyer
