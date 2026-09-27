@@ -8,6 +8,7 @@
 
 import Link from "next/link";
 
+import { SUPPORT_EMAIL } from "@/components/LegalPage";
 import { footerNav, legalNav, siteName } from "@/lib/site";
 
 export function SiteFooter() {
@@ -42,15 +43,19 @@ export function SiteFooter() {
         className="mx-auto flex w-full max-w-[2200px] flex-wrap gap-x-5 gap-y-2 border-t border-line/60 px-5 py-4"
       >
         {legalNav.map((link) => (
-          <Link
-            key={link.href}
-            href={link.href}
-            className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-accent"
-          >
+          <Link key={link.href} href={link.href} className={QUIET}>
             {link.label}
           </Link>
         ))}
+        {/* A way to reach a person, one click from any page: what a buyer with a problem needs,
+            and what a payment processor's review checks for. */}
+        <a href={`mailto:${SUPPORT_EMAIL}`} className={QUIET}>
+          Contact
+        </a>
       </nav>
     </footer>
   );
 }
+
+const QUIET =
+  "font-mono text-meta uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-accent";

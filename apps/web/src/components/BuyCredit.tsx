@@ -36,11 +36,21 @@ type Arrival =
   | { state: "late"; credit: string }
   | { state: "unmatched" };
 
-export function BuyCredit({ packs, signedIn }: { packs: CreditPack[]; signedIn: boolean }) {
+export function BuyCredit({
+  packs,
+  signedIn,
+  selling,
+}: {
+  packs: CreditPack[];
+  signedIn: boolean;
+  /** False shows the packs and their arithmetic with nothing to buy: what credit costs is public
+   *  before it is on sale. */
+  selling: boolean;
+}) {
   return (
     <ul className="grid gap-4 sm:grid-cols-3">
       {packs.map((pack) => (
-        <li key={pack.price_id} className="flex flex-col gap-5 border border-line bg-surface px-5 py-5">
+        <li key={pack.price_usd} className="flex flex-col gap-5 border border-line bg-surface px-5 py-5">
           {/* A sum, top to bottom: what you pay, what comes out of it, what reaches your balance.
               Three different numbers side by side read as three prices; laid out as arithmetic
               they read as one purchase. */}
@@ -54,8 +64,12 @@ export function BuyCredit({ packs, signedIn }: { packs: CreditPack[]; signedIn: 
             </div>
           </dl>
           <p className="-mt-2 text-xs text-ink-faint">Tax is added at checkout where it applies.</p>
-          {signedIn ? (
-            <BuyButton pack={pack} />
+          {!selling || pack.price_id === null ? (
+            <button type="button" disabled className={BUY}>
+              not on sale yet
+            </button>
+          ) : signedIn ? (
+            <BuyButton pack={pack} priceId={pack.price_id} />
           ) : (
             <Link href="/sign-in?redirect=/credit" className={BUY}>
               sign in to buy
@@ -93,7 +107,7 @@ function loadPaddle(): Promise<Paddle | undefined> {
   return paddlePromise;
 }
 
-function BuyButton({ pack }: { pack: CreditPack }) {
+function BuyButton({ pack, priceId }: { pack: CreditPack; priceId: string }) {
   const { getToken, userId } = useAuth();
   const { user } = useUser();
   const [paddle, setPaddle] = useState<Paddle | undefined>();
@@ -159,7 +173,7 @@ function BuyButton({ pack }: { pack: CreditPack }) {
     mine.current = true;
     const email = user?.primaryEmailAddress?.emailAddress;
     paddle.Checkout.open({
-      items: [{ priceId: pack.price_id, quantity: 1 }],
+      items: [{ priceId, quantity: 1 }],
       customData: { [BUYER_KEY]: userId },
       ...(email ? { customer: { email } } : {}),
       settings: { displayMode: "overlay", variant: "one-page", theme: "dark", allowLogout: !email },

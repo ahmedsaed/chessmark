@@ -237,13 +237,20 @@ async def test_the_packs_on_sale_say_what_each_grants(client: AsyncClient, selli
     ]
 
 
-async def test_nothing_is_on_sale_until_paddle_is_configured(
+async def test_the_packs_are_shown_but_not_sold_until_paddle_is_configured(
     app: FastAPI, client: AsyncClient
 ) -> None:
     app.dependency_overrides[get_settings] = lambda: Settings(
         paddle_webhook_secret="", paddle_price_ids=""
     )
-    assert (await client.get("/credit/packs")).json() == {"selling": False, "packs": []}
+    body = (await client.get("/credit/packs")).json()
+    assert body["selling"] is False
+    # Still listed, with nothing to check out with: the price is public before it is on sale.
+    assert [(p["price_usd"], p["credit_usd"], p["price_id"]) for p in body["packs"]] == [
+        ("5", "4.00", None),
+        ("10", "8.50", None),
+        ("25", "22.00", None),
+    ]
 
 
 async def test_a_buyer_can_see_their_own_purchase_and_nobody_elses(

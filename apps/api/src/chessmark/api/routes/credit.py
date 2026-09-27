@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from chessmark.api.deps import CurrentUser, SessionDep, SettingsDep
 from chessmark.core.config import Settings
-from chessmark.core.credit_packs import Pack, parse_packs
+from chessmark.core.credit_packs import PACK_PRICES, Pack, credit_for, parse_packs
 from chessmark.core.paddle_signature import WebhookError, verify
 from chessmark.db.credits import balance_of
 from chessmark.db.enums import PurchaseStatus
@@ -31,7 +31,8 @@ router = APIRouter(tags=["credit"])
 
 
 class PackOut(BaseModel):
-    price_id: str
+    #: The Paddle price to check out with; `None` while selling is off.
+    price_id: str | None
     price_usd: Decimal
     #: What comes out of the price, so the page can show the sum without doing any of it.
     processor_fee_usd: Decimal
@@ -40,7 +41,9 @@ class PackOut(BaseModel):
 
 
 class PacksOut(BaseModel):
-    #: False until Paddle is configured on this server. The page says so instead of selling.
+    #: False until Paddle is configured on this server. The packs are listed either way — what
+    #: credit costs is public before it is on sale, which is also what a payment processor's review
+    #: looks for — and the page offers no checkout until this is true.
     selling: bool
     packs: list[PackOut]
 
@@ -59,13 +62,17 @@ def _packs(settings: Settings) -> dict[str, Pack]:
 
 @router.get("/credit/packs", response_model=PacksOut)
 async def list_packs(settings: SettingsDep) -> PacksOut:
-    """The packs on sale and what each grants. No query: it is read from configuration."""
-    packs = sorted(_packs(settings).values(), key=lambda pack: pack.price_usd)
+    """The packs and what each grants, and whether they can be bought. No query: it is read from
+    configuration."""
+    on_sale = sorted(_packs(settings).values(), key=lambda pack: pack.price_usd)
+    packs = on_sale or [
+        Pack(price_id="", price_usd=price, credit_usd=credit_for(price)) for price in PACK_PRICES
+    ]
     return PacksOut(
-        selling=bool(packs),
+        selling=bool(on_sale),
         packs=[
             PackOut(
-                price_id=p.price_id,
+                price_id=p.price_id or None,
                 price_usd=p.price_usd,
                 processor_fee_usd=p.processor_fee_usd,
                 upkeep_usd=p.upkeep_usd,

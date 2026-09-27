@@ -448,7 +448,8 @@ export function getTournament(
 // ---------------------------------------------------------------------- credit (ADR-0055)
 
 export interface CreditPack {
-  price_id: string;
+  /** The price to check out with; null while selling is off, when the packs are shown unsold. */
+  price_id: string | null;
   /** What the pack costs before tax, in dollars — a decimal string, as the API sends money. */
   price_usd: string;
   /** The payment processor's share, and the share kept for running the site. The API computes

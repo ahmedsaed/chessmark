@@ -22,8 +22,8 @@ export const metadata: Metadata = pageMetadata({
  * what each grants; this page shows its numbers and does no arithmetic of its own.
  *
  * Selling needs both halves configured: the API's packs and this build's Paddle token. Either one
- * missing renders "not on sale yet" rather than a checkout nothing would credit, or a pack list with
- * no way to buy.
+ * missing still shows the packs and their arithmetic — what credit costs is public before it is on
+ * sale, and a payment processor's review looks for it — with "not on sale yet" where Buy would be.
  */
 export default async function CreditPage() {
   const signedIn = hasSessionCookie((await cookies()).get("__client_uat")?.value);
@@ -39,8 +39,8 @@ export default async function CreditPage() {
       </p>
 
       <section className="mt-10">
-        {onSale ? (
-          <BuyCredit packs={packs} signedIn={signedIn} />
+        {packs.length > 0 ? (
+          <BuyCredit packs={packs} signedIn={signedIn} selling={onSale} />
         ) : (
           <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
             Buying credit is not open yet.
