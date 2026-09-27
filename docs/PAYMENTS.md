@@ -76,13 +76,40 @@ approving them:
 Before credit has a cash price, the following must be settled:
 
 1. ~~**A game we fail must give its credits back.**~~ **Settled by ADR-0052, without refunds.** A
-   game is charged turn by turn, and a turn rolled back by a provider failure is never charged. The
-   owner decided that the turns a person watched played are what they paid for, whether or not the
-   game reached a result. The refund policy has to say exactly that.
+   game is charged turn by turn, at what OpenRouter billed for it — including the rare rounds a
+   failed turn paid for before it failed ([ADR-0054](adr/0054-a-game-is-charged-what-openrouter-billed.md)).
+   The owner decided that the turns a person watched played are what they paid for, whether or not
+   the game reached a result, and the [refund policy](#the-policies) says exactly that.
 2. ~~**A credit's price has to cover what a game can cost.**~~ **Settled by ADR-0052.** A dollar of
    credit is a dollar of play at cost, so no price band can under-charge. The margin that pays the
    processor's fee is taken when credit is bought, not hidden in the token prices.
-3. **Terms of service, a refund policy and a privacy policy**, published before onboarding.
+3. ~~**Terms of service, a refund policy and a privacy policy**, published before onboarding.~~
+   **Drafted** as `/terms`, `/privacy` and `/refunds`, linked from every page's footer — see
+   [the policies](#the-policies).
+
+## The policies
+
+The owner's decisions (2026-09-27), and what the pages hold to:
+
+* **Spent credit is not refunded**, and neither is unused credit, with one exception: a purchase
+  of which nothing has been spent can be refunded within 14 days. EU and UK buyers have that right
+  by law, and Paddle may refund within 14 days whatever our policy says
+  ([Paddle's refund policy](https://www.paddle.com/legal/refund-policy)), so the page states it as
+  one rule for everybody rather than promising less than is true.
+* **A game broken by our fault** is reported to `support@chessmark.merope.dev` within 30 days, and
+  once confirmed its cost is returned **as credit**, not cash. A model playing badly, forfeiting or
+  a provider outage is not a fault.
+* **If the service shuts down**, or an account is closed without breaking the terms, unspent
+  *purchased* credit is refunded to the original payment method. Granted credit never is, and an
+  account closed for breaking the terms forfeits its balance.
+* **Ages:** 13 to hold an account, 18 to buy.
+* **Law:** Egypt, with a consumer keeping their own country's mandatory protections.
+
+Every mechanism the terms describe is one the code runs (per-move charging, settlement to the
+bill, pausing at zero, the one-move overshoot). A change to those rules is a change to `/terms`.
+
+**Before anyone can buy:** the support mailbox has to exist and be read, and deleting an account
+is a manual step taken from an email (there is no self-serve deletion yet).
 
 ## Sources
 

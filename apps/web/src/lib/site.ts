@@ -57,6 +57,14 @@ export const footerNav: NavLink[] = [
   { href: "/about", label: "About" },
 ];
 
+/** The policies, in a quieter row of their own under the footer: every page links to them, which
+ *  is what a payment provider's review looks for, but they are not places anyone browses to. */
+export const legalNav: NavLink[] = [
+  { href: "/terms", label: "Terms" },
+  { href: "/privacy", label: "Privacy" },
+  { href: "/refunds", label: "Refunds" },
+];
+
 /**
  * Every static route, with the crawl hints the sitemap needs.
  *
@@ -79,6 +87,9 @@ export const staticRoutes: StaticRoute[] = [
   { path: "/play", changeFrequency: "monthly", priority: 0.7 },
   { path: "/methodology", changeFrequency: "monthly", priority: 0.6 },
   { path: "/about", changeFrequency: "monthly", priority: 0.6 },
+  { path: "/terms", changeFrequency: "monthly", priority: 0.2 },
+  { path: "/privacy", changeFrequency: "monthly", priority: 0.2 },
+  { path: "/refunds", changeFrequency: "monthly", priority: 0.2 },
 ];
 
 /**
