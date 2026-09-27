@@ -1596,8 +1596,9 @@ balance ([ADR-0055](adr/0055-credit-is-sold-as-fixed-packs-through-paddle.md)).
       chargeback restores it — `tests/api/test_buy_credit.py`, each rule mutated and caught
 - [x] Production refuses half the configuration; the web build refuses a token without its
       environment or from the other one
-- [ ] A sandbox checkout completes and its real webhook credits the account, end to end — needs the
-      default payment link and a notification destination set in Paddle's dashboard
+- [x] A sandbox checkout completes and its real webhook credits the account, end to end: $5 from
+      Egypt, $5.70 with VAT, delivered through `make tunnel`, verified, $4.00 credited once, and the
+      page said so; a refund awaiting approval was received and correctly moved nothing
 - [ ] Paddle approves the live account, and the live catalogue is created
 
 **Covers:** AUTH-19, AUTH-20, AUTH-21

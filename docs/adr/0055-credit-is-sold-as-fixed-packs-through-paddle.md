@@ -66,10 +66,12 @@ a sandbox token pointed at production, or the reverse, fails in front of a buyer
 * A **purchases** table (one row per Paddle transaction, keeping what the buyer paid, the tax,
   Paddle's fee and our earnings verbatim) and **purchase_adjustments**. Purchases outlive the
   account (`user_id SET NULL`), because a refund can arrive after the buyer deleted it.
-* The margin in `core/credit_packs.py` assumes Paddle's published fee. Each purchase records
-  Paddle's actual `fee` and `earnings`, so it can be checked against real sales. If Paddle charges
-  its fee on the total *including* tax, a buyer in a 19% VAT country leaves us about 4% rather than
-  5% — the first sandbox purchase in a VAT country answers that.
+* **Paddle charges its fee on the total including tax**, measured on the first sandbox purchase:
+  a $5 pack bought from Egypt (14% VAT) came to $5.70, Paddle kept $0.79 rather than $0.75, and
+  $4.21 reached us against $4.00 granted. So the 5% for running the site is 5% where there is no
+  tax and a little less where there is — about 3.6% at the highest VAT rate (27%) — and never a
+  loss. Accepted rather than priced per country, which would make the credit a pack grants depend
+  on where its buyer lives. Each purchase records Paddle's actual `fee` and `earnings`.
 * **Selling needs the owner's steps in Paddle's dashboard**, which no API sets: the default payment
   link, the notification destination, and website approval on live.
 * The worst purchase failure is a paid, uncredited purchase. It is visible (the page tells the buyer
