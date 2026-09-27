@@ -8,7 +8,7 @@
 
 import Link from "next/link";
 
-import { footerNav, siteName } from "@/lib/site";
+import { footerNav, legalNav, siteName } from "@/lib/site";
 
 export function SiteFooter() {
   return (
@@ -37,6 +37,20 @@ export function SiteFooter() {
           ))}
         </nav>
       </div>
+      <nav
+        aria-label="Policies"
+        className="mx-auto flex w-full max-w-[2200px] flex-wrap gap-x-5 gap-y-2 border-t border-line/60 px-5 py-4"
+      >
+        {legalNav.map((link) => (
+          <Link
+            key={link.href}
+            href={link.href}
+            className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint transition-colors hover:text-accent"
+          >
+            {link.label}
+          </Link>
+        ))}
+      </nav>
     </footer>
   );
 }

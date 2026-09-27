@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { footerNav, pageMetadata, primaryNav, siteUrl, staticRoutes } from "@/lib/site";
+import { footerNav, legalNav, pageMetadata, primaryNav, siteUrl, staticRoutes } from "@/lib/site";
 
 describe("staticRoutes", () => {
   /**
@@ -11,6 +11,12 @@ describe("staticRoutes", () => {
   it("lists every route the site links to in its own footer", () => {
     const declared = new Set(staticRoutes.map((route) => route.path));
     const missing = footerNav.map((link) => link.href).filter((href) => !declared.has(href));
+    expect(missing).toEqual([]);
+  });
+
+  it("lists every policy the footer links to", () => {
+    const declared = new Set(staticRoutes.map((route) => route.path));
+    const missing = legalNav.map((link) => link.href).filter((href) => !declared.has(href));
     expect(missing).toEqual([]);
   });
 
