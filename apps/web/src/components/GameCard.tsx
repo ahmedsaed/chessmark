@@ -17,8 +17,11 @@ export function GameCard({
   game,
   seat,
   yourTurn = false,
+  cost,
 }: {
   game: GameSummary;
+  /** What the game cost, when the reader is the one who paid for it. */
+  cost?: string;
   /** The colour *you* hold here, when this is a game you are playing. */
   seat?: Colour;
   /** Running and waiting on you. Drawn as a badge, because it is the only reason to hurry. */
@@ -77,6 +80,7 @@ export function GameCard({
           {game.termination ? ` · ${game.termination}` : ""}
           {illegal > 0 ? ` · ${illegal} illegal` : ""}
           {game.is_ranked ? " · ranked" : ""}
+          {cost ? ` · ${cost}` : ""}
         </p>
       </Link>
     </li>

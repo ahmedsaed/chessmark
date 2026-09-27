@@ -47,6 +47,7 @@ from chessmark.api.schemas import (
     PlyOut,
     RawCallOut,
     SeatOut,
+    StartedGameSummary,
     TournamentRef,
     TurnDetail,
     WaitingOn,
@@ -67,6 +68,7 @@ from chessmark.db.models import (
     Tournament,
     TournamentGame,
     Turn,
+    UnrecordedGeneration,
     User,
 )
 from chessmark.db.quotas import note_game_started
@@ -276,6 +278,48 @@ async def get_human_record(session: SessionDep) -> HumanRecord:
     return HumanRecord(games=row.games, wins=row.wins, draws=row.draws, losses=row.losses)
 
 
+@router.get("/started", response_model=list[StartedGameSummary])
+async def list_started_games(
+    session: SessionDep,
+    user: CurrentUser,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[StartedGameSummary]:
+    """The games between two models the caller started, newest first (ADR-0052).
+
+    They are paid from the caller's credit, and `/games/mine` lists only games the caller holds a
+    seat in — so a person could pay for a game and have no way back to it but its URL. A game they
+    play is already listed there and is left out here. Two queries whatever the count.
+    """
+    games = list(
+        await session.scalars(
+            sa.select(Game)
+            .where(
+                Game.created_by_user_id == user.id,
+                ~sa.exists().where(Player.game_id == Game.id, Player.kind == PlayerKind.HUMAN),
+            )
+            .order_by(Game.created_at.desc())
+            .limit(limit)
+        )
+    )
+    if not games:
+        return []
+
+    players = list(
+        await session.scalars(sa.select(Player).where(Player.game_id.in_([g.id for g in games])))
+    )
+    by_game: dict[uuid.UUID, list[Player]] = {}
+    for player in players:
+        by_game.setdefault(player.game_id, []).append(player)
+
+    return [
+        StartedGameSummary(
+            **GameSummary.from_model(game, by_game.get(game.id, [])).model_dump(),
+            billed_usd=game.billed_usd,
+        )
+        for game in games
+    ]
+
+
 @router.get("/mine", response_model=list[MyGameSummary])
 async def list_my_games(
     session: SessionDep,
@@ -387,6 +431,16 @@ async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
         served_by=await _served_by(session, game.id),
         tournament=tournament,
         started_by=None if tournament is not None else await _started_by(session, game),
+        # One count, and only for a game that has been reconciled.
+        unrecorded_requests=(
+            await session.scalar(
+                sa.select(sa.func.count())
+                .select_from(UnrecordedGeneration)
+                .where(UnrecordedGeneration.game_id == game.id)
+            )
+            if game.billed_usd is not None
+            else None
+        ),
         waiting_on=(
             WaitingOn(kind=waiting.kind, until=waiting.until, tournament=waiting.tournament)
             if waiting
@@ -701,7 +755,9 @@ async def create_game_endpoint(
     # game between machines is something a person runs, not something they play, and only playing
     # a free model is open to an account holding nothing.
     try:
-        await require_credit(session, user.id)
+        await require_credit(
+            session, user.id, needs="A game between two models needs credit, free models included."
+        )
     except InsufficientCreditError as error:
         raise HTTPException(
             status_code=status.HTTP_402_PAYMENT_REQUIRED,

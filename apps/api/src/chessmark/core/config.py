@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # --- LLM ---
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    #: A management key, read-only in our use: it is what OpenRouter's analytics API accepts, and
+    #: reconciliation asks it what each game's session was billed (ADR-0054). Empty turns
+    #: reconciliation off. It can create and delete keys, so it lives only on the server.
+    openrouter_management_key: str = ""
 
     #: Our public URL, sent as `HTTP-Referer` so OpenRouter can attribute our usage to us.
     #:

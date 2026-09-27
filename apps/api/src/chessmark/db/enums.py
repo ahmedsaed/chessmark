@@ -146,6 +146,9 @@ class CreditReason(StrEnum):
     #: The closing row of a balance held in credits, written once by the migration that made the
     #: balance dollars. Credits did not convert — the owner reset every balance to zero (ADR-0052).
     RETIRED = "retired"
+    #: The difference between what a game's turns were charged and what OpenRouter billed for it,
+    #: settled once the game is reconciled (ADR-0054). Either sign: a charge or a refund.
+    SETTLEMENT = "settlement"
 
 
 class TournamentStatus(StrEnum):

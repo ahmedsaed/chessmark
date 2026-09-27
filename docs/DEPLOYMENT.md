@@ -542,7 +542,8 @@ uses and stays unproven until a server exists.
 
 ## First deploy
 
-1. `.env` at the repo root, with `DATABASE_URL`, `REDIS_URL`, Clerk keys and `OPENROUTER_API_KEY`.
+1. `.env` at the repo root, with `DATABASE_URL`, `REDIS_URL`, Clerk keys and `OPENROUTER_API_KEY` —
+   and on the server `OPENROUTER_MANAGEMENT_KEY`, which reconciliation needs (ADR-0054).
 2. `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
 3. `docker compose run --rm api python /app/scripts/seed_models.py` — the registry starts empty.
 4. `docker compose run --rm api python /app/scripts/refresh_endpoints.py` — a model has no

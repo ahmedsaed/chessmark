@@ -33,6 +33,13 @@ DIM, BOLD, OFF = "\033[2m", "\033[1m", "\033[0m"
 RED, GREEN, AMBER = "\033[31m", "\033[32m", "\033[33m"
 
 
+def _money(amount: Decimal) -> str:
+    """Dollars to the last digit that means anything: at least cents, never a rounded fraction."""
+    text = f"{abs(amount):.8f}".rstrip("0")
+    whole, _, cents = text.partition(".")
+    return f"{'-' if amount < 0 else ''}${whole}.{cents.ljust(2, '0')}"
+
+
 def _dollars(raw: str) -> Decimal:
     try:
         return Decimal(raw)
@@ -73,7 +80,7 @@ async def main() -> int:
 
             if args.show:
                 balance = await balance_of(session, user.id)
-                print(f"{label}\n  balance {BOLD}${balance:.2f}{OFF}")
+                print(f"{label}\n  balance {BOLD}{_money(balance)}{OFF}")
                 rows = await history_of(session, user.id)
                 for row in rows:
                     sign = (
@@ -92,8 +99,11 @@ async def main() -> int:
             balance = await grant(session, user.id, args.amount, note=args.note)
 
         verb = "granted" if args.amount >= 0 else "revoked"
+        # Exact, not rounded to cents: turns are charged in thousandths of a cent, and "revoked
+        # $1.00 → balance $0.00" was what revoking $0.9960594 from $0.9961594 printed.
         print(
-            f"{GREEN}{verb}{OFF} ${abs(args.amount):.2f} → balance {BOLD}${balance:.2f}{OFF}  {label}"
+            f"{GREEN}{verb}{OFF} {_money(abs(args.amount))} → balance {BOLD}{_money(balance)}{OFF}"
+            f"  {label}"
         )
         if args.amount < 0:
             # `grant` stops at zero, because a negative balance would be a debt rather than a

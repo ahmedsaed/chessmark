@@ -232,6 +232,22 @@ of its four causes did not look like the problem. **A gate cannot be waited out 
 Both sides played nine moves of correct Richter-Rauzer theory in the second. Across these games
 **every** illegal attempt has been `not_reachable` — board-state tracking, never rule knowledge.
 
+## What OpenRouter billed
+
+A game's record is checked against OpenRouter's own bill for its session, `game-<id>`
+([ADR-0054](adr/0054-a-game-is-charged-what-openrouter-billed.md)). Traps found building it:
+
+* **`POST /analytics/query` needs a management key.** A regular key gets a 403. It is
+  `OPENROUTER_MANAGEMENT_KEY`, set on the server only.
+* **The analytics total truncates each generation to six decimal places.** `0.000062496` reads
+  `0.000062`, which is 1% of a decision model's call. Use it to *list* generations (`generation_id`
+  and `session_id` are both dimensions) and price each one from `GET /generation`, whose
+  `total_cost` is exact.
+* **Timestamps must end in `Z`.** `+00:00` is refused as "Invalid ISO datetime".
+* **Per-generation dimensions cover 31 days**, and a longer range is refused outright.
+* **`GET /api/v1/key` reports the key's own `usage_daily`, `usage_weekly` and `usage_monthly`**,
+  and `free_model_daily_requests`. `status` compares the month against our record.
+
 ## Measuring time
 
 **`game_events.created_at` is the *transaction* timestamp.** It defaults to `now()`, which in

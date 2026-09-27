@@ -411,6 +411,16 @@ class MyGameSummary(GameSummary):
     your_turn: bool
 
 
+class StartedGameSummary(GameSummary):
+    """A game between two models that the caller started and pays for (ADR-0052).
+
+    The billed figure is the game's own and is public on its page; it rides here so the profile can
+    say what the caller spent without a request per card.
+    """
+
+    billed_usd: Decimal | None = None
+
+
 class TournamentRef(Schema):
     """Which event a game was played for — enough to say so and to link there, and no more.
 
@@ -474,6 +484,13 @@ class GameDetail(GameSummary):
     #: or a script's), and for a tournament game, which names its event instead.
     started_by: str | None = None
 
+    #: What OpenRouter billed for this game's session, once reconciled (ADR-0054) — null before.
+    #: `total_cost_usd` is what was recorded turn by turn; the two differ by requests our failures
+    #: lost, `unrecorded_requests` of them, which OpenRouter billed all the same.
+    billed_usd: Decimal | None = None
+    billed_requests: int | None = None
+    unrecorded_requests: int | None = None
+
     #: Why a paused game has not resumed. Null unless the game is paused.
     waiting_on: WaitingOn | None = None
 
@@ -489,12 +506,16 @@ class GameDetail(GameSummary):
         tournament: TournamentRef | None = None,
         waiting_on: WaitingOn | None = None,
         started_by: str | None = None,
+        unrecorded_requests: int | None = None,
     ) -> GameDetail:
         summary = GameSummary.from_model(game, players, served_by=served_by)
         return cls(
             **summary.model_dump(),
             tournament=tournament,
             started_by=started_by,
+            billed_usd=game.billed_usd,
+            billed_requests=game.billed_requests,
+            unrecorded_requests=unrecorded_requests,
             waiting_on=waiting_on,
             start_fen=game.start_fen,
             current_fen=current_fen,
@@ -907,6 +928,10 @@ class MeOut(Schema):
     #: Credit held, in US dollars, spent at each turn's actual cost (ADR-0052). Can sit below zero
     #: by the one turn a game overran by.
     balance_usd: Decimal
+
+    #: Everything this account has been charged, in dollars: every turn, and every settlement
+    #: against what OpenRouter billed (ADR-0052, ADR-0054).
+    usd_spent_total: Decimal = Decimal(0)
 
     #: Kept for the admin spend view; no longer a limit on anything.
     games_started_today: int

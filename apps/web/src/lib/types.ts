@@ -92,6 +92,12 @@ export interface MyGameSummary extends GameSummary {
   your_turn: boolean;
 }
 
+/** A game between two models the caller started and pays for (ADR-0052). */
+export interface StartedGameSummary extends GameSummary {
+  /** What OpenRouter billed for it, once reconciled (ADR-0054). */
+  billed_usd: string | null;
+}
+
 export interface GameDetail extends GameSummary {
   /** Why a paused game has not resumed. Null unless it is paused. */
   waiting_on: WaitingOn | null;
@@ -114,6 +120,11 @@ export interface GameDetail extends GameSummary {
   /** Who started a game that is not a tournament's, by display name — never an email. Null for a
    *  game nobody started, and for a tournament game, which names its event instead. */
   started_by?: string | null;
+  /** What OpenRouter billed for the game's session, once reconciled (ADR-0054); null before. */
+  billed_usd?: string | null;
+  billed_requests?: number | null;
+  /** Requests OpenRouter billed that our record lost to a failure of ours. */
+  unrecorded_requests?: number | null;
 }
 
 /** Which event a game was played for — enough to say so and to link there. */
@@ -528,6 +539,8 @@ export interface Me {
   /** Credit held, in US dollars, as a decimal string; spent at what each turn actually cost
    *  (ADR-0052). Can sit a turn's cost below zero. */
   balance_usd: string;
+  /** Everything the account has been charged: every turn, every settlement (ADR-0054). */
+  usd_spent_total: string;
   games_started_today: number;
   usd_spent_today: string;
 }

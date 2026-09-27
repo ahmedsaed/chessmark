@@ -37,8 +37,10 @@ class InsufficientCreditError(Exception):
     at $0.00 from somebody the one turn below it.
     """
 
-    def __init__(self, *, held: Decimal) -> None:
-        super().__init__(f"You have ${held:.2f} of credit. A game against a paid model needs more.")
+    def __init__(
+        self, *, held: Decimal, needs: str = "A game against a paid model needs more."
+    ) -> None:
+        super().__init__(f"You have ${held:.2f} of credit. {needs}")
         self.held = held
 
 
@@ -56,11 +58,14 @@ async def can_play(session: AsyncSession, user_id: uuid.UUID) -> bool:
     return await balance_of(session, user_id) > ZERO
 
 
-async def require_credit(session: AsyncSession, user_id: uuid.UUID) -> None:
-    """Refuse to start a paid game for someone with nothing to pay with."""
+async def require_credit(
+    session: AsyncSession, user_id: uuid.UUID, *, needs: str | None = None
+) -> None:
+    """Refuse to start a paid game for someone with nothing to pay with. `needs` says what the
+    refused thing needs, in the words of the form that asked for it."""
     held = await balance_of(session, user_id)
     if held <= ZERO:
-        raise InsufficientCreditError(held=held)
+        raise InsufficientCreditError(held=held, **({"needs": needs} if needs else {}))
 
 
 async def spend(
@@ -103,6 +108,59 @@ async def spend(
     )
     session.add(entry)
     return entry
+
+
+async def settle(
+    session: AsyncSession, user_id: uuid.UUID, amount: Decimal, *, game_id: uuid.UUID
+) -> CreditLedger | None:
+    """Charge (positive) or refund (negative) the difference between what a game's turns were
+    charged and what OpenRouter billed for it (ADR-0054). Never refused and never clamped: it is
+    money already spent, settled to the cent, and a balance may end below zero by it."""
+    if amount == ZERO:
+        return None
+    remaining = (
+        await session.execute(
+            sa.update(User)
+            .where(User.id == user_id)
+            .values(balance_usd=User.balance_usd - amount)
+            .returning(User.balance_usd)
+        )
+    ).scalar_one_or_none()
+    if remaining is None:
+        return None
+    entry = CreditLedger(
+        user_id=user_id,
+        delta=-amount,
+        balance_after=Decimal(remaining),
+        reason=CreditReason.SETTLEMENT,
+        game_id=game_id,
+    )
+    session.add(entry)
+    return entry
+
+
+async def charged_for(session: AsyncSession, game_id: uuid.UUID) -> Decimal:
+    """What a game's payer has been charged for it so far: its turns and any settlement."""
+    total = await session.scalar(
+        sa.select(sa.func.coalesce(sa.func.sum(CreditLedger.delta), 0)).where(
+            CreditLedger.game_id == game_id,
+            CreditLedger.unit == "usd",
+            CreditLedger.reason.in_((CreditReason.TURN, CreditReason.SETTLEMENT)),
+        )
+    )
+    return -Decimal(total or 0)
+
+
+async def spent_by(session: AsyncSession, user_id: uuid.UUID) -> Decimal:
+    """Everything a person has been charged in dollars: their turns and their settlements."""
+    total = await session.scalar(
+        sa.select(sa.func.coalesce(sa.func.sum(CreditLedger.delta), 0)).where(
+            CreditLedger.user_id == user_id,
+            CreditLedger.unit == "usd",
+            CreditLedger.reason.in_((CreditReason.TURN, CreditReason.SETTLEMENT)),
+        )
+    )
+    return -Decimal(total or 0)
 
 
 async def grant(

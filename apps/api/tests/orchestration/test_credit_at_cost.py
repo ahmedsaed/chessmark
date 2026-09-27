@@ -255,3 +255,46 @@ async def test_a_decision_model_s_turn_is_charged_the_same_way(
         assert stored is not None
         assert stored.total_cost_usd == Decimal("0.004")
     assert await _balance(sessionmaker, owner) == Decimal("0.996")
+
+
+def test_the_budget_line_reads_like_money() -> None:
+    """The end of a capped game said "Stopped after $0.01048980 of a $0.01000000 budget"."""
+    from chessmark.orchestration.worker import _dollars
+
+    assert _dollars(Decimal("0.01048980")) == "$0.0104898"
+    assert _dollars(Decimal("0.01000000")) == "$0.01"
+    assert _dollars(Decimal("2")) == "$2.00"
+
+
+async def test_a_game_ended_by_its_budget_publishes_the_ending(
+    db: AsyncSession, queue: Any, sessionmaker: Any, make_worker: Any
+) -> None:
+    """The live page's header updated and its event stream did not: the ending was written and
+    never published, so "game over" appeared only after a reload."""
+    owner = await _funded(db, "1")
+    match = await create_match(
+        db,
+        white=Seat(display_name="white", model="vendor/white"),
+        black=Seat(display_name="black", model="vendor/black"),
+        created_by_user_id=owner.id,
+        max_usd=Decimal("0.005"),
+    )
+    job = await start_match(db, queue, game_id=match.game.id)
+    await db.commit()
+    await queue.enqueue(job)
+    worker = make_worker(both_sides(["e4"], ["e5"], cost=float(TURN)))
+    published: list[str] = []
+
+    async def spy(game_id: uuid.UUID, events: list[Any]) -> None:
+        published.extend(str(event.type) for event in events)
+
+    worker._publish = spy  # type: ignore[method-assign]
+
+    await run_next(worker, queue)  # the turn that takes it over its budget
+    await run_next(worker, queue)  # the check before the next turn ends it
+
+    async with sessionmaker() as session:
+        stored = await session.get(Game, match.game.id)
+    assert stored is not None
+    assert stored.status is GameStatus.FINISHED
+    assert "game_ended" in published

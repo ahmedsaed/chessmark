@@ -19,8 +19,10 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 
 import { ModelPicker } from "@/components/ModelPicker";
-import { SpendLimit } from "@/components/SpendLimit";
+import { GameLimits } from "@/components/GameLimits";
+import { TalkToggle } from "@/components/TalkToggle";
 import { limitFrom } from "@/lib/credit";
+import { DEFAULT_PLIES, pliesFrom } from "@/lib/limits";
 import { ApiError, createHumanGame } from "@/lib/api";
 import type { Colour, ModelInfo } from "@/lib/types";
 
@@ -45,6 +47,7 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
   const [colour, setColour] = useState<Colour>("white");
   const [chat, setChat] = useState(false);
   const [limit, setLimit] = useState("");
+  const [plies, setPlies] = useState(String(DEFAULT_PLIES));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,6 +63,7 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
         model_quantization: quantization || null,
         trash_talk_enabled: chat,
         max_usd: limitFrom(limit),
+        max_plies: pliesFrom(plies),
       });
       router.push(`/games/${game.id}`);
     } catch (failure) {
@@ -131,26 +135,20 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
         </div>
       </div>
 
-      <SpendLimit value={limit} onChange={setLimit} />
 
-      <label className="flex items-start gap-2 text-xs text-ink-dim">
-        <input
-          type="checkbox"
-          checked={chat}
-          onChange={(event) => setChat(event.target.checked)}
-          /* No `accent-[…]` here: the checkbox is drawn from tokens in `globals.css`, and
-             `accent-color` is inert once `appearance: none` replaces the native control. */
-          className="mt-0.5"
-        />
-        <span>
-          Let us talk during the game.{" "}
-          <span className="text-ink-faint">
-            Your messages reach the model unmoderated — nothing checks them first.
-          </span>
-        </span>
-      </label>
-
-      <div className="flex flex-wrap items-center gap-3">
+      <GameLimits
+        limit={limit}
+        onLimitChange={setLimit}
+        plies={plies}
+        onPliesChange={setPlies}
+        options={
+          <TalkToggle
+            checked={chat}
+            onChange={setChat}
+            hint="Chat with the model while you play: it reads what you say and can answer back. Off by default."
+          />
+        }
+      >
         <button
           type="button"
           onClick={start}
@@ -159,12 +157,8 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
         >
           {busy ? "seating…" : "sit down"}
         </button>
-        <p className="font-mono text-meta text-ink-faint">
-          Never ranked — a person is not a contestant. No clock; an idle game expires after two
-          hours. Your moves are free; the model&apos;s turns are charged what they cost, and a free
-          model costs nothing.
-        </p>
-      </div>
+      </GameLimits>
+
 
       {error && (
         <p className="border border-bad-deep bg-surface px-3 py-2 text-xs leading-relaxed text-bad">

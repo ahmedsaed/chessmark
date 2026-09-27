@@ -17,6 +17,19 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **Starting a game has its settings on one row**: an optional spending limit, a ply cap (2–1000,
+  which the page mentioned and never offered), and **Talk**, explained in a tooltip. Talk is trash
+  talk for a game between two models (on by default, as the API always had it; the form never let
+  anyone turn it off) and chat for a game you play.
+- **Your profile lists the games between two models you started** ("Games you started"), with
+  what each cost and the total. It shows what you have spent in all rather than today.
+- **A game is charged what OpenRouter billed for it.** When a game ends, or is paused by its owner
+  or for lack of credit, it is checked against OpenRouter's own bill for its session, about 5
+  minutes, an hour and a day later. Its owner is settled to that figure, as a charge or a refund.
+  The page shows **Billed**, with an ⓘ that explains any difference from the running total.
+  `./chessmark status` compares the month's key usage with what the record and reconciliation
+  hold. Needs `OPENROUTER_MANAGEMENT_KEY` on the server. (OPS-25, AUTH-18,
+  [ADR-0054](docs/adr/0054-a-game-is-charged-what-openrouter-billed.md))
 - **`./chessmark status` lists turns that crashed.** A turn that raised something the worker had no
   rule for, such as a constraint violation, used to end the worker process. Its job had already
   been acknowledged, so the game sat silent until the stall sweep requeued it 45 minutes later, and
@@ -66,6 +79,20 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **A game ended by its spending limit says so on the live page.** The ending was written but never
+  published, so the header changed and the event stream did not until a reload.
+- **Costs and balances show enough decimal places to move and to add up.** A decision game took a
+  balance from $1.00 to $0.9962 and the header still read $1.00, and a game's seats read "$0.002"
+  and "$0.001" over a total of "$0.004".
+- **A failed turn keeps the answers it paid for.** A rejected request, no room to answer, broken
+  token accounting, our own output ceiling and a garbled tool call each used to roll back the whole
+  turn: answers already billed vanished from the record, and the retry paid for them again. About
+  3.5% of successful answers since mid-September went this way, found by reconciling games against
+  OpenRouter's own per-session totals. Every classified failure now keeps its completed rounds and
+  the next attempt continues from them. Our own output ceiling is no longer retried five times.
+  A turn that crashes spends one of its five attempts, so a crash caused by the game's own state
+  ends the game unrated instead of looping for a day.
+  ([ADR-0053](docs/adr/0053-every-failure-keeps-its-rounds.md))
 - **A pause inside a turn folds only into the pause directly above it**, as it always has between
   turns. The in-turn fold searched the whole turn and joined the first matching row wherever it
   was, so `c4550202` drew a day of rate limits as one `×16` row above a halt from the night before,

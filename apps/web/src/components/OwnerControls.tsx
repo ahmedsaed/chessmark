@@ -22,9 +22,13 @@ export function OwnerControls({
   gameId,
   status,
   heldByOwner,
+  outOfCredit = false,
 }: {
   gameId: string;
   status: GameStatus;
+  /** Paused because this person's credit ran out. It resumes by itself when credit is added, so
+   *  "pause it to stop spending" would be advice about a game that is already not spending. */
+  outOfCredit?: boolean;
   /** Paused by its owner, rather than by a provider, a halt or credit. Only that pause is theirs
    *  to lift. */
   heldByOwner: boolean;
@@ -78,7 +82,9 @@ export function OwnerControls({
             ? "Paused. Nothing is spent until you resume."
             : pausing
               ? "Pausing after the move in progress, which is still charged."
-              : "Your credit pays for this game. Pause it to stop spending."}
+              : outOfCredit
+                ? "Out of credit: it resumes by itself when credit is added. Pause it to hold it instead."
+                : "Your credit pays for this game. Pause it to stop spending."}
         </p>
       </div>
       {error && <p className="font-mono text-meta text-bad">{error}</p>}

@@ -13,6 +13,7 @@ from fastapi import APIRouter
 
 from chessmark.api.deps import CurrentUser, SessionDep
 from chessmark.api.schemas import MeOut
+from chessmark.db.credits import spent_by
 from chessmark.db.quotas import usage_for
 
 router = APIRouter(tags=["me"])
@@ -30,6 +31,7 @@ async def get_me(session: SessionDep, user: CurrentUser) -> MeOut:
         # Dollars, spent at each turn's actual cost (ADR-0052). It does not refill, so a reader
         # who sees zero needs to know how it changes — hence the copy in the UI.
         balance_usd=user.balance_usd,
+        usd_spent_total=await spent_by(session, user.id),
         games_started_today=usage.games_started,
         usd_spent_today=Decimal(usage.usd_spent),
     )

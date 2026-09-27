@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { canPay, formatBalance, limitFrom, modelMoveCharged } from "@/lib/credit";
+import {
+  canPay,
+  costOf,
+  formatBalance,
+  gameCost,
+  limitFrom,
+  modelMoveCharged,
+  spentOn,
+  usd,
+} from "@/lib/credit";
 
 describe("formatBalance", () => {
   it("writes a balance in dollars and cents", () => {
@@ -11,6 +20,12 @@ describe("formatBalance", () => {
 
   it("does not round a balance under a cent to an empty-looking zero", () => {
     expect(formatBalance("0.00420000")).toBe("$0.0042");
+  });
+
+  it("shows a balance that is not whole cents to four places, so spending is visible", () => {
+    // A decision game took $1.00 to $0.9962; rounded to cents it still read $1.00.
+    expect(formatBalance("0.99615940")).toBe("$0.9962");
+    expect(formatBalance("1.00000000")).toBe("$1.00");
   });
 
   it("says a balance a turn below zero as it is", () => {
@@ -54,13 +69,72 @@ describe("limitFrom", () => {
     expect(limitFrom("   ")).toBeNull();
   });
 
-  it("is dollars and cents when set", () => {
-    expect(limitFrom("5")).toBe("5.00");
-    expect(limitFrom("2.5")).toBe("2.50");
+  it("is the amount as typed when set, even under a cent", () => {
+    expect(limitFrom("5")).toBe("5");
+    expect(limitFrom(" 2.5 ")).toBe("2.5");
+    expect(limitFrom("0.0005")).toBe("0.0005");
   });
 
   it("refuses a limit that would stop the game before it starts", () => {
     expect(limitFrom("0")).toBeNull();
     expect(limitFrom("-3")).toBeNull();
+  });
+});
+
+describe("gameCost", () => {
+  it("is the recorded cost while the game has not been reconciled", () => {
+    expect(gameCost({ total_cost_usd: "0.0123", billed_usd: null })).toEqual({
+      usd: "0.0123",
+      note: null,
+    });
+  });
+
+  it("is the billed cost once reconciled, and says nothing when the two agree", () => {
+    expect(gameCost({ total_cost_usd: "0.00831349", billed_usd: "0.00831349" }).note).toBeNull();
+  });
+
+  it("says why when OpenRouter billed more than the game recorded", () => {
+    const shown = gameCost({
+      total_cost_usd: "0.37833",
+      billed_usd: "0.418989",
+      billed_requests: 166,
+      unrecorded_requests: 21,
+    });
+    expect(shown.usd).toBe("0.418989");
+    expect(shown.note).toContain("$0.4190 for 166 requests");
+    expect(shown.note).toContain("$0.0407 of it is 21 requests");
+  });
+
+  it("says so when the bill came in under the record", () => {
+    expect(gameCost({ total_cost_usd: "0.003", billed_usd: "0.0025" }).note).toContain("refunded");
+  });
+});
+
+describe("usd", () => {
+  it("keeps a game's seats and its total adding up", () => {
+    // The seats of a real decision game, and its total: 0.00236 + 0.00148 = 0.00384.
+    expect(usd("0.0023604")).toBe("$0.002360");
+    expect(usd("0.00148020")).toBe("$0.001480");
+    expect(usd("0.00384060")).toBe("$0.003841");
+  });
+
+  it("uses four places below a dollar and cents above", () => {
+    expect(usd("0.418989")).toBe("$0.4190");
+    expect(usd("12.3456")).toBe("$12.35");
+  });
+});
+
+describe("games you started", () => {
+  it("costs what was billed once reconciled, and what was recorded before", () => {
+    expect(costOf({ total_cost_usd: "0.0038", billed_usd: "0.0040" })).toBe("0.0040");
+    expect(costOf({ total_cost_usd: "0.0038", billed_usd: null })).toBe("0.0038");
+  });
+
+  it("totals each game at that figure", () => {
+    const games = [
+      { total_cost_usd: "0.0038406", billed_usd: "0.0038406" },
+      { total_cost_usd: "0.0104898", billed_usd: null },
+    ];
+    expect(spentOn(games)).toBeCloseTo(0.0143304, 9);
   });
 });

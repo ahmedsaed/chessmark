@@ -43,6 +43,7 @@ flowchart LR
     P9 --> P21[21 Credits]
     P21 --> P22[22 Accountability]
     P22 --> P28[28 Credit at cost]
+    P28 --> P29[29 What was billed]
     P22 --> P17
     P7 --> P23[23 Browser suite]
     P18 --> P24[24 Game archive]
@@ -1574,6 +1575,34 @@ and no game started against a model that cannot answer a turn
 - [x] A game outside a tournament names who started it, by display name and never by email
 
 **Covers:** AUTH-10, AUTH-11, AUTH-13, AUTH-15, AUTH-16, AUTH-17; supersedes AUTH-12
+
+---
+
+## Phase 29 — What was billed
+
+**Goal:** a game's cost is what OpenRouter billed for it, found per session rather than chased one
+failure at a time ([ADR-0053](adr/0053-every-failure-keeps-its-rounds.md),
+[ADR-0054](adr/0054-a-game-is-charged-what-openrouter-billed.md)).
+
+**Objectives**
+1. A failed turn keeps the answers it paid for; a crash spends an attempt rather than looping
+2. Each game reconciled against its session when it comes to rest, and its payer settled to it
+3. The page shows the billed cost and why it differs; `status` holds the month against the key
+
+**Exit criteria**
+- [x] Every classified failure keeps its completed rounds, a failure after the move completes the
+      turn, our own ceiling is not retried five times, and a crash is counted — each mutated and
+      caught (`test_a_resumed_turn_keeps_its_rounds.py`, `test_crashed_turns.py`)
+- [x] The billed total prices lost generations exactly, never from the truncated aggregate; a
+      silent OpenRouter changes nothing; each check settles only what changed; a credits-era game
+      is not charged; games already checked do not hide the rest — `tests/db/test_billing.py`,
+      each rule mutated and caught
+- [x] Run against production's copy: 168 games, $0.4332 billed against the key's own $0.4334 for
+      the month; the decision games' "1% overcharge" was the aggregate's truncation, and they
+      reconcile exactly
+- [x] The billed cost and its note, read on a real reconciled game at desktop and phone width
+
+**Covers:** OPS-25, AUTH-18
 
 ---
 

@@ -106,3 +106,41 @@ async def test_a_database_error_is_recorded_by_its_cause(redis: Any) -> None:
 
     [failure] = await log.recent(dt.datetime.now(dt.UTC) - dt.timedelta(hours=1))
     assert failure.message.startswith("duplicate key value violates unique constraint")
+
+
+async def test_a_crash_spends_an_attempt_and_the_game_is_retried(
+    db: AsyncSession, game: Fixture, make_worker: Any
+) -> None:
+    """ADR-0053. A crash is requeued at the next attempt, not left for a sweep that resets it."""
+    worker = crashing(make_worker(plays(["e4"])))
+
+    await run_next(worker, game.queue)
+
+    requeued = await game.queue.consume("checker", block_ms=200)
+    assert len(requeued) == 1
+    assert requeued[0].job.attempt == 2
+
+
+async def test_a_crash_that_keeps_happening_ends_the_game_unrated(
+    db: AsyncSession, game: Fixture, make_worker: Any
+) -> None:
+    """A crash that follows from the game's own state happens on every attempt. Five, then the
+    game is abandoned — never forfeited: a bug of ours is not a finding about a player."""
+    from chessmark.game import Termination
+    from chessmark.orchestration.worker import ABORTED, MAX_JOB_ATTEMPTS
+
+    worker = crashing(make_worker(plays(["e4"])))
+    await game.queue.enqueue(
+        AdvanceTurn(game_id=game.game.id, expected_ply=0, attempt=MAX_JOB_ATTEMPTS)
+    )
+    await game.queue.consume("drain-first", block_ms=200)  # the fixture's own first job
+
+    handled = await run_next(worker, game.queue)
+
+    assert handled.outcome == ABORTED
+    db.expunge_all()
+    stored = await db.get(Game, game.game.id)
+    assert stored is not None
+    assert stored.status is GameStatus.ABORTED
+    assert stored.termination is Termination.ABANDONED
+    assert "crashed" in (stored.termination_detail or "")

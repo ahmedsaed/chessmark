@@ -128,15 +128,21 @@ class ProviderAccountingError(Exception):
 class HarnessCeilingError(Exception):
     """A model was cut off by a limit *we* set, so the turn failed rather than the player.
 
-    Raised rather than returned so it travels the same path as a provider failure: the turn rolls
-    back whole and the worker decides. It is never a `Termination` and never reaches a player's
-    record — that is the entire point (invariant 11).
+    Raised rather than returned so it travels the same path as a provider failure: the turn fails,
+    keeps the rounds it completed, and the worker decides. It is never a `Termination` and never
+    reaches a player's record — that is the entire point (invariant 11).
+
+    `ours` is the case where the number that cut the answer off was plainly ours: asking the same
+    request again gets the same cut. It is treated as a rejected request — one rescue that shrinks
+    the transcript, which is also what lets our clamp ask for more, and then an end — rather than
+    five identical retries. `19e69569` spent five attempts that way, each replaying its whole turn.
     """
 
-    def __init__(self, model: str, max_tokens: int) -> None:
+    def __init__(self, model: str, max_tokens: int, *, ours: bool = False) -> None:
         super().__init__(f"{model} was cut off by our own max_tokens of {max_tokens}")
         self.model = model
         self.max_tokens = max_tokens
+        self.ours = ours
 
 
 #: How many times a read-only tool may be called with the *same* arguments in one turn before the
@@ -331,13 +337,14 @@ class TurnResult:
     #: The provider rejected the request itself. Requeueing it cannot help.
     request_rejected: bool = False
 
-    #: Whether the rounds this turn completed should survive the failure (ADR-0045).
+    #: Whether the rounds this turn completed should survive the failure (ADR-0045, ADR-0053).
     #:
-    #: **The rule is whether the next attempt sends the same request again.** A provider that
-    #: stopped answering will serve the identical request later, so the rounds before it are work
-    #: that need not be paid for twice. A transcript with no room to answer, a broken token count
-    #: or a mangled tool call all need the *next* request to be different, and keeping more rounds
-    #: makes that harder rather than easier — those still roll back whole.
+    #: **Every classified failure keeps them.** ADR-0045 kept them only where the next attempt
+    #: would send the same request, and rolled back the rest on the reasoning that a request that
+    #: must change is easier to change from a smaller transcript. What it cost was measured once
+    #: OpenRouter's per-game totals could be read: answered, billed rounds vanishing from the
+    #: record and being paid for again on the retry. The worker's rescue shrinks the transcript
+    #: outside the turn either way. Only an unclassified exception — a bug — still rolls back.
     keep_rounds: bool = False
 
     #: How the game should describe giving up, when "the provider rejected the request" would be
@@ -572,6 +579,12 @@ class TurnRunner:
                 ),
             )
 
+        # **Every failure below keeps the rounds this attempt completed** (ADR-0053, amending
+        # ADR-0045). They were answered and billed, and a rollback threw them away: the retry paid
+        # for them a second time, the record lost them, and OpenRouter's own per-game totals came
+        # to more than ours. The transcript is safe to keep because a round is only ever committed
+        # whole — an assistant message with its tool results — and the worker's rescue, compaction
+        # included, now works on what survived rather than on what was discarded.
         try:
             await self._loop(turn, result)
         except LlmError as error:
@@ -581,68 +594,37 @@ class TurnRunner:
             # daily quota would be recorded as `error_forfeit` and read on the leaderboard as the
             # model failing to operate. Observed for real — an OpenRouter daily cap ended a turn
             # mid-game and would have handed the opponent a win.
-            #
-            # The turn is marked FAILED and the referee is untouched. The orchestrator decides
-            # what to do about it (retry the turn, or abandon the game as `aborted`) — Phase 5.
-            if self._move_committed:
-                # **A move already played is not a failed turn.** A turn goes on past its move
-                # until the model stops (ADR-0037), so a provider can die during the *closing*
-                # round — after the ply is committed and after the game has moved on. There is
-                # nothing to come back for: the move stands, the rest of the turn was optional,
-                # and the next ply is somebody else's.
-                #
-                # Marking it interrupted made it resumable, and it was resumed — for a *later
-                # ply*. One turn row then held two turn prompts and two moves, its `ply_number`
-                # overwritten by the second, and the ply in between had no `turn_started` at all.
-                # Found by playing a game whose endpoint went dark mid-turn.
-                result.status = TurnStatus.COMPLETED
-                result.error = str(error)
-            else:
-                result.status = TurnStatus.FAILED
-                result.error = str(error)
-                result.outcome = None
-                result.rate_limit = error.rate_limit
-                result.request_rejected = error.request_rejected
-                # The one class whose next attempt sends the same bytes to the same endpoint and
-                # can expect a different answer — unless the endpoint rejected the request itself,
-                # which it will go on rejecting (ADR-0045).
-                result.keep_rounds = not error.request_rejected
+            self._fail(
+                result,
+                error,
+                rate_limit=error.rate_limit,
+                request_rejected=error.request_rejected,
+            )
         except compaction.NoRoomToAnswerError as error:
             # The transcript leaves no usable room for an answer, and compaction could not fix it.
             # **A harness stop, not a forfeit** (invariant 11, ADR-0019): the model did not play
-            # badly, our request would not fit. Treated exactly like a provider failure — the turn
-            # rolls back whole and the worker decides — rather than clamped to a token nobody can
-            # answer in, which is what forfeited a model for truncation at ply 5 (ADR-0021).
-            result.status = TurnStatus.FAILED
-            result.error = str(error)
-            result.outcome = None
+            # badly, our request would not fit — rather than clamped to a token nobody can answer
+            # in, which is what forfeited a model for truncation at ply 5 (ADR-0021). The worker's
+            # rescue shrinks the transcript outside the turn; the next request has to be smaller.
+            self._fail(result, error, request_rejected=True)
         except ProviderAccountingError as error:
             # The endpoint's token accounting is broken, so nothing it reports can be trusted and
-            # there is nothing to retry into. `request_rejected` is the honest classification: the
-            # next attempt sends the same bytes to the same endpoint and gets the same nonsense
-            # back, so the worker abandons at once rather than spending five attempts on it. Not a
-            # forfeit — the model did nothing (invariant 11).
-            result.status = TurnStatus.FAILED
-            result.error = str(error)
-            result.outcome = None
-            result.request_rejected = True
-            result.abandon_reason = f"Abandoned — {error}"
+            # there is nothing to retry into: the next attempt sends the same bytes and gets the
+            # same nonsense back, so the worker abandons at once. Not a forfeit — the model did
+            # nothing (invariant 11).
+            self._fail(result, error, request_rejected=True, abandon_reason=f"Abandoned — {error}")
         except HarnessCeilingError as error:
-            # Our ceiling, not the model's failure. Same treatment as a provider outage: the turn
-            # is marked FAILED with no outcome, so nothing is recorded against either player and
-            # the worker retries or abandons honestly (invariant 11, ADR-0019).
-            result.status = TurnStatus.FAILED
-            result.error = str(error)
-            result.outcome = None
+            # Our ceiling, not the model's failure (invariant 11, ADR-0019). The endpoint's own
+            # output ceiling is worth a retry — a model often finishes on the next try — but ours
+            # is not: the same request is cut at the same place (see `HarnessCeilingError.ours`).
+            self._fail(result, error, request_rejected=error.ours)
         except ProviderMangledError as error:
             # The endpoint failed to parse a tool call the model did make (ADR-0015). Same
             # treatment as an outage, for the same reason: the model acted correctly and its host
             # did not, so forfeiting it would publish a claim about the model that the endpoint
             # manufactured. `deepseek-v4-pro` lost two games this way through StreamLake and none
             # at all through Baidu or DeepInfra, on identical weights at identical precision.
-            result.status = TurnStatus.FAILED
-            result.error = str(error)
-            result.outcome = None
+            self._fail(result, error)
 
         result.latency_ms = int((time.perf_counter() - started) * 1000)
         await self._finalise(turn, result)
@@ -1508,7 +1490,7 @@ class TurnRunner:
                 self.model,
                 self._requested_max_tokens,
             )
-            raise HarnessCeilingError(self.model, self._requested_max_tokens or 0)
+            raise HarnessCeilingError(self.model, self._requested_max_tokens or 0, ours=True)
 
         self._truncations += 1
         if self._truncations > MAX_TRUNCATIONS:
@@ -1587,6 +1569,35 @@ class TurnRunner:
             )
         )
         await self.session.flush()
+
+    def _fail(
+        self,
+        result: TurnResult,
+        error: Exception,
+        *,
+        rate_limit: RateLimit | None = None,
+        request_rejected: bool = False,
+        abandon_reason: str | None = None,
+    ) -> None:
+        """Mark this attempt failed, keeping the rounds it completed, and hand the worker the facts.
+
+        **A move already played is not a failed turn.** A turn goes on past its move until the
+        model stops (ADR-0037), so any of these can happen in the *closing* round — after the ply is
+        committed and the game has moved on. There is nothing to come back for: the move stands and
+        the rest of the turn was optional. Marking it interrupted made it resumable, and it was
+        resumed for a *later* ply — one turn row holding two prompts and two moves. Every failure
+        path shares this rule, now that every one of them keeps its rounds.
+        """
+        result.error = str(error)
+        if self._move_committed:
+            result.status = TurnStatus.COMPLETED
+            return
+        result.status = TurnStatus.FAILED
+        result.outcome = None
+        result.rate_limit = rate_limit
+        result.request_rejected = request_rejected
+        result.abandon_reason = abandon_reason
+        result.keep_rounds = True
 
     async def _append_tool_result(
         self, turn: Turn, call: ToolInvocation, payload: dict[str, Any], *, ok: bool

@@ -185,6 +185,7 @@ async def test_a_user_out_of_credit_is_refused_with_a_reason(
     assert "credit" in refused.text.lower()
     # The refusal has to say what is held and how a balance changes, or it is a dead end.
     assert "$0.00" in refused.text
+    assert "between two models" in refused.text
     assert "administrator" in refused.text.lower()
 
 
@@ -404,3 +405,22 @@ async def test_a_returning_user_is_not_duplicated(client: AsyncClient, db: Async
     db.expunge_all()
     rows = (await db.scalars(sa.select(User).where(User.clerk_user_id == "user_returning"))).all()
     assert len(rows) == 1
+
+
+async def test_me_reports_everything_the_account_was_charged(
+    client: AsyncClient, db: AsyncSession, game: Fixture
+) -> None:
+    """The profile's "spent" is the account's total, not today's: every turn and every settlement,
+    and never a grant."""
+    from chessmark.db.credits import settle, spend
+
+    await fund(db, "user_spender", usd="1")
+    user = await db.scalar(sa.select(User).where(User.clerk_user_id == "user_spender"))
+    assert user is not None
+    await spend(db, user.id, Decimal("0.003"), game_id=game.game.id, turn_id=None)
+    await settle(db, user.id, Decimal("0.0005"), game_id=game.game.id)
+    await db.commit()
+
+    body = (await client.get("/me", headers=as_user("user_spender"))).json()
+
+    assert Decimal(body["usd_spent_total"]) == Decimal("0.0035")
