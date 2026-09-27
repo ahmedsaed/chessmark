@@ -30,11 +30,27 @@ INFRA_RATE = Decimal("0.05")
 CENT = Decimal("0.01")
 
 
+def _cents_up(amount: Decimal) -> Decimal:
+    return amount.quantize(CENT, rounding="ROUND_UP")
+
+
+def processor_fee(price: Decimal) -> Decimal:
+    """The payment processor's share of a sale at this price, rounded up to the cent."""
+    return _cents_up(price * FEE_RATE + FEE_FIXED)
+
+
+def upkeep(price: Decimal) -> Decimal:
+    """The share kept for running the site, rounded up to the cent."""
+    return _cents_up(price * INFRA_RATE)
+
+
 def credit_for(price: Decimal) -> Decimal:
-    """The credit a pack at this price grants, rounded down to the cent so it never grants more
-    than the rule allows."""
-    granted = price - (price * FEE_RATE + FEE_FIXED) - price * INFRA_RATE
-    return granted.quantize(CENT, rounding="ROUND_DOWN")
+    """The credit a pack at this price grants: its price less both shares.
+
+    The shares round *up* and the credit is what is left, so the three lines the page shows always
+    add up to the price, and rounding never grants more than the rule allows.
+    """
+    return price - processor_fee(price) - upkeep(price)
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +58,14 @@ class Pack:
     price_id: str
     price_usd: Decimal
     credit_usd: Decimal
+
+    @property
+    def processor_fee_usd(self) -> Decimal:
+        return processor_fee(self.price_usd)
+
+    @property
+    def upkeep_usd(self) -> Decimal:
+        return upkeep(self.price_usd)
 
 
 class PackConfigError(ValueError):
@@ -76,4 +100,12 @@ def parse_packs(spec: str) -> tuple[Pack, ...]:
     return tuple(sorted(packs, key=lambda pack: pack.price_usd))
 
 
-__all__ = ["PACK_PRICES", "Pack", "PackConfigError", "credit_for", "parse_packs"]
+__all__ = [
+    "PACK_PRICES",
+    "Pack",
+    "PackConfigError",
+    "credit_for",
+    "parse_packs",
+    "processor_fee",
+    "upkeep",
+]

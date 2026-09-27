@@ -568,6 +568,12 @@ Off until configured (ADR-0055). To turn it on, all of this, in the **same** Pad
      `transaction.completed`, `adjustment.created` and `adjustment.updated`.
    * On live, **Checkout → Website approval** for the site's domain.
 
+**Developing against the sandbox** needs Paddle to reach the local API. `make tunnel` starts a
+Cloudflare quick tunnel in Docker and prints a public address for `127.0.0.1:8010` (a random
+`*.trycloudflare.com`, new each time); point a sandbox notification destination at
+`<address>/webhooks/paddle`, put its secret in `.env`, and `make tunnel-down` when done. While it
+runs, anyone with the address reaches the local API.
+
 A purchase that could not be credited is a `purchases` row with status `unmatched` and a `problem`
 saying why. Settle it with `./chessmark credits <email> <dollars>` once you know whose it was.
 

@@ -6,7 +6,14 @@ from decimal import Decimal
 
 import pytest
 
-from chessmark.core.credit_packs import PackConfigError, credit_for, parse_packs
+from chessmark.core.credit_packs import (
+    PACK_PRICES,
+    PackConfigError,
+    credit_for,
+    parse_packs,
+    processor_fee,
+    upkeep,
+)
 
 
 @pytest.mark.parametrize(("price", "credit"), [("5", "4.00"), ("10", "8.50"), ("25", "22.00")])
@@ -40,3 +47,9 @@ def test_no_price_ids_means_nothing_is_on_sale() -> None:
 def test_a_malformed_mapping_is_refused_rather_than_skipped(spec: str) -> None:
     with pytest.raises(PackConfigError):
         parse_packs(spec)
+
+
+@pytest.mark.parametrize("price", [*PACK_PRICES, Decimal("7.77"), Decimal("3.33")])
+def test_the_breakdown_the_page_shows_always_adds_up_to_the_price(price: Decimal) -> None:
+    """The page lists price, fee, upkeep and credit as a sum; it must be one."""
+    assert processor_fee(price) + upkeep(price) + credit_for(price) == price

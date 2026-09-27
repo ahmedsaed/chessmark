@@ -40,15 +40,20 @@ export function BuyCredit({ packs, signedIn }: { packs: CreditPack[]; signedIn: 
   return (
     <ul className="grid gap-4 sm:grid-cols-3">
       {packs.map((pack) => (
-        <li
-          key={pack.price_id}
-          className="flex flex-col gap-4 border border-line bg-surface px-5 py-5"
-        >
-          <p className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">
-            {formatBalance(pack.credit_usd)} credit
-          </p>
+        <li key={pack.price_id} className="flex flex-col gap-5 border border-line bg-surface px-5 py-5">
+          {/* A sum, top to bottom: what you pay, what comes out of it, what reaches your balance.
+              Three different numbers side by side read as three prices; laid out as arithmetic
+              they read as one purchase. */}
           <p className="tabular font-serif text-4xl text-ink">{dollars(pack.price_usd)}</p>
-          <p className="-mt-3 font-mono text-meta text-ink-faint">+ tax where it applies</p>
+          <dl className="tabular flex flex-col gap-1.5 font-mono text-meta">
+            <Line label="Payment processor" rule="5% + $0.50" amount={`− ${dollars(pack.processor_fee_usd)}`} />
+            <Line label="Running Chessmark" rule="5%" amount={`− ${dollars(pack.upkeep_usd)}`} />
+            <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-line pt-2.5">
+              <dt className="uppercase tracking-[0.12em] text-ink">Your credit</dt>
+              <dd className="text-lg text-accent">{dollars(pack.credit_usd)}</dd>
+            </div>
+          </dl>
+          <p className="-mt-2 text-xs text-ink-faint">Tax is added at checkout where it applies.</p>
           {signedIn ? (
             <BuyButton pack={pack} />
           ) : (
@@ -59,6 +64,17 @@ export function BuyCredit({ packs, signedIn }: { packs: CreditPack[]; signedIn: 
         </li>
       ))}
     </ul>
+  );
+}
+
+function Line({ label, rule, amount }: { label: string; rule: string; amount: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 text-ink-faint">
+      <dt>
+        {label} ({rule})
+      </dt>
+      <dd className="text-ink-dim">{amount}</dd>
+    </div>
   );
 }
 
@@ -198,8 +214,8 @@ function Note({ tone, children }: { tone: string; children: React.ReactNode }) {
   );
 }
 
-/** "$5.00" from "5". Our own catalogue price, not a Paddle total — Paddle's checkout shows what the
- *  buyer pays with their tax, and this page does no arithmetic on it. */
+/** "$5.00" from "5". The API's own figures, only formatted: the checkout shows what the buyer pays
+ *  with their tax, and this page does no arithmetic. */
 function dollars(usd: string): string {
   return `$${Number(usd).toFixed(2)}`;
 }

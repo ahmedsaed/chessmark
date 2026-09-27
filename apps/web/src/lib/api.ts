@@ -451,6 +451,10 @@ export interface CreditPack {
   price_id: string;
   /** What the pack costs before tax, in dollars — a decimal string, as the API sends money. */
   price_usd: string;
+  /** The payment processor's share, and the share kept for running the site. The API computes
+   *  both, and `price − both = credit` holds exactly; the page only lays the sum out. */
+  processor_fee_usd: string;
+  upkeep_usd: string;
   /** What it adds to a balance. */
   credit_usd: string;
 }

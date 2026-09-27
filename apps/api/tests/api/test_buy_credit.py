@@ -226,10 +226,14 @@ async def test_refunds_and_chargebacks_never_take_back_more_than_was_granted(
 async def test_the_packs_on_sale_say_what_each_grants(client: AsyncClient, selling: None) -> None:
     body = (await client.get("/credit/packs")).json()
     assert body["selling"] is True
-    assert [(p["price_usd"], p["credit_usd"], p["price_id"]) for p in body["packs"]] == [
-        ("5", "4.00", PRICES["5"]),
-        ("10", "8.50", PRICES["10"]),
-        ("25", "22.00", PRICES["25"]),
+    rows = [
+        (p["price_id"], p["price_usd"], p["processor_fee_usd"], p["upkeep_usd"], p["credit_usd"])
+        for p in body["packs"]
+    ]
+    assert rows == [
+        (PRICES["5"], "5", "0.75", "0.25", "4.00"),
+        (PRICES["10"], "10", "1.00", "0.50", "8.50"),
+        (PRICES["25"], "25", "1.75", "1.25", "22.00"),
     ]
 
 

@@ -33,6 +33,9 @@ router = APIRouter(tags=["credit"])
 class PackOut(BaseModel):
     price_id: str
     price_usd: Decimal
+    #: What comes out of the price, so the page can show the sum without doing any of it.
+    processor_fee_usd: Decimal
+    upkeep_usd: Decimal
     credit_usd: Decimal
 
 
@@ -61,7 +64,13 @@ async def list_packs(settings: SettingsDep) -> PacksOut:
     return PacksOut(
         selling=bool(packs),
         packs=[
-            PackOut(price_id=p.price_id, price_usd=p.price_usd, credit_usd=p.credit_usd)
+            PackOut(
+                price_id=p.price_id,
+                price_usd=p.price_usd,
+                processor_fee_usd=p.processor_fee_usd,
+                upkeep_usd=p.upkeep_usd,
+                credit_usd=p.credit_usd,
+            )
             for p in packs
         ],
     )
