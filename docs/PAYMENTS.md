@@ -96,7 +96,7 @@ The owner's decisions (2026-09-27), and what the pages hold to:
   by law, and Paddle may refund within 14 days whatever our policy says
   ([Paddle's refund policy](https://www.paddle.com/legal/refund-policy)), so the page states it as
   one rule for everybody rather than promising less than is true.
-* **A game broken by our fault** is reported to `support@chessmark.merope.dev` within 30 days, and
+* **A game broken by our fault** is reported to `support@merope.dev` within 30 days, and
   once confirmed its cost is returned **as credit**, not cash. A model playing badly, forfeiting or
   a provider outage is not a fault.
 * **If the service shuts down**, or an account is closed without breaking the terms, unspent

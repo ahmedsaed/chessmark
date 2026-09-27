@@ -9,7 +9,7 @@
 import Link from "next/link";
 
 /** Where every policy sends a question, a deletion request or a broken-game report. */
-export const SUPPORT_EMAIL = "support@chessmark.merope.dev";
+export const SUPPORT_EMAIL = "support@merope.dev";
 
 export function LegalPage({
   title,
