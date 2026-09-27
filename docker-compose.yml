@@ -32,6 +32,22 @@ services:
       timeout: 3s
       retries: 10
 
+  # A public address for the local API, so a payment processor's webhooks can reach it while
+  # developing (ADR-0055). **Development only, and only on request**: the `tunnel` profile keeps it
+  # out of `make up` and out of production, which layers its own file over this one.
+  #
+  # A Cloudflare quick tunnel: no account, a random `*.trycloudflare.com` address that changes
+  # every time it starts, gone when it stops. While it runs, **anyone with the address reaches the
+  # local API** — writes still need a signed-in token, but it is the local database behind it.
+  # `make tunnel` starts it and prints the address; `make tunnel-down` stops it.
+  #
+  # Host networking because the API listens on 127.0.0.1, which a bridged container cannot reach.
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: [tunnel]
+    network_mode: host
+    command: tunnel --no-autoupdate --url http://127.0.0.1:${API_PORT:-8010}
+
 volumes:
   postgres_data:
   redis_data:

@@ -139,6 +139,45 @@ async def settle(
     return entry
 
 
+async def move_for_purchase(
+    session: AsyncSession,
+    user_id: uuid.UUID,
+    amount: Decimal,
+    *,
+    purchase_id: int,
+    reason: CreditReason,
+) -> CreditLedger | None:
+    """Add a purchase's credit (positive) or take it back for a refund or chargeback (negative),
+    and record why (ADR-0055).
+
+    **Never clamped, in either direction** — unlike `grant`, whose floor stops an administrator's
+    revocation at zero. Credit taken back for a refund is credit the buyer was paid back for, and the
+    refund policy says a balance can go below zero because of it: their paid games then pause until
+    it is above zero again. `None` when the user no longer exists.
+    """
+    if amount == ZERO:
+        return None
+    after = (
+        await session.execute(
+            sa.update(User)
+            .where(User.id == user_id)
+            .values(balance_usd=User.balance_usd + amount)
+            .returning(User.balance_usd)
+        )
+    ).scalar_one_or_none()
+    if after is None:
+        return None
+    entry = CreditLedger(
+        user_id=user_id,
+        delta=amount,
+        balance_after=Decimal(after),
+        reason=reason,
+        purchase_id=purchase_id,
+    )
+    session.add(entry)
+    return entry
+
+
 async def charged_for(session: AsyncSession, game_id: uuid.UUID) -> Decimal:
     """What a game's payer has been charged for it so far: its turns and any settlement."""
     total = await session.scalar(

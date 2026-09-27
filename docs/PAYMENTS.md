@@ -1,6 +1,8 @@
 # Payments — selling credits, if we ever do
 
-**Status: research, not a decision.** Nothing here is built. Credit is granted by an
+**Status: decided, and built against Paddle's sandbox** ([ADR-0055](adr/0055-credit-is-sold-as-fixed-packs-through-paddle.md)). Selling stays off until Paddle approves the live account. What follows was the research behind it.
+
+**Originally: research, not a decision.** Nothing here was built. Credit is granted by an
 administrator, in dollars, and spent at what each turn actually cost
 ([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)). This file holds what was found
 about *how* it could be sold, so that when the owner decides whether to sell it, the processor,

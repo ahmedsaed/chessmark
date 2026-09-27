@@ -505,11 +505,26 @@ A repair cannot be rolled back by redeploying, because it changed data rather th
 one means clearing `superseded_at` on the rows it set, which is why the dry run exists and why the
 backup comes first.
 
-## Continuous deployment
+## Deploying is manual
 
-Push to `main` publishes `ghcr.io/<repo>-api` and `-web`, each tagged `:latest` and `:<sha>`. The
-deploy job then SSHes to `vars.DEPLOY_HOST`, pulls, runs `migrate` to completion, restarts, and
-waits on `/ready`. With no host configured it is **skipped rather than failed**.
+**Production is deployed by hand, never by a workflow.** Merging to `main` runs *Publish images*
+(`.github/workflows/deploy.yml`), which builds `ghcr.io/<repo>-api` and `-web`, tagged `:latest` and
+`:<sha>`. Nothing reaches the site until the owner runs, on the server:
+
+```
+./chessmark deploy
+```
+
+— pull those images, drain the workers, migrate, restart, check `/ready`. So:
+
+* **A merge is not a deploy.** A green *Publish images* run means the images can be pulled, not that
+  anything is live. Wait for it to finish before deploying, or `deploy` pulls the previous images.
+* **Anything that has to happen with a deploy** — a server `.env` change, a data repair, turning
+  selling on — is the owner's step at the moment they deploy, and is written down as such.
+* The workflow still has a `deploy` job that would SSH to `vars.DEPLOY_HOST`. **No host is set, on
+  purpose**, so it is skipped rather than failed. It has never run.
+
+## Publishing images
 
 Set repository variables `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, `HEALTH_URL`,
 `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and the secret
@@ -537,8 +552,8 @@ the server had nothing to pull. `lib/env.ts` now treats blank as unset — the s
 gives every server-side read a ten-second ceiling, and CI builds both images on every pull request
 with **no build args at all**, which is the exact shape that failed.
 
-**The deploy half has never run.** It is written from the documented behaviour of the actions it
-uses and stays unproven until a server exists.
+**The deploy job has never run**, and is not how production is deployed — see
+[Deploying is manual](#deploying-is-manual).
 
 ## First deploy
 
@@ -549,6 +564,33 @@ uses and stays unproven until a server exists.
 4. `docker compose run --rm api python /app/scripts/refresh_endpoints.py` — a model has no
    contestants, and so cannot be played, until its endpoints are known.
 5. Grant yourself credit, in dollars: new accounts hold none by design (AUTH-11).
+
+## Selling credit
+
+Off until configured (ADR-0055). To turn it on, all of this, in the **same** Paddle environment:
+
+1. The catalogue: one product and three one-time prices, $5, $10 and $25, **tax added on top**
+   (`tax_mode: external`), each named with the credit it grants. Created in the sandbox already.
+2. On the server, `PADDLE_WEBHOOK_SECRET` (from the notification destination) and
+   `PADDLE_PRICE_IDS=5=pri_…,10=pri_…,25=pri_…`. Production refuses to start with only one.
+3. As repository variables for the web build, `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN` (`live_…` on
+   production) and `NEXT_PUBLIC_PADDLE_ENV=production`. The build refuses a token without its
+   environment, or from the other one.
+4. In Paddle's dashboard, which no API can set:
+   * **Checkout → Checkout settings → Default payment link**: `https://<site>/credit`. Without it
+     every checkout fails with `transaction_default_checkout_url_not_set`.
+   * **Developer tools → Notifications → New destination**: `https://<api>/webhooks/paddle`, with
+     `transaction.completed`, `adjustment.created` and `adjustment.updated`.
+   * On live, **Checkout → Website approval** for the site's domain.
+
+**Developing against the sandbox** needs Paddle to reach the local API. `make tunnel` starts a
+Cloudflare quick tunnel in Docker and prints a public address for `127.0.0.1:8010` (a random
+`*.trycloudflare.com`, new each time); point a sandbox notification destination at
+`<address>/webhooks/paddle`, put its secret in `.env`, and `make tunnel-down` when done. While it
+runs, anyone with the address reaches the local API.
+
+A purchase that could not be credited is a `purchases` row with status `unmatched` and a `problem`
+saying why. Settle it with `./chessmark credits <email> <dollars>` once you know whose it was.
 
 **Clerk production is a different instance from Clerk development.** Different user table,
 different JWKS. Every account in your dev instance — including yours, and its credit — does not

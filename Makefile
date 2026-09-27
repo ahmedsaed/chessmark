@@ -3,7 +3,7 @@ SHELL := /bin/bash
 API := apps/api
 WEB := apps/web
 
-.PHONY: help setup up down logs psql redis api web dev test lint fmt typecheck check clean dev-pull harvest-cassettes probe-decisions
+.PHONY: help setup up down tunnel tunnel-down logs psql redis api web dev test lint fmt typecheck check clean dev-pull harvest-cassettes probe-decisions
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -19,6 +19,18 @@ up: ## Start Postgres + Redis
 
 down: ## Stop Postgres + Redis
 	docker compose down
+
+tunnel: ## Expose the local API publicly, for payment webhooks; prints the address
+	docker compose --profile tunnel up -d tunnel
+	@for i in $$(seq 1 30); do \
+		url=$$(docker compose --profile tunnel logs tunnel 2>&1 | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' | tail -1); \
+		if [ -n "$$url" ]; then echo "$$url  ->  http://127.0.0.1:8010"; echo "Paddle webhook: $$url/webhooks/paddle"; exit 0; fi; \
+		sleep 1; \
+	done; echo "No address yet: docker compose --profile tunnel logs tunnel"; exit 1
+
+tunnel-down: ## Stop the public tunnel
+	docker compose --profile tunnel stop tunnel
+	docker compose --profile tunnel rm -f tunnel
 
 logs: ## Tail datastore logs
 	docker compose logs -f

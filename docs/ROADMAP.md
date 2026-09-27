@@ -1578,6 +1578,33 @@ and no game started against a model that cannot answer a turn
 
 ---
 
+## Phase 30 — Buying credit
+
+**Goal:** a person can buy credit, and nothing but the payment processor's signed word moves their
+balance ([ADR-0055](adr/0055-credit-is-sold-as-fixed-packs-through-paddle.md)).
+
+**Objectives**
+1. Terms of service, a privacy policy and a refund policy, published and linked from every page
+2. `/credit`: three packs with what each grants, Paddle's overlay checkout, and the wait for the
+   webhook afterwards
+3. The webhook: verified, credits once per transaction, takes back refunds and chargebacks
+
+**Exit criteria**
+- [x] A purchase credits once however often or concurrently it is delivered; a forged delivery,
+      an unknown price and an unknown account move nothing; a refund waits for approval, takes back
+      its share, never more than was granted, and can leave a balance below zero; a reversed
+      chargeback restores it — `tests/api/test_buy_credit.py`, each rule mutated and caught
+- [x] Production refuses half the configuration; the web build refuses a token without its
+      environment or from the other one
+- [x] A sandbox checkout completes and its real webhook credits the account, end to end: $5 from
+      Egypt, $5.70 with VAT, delivered through `make tunnel`, verified, $4.00 credited once, and the
+      page said so; a refund awaiting approval was received and correctly moved nothing
+- [ ] Paddle approves the live account, and the live catalogue is created
+
+**Covers:** AUTH-19, AUTH-20, AUTH-21
+
+---
+
 ## Phase 29 — What was billed
 
 **Goal:** a game's cost is what OpenRouter billed for it, found per session rather than chased one
@@ -1628,6 +1655,8 @@ failure at a time ([ADR-0053](adr/0053-every-failure-keeps-its-rounds.md),
       untested.** Every commit on `main` gets a `:latest` and an immutable `:sha` image in GHCR.
       The deploy job SSHes, pulls, migrates and waits on readiness, but there is no host to point
       it at, so it is skipped rather than run. It stays open until a server proves it.
+      **Production is deployed by hand** (`./chessmark deploy`), by the owner's choice, and the job
+      is left unconfigured on purpose ([DEPLOYMENT.md](DEPLOYMENT.md#deploying-is-manual)).
 - [x] A backup is restored to a scratch database and verified — not just taken
 - [x] Zero high-severity findings in the dependency audit
 - [x] Deliberately killing each container in turn causes no data loss and recovers automatically

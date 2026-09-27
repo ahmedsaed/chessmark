@@ -135,8 +135,9 @@ export default function PrivacyPage() {
         <p>
           Your account, credit history and email are kept until your account is deleted. Game
           records are kept permanently, because the benchmark is measured on them. When an account
-          is deleted, its games stay public without the player&apos;s name. Paddle keeps its own
-          payment records for as long as the law requires.
+          is deleted, its games stay public without the player&apos;s name, and a record of each
+          purchase is kept without the account, because a refund or chargeback can still arrive for
+          it. Paddle keeps its own payment records for as long as the law requires.
         </p>
       </Clause>
 

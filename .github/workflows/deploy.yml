@@ -1,6 +1,11 @@
-name: Deploy
+name: Publish images
 
-# Push to `main` publishes images, and deploys them if a host is configured (NFR-09).
+# **This does not deploy production.** Production is deployed by hand: the owner runs
+# `./chessmark deploy` on the server, which pulls the images this publishes. Merging to `main` changes
+# nothing a visitor sees until then — so a green run here means "the images are ready to pull", never
+# "it is live". (The `deploy` job below is skipped: no `DEPLOY_HOST` is set, deliberately.)
+#
+# Push to `main` publishes images, and would deploy them if a host were configured (NFR-09).
 #
 # Split in two on purpose. Publishing needs nothing but the repository's own token, so it works
 # today and gives every commit on `main` a pullable, immutable image. Deploying needs a server,
@@ -100,6 +105,8 @@ jobs:
             NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL }}
             NEXT_PUBLIC_SITE_URL=${{ vars.NEXT_PUBLIC_SITE_URL }}
             NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+            NEXT_PUBLIC_PADDLE_CLIENT_TOKEN=${{ vars.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN }}
+            NEXT_PUBLIC_PADDLE_ENV=${{ vars.NEXT_PUBLIC_PADDLE_ENV }}
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository }}-web:latest
             ${{ env.REGISTRY }}/${{ github.repository }}-web:${{ github.sha }}

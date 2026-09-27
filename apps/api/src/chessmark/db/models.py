@@ -42,6 +42,7 @@ from chessmark.db.enums import (
     ModelRuntime,
     ModerationStatus,
     PlayerKind,
+    PurchaseStatus,
     TournamentStatus,
     TurnStatus,
 )
@@ -827,6 +828,76 @@ class CreditLedger(Base):
 
     #: Free text from whoever granted. The "why" a reason code cannot carry.
     note: Mapped[str | None] = mapped_column(sa.Text)
+
+    #: The Paddle purchase this bought, refunded or charged back (ADR-0055).
+    purchase_id: Mapped[int | None] = mapped_column(
+        sa.BigInteger, _fk("purchases.id", ondelete="SET NULL"), index=True
+    )
+
+    created_at: Mapped[dt.datetime] = created_at()
+
+
+class Purchase(Base):
+    """A pack of credit bought through Paddle — one row per Paddle transaction (ADR-0055).
+
+    **The unique transaction id is what makes a purchase credit once.** Paddle delivers webhooks at
+    least once and retries anything it did not see acknowledged, so the same `transaction.completed`
+    can arrive twice, concurrently. The insert that wins the constraint grants; every other one finds
+    the row and does nothing.
+
+    **It outlives the account.** A purchase is a record of money that moved, and a refund or a
+    chargeback can arrive for it after the buyer deleted their account — so the user is `SET NULL`,
+    and the row keeps no personal data of its own beyond Paddle's ids.
+    """
+
+    __tablename__ = "purchases"
+
+    id: Mapped[int] = bigint_pk()
+    paddle_transaction_id: Mapped[str] = mapped_column(sa.Text, unique=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        _fk("users.id", ondelete="SET NULL"), index=True
+    )
+    status: Mapped[PurchaseStatus] = mapped_column(enum_column(PurchaseStatus), index=True)
+    #: Why it is unmatched, for the operator who settles it.
+    problem: Mapped[str | None] = mapped_column(sa.Text)
+
+    paddle_price_id: Mapped[str | None] = mapped_column(sa.Text)
+    paddle_customer_id: Mapped[str | None] = mapped_column(sa.Text)
+    credit_usd: Mapped[Decimal] = mapped_column(USD, default=Decimal(0))
+
+    #: What the buyer paid and what reached us, in Paddle's own terms: lowest currency units as
+    #: strings, in the currency they paid in. Kept verbatim so the margin in `core.credit_packs` can
+    #: be checked against real sales rather than against the published fee.
+    currency_code: Mapped[str] = mapped_column(sa.Text)
+    grand_total: Mapped[str] = mapped_column(sa.Text)
+    tax: Mapped[str | None] = mapped_column(sa.Text)
+    fee: Mapped[str | None] = mapped_column(sa.Text)
+    earnings: Mapped[str | None] = mapped_column(sa.Text)
+
+    created_at: Mapped[dt.datetime] = created_at()
+    updated_at: Mapped[dt.datetime] = updated_at()
+
+
+class PurchaseAdjustment(Base):
+    """A refund, a chargeback or its reversal, applied to a purchase's credit (ADR-0055).
+
+    Unique on Paddle's adjustment id for the reason `Purchase` is unique on the transaction: a
+    refund is announced by `adjustment.created` and again by `adjustment.updated` once approved, and
+    either can be redelivered. Only an approved one is recorded, and recording it is what applies it.
+    """
+
+    __tablename__ = "purchase_adjustments"
+
+    id: Mapped[int] = bigint_pk()
+    paddle_adjustment_id: Mapped[str] = mapped_column(sa.Text, unique=True)
+    purchase_id: Mapped[int] = mapped_column(
+        sa.BigInteger, _fk("purchases.id", ondelete="CASCADE"), index=True
+    )
+    action: Mapped[str] = mapped_column(sa.Text)
+    #: The adjustment's total, in the purchase's currency and Paddle's lowest units.
+    amount: Mapped[str] = mapped_column(sa.Text)
+    #: What it did to the buyer's credit: negative for a refund or chargeback.
+    credit_delta_usd: Mapped[Decimal] = mapped_column(USD)
 
     created_at: Mapped[dt.datetime] = created_at()
 

@@ -146,7 +146,7 @@ export function AccountMenu({ me }: { me: Me | null }) {
             )}
           </div>
 
-          {/* Both items close the menu themselves. Watching the pathname instead would mean
+          {/* Every item closes the menu itself. Watching the pathname instead would mean
               setting state from an effect on every navigation in the app, for a menu that is shut
               on all but one of them. */}
           <Link
@@ -156,6 +156,9 @@ export function AccountMenu({ me }: { me: Me | null }) {
             className={ITEM}
           >
             Profile
+          </Link>
+          <Link href="/credit" role="menuitem" onClick={() => setOpen(false)} className={ITEM}>
+            Credit
           </Link>
           <button
             type="button"

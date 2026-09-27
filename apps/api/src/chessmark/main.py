@@ -10,6 +10,7 @@ from chessmark import __version__
 from chessmark.api.deps import close_redis
 from chessmark.api.routes import (
     admin,
+    credit,
     events,
     games,
     health,
@@ -77,6 +78,7 @@ def create_app() -> FastAPI:
     app.include_router(tournaments.router)
     app.include_router(admin.router)
     app.include_router(webhooks.router)
+    app.include_router(credit.router)
 
     return app
 

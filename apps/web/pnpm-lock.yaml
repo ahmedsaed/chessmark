@@ -11,6 +11,9 @@ importers:
       '@clerk/nextjs':
         specifier: ^7.8.0
         version: 7.8.0(next@16.3.1(@babel/core@7.29.7(supports-color@7.2.0))(@playwright/test@1.62.1)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@paddle/paddle-js':
+        specifier: ^1.6.5
+        version: 1.6.5
       chess.js:
         specifier: ^1.4.0
         version: 1.4.0
@@ -568,6 +571,9 @@ packages:
 
   '@oxc-project/types@0.146.0':
     resolution: {integrity: sha512-XC0QsnnhVe7sLIWmYmdPw7x5P0h4W8vUU3Nv1ySgWXtvCz8NizoAEpGXA0sOYoJQV2Rl13LgURAHQ5cI5ILCSA==}
+
+  '@paddle/paddle-js@1.6.5':
+    resolution: {integrity: sha512-uFRvptUzYRqRlqTU5XmfcZWC9BGVYpZNdANd3giJjZbJlHesnE4gn8PyjtYpesU1ar2ZGPuJxHvrrSIV9jjdVw==}
 
   '@paulirish/trace_engine@0.0.53':
     resolution: {integrity: sha512-PUl/vlfo08Oj804VI5nDPeSk9vyslnBlVzDDwFt8SUVxY8+KdGMkra/vrXjEEHe8gb7+RqVTfOIlGw0nyrEelA==}
@@ -4043,6 +4049,8 @@ snapshots:
   '@nolyfill/is-core-module@1.0.39': {}
 
   '@oxc-project/types@0.146.0': {}
+
+  '@paddle/paddle-js@1.6.5': {}
 
   '@paulirish/trace_engine@0.0.53':
     dependencies:

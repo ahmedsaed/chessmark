@@ -40,6 +40,9 @@ PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("OpenAI-style API key", re.compile(r"\bsk-[A-Za-z0-9]{32,}")),
     ("Clerk secret key", re.compile(r"\bsk_(?:test|live)_[A-Za-z0-9]{16,}")),
     ("Clerk webhook secret", re.compile(r"\bwhsec_[A-Za-z0-9+/=]{16,}")),
+    # Paddle's server-side secrets. Its *client* token (`test_…` / `live_…`) is public by design.
+    ("Paddle webhook secret", re.compile(r"\bpdl_ntfset_[A-Za-z0-9_]{16,}")),
+    ("Paddle API key", re.compile(r"\bpdl_(?:sdbx|live)_apikey_[A-Za-z0-9_]{16,}")),
     ("Anthropic API key", re.compile(r"sk-ant-[A-Za-z0-9\-_]{16,}")),
     ("AWS access key id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("Postgres URL with a password", re.compile(r"postgres(?:ql)?://[^\s:@/\"']+:[^\s@/\"']+@")),
@@ -50,6 +53,7 @@ SECRET_ENV_VARS = [
     "OPENROUTER_API_KEY",
     "CLERK_SECRET_KEY",
     "CLERK_WEBHOOK_SECRET",
+    "PADDLE_WEBHOOK_SECRET",
     "DATABASE_URL",
     "REDIS_URL",
 ]
