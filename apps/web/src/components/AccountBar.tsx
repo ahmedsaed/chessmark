@@ -166,19 +166,20 @@ function Bar({ apiUrl }: { apiUrl: string }) {
         {/* `me` is only rendered while signed in, so a stale readout from a previous session
             cannot appear — which is why signing out needs no cleanup here. */}
         {me && (
-          <span
+          <Link
+            href="/credit"
             /* Hidden on a phone, where the header is already four items wide and the menu repeats
                it. Visible everywhere else: the number decides whether you can start a game, and
-               one click away is worse than in front of you. */
-            className="tabular hidden font-mono text-meta text-ink-faint sm:inline"
+               one click away is worse than in front of you. A link to where more is bought. */
+            className="tabular hidden font-mono text-meta text-ink-faint transition-colors hover:text-accent sm:inline"
             title={
               canPay(me.balance_usd)
                 ? `$${Number(me.usd_spent_today).toFixed(4)} spent today`
-                : "No credit. An administrator grants it."
+                : "No credit left. Add some to play paid models."
             }
           >
             {formatBalance(me.balance_usd)}
-          </span>
+          </Link>
         )}
         {/* Was `<UserButton />`, whose menu offered account management this site does not use and
             knew nothing about credit, and then a bare `profile` link that showed neither who you

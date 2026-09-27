@@ -17,6 +17,13 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **Credit can be bought** at `/credit`, in packs of $5, $10 and $25 that grant $4.00, $8.50 and
+  $22.00 (Paddle's fee and 5% for running the site are taken out; tax is added on top where it
+  applies). Paddle sells it as merchant of record; its signed webhook credits the account, once per
+  purchase, and a refund or chargeback takes it back. **Off until Paddle is configured** — built
+  and tested against Paddle's sandbox while the live account awaits approval (ADR-0055).
+- **Terms of service, a privacy policy and a refund policy**, linked from every page's footer.
+  The header's balance links to `/credit`, and so does the account menu.
 - **Starting a game has its settings on one row**: an optional spending limit, a ply cap (2–1000,
   which the page mentioned and never offered), and **Talk**, explained in a tooltip. Talk is trash
   talk for a game between two models (on by default, as the API always had it; the form never let

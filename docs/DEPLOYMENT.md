@@ -550,6 +550,27 @@ uses and stays unproven until a server exists.
    contestants, and so cannot be played, until its endpoints are known.
 5. Grant yourself credit, in dollars: new accounts hold none by design (AUTH-11).
 
+## Selling credit
+
+Off until configured (ADR-0055). To turn it on, all of this, in the **same** Paddle environment:
+
+1. The catalogue: one product and three one-time prices, $5, $10 and $25, **tax added on top**
+   (`tax_mode: external`), each named with the credit it grants. Created in the sandbox already.
+2. On the server, `PADDLE_WEBHOOK_SECRET` (from the notification destination) and
+   `PADDLE_PRICE_IDS=5=pri_…,10=pri_…,25=pri_…`. Production refuses to start with only one.
+3. As repository variables for the web build, `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN` (`live_…` on
+   production) and `NEXT_PUBLIC_PADDLE_ENV=production`. The build refuses a token without its
+   environment, or from the other one.
+4. In Paddle's dashboard, which no API can set:
+   * **Checkout → Checkout settings → Default payment link**: `https://<site>/credit`. Without it
+     every checkout fails with `transaction_default_checkout_url_not_set`.
+   * **Developer tools → Notifications → New destination**: `https://<api>/webhooks/paddle`, with
+     `transaction.completed`, `adjustment.created` and `adjustment.updated`.
+   * On live, **Checkout → Website approval** for the site's domain.
+
+A purchase that could not be credited is a `purchases` row with status `unmatched` and a `problem`
+saying why. Settle it with `./chessmark credits <email> <dollars>` once you know whose it was.
+
 **Clerk production is a different instance from Clerk development.** Different user table,
 different JWKS. Every account in your dev instance — including yours, and its credit — does not
 exist there. The first sign-in starts from an empty `users` table.

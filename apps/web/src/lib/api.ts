@@ -445,6 +445,63 @@ export function getTournament(
   );
 }
 
+// ---------------------------------------------------------------------- credit (ADR-0055)
+
+export interface CreditPack {
+  price_id: string;
+  /** What the pack costs before tax, in dollars — a decimal string, as the API sends money. */
+  price_usd: string;
+  /** What it adds to a balance. */
+  credit_usd: string;
+}
+
+export interface CreditPacks {
+  /** False until Paddle is configured on the API; the page says so instead of selling. */
+  selling: boolean;
+  packs: CreditPack[];
+}
+
+/**
+ * The packs on sale. Configuration rather than data — it changes only with a deploy, which
+ * restarts everything anyway — so it is cached for the fallback period with nothing to invalidate
+ * it. Never throws: an unreachable API renders as "not on sale", which is true for that moment.
+ */
+export async function getCreditPacks(): Promise<CreditPacks> {
+  try {
+    return await get<CreditPacks>("/credit/packs", cached([]));
+  } catch (error) {
+    reportFailure("/credit/packs", error);
+    return { selling: false, packs: [] };
+  }
+}
+
+export interface PurchaseStatus {
+  status: "credited" | "unmatched";
+  credit_usd: string;
+  balance_usd: string;
+}
+
+/**
+ * One of the caller's purchases, or null while Paddle's webhook has not recorded it yet. From the
+ * browser, with the caller's token, like every read that depends on who is asking.
+ */
+export async function getPurchase(
+  transactionId: string,
+  token: string | null,
+): Promise<PurchaseStatus | null> {
+  const response = await fetch(`${PUBLIC_API_URL}/credit/purchases/${encodeURIComponent(transactionId)}`, {
+    headers: {
+      accept: "application/json",
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new ApiError(response.status, `Could not check the purchase (HTTP ${response.status}).`);
+  }
+  return (await response.json()) as PurchaseStatus;
+}
+
 /** The PGN download URL. Handed to the browser as a link so the file arrives with its filename. */
 export function pgnUrl(id: string): string {
   // Rendered as a link for the browser to follow, not fetched here.

@@ -7,6 +7,8 @@ from typing import Any, Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from chessmark.core.credit_packs import PackConfigError, parse_packs
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -137,6 +139,19 @@ class Settings(BaseSettings):
     #: refuses every delivery.
     clerk_webhook_secret: str = ""
 
+    # --- Selling credit (Paddle, ADR-0055) ---
+    #: The notification destination's secret (`pdl_ntfset_...`). Sandbox and live destinations have
+    #: separate secrets, as they have separate catalogues.
+    paddle_webhook_secret: str = ""
+    #: Which Paddle price is which pack: `5=pri_…,10=pri_…,25=pri_…`. What each pack grants is fixed
+    #: in `core.credit_packs`; only the ids differ between sandbox and live. Empty, with the secret,
+    #: keeps selling off — the page says so rather than offering a checkout nothing would credit.
+    paddle_price_ids: str = ""
+
+    @property
+    def selling_credit(self) -> bool:
+        return bool(self.paddle_webhook_secret and self.paddle_price_ids)
+
     # --- Cost & abuse controls ---
     max_games_per_user_per_day: int = 20
     #: Per-user daily spend ceiling. 0 disables it, leaving the game-count quota in charge.
@@ -221,6 +236,14 @@ class Settings(BaseSettings):
             problems.append("CLERK_ISSUER is not set — tokens from any Clerk instance would pass")
         if not self.clerk_webhook_secret:
             problems.append("CLERK_WEBHOOK_SECRET is not set — user updates cannot be received")
+        if bool(self.paddle_webhook_secret) != bool(self.paddle_price_ids):
+            # Half-configured is the dangerous state: prices without the secret sell packs whose
+            # webhooks are all refused, so buyers pay and are never credited.
+            problems.append("PADDLE_WEBHOOK_SECRET and PADDLE_PRICE_IDS must be set together")
+        try:
+            parse_packs(self.paddle_price_ids)
+        except PackConfigError as error:
+            problems.append(f"PADDLE_PRICE_IDS is malformed — {error}")
         if self.global_daily_usd_budget <= 0:
             problems.append("GLOBAL_DAILY_USD_BUDGET is unset — spending would be uncapped")
         if self.debug:

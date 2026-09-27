@@ -1578,6 +1578,32 @@ and no game started against a model that cannot answer a turn
 
 ---
 
+## Phase 30 — Buying credit
+
+**Goal:** a person can buy credit, and nothing but the payment processor's signed word moves their
+balance ([ADR-0055](adr/0055-credit-is-sold-as-fixed-packs-through-paddle.md)).
+
+**Objectives**
+1. Terms of service, a privacy policy and a refund policy, published and linked from every page
+2. `/credit`: three packs with what each grants, Paddle's overlay checkout, and the wait for the
+   webhook afterwards
+3. The webhook: verified, credits once per transaction, takes back refunds and chargebacks
+
+**Exit criteria**
+- [x] A purchase credits once however often or concurrently it is delivered; a forged delivery,
+      an unknown price and an unknown account move nothing; a refund waits for approval, takes back
+      its share, never more than was granted, and can leave a balance below zero; a reversed
+      chargeback restores it — `tests/api/test_buy_credit.py`, each rule mutated and caught
+- [x] Production refuses half the configuration; the web build refuses a token without its
+      environment or from the other one
+- [ ] A sandbox checkout completes and its real webhook credits the account, end to end — needs the
+      default payment link and a notification destination set in Paddle's dashboard
+- [ ] Paddle approves the live account, and the live catalogue is created
+
+**Covers:** AUTH-19, AUTH-20, AUTH-21
+
+---
+
 ## Phase 29 — What was billed
 
 **Goal:** a game's cost is what OpenRouter billed for it, found per session rather than chased one

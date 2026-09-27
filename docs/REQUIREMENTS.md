@@ -146,6 +146,9 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | AUTH-16 | The person paying for a game between two models can pause it before its next turn and resume it. A game its owner paused is never resumed for them, and a paid game needs credit to resume ([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)). | M |
 | AUTH-17 | A game outside any tournament names who started it, by display name and never by email ([ADR-0052](adr/0052-credit-is-dollars-spent-at-actual-cost.md)). | S |
 | AUTH-18 | A game's payer is charged what OpenRouter billed for it, settled after reconciliation as a charge or a refund on the ledger; its page shows the billed cost and explains any difference from the running total ([ADR-0054](adr/0054-a-game-is-charged-what-openrouter-billed.md)). | M |
+| AUTH-19 | Credit can be bought in fixed packs ($5, $10, $25) through a merchant of record. Each grants a fixed amount stated before payment — the price less the processor's fee and 5% — with tax added on top ([ADR-0055](adr/0055-credit-is-sold-as-fixed-packs-through-paddle.md)). | S |
+| AUTH-20 | A purchase is credited only by the processor's signed webhook, once per transaction whatever the redelivery, for the amount the server's own pack table gives the price paid. A purchase that cannot be matched is recorded and not credited ([ADR-0055](adr/0055-credit-is-sold-as-fixed-packs-through-paddle.md)). | M |
+| AUTH-21 | A refund or chargeback takes back the credit its purchase granted, in proportion to the money returned, once, and never more than was granted; it may leave a balance below zero. A reversed chargeback restores it ([ADR-0055](adr/0055-credit-is-sold-as-fixed-packs-through-paddle.md)). | M |
 | AUTH-09 | Bring-your-own OpenRouter key to unlock expensive models. | W |
 
 ## 9. Platform & operations (OPS)

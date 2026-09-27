@@ -77,3 +77,29 @@ def test_production_refuses_to_start_unconfigured(monkeypatch: pytest.MonkeyPatc
         create_app()
 
     get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    ("secret", "prices", "expected"),
+    [
+        ("pdl_ntfset_x", "", "must be set together"),
+        ("", "5=pri_a", "must be set together"),
+        ("pdl_ntfset_x", "7=pri_a", "PADDLE_PRICE_IDS is malformed"),
+    ],
+    ids=["secret without prices", "prices without secret", "a pack that does not exist"],
+)
+def test_selling_credit_half_configured_is_reported(
+    secret: str, prices: str, expected: str
+) -> None:
+    """Prices without the secret sell packs whose webhooks are all refused: buyers pay and are never
+    credited. Neither set is fine — selling is simply off (ADR-0055)."""
+    problems = Settings(
+        **{**SAFE, "paddle_webhook_secret": secret, "paddle_price_ids": prices}
+    ).production_problems()
+    assert any(expected in problem for problem in problems), problems
+
+
+def test_selling_credit_fully_configured_or_off_is_not_a_problem() -> None:
+    for secret, prices in (("", ""), ("pdl_ntfset_x", "5=pri_a,10=pri_b,25=pri_c")):
+        settings = Settings(**{**SAFE, "paddle_webhook_secret": secret, "paddle_price_ids": prices})
+        assert settings.production_problems() == []

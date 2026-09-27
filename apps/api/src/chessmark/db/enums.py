@@ -149,6 +149,26 @@ class CreditReason(StrEnum):
     #: The difference between what a game's turns were charged and what OpenRouter billed for it,
     #: settled once the game is reconciled (ADR-0054). Either sign: a charge or a refund.
     SETTLEMENT = "settlement"
+    #: Credit bought through Paddle: a pack's credit, once per Paddle transaction (ADR-0055).
+    PURCHASE = "purchase"
+    #: A purchase refunded by Paddle, taking back the credit it granted, in proportion to how much
+    #: of it was refunded. Never floored at zero: the refund policy says so.
+    PURCHASE_REFUNDED = "purchase_refunded"
+    #: A purchase disputed by the buyer's bank. Same rule as a refund.
+    CHARGEBACK = "chargeback"
+    #: A chargeback the bank reversed in our favour, restoring what it took.
+    CHARGEBACK_REVERSED = "chargeback_reversed"
+
+
+class PurchaseStatus(StrEnum):
+    """Where a Paddle purchase stands (ADR-0055)."""
+
+    #: Paid, and its credit granted.
+    CREDITED = "credited"
+    #: Paid, but it could not be matched to an account or a pack, so nothing was granted. Kept
+    #: rather than refused, because Paddle would retry a refusal for three days and the money has
+    #: already moved: an operator settles it by hand.
+    UNMATCHED = "unmatched"
 
 
 class TournamentStatus(StrEnum):

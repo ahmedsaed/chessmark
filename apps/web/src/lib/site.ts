@@ -53,6 +53,7 @@ export const footerNav: NavLink[] = [
   { href: "/tournaments", label: "Tournaments" },
   { href: "/models", label: "Models" },
   { href: "/play", label: "Play" },
+  { href: "/credit", label: "Credit" },
   { href: "/methodology", label: "Methodology" },
   { href: "/about", label: "About" },
 ];
@@ -85,6 +86,7 @@ export const staticRoutes: StaticRoute[] = [
   { path: "/games", changeFrequency: "hourly", priority: 0.8 },
   { path: "/models", changeFrequency: "daily", priority: 0.8 },
   { path: "/play", changeFrequency: "monthly", priority: 0.7 },
+  { path: "/credit", changeFrequency: "monthly", priority: 0.5 },
   { path: "/methodology", changeFrequency: "monthly", priority: 0.6 },
   { path: "/about", changeFrequency: "monthly", priority: 0.6 },
   { path: "/terms", changeFrequency: "monthly", priority: 0.2 },
