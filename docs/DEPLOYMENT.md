@@ -505,11 +505,26 @@ A repair cannot be rolled back by redeploying, because it changed data rather th
 one means clearing `superseded_at` on the rows it set, which is why the dry run exists and why the
 backup comes first.
 
-## Continuous deployment
+## Deploying is manual
 
-Push to `main` publishes `ghcr.io/<repo>-api` and `-web`, each tagged `:latest` and `:<sha>`. The
-deploy job then SSHes to `vars.DEPLOY_HOST`, pulls, runs `migrate` to completion, restarts, and
-waits on `/ready`. With no host configured it is **skipped rather than failed**.
+**Production is deployed by hand, never by a workflow.** Merging to `main` runs *Publish images*
+(`.github/workflows/deploy.yml`), which builds `ghcr.io/<repo>-api` and `-web`, tagged `:latest` and
+`:<sha>`. Nothing reaches the site until the owner runs, on the server:
+
+```
+./chessmark deploy
+```
+
+— pull those images, drain the workers, migrate, restart, check `/ready`. So:
+
+* **A merge is not a deploy.** A green *Publish images* run means the images can be pulled, not that
+  anything is live. Wait for it to finish before deploying, or `deploy` pulls the previous images.
+* **Anything that has to happen with a deploy** — a server `.env` change, a data repair, turning
+  selling on — is the owner's step at the moment they deploy, and is written down as such.
+* The workflow still has a `deploy` job that would SSH to `vars.DEPLOY_HOST`. **No host is set, on
+  purpose**, so it is skipped rather than failed. It has never run.
+
+## Publishing images
 
 Set repository variables `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PATH`, `HEALTH_URL`,
 `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SITE_URL`, `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, and the secret
@@ -537,8 +552,8 @@ the server had nothing to pull. `lib/env.ts` now treats blank as unset — the s
 gives every server-side read a ten-second ceiling, and CI builds both images on every pull request
 with **no build args at all**, which is the exact shape that failed.
 
-**The deploy half has never run.** It is written from the documented behaviour of the actions it
-uses and stays unproven until a server exists.
+**The deploy job has never run**, and is not how production is deployed — see
+[Deploying is manual](#deploying-is-manual).
 
 ## First deploy
 

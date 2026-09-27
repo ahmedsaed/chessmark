@@ -1655,6 +1655,8 @@ failure at a time ([ADR-0053](adr/0053-every-failure-keeps-its-rounds.md),
       untested.** Every commit on `main` gets a `:latest` and an immutable `:sha` image in GHCR.
       The deploy job SSHes, pulls, migrates and waits on readiness, but there is no host to point
       it at, so it is skipped rather than run. It stays open until a server proves it.
+      **Production is deployed by hand** (`./chessmark deploy`), by the owner's choice, and the job
+      is left unconfigured on purpose ([DEPLOYMENT.md](DEPLOYMENT.md#deploying-is-manual)).
 - [x] A backup is restored to a scratch database and verified — not just taken
 - [x] Zero high-severity findings in the dependency audit
 - [x] Deliberately killing each container in turn causes no data loss and recovers automatically

@@ -61,6 +61,11 @@ against it — the way to see a change against real data instead of on the live 
 
 On a server there is no toolchain — use `./chessmark` ([DEPLOYMENT.md](docs/DEPLOYMENT.md)).
 
+**Merging is not deploying.** The *Publish images* workflow only builds images; production changes
+when the owner runs `./chessmark deploy` on the server. Never report a change as live, deployed or
+"on prod" because a merge or a workflow succeeded — say it is merged and ready to deploy
+([DEPLOYMENT.md](docs/DEPLOYMENT.md#deploying-is-manual)).
+
 ## Ports — non-standard, deliberately
 
 **3010** web · **8010** api · **5433** postgres · **6380** redis
