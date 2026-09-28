@@ -22,7 +22,7 @@ export default function RefundsPage() {
   return (
     <LegalPage
       title="Refund policy"
-      updated="27 September 2026"
+      updated="28 September 2026"
       summary={
         <p>
           Credit pays for AI moves as they are played, at what the AI provider charged for them.
@@ -40,7 +40,8 @@ export default function RefundsPage() {
         </p>
         <p>
           Once you have played a paid move after a purchase, that purchase is no longer
-          refundable. The rest of your balance stays on your account, and it does not expire.
+          refundable. The rest of your balance stays on your account. Credit unused for 12 months
+          may expire, as the <InlineLink href="/terms">terms</InlineLink> explain.
         </p>
       </Clause>
 

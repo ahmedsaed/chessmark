@@ -149,6 +149,9 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | AUTH-19 | Credit can be bought in fixed packs ($5, $10, $25) through a merchant of record. Each grants a fixed amount stated before payment — the price less the processor's fee and 5% — with tax added on top ([ADR-0055](adr/0055-credit-is-sold-as-fixed-packs-through-paddle.md)). | S |
 | AUTH-20 | A purchase is credited only by the processor's signed webhook, once per transaction whatever the redelivery, for the amount the server's own pack table gives the price paid. A purchase that cannot be matched is recorded and not credited ([ADR-0055](adr/0055-credit-is-sold-as-fixed-packs-through-paddle.md)). | M |
 | AUTH-21 | A refund or chargeback takes back the credit its purchase granted, in proportion to the money returned, once, and never more than was granted; it may leave a balance below zero. A reversed chargeback restores it ([ADR-0055](adr/0055-credit-is-sold-as-fixed-packs-through-paddle.md)). | M |
+| AUTH-22 | Credit is bought in any whole-dollar amount from $5 to $100. Each purchase is shown as a sum — the payment processor's fee, 5% for running the site, the AI provider's 5.5%, and the credit left — computed on the server ([ADR-0056](adr/0056-credit-is-sold-only-while-openrouter-can-cover-it.md)). | S |
+| AUTH-23 | Credit is sold only while OpenRouter's remaining balance covers everything users hold, everything open checkouts reserve, and a house reserve. A checkout reserves its credit under a lock, so concurrent buyers cannot both take the last of it; an unknown balance sells nothing ([ADR-0056](adr/0056-credit-is-sold-only-while-openrouter-can-cover-it.md)). | M |
+| AUTH-24 | An operator can see, per account, every purchase and whether the refund policy allows refunding it (`./chessmark purchases`). | S |
 | AUTH-09 | Bring-your-own OpenRouter key to unlock expensive models. | W |
 
 ## 9. Platform & operations (OPS)

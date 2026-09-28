@@ -1578,6 +1578,29 @@ and no game started against a model that cannot answer a turn
 
 ---
 
+## Phase 31 — Selling only what OpenRouter can cover
+
+**Goal:** credit is sold in any amount, only while OpenRouter's prepaid balance can pay for it, and
+without losing money on OpenRouter's own fee
+([ADR-0056](adr/0056-credit-is-sold-only-while-openrouter-can-cover-it.md)).
+
+**Exit criteria**
+- [x] Any whole amount from $5 to $100, quoted by the API as four lines that always add up and always
+      cover OpenRouter's 5.5% — every amount in the range checked (`test_credit_pricing.py`)
+- [x] A checkout is refused beyond the headroom, with the largest amount that fits; credit users
+      hold and open reservations count; an expired reservation frees its share; an unknown balance
+      sells nothing; a refused Paddle call releases its hold — `test_buy_credit.py`, each mutated
+- [x] A second buyer's check waits for the first's reservation and then sees it, proven with two
+      sessions held open at once (`tests/db/test_capacity.py`, fails without the lock)
+- [x] A purchase credits what its reservation says, once; a payment that does not match its
+      reservation is recorded and not credited
+- [ ] A sandbox checkout at a custom amount completes end to end — needs a sandbox `PADDLE_API_KEY`
+- [ ] The live catalogue's fixed prices archived, and live settings in place once Paddle verifies
+
+**Covers:** AUTH-22, AUTH-23, AUTH-24
+
+---
+
 ## Phase 30 — Buying credit
 
 **Goal:** a person can buy credit, and nothing but the payment processor's signed word moves their

@@ -73,7 +73,8 @@ were live in this directory before it was written.
 | [0052](0052-credit-is-dollars-spent-at-actual-cost.md) | Credit is dollars, spent at what each turn actually cost | Accepted |
 | [0053](0053-every-failure-keeps-its-rounds.md) | Every failure keeps its rounds, and a crash spends an attempt | Accepted |
 | [0054](0054-a-game-is-charged-what-openrouter-billed.md) | A game is reconciled against what OpenRouter billed, and charged it | Accepted |
-| [0055](0055-credit-is-sold-as-fixed-packs-through-paddle.md) | Credit is sold as fixed packs through Paddle, and credited by its webhook | Accepted |
+| [0055](0055-credit-is-sold-as-fixed-packs-through-paddle.md) | Credit is sold as fixed packs through Paddle, and credited by its webhook | Amended by [0056](0056-credit-is-sold-only-while-openrouter-can-cover-it.md) |
+| [0056](0056-credit-is-sold-only-while-openrouter-can-cover-it.md) | Credit is sold only while OpenRouter can cover it, in any amount the buyer chooses | Accepted |
 
 ## Template
 

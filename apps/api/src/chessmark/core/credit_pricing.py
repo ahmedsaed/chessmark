@@ -1,0 +1,104 @@
+"""What a purchase of credit costs and grants (ADR-0055, ADR-0056).
+
+**What a purchase grants is decided here, on the server, and nowhere else.** The buyer names an
+amount; the API quotes it, reserves the credit, and creates the Paddle transaction at that price
+itself. Paddle's signed webhook then reports what was paid, and the reservation — ours — says what
+it grants. Nothing the browser sends can change the credit.
+
+**No fee is absorbed** (the owner's rule), so a purchase is a sum the page lays out line by line:
+
+* the **payment processor**'s share: Paddle's 5% + $0.50 of the sale;
+* **running Chessmark**: 5% of the sale;
+* the **AI provider**'s fee: OpenRouter charges 5.5% on the credit we buy from it to pay for the
+  usage, so a dollar of Chessmark credit costs us $1.055 of OpenRouter's;
+* and the **credit**: what is left.
+
+The first two round *up* to the cent, the credit is what then pays for itself plus the AI provider's
+5.5%, rounded *down*, and the AI provider's line is the remainder — so the four lines always add up
+to the price, and rounding never grants more than the rule allows.
+
+Tax is not in the sum: it is added on top at checkout and goes to the tax authority through Paddle.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from decimal import Decimal
+
+#: A purchase is a whole number of dollars in this range. The floor keeps Paddle's fixed $0.50 from
+#: eating most of a purchase; the ceiling caps what one refund or chargeback can cost, and how much
+#: of the OpenRouter headroom one buyer can take.
+MIN_USD = Decimal(5)
+MAX_USD = Decimal(100)
+
+#: Offered as one-click amounts beside the box that takes any other.
+PRESETS = (Decimal(5), Decimal(10), Decimal(25))
+
+PROCESSOR_RATE = Decimal("0.05")
+PROCESSOR_FIXED = Decimal("0.50")
+UPKEEP_RATE = Decimal("0.05")
+#: OpenRouter's fee on buying its credits by card (5.5%, $0.80 minimum per top-up — the minimum is
+#: per top-up of our own, amortised over many purchases, so it is not charged per purchase).
+PROVIDER_RATE = Decimal("0.055")
+
+CENT = Decimal("0.01")
+
+
+class AmountError(ValueError):
+    """Not a whole number of dollars between `MIN_USD` and `MAX_USD`."""
+
+
+@dataclass(frozen=True, slots=True)
+class Quote:
+    price_usd: Decimal
+    processor_fee_usd: Decimal
+    upkeep_usd: Decimal
+    provider_fee_usd: Decimal
+    credit_usd: Decimal
+
+
+def _up(amount: Decimal) -> Decimal:
+    return amount.quantize(CENT, rounding="ROUND_UP")
+
+
+def _down(amount: Decimal) -> Decimal:
+    return amount.quantize(CENT, rounding="ROUND_DOWN")
+
+
+def checked_amount(raw: Decimal | int | str) -> Decimal:
+    """The amount, if it may be bought; `AmountError` saying why otherwise."""
+    try:
+        amount = Decimal(str(raw))
+    except ArithmeticError as error:
+        raise AmountError(f"{raw!r} is not an amount of dollars") from error
+    if amount != amount.to_integral_value():
+        raise AmountError("Choose a whole number of dollars.")
+    if not MIN_USD <= amount <= MAX_USD:
+        raise AmountError(f"Choose between ${MIN_USD} and ${MAX_USD}.")
+    return amount
+
+
+def quote(price: Decimal) -> Quote:
+    """The breakdown of a purchase at this price. Call `checked_amount` first for buyer input."""
+    processor = _up(price * PROCESSOR_RATE + PROCESSOR_FIXED)
+    upkeep = _up(price * UPKEEP_RATE)
+    left = price - processor - upkeep
+    credit = _down(left / (1 + PROVIDER_RATE))
+    return Quote(
+        price_usd=price,
+        processor_fee_usd=processor,
+        upkeep_usd=upkeep,
+        provider_fee_usd=left - credit,
+        credit_usd=credit,
+    )
+
+
+__all__ = [
+    "MAX_USD",
+    "MIN_USD",
+    "PRESETS",
+    "AmountError",
+    "Quote",
+    "checked_amount",
+    "quote",
+]

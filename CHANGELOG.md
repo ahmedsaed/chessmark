@@ -15,6 +15,27 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Added
+
+- **Buy any amount of credit** from $5 to $100, with $5, $10 and $25 as quick picks. Each purchase
+  is shown as a sum: the payment processor's fee, 5% for running Chessmark, the **AI provider fee**
+  (OpenRouter's 5.5% on the credit we buy from it, which the old packs did not cover), and the
+  credit left. $5 now buys $3.79, $10 buys $8.05, $25 buys $20.85. (AUTH-22,
+  [ADR-0056](docs/adr/0056-credit-is-sold-only-while-openrouter-can-cover-it.md))
+- **Credit is sold only while OpenRouter can pay for it.** A checkout reserves its credit against
+  OpenRouter's remaining balance, less what users already hold and a $10 reserve, under a lock that
+  stops two buyers taking the last of it. An amount that does not fit is refused with the largest
+  that does. `./chessmark status` shows the headroom. (AUTH-23)
+- **`./chessmark purchases <email>`** lists an account's purchases and whether the refund policy
+  allows refunding each. (AUTH-24)
+
+### Changed
+
+- **Credit unused for 12 months may expire**, in the terms and on the credit page. OpenRouter can
+  expire the credit we hold with it after a year, so a promise that ours never expires could not be
+  kept.
+
+
 ## [0.6.0] — 2026-09-27
 
 **Credit is money now: dollars spent at what each turn cost, settled to what OpenRouter billed, and

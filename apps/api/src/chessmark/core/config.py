@@ -7,8 +7,6 @@ from typing import Any, Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from chessmark.core.credit_packs import PackConfigError, parse_packs
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -139,18 +137,31 @@ class Settings(BaseSettings):
     #: refuses every delivery.
     clerk_webhook_secret: str = ""
 
-    # --- Selling credit (Paddle, ADR-0055) ---
+    # --- Selling credit (Paddle, ADR-0055, ADR-0056) ---
     #: The notification destination's secret (`pdl_ntfset_...`). Sandbox and live destinations have
     #: separate secrets, as they have separate catalogues.
     paddle_webhook_secret: str = ""
-    #: Which Paddle price is which pack: `5=pri_…,10=pri_…,25=pri_…`. What each pack grants is fixed
-    #: in `core.credit_packs`; only the ids differ between sandbox and live. Empty, with the secret,
-    #: keeps selling off — the page says so rather than offering a checkout nothing would credit.
-    paddle_price_ids: str = ""
+    #: A server-side API key (`pdl_sdbx_apikey_…` or `pdl_live_apikey_…`, which also says which
+    #: environment to call), allowed to create transactions: the API makes each checkout at the
+    #: price the buyer chose. Never sent to a browser.
+    paddle_api_key: str = ""
+    #: The catalogue product every purchase is a price of ("Chessmark credit", `pro_…`).
+    paddle_product_id: str = ""
+    #: OpenRouter credit kept back from sale for our own tournaments and benchmark games, and as a
+    #: margin for turns in flight: credit is sold only while OpenRouter's balance covers everything
+    #: users already hold, everything reserved by open checkouts, and this (ADR-0056).
+    credit_reserve_usd: float = 10.0
 
     @property
     def selling_credit(self) -> bool:
-        return bool(self.paddle_webhook_secret and self.paddle_price_ids)
+        """All of Paddle's settings, and the management key that reads OpenRouter's balance —
+        without it there is no way to know how much can be sold, so nothing is."""
+        return bool(
+            self.paddle_webhook_secret
+            and self.paddle_api_key
+            and self.paddle_product_id
+            and self.openrouter_management_key
+        )
 
     # --- Cost & abuse controls ---
     max_games_per_user_per_day: int = 20
@@ -236,14 +247,17 @@ class Settings(BaseSettings):
             problems.append("CLERK_ISSUER is not set — tokens from any Clerk instance would pass")
         if not self.clerk_webhook_secret:
             problems.append("CLERK_WEBHOOK_SECRET is not set — user updates cannot be received")
-        if bool(self.paddle_webhook_secret) != bool(self.paddle_price_ids):
-            # Half-configured is the dangerous state: prices without the secret sell packs whose
-            # webhooks are all refused, so buyers pay and are never credited.
-            problems.append("PADDLE_WEBHOOK_SECRET and PADDLE_PRICE_IDS must be set together")
-        try:
-            parse_packs(self.paddle_price_ids)
-        except PackConfigError as error:
-            problems.append(f"PADDLE_PRICE_IDS is malformed — {error}")
+        paddle = (self.paddle_webhook_secret, self.paddle_api_key, self.paddle_product_id)
+        if any(paddle) and not all(paddle):
+            # Half-configured is the dangerous state: a checkout whose webhooks are all refused
+            # takes money it never credits.
+            problems.append(
+                "PADDLE_WEBHOOK_SECRET, PADDLE_API_KEY and PADDLE_PRODUCT_ID must be set together"
+            )
+        if all(paddle) and not self.openrouter_management_key:
+            problems.append(
+                "selling credit needs OPENROUTER_MANAGEMENT_KEY — it is how headroom is measured"
+            )
         if self.global_daily_usd_budget <= 0:
             problems.append("GLOBAL_DAILY_USD_BUDGET is unset — spending would be uncapped")
         if self.debug:

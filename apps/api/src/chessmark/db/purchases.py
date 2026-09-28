@@ -5,10 +5,11 @@ entry point is **idempotent on Paddle's own id** — the transaction for a purch
 for a refund — enforced by a unique constraint rather than by a read-then-write, so two concurrent
 deliveries of one event cannot both credit it.
 
-What a pack grants comes from `core.credit_packs`, keyed by the price Paddle says was paid for.
-Which account it goes to comes from the checkout's `custom_data`, which the browser set: that is
-the one buyer-supplied value trusted here, and the worst it can do is credit a pack somebody paid
-for to a different account than their own — a gift, not a theft.
+**What a purchase grants, and to whom, comes from its reservation** (ADR-0056): the API wrote both
+when it quoted the amount and created the Paddle transaction itself, with the reservation's id in
+the transaction's `custom_data`. Nothing a browser sends reaches this module. The webhook checks
+that what was paid is what was reserved, and a purchase that does not match is recorded and not
+credited.
 """
 
 from __future__ import annotations
@@ -24,14 +25,20 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.core.credit_packs import Pack
 from chessmark.db.credits import move_for_purchase
-from chessmark.db.enums import CreditReason, PurchaseStatus
-from chessmark.db.models import CreditLedger, Purchase, PurchaseAdjustment, User
+from chessmark.db.enums import CreditReason, PurchaseStatus, ReservationStatus
+from chessmark.db.models import (
+    CreditLedger,
+    CreditReservation,
+    Purchase,
+    PurchaseAdjustment,
+)
 
 log = logging.getLogger(__name__)
 
-#: The key the checkout puts the buyer's Clerk id under. The web tier writes it (`BuyCredit`).
+#: The keys the API puts in each transaction's `custom_data` (`routes/credit.py`). The reservation
+#: is what is trusted; the Clerk id is for a person reading Paddle's dashboard.
+RESERVATION_KEY = "reservation_id"
 USER_KEY = "clerk_user_id"
 
 #: Adjustments that take a purchase's credit back, and the one that restores it.
@@ -53,35 +60,54 @@ def _text(value: Any) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def _pack_credit(items: Any, packs: dict[str, Pack]) -> tuple[Decimal, str | None, str | None]:
-    """What a transaction's items grant, the price it names, and why it cannot be credited.
-
-    Every line must be a pack. A transaction with a line we do not recognise is not credited at all
-    rather than credited in part: a checkout carrying a foreign price is either a misconfiguration
-    or somebody composing their own, and an operator should look at it either way.
-    """
-    if not isinstance(items, list) or not items:
-        return Decimal(0), None, "the transaction has no items"
-    total = Decimal(0)
-    price_ids: list[str] = []
-    for item in items:
-        price = item.get("price") if isinstance(item, dict) else None
-        price_id = _text(price.get("id")) if isinstance(price, dict) else None
-        quantity = item.get("quantity") if isinstance(item, dict) else None
-        if price_id is None or not isinstance(quantity, int) or quantity < 1:
-            return Decimal(0), None, "an item has no price or quantity"
-        price_ids.append(price_id)
-        pack = packs.get(price_id)
-        if pack is None:
-            return Decimal(0), price_id, f"{price_id} is not a credit pack"
-        total += pack.credit_usd * quantity
-    return total, ",".join(price_ids), None
+def _price_id(items: Any) -> str | None:
+    if isinstance(items, list) and items and isinstance(items[0], dict):
+        price = items[0].get("price")
+        if isinstance(price, dict):
+            return _text(price.get("id"))
+    return None
 
 
-async def record_transaction(
-    session: AsyncSession, data: dict[str, Any], packs: dict[str, Pack]
-) -> Recorded | None:
-    """Record a completed Paddle transaction and credit its buyer, once.
+def _cents(usd: Decimal) -> str:
+    return str(int((usd * 100).to_integral_value()))
+
+
+async def _reservation_for(
+    session: AsyncSession, transaction_id: str, custom: Any
+) -> CreditReservation | None:
+    """The transaction's reservation: by the id we put in its `custom_data`, else by the
+    transaction id we stored on it once Paddle created the transaction."""
+    raw = custom.get(RESERVATION_KEY) if isinstance(custom, dict) else None
+    try:
+        reservation_id = uuid.UUID(str(raw)) if raw else None
+    except ValueError:
+        reservation_id = None
+    if reservation_id is not None:
+        condition = CreditReservation.id == reservation_id
+    else:
+        condition = CreditReservation.paddle_transaction_id == transaction_id
+    found: CreditReservation | None = await session.scalar(
+        sa.select(CreditReservation).where(condition).with_for_update()
+    )
+    return found
+
+
+def _mismatch(
+    reservation: CreditReservation | None, transaction_id: str, subtotal: str | None
+) -> str | None:
+    if reservation is None:
+        return "no reservation matches this transaction"
+    if reservation.paddle_transaction_id not in (None, transaction_id):
+        return f"its reservation belongs to {reservation.paddle_transaction_id}"
+    if reservation.status is ReservationStatus.CONSUMED:
+        return "its reservation was already paid for"
+    if subtotal != _cents(reservation.price_usd):
+        return f"paid {subtotal} cents before tax, reserved {_cents(reservation.price_usd)}"
+    return None
+
+
+async def record_transaction(session: AsyncSession, data: dict[str, Any]) -> Recorded | None:
+    """Record a completed Paddle transaction and credit its buyer what was reserved, once.
 
     Returns `None` for a payload that is not a transaction at all (no id). The caller commits.
     """
@@ -95,30 +121,26 @@ async def record_transaction(
     if existing is not None:
         return Recorded(purchase=existing, new=False)
 
-    credit, price_id, problem = _pack_credit(data.get("items"), packs)
-
-    custom = data.get("custom_data")
-    clerk_id = _text(custom.get(USER_KEY)) if isinstance(custom, dict) else None
-    user_id = None
-    if clerk_id is not None:
-        user_id = await session.scalar(sa.select(User.id).where(User.clerk_user_id == clerk_id))
-    if problem is None and user_id is None:
-        problem = "no account matches the checkout's user" if clerk_id else "no user in custom_data"
-
     details = data.get("details")
     totals = details.get("totals") if isinstance(details, dict) else None
     totals = totals if isinstance(totals, dict) else {}
+
+    reservation = await _reservation_for(session, transaction_id, data.get("custom_data"))
+    problem = _mismatch(reservation, transaction_id, _text(totals.get("subtotal")))
+    user_id = reservation.user_id if reservation is not None else None
+    credit = reservation.credit_usd if reservation is not None and not problem else Decimal(0)
 
     inserted = await session.scalar(
         insert(Purchase)
         .values(
             paddle_transaction_id=transaction_id,
             user_id=user_id,
+            reservation_id=reservation.id if reservation is not None else None,
             status=PurchaseStatus.UNMATCHED if problem else PurchaseStatus.CREDITED,
             problem=problem,
-            paddle_price_id=price_id,
+            paddle_price_id=_price_id(data.get("items")),
             paddle_customer_id=_text(data.get("customer_id")),
-            credit_usd=Decimal(0) if problem else credit,
+            credit_usd=credit,
             currency_code=_text(data.get("currency_code"))
             or _text(totals.get("currency_code"))
             or "",
@@ -140,11 +162,16 @@ async def record_transaction(
 
     if problem:
         log.warning("paddle transaction %s not credited: %s", transaction_id, problem)
-    else:
-        assert user_id is not None
-        await move_for_purchase(
-            session, user_id, credit, purchase_id=inserted.id, reason=CreditReason.PURCHASE
-        )
+        return Recorded(purchase=inserted, new=True)
+
+    assert reservation is not None and user_id is not None
+    # Consumed in the same transaction as the credit, so the headroom never counts this credit
+    # twice (held and reserved) or not at all.
+    reservation.status = ReservationStatus.CONSUMED
+    reservation.paddle_transaction_id = transaction_id
+    await move_for_purchase(
+        session, user_id, credit, purchase_id=inserted.id, reason=CreditReason.PURCHASE
+    )
     return Recorded(purchase=inserted, new=True)
 
 
@@ -314,6 +341,7 @@ async def purchases_of(
 
 __all__ = [
     "REFUND_WINDOW",
+    "RESERVATION_KEY",
     "USER_KEY",
     "PurchaseReport",
     "Recorded",

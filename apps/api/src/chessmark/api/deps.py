@@ -25,6 +25,9 @@ from chessmark.core.auth import (
 from chessmark.core.budget import GlobalBudget
 from chessmark.core.clerk import get_directory
 from chessmark.core.config import Settings, get_settings
+from chessmark.core.openrouter_balance import Balance, CachedBalance
+from chessmark.core.openrouter_billing import OpenRouterBilling
+from chessmark.core.paddle_api import PaddleApi
 from chessmark.core.ratelimit import RateLimiter
 from chessmark.db.models import Game, User
 from chessmark.db.repositories import GameNotFoundError, get_game
@@ -70,6 +73,27 @@ async def close_redis() -> None:
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 RedisDep = Annotated[RedisClient, Depends(get_redis)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
+
+
+async def get_openrouter_balance(redis: RedisDep, settings: SettingsDep) -> Balance:
+    """OpenRouter's remaining credit, which bounds how much credit can be sold (ADR-0056)."""
+    return CachedBalance(
+        redis,
+        OpenRouterBilling(
+            management_key=settings.openrouter_management_key,
+            api_key=settings.openrouter_api_key,
+            base_url=settings.openrouter_base_url,
+        ),
+    )
+
+
+def get_paddle_api(settings: SettingsDep) -> PaddleApi:
+    """Creates the transaction each checkout opens on, at the amount the buyer chose."""
+    return PaddleApi(settings.paddle_api_key)
+
+
+BalanceDep = Annotated[Balance, Depends(get_openrouter_balance)]
+PaddleApiDep = Annotated[PaddleApi, Depends(get_paddle_api)]
 
 
 async def get_queue(redis: RedisDep) -> TurnQueue:

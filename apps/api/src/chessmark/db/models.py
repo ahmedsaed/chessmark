@@ -43,6 +43,7 @@ from chessmark.db.enums import (
     ModerationStatus,
     PlayerKind,
     PurchaseStatus,
+    ReservationStatus,
     TournamentStatus,
     TurnStatus,
 )
@@ -863,10 +864,15 @@ class Purchase(Base):
 
     paddle_price_id: Mapped[str | None] = mapped_column(sa.Text)
     paddle_customer_id: Mapped[str | None] = mapped_column(sa.Text)
+    #: The checkout's reservation, which says what the purchase grants (ADR-0056). Null for the
+    #: fixed packs sold before reservations existed.
+    reservation_id: Mapped[uuid.UUID | None] = mapped_column(
+        _fk("credit_reservations.id", ondelete="SET NULL"), index=True
+    )
     credit_usd: Mapped[Decimal] = mapped_column(USD, default=Decimal(0))
 
     #: What the buyer paid and what reached us, in Paddle's own terms: lowest currency units as
-    #: strings, in the currency they paid in. Kept verbatim so the margin in `core.credit_packs` can
+    #: strings, in the currency they paid in. Kept verbatim so the margin in `core.credit_pricing` can
     #: be checked against real sales rather than against the published fee.
     currency_code: Mapped[str] = mapped_column(sa.Text)
     grand_total: Mapped[str] = mapped_column(sa.Text)
@@ -874,6 +880,31 @@ class Purchase(Base):
     fee: Mapped[str | None] = mapped_column(sa.Text)
     earnings: Mapped[str | None] = mapped_column(sa.Text)
 
+    created_at: Mapped[dt.datetime] = created_at()
+    updated_at: Mapped[dt.datetime] = updated_at()
+
+
+class CreditReservation(Base):
+    """A checkout's claim on OpenRouter headroom, from the moment it opens (ADR-0056).
+
+    Credit is sold only while OpenRouter's prepaid balance covers what users already hold. Two
+    buyers checking at once would both see the same last slot, so a checkout **reserves** its credit
+    first, under a lock, and an open reservation counts against the headroom until it is paid (its
+    credit then moves into the buyer's balance, in the same transaction) or it expires.
+
+    It is also what a purchase grants: the API wrote the credit here when it quoted the amount and
+    created the Paddle transaction at that price, so the webhook never has to trust the browser.
+    """
+
+    __tablename__ = "credit_reservations"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    user_id: Mapped[uuid.UUID] = mapped_column(_fk("users.id", ondelete="CASCADE"), index=True)
+    price_usd: Mapped[Decimal] = mapped_column(USD)
+    credit_usd: Mapped[Decimal] = mapped_column(USD)
+    status: Mapped[ReservationStatus] = mapped_column(enum_column(ReservationStatus), index=True)
+    paddle_transaction_id: Mapped[str | None] = mapped_column(sa.Text, unique=True)
+    expires_at: Mapped[dt.datetime] = mapped_column(index=True)
     created_at: Mapped[dt.datetime] = created_at()
     updated_at: Mapped[dt.datetime] = updated_at()
 

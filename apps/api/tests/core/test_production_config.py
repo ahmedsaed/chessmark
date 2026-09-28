@@ -18,6 +18,10 @@ SAFE = {
     "clerk_issuer": "https://clerk.chessmark.com",
     "clerk_webhook_secret": "whsec_abc",
     "global_daily_usd_budget": 25.0,
+    # Pinned empty, so the machine's own `.env` cannot half-configure selling under the test.
+    "paddle_webhook_secret": "",
+    "paddle_api_key": "",
+    "paddle_product_id": "",
 }
 
 
@@ -79,27 +83,29 @@ def test_production_refuses_to_start_unconfigured(monkeypatch: pytest.MonkeyPatc
     get_settings.cache_clear()
 
 
-@pytest.mark.parametrize(
-    ("secret", "prices", "expected"),
-    [
-        ("pdl_ntfset_x", "", "must be set together"),
-        ("", "5=pri_a", "must be set together"),
-        ("pdl_ntfset_x", "7=pri_a", "PADDLE_PRICE_IDS is malformed"),
-    ],
-    ids=["secret without prices", "prices without secret", "a pack that does not exist"],
-)
-def test_selling_credit_half_configured_is_reported(
-    secret: str, prices: str, expected: str
-) -> None:
-    """Prices without the secret sell packs whose webhooks are all refused: buyers pay and are never
-    credited. Neither set is fine — selling is simply off (ADR-0055)."""
+PADDLE = {
+    "paddle_webhook_secret": "pdl_ntfset_x",
+    "paddle_api_key": "pdl_sdbx_apikey_x",
+    "paddle_product_id": "pro_x",
+}
+
+
+@pytest.mark.parametrize("missing", sorted(PADDLE))
+def test_selling_credit_half_configured_is_reported(missing: str) -> None:
+    """Any one of Paddle's settings without the others takes money it cannot credit, or offers a
+    checkout that cannot open. None of them is fine — selling is simply off (ADR-0055, ADR-0056)."""
     problems = Settings(
-        **{**SAFE, "paddle_webhook_secret": secret, "paddle_price_ids": prices}
+        **{**SAFE, **PADDLE, missing: "", "openrouter_management_key": "mgmt"}
     ).production_problems()
-    assert any(expected in problem for problem in problems), problems
+    assert any("must be set together" in problem for problem in problems), problems
+
+
+def test_selling_credit_needs_the_key_that_measures_headroom() -> None:
+    problems = Settings(**{**SAFE, **PADDLE, "openrouter_management_key": ""}).production_problems()
+    assert any("OPENROUTER_MANAGEMENT_KEY" in problem for problem in problems), problems
 
 
 def test_selling_credit_fully_configured_or_off_is_not_a_problem() -> None:
-    for secret, prices in (("", ""), ("pdl_ntfset_x", "5=pri_a,10=pri_b,25=pri_c")):
-        settings = Settings(**{**SAFE, "paddle_webhook_secret": secret, "paddle_price_ids": prices})
-        assert settings.production_problems() == []
+    assert Settings(**SAFE).production_problems() == []
+    configured = Settings(**{**SAFE, **PADDLE, "openrouter_management_key": "mgmt"})
+    assert configured.production_problems() == []

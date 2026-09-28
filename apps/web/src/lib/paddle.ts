@@ -41,7 +41,3 @@ export const paddleConfig = paddleConfigFrom(
   process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN,
   process.env.NEXT_PUBLIC_PADDLE_ENV,
 );
-
-/** The key the checkout carries the buyer's Clerk id under; the API reads the same key
- *  (`db/purchases.py`, `USER_KEY`) to know whose balance a paid purchase credits. */
-export const BUYER_KEY = "clerk_user_id";

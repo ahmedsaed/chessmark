@@ -1,17 +1,21 @@
 "use client";
 
 /**
- * The packs, and Paddle's checkout for the one chosen (ADR-0055).
+ * Choosing an amount of credit, and Paddle's checkout for it (ADR-0055, ADR-0056).
  *
- * **This never moves a balance.** It opens Paddle's overlay with the pack's price, the buyer's email
- * and their Clerk id; Paddle takes the payment, and its signed webhook to our API is what credits
- * the account. What the browser sends cannot change how much: the API maps the *price paid* to
- * credit itself (`core/credit_packs.py`).
+ * **The amount is the buyer's**: one of three quick picks, or any whole number of dollars in the
+ * range. Every figure in the breakdown is the API's — the presets arrive quoted with the page, and a
+ * typed amount is quoted by `GET /credit/quote` — so the page lays out a sum it never computes.
  *
- * **So after a payment, this waits for the webhook** — asking the API about that one transaction
- * every two seconds, for up to a minute. That is not a loading costume over a slow read: the money
- * has moved and the credit is arriving by a different road, usually within seconds, and saying
- * "added" before it has would be a claim the header then contradicts.
+ * **This never moves a balance.** Buy asks the API to reserve the credit and create a Paddle
+ * transaction at that price; the API refuses, with the largest amount it can sell, when OpenRouter's
+ * balance cannot cover it. Paddle's overlay then opens on that transaction, and Paddle's signed
+ * webhook to our API is what credits the account — for what the reservation says, not for anything
+ * this page sent.
+ *
+ * **After a payment it waits for the webhook**, asking about that one transaction every two
+ * seconds for up to a minute. The money has moved and the credit arrives by a different road,
+ * usually within seconds; saying "added" before it has would be contradicted by the header.
  *
  * Paddle.js is loaded only here, only for a signed-in buyer, and only when selling is configured.
  */
@@ -22,78 +26,188 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { SUPPORT_EMAIL } from "@/components/LegalPage";
-import { getPurchase, type CreditPack } from "@/lib/api";
+import {
+  ApiError,
+  getCreditQuote,
+  getPurchase,
+  startCheckout,
+  type CreditOptions,
+  type CreditQuote,
+} from "@/lib/api";
 import { announceSpend, formatBalance } from "@/lib/credit";
-import { BUYER_KEY, paddleConfig } from "@/lib/paddle";
+import { paddleConfig } from "@/lib/paddle";
 
 const POLL_MS = 2_000;
 const POLL_FOR_MS = 60_000;
+/** A typed amount is quoted once the typing pauses, not on every keystroke. */
+const QUOTE_AFTER_MS = 300;
 
 type Arrival =
   | { state: "idle" }
   | { state: "waiting"; credit: string }
   | { state: "credited"; credit: string; balance: string }
-  | { state: "late"; credit: string }
+  | { state: "late" }
   | { state: "unmatched" };
 
 export function BuyCredit({
-  packs,
+  options,
   signedIn,
   selling,
 }: {
-  packs: CreditPack[];
+  options: CreditOptions;
   signedIn: boolean;
-  /** False shows the packs and their arithmetic with nothing to buy: what credit costs is public
+  /** False shows the amounts and their arithmetic with nothing to buy: what credit costs is public
    *  before it is on sale. */
   selling: boolean;
 }) {
+  const first = options.presets[0];
+  const [amount, setAmount] = useState(first ? whole(first.price_usd) : whole(options.min_usd));
+  /* Only a typed amount's quote is fetched and held; it is tagged with the amount it is for, so a
+     slow answer for an earlier keystroke is never shown against a later one. */
+  const [fetched, setFetched] = useState<{
+    amount: string;
+    quote?: CreditQuote;
+    error?: string;
+  } | null>(null);
+
+  const preset = options.presets.find((p) => whole(p.price_usd) === amount);
+  const wholeNumber = /^\d+$/.test(amount);
+  /* The range is checked here too, so an amount the API would refuse is not sent to be refused.
+     A comparison of the API's own bounds, not arithmetic on money. */
+  const inRange =
+    wholeNumber &&
+    Number(amount) >= Number(options.min_usd) &&
+    Number(amount) <= Number(options.max_usd);
+  const typed = !preset && inRange;
+  const answer = fetched?.amount === amount ? fetched : null;
+  const quote = preset ?? answer?.quote ?? null;
+  const problem = preset || !amount
+    ? null
+    : !wholeNumber
+      ? "Choose a whole number of dollars."
+      : !inRange
+        ? `Choose between $${whole(options.min_usd)} and $${whole(options.max_usd)}.`
+        : (answer?.error ?? null);
+
+  /* Quote what was typed, once the typing pauses. A preset's quote is already in hand. */
+  useEffect(() => {
+    if (!typed) return;
+    let current = true;
+    const timer = setTimeout(() => {
+      getCreditQuote(amount).then(
+        (quoted) => current && setFetched({ amount, quote: quoted }),
+        (error: unknown) =>
+          current &&
+          setFetched({
+            amount,
+            error: error instanceof ApiError ? error.message : "That amount could not be quoted.",
+          }),
+      );
+    }, QUOTE_AFTER_MS);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [amount, typed]);
+
   return (
-    <ul className="grid gap-4 sm:grid-cols-3">
-      {packs.map((pack) => (
-        <li key={pack.price_usd} className="flex flex-col gap-5 border border-line bg-surface px-5 py-5">
-          {/* A sum, top to bottom: what you pay, what comes out of it, what reaches your balance.
-              Three different numbers side by side read as three prices; laid out as arithmetic
-              they read as one purchase. */}
-          <p className="tabular font-serif text-4xl text-ink">{dollars(pack.price_usd)}</p>
-          <dl className="tabular flex flex-col gap-1.5 font-mono text-meta">
-            <Line label="Payment processor" rule="5% + $0.50" amount={`− ${dollars(pack.processor_fee_usd)}`} />
-            <Line label="Running Chessmark" rule="5%" amount={`− ${dollars(pack.upkeep_usd)}`} />
-            <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-line pt-2.5">
-              <dt className="uppercase tracking-[0.12em] text-ink">Your credit</dt>
-              <dd className="text-lg text-accent">{dollars(pack.credit_usd)}</dd>
-            </div>
-          </dl>
-          <p className="-mt-2 text-xs text-ink-faint">Tax is added at checkout where it applies.</p>
-          {!selling || pack.price_id === null ? (
-            <button type="button" disabled className={BUY}>
-              not on sale yet
-            </button>
-          ) : signedIn ? (
-            <BuyButton pack={pack} priceId={pack.price_id} />
-          ) : (
-            <Link href="/sign-in?redirect=/credit" className={BUY}>
-              sign in to buy
-            </Link>
-          )}
-        </li>
-      ))}
-    </ul>
+    <div className="grid max-w-[760px] gap-6 sm:grid-cols-[1fr_1.1fr]">
+      <div className="flex flex-col gap-4">
+        <p className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">Amount</p>
+        <div className="flex flex-wrap gap-2">
+          {options.presets.map((preset) => {
+            const value = whole(preset.price_usd);
+            const chosen = value === amount;
+            return (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={chosen}
+                onClick={() => setAmount(value)}
+                className={`tabular border px-4 py-2 font-mono text-data transition-colors ${
+                  chosen
+                    ? "border-accent bg-accent text-on-accent"
+                    : "border-line bg-surface text-ink-dim hover:border-accent-dim hover:text-ink"
+                }`}
+              >
+                ${value}
+              </button>
+            );
+          })}
+        </div>
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm text-ink-dim">
+            Or any amount from ${whole(options.min_usd)} to ${whole(options.max_usd)}
+          </span>
+          {/* The input is the whole field, "$" drawn inside it, so the site's one focus ring goes
+              round all of it — a ring on an inner input cut through the "$" beside it. */}
+          <span className="relative block">
+            <span
+              aria-hidden
+              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 font-mono text-ink-faint"
+            >
+              $
+            </span>
+            <input
+              type="text"
+              inputMode="numeric"
+              autoComplete="off"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value.trim())}
+              className="tabular w-full border border-line bg-surface py-2 pl-7 pr-3 font-mono text-ink"
+              aria-describedby="amount-problem"
+            />
+          </span>
+          <span id="amount-problem" role="status" className="min-h-[1.25rem] text-xs text-bad">
+            {problem}
+          </span>
+        </label>
+      </div>
+
+      <div className="flex flex-col gap-5 border border-line bg-surface px-5 py-5">
+        {/* A sum, top to bottom: what you pay, what comes out of it, what reaches your balance. */}
+        <p className="tabular font-serif text-4xl text-ink">
+          {quote ? dollars(quote.price_usd) : "—"}
+        </p>
+        <dl className="tabular flex flex-col gap-1.5 font-mono text-meta">
+          <Line label="Payment processor" rule="5% + $0.50" amount={quote?.processor_fee_usd} />
+          <Line label="Running Chessmark" rule="5%" amount={quote?.upkeep_usd} />
+          <Line label="AI provider fee" rule="5.5%" amount={quote?.provider_fee_usd} />
+          <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-line pt-2.5">
+            <dt className="uppercase tracking-[0.12em] text-ink">Your credit</dt>
+            <dd className="text-lg text-accent">{quote ? dollars(quote.credit_usd) : "—"}</dd>
+          </div>
+        </dl>
+        <p className="-mt-2 text-xs text-ink-faint">Tax is added at checkout where it applies.</p>
+        {!selling ? (
+          <button type="button" disabled className={BUY}>
+            not on sale yet
+          </button>
+        ) : signedIn ? (
+          <Checkout amount={quote ? whole(quote.price_usd) : null} />
+        ) : (
+          <Link href="/sign-in?redirect=/credit" className={BUY}>
+            sign in to buy
+          </Link>
+        )}
+      </div>
+    </div>
   );
 }
 
-function Line({ label, rule, amount }: { label: string; rule: string; amount: string }) {
+function Line({ label, rule, amount }: { label: string; rule: string; amount?: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3 text-ink-faint">
       <dt>
         {label} ({rule})
       </dt>
-      <dd className="text-ink-dim">{amount}</dd>
+      <dd className="text-ink-dim">{amount ? `− ${dollars(amount)}` : "—"}</dd>
     </div>
   );
 }
 
-/* One Paddle per page, shared by the three buttons, and the arrival it reports on. Kept at module
-   scope because `initializePaddle` refuses a second call. */
+/* One Paddle per page, and the events it reports. Kept at module scope because `initializePaddle`
+   refuses a second call. */
 let paddlePromise: Promise<Paddle | undefined> | null = null;
 const listeners = new Set<(event: PaddleEventData) => void>();
 
@@ -107,12 +221,14 @@ function loadPaddle(): Promise<Paddle | undefined> {
   return paddlePromise;
 }
 
-function BuyButton({ pack, priceId }: { pack: CreditPack; priceId: string }) {
+function Checkout({ amount }: { amount: string | null }) {
   const { getToken, userId } = useAuth();
   const { user } = useUser();
   const [paddle, setPaddle] = useState<Paddle | undefined>();
+  const [opening, setOpening] = useState(false);
   const [arrival, setArrival] = useState<Arrival>({ state: "idle" });
   const [error, setError] = useState<string | null>(null);
+  const credit = useRef<string>("0");
   const mine = useRef(false);
 
   useEffect(() => {
@@ -128,14 +244,18 @@ function BuyButton({ pack, priceId }: { pack: CreditPack; priceId: string }) {
 
   const waitFor = useCallback(
     async (transactionId: string) => {
-      setArrival({ state: "waiting", credit: pack.credit_usd });
+      setArrival({ state: "waiting", credit: credit.current });
       const deadline = Date.now() + POLL_FOR_MS;
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, POLL_MS));
         try {
           const purchase = await getPurchase(transactionId, await getToken());
           if (purchase?.status === "credited") {
-            setArrival({ state: "credited", credit: purchase.credit_usd, balance: purchase.balance_usd });
+            setArrival({
+              state: "credited",
+              credit: purchase.credit_usd,
+              balance: purchase.balance_usd,
+            });
             announceSpend(); // the header re-reads the balance
             return;
           }
@@ -147,9 +267,9 @@ function BuyButton({ pack, priceId }: { pack: CreditPack; priceId: string }) {
           /* A failed check is not a failed purchase; the next one may answer. */
         }
       }
-      setArrival({ state: "late", credit: pack.credit_usd });
+      setArrival({ state: "late" });
     },
-    [getToken, pack.credit_usd],
+    [getToken],
   );
 
   useEffect(() => {
@@ -166,27 +286,48 @@ function BuyButton({ pack, priceId }: { pack: CreditPack; priceId: string }) {
     };
   }, [waitFor]);
 
-  function open() {
-    if (!paddle || !userId) return;
+  async function buy() {
+    if (!paddle || !userId || !amount) return;
     setError(null);
     setArrival({ state: "idle" });
-    mine.current = true;
-    const email = user?.primaryEmailAddress?.emailAddress;
-    paddle.Checkout.open({
-      items: [{ priceId, quantity: 1 }],
-      customData: { [BUYER_KEY]: userId },
-      ...(email ? { customer: { email } } : {}),
-      settings: { displayMode: "overlay", variant: "one-page", theme: "dark", allowLogout: !email },
-    });
+    setOpening(true);
+    try {
+      const checkout = await startCheckout(amount, await getToken());
+      credit.current = checkout.quote.credit_usd;
+      mine.current = true;
+      const email = user?.primaryEmailAddress?.emailAddress;
+      paddle.Checkout.open({
+        transactionId: checkout.transaction_id,
+        ...(email ? { customer: { email } } : {}),
+        settings: { displayMode: "overlay", variant: "one-page", theme: "dark", allowLogout: !email },
+      });
+    } catch (failure) {
+      setError(
+        failure instanceof ApiError
+          ? failure.message
+          : "That did not reach the server. Check your connection and try again.",
+      );
+    } finally {
+      setOpening(false);
+    }
   }
 
   return (
     <div className="flex flex-col gap-2">
-      <button type="button" onClick={open} disabled={!paddle || !userId} className={BUY}>
-        buy
+      <button
+        type="button"
+        onClick={() => void buy()}
+        disabled={!paddle || !userId || !amount || opening}
+        className={BUY}
+      >
+        {amount ? `buy $${amount} of credit` : "buy"}
       </button>
       <ArrivalNote arrival={arrival} />
-      {error && <p className="font-mono text-meta text-bad">{error}</p>}
+      {error && (
+        <p role="alert" className="font-mono text-meta text-bad">
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -196,7 +337,9 @@ function ArrivalNote({ arrival }: { arrival: Arrival }) {
     case "idle":
       return null;
     case "waiting":
-      return <Note tone="text-ink-dim">Paid. Adding {formatBalance(arrival.credit)} to your credit…</Note>;
+      return (
+        <Note tone="text-ink-dim">Paid. Adding {formatBalance(arrival.credit)} to your credit…</Note>
+      );
     case "credited":
       return (
         <Note tone="text-accent">
@@ -226,6 +369,11 @@ function Note({ tone, children }: { tone: string; children: React.ReactNode }) {
       {children}
     </p>
   );
+}
+
+/** "5" from "5" or "5.00": the API's decimals, as the whole dollars the amounts always are. */
+function whole(usd: string): string {
+  return String(Math.trunc(Number(usd)));
 }
 
 /** "$5.00" from "5". The API's own figures, only formatted: the checkout shows what the buyer pays

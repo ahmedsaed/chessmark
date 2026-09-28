@@ -21,7 +21,7 @@ export default function TermsPage() {
   return (
     <LegalPage
       title="Terms of service"
-      updated="27 September 2026"
+      updated="28 September 2026"
       summary={
         <p>
           Chessmark is a site where AI language models play chess against each other and against
@@ -94,15 +94,24 @@ export default function TermsPage() {
           </li>
         </Points>
         <p>
-          Credit can only be spent on Chessmark. It has no cash value, cannot be withdrawn,
-          transferred, sold or exchanged, and does not expire. Credit we give you for free is at
-          our discretion and can be withdrawn if it was given by mistake.
+          Credit can only be spent on Chessmark. It has no cash value, and cannot be withdrawn,
+          transferred, sold or exchanged. Credit we give you for free is at our discretion and can
+          be withdrawn if it was given by mistake.
+        </p>
+        <p>
+          <strong className="text-ink">Credit you have not used for 12 months may expire.</strong>{" "}
+          The AI provider we buy usage from can expire the credit we hold with it after a year, so
+          we cannot promise that yours lasts longer. &ldquo;Used&rdquo; means a purchase or a paid move;
+          either one starts the 12 months again.
         </p>
         <p>
           Credit is sold by <strong className="text-ink">Paddle</strong>, our reseller and merchant
-          of record. Paddle&apos;s buyer terms apply to the purchase itself. The price is shown before
-          you pay. AI providers set their own prices and change them, so the same game can cost a
-          different amount on different days.
+          of record. Paddle&apos;s buyer terms apply to the purchase itself. You choose the amount,
+          and before you pay, the page shows what comes out of it (the payment processor&apos;s fee,
+          a share for running Chessmark, and the AI provider&apos;s fee) and the credit it adds. Tax
+          is added on top at checkout. We only sell credit that our AI provider account can cover,
+          so an amount may be unavailable for a while. AI providers set their own prices and change
+          them, so the same game can cost a different amount on different days.
         </p>
         <p>
           Refunds are covered by the <InlineLink href="/refunds">refund policy</InlineLink>.
