@@ -111,7 +111,7 @@ export function BuyCredit({
   }, [amount, typed]);
 
   return (
-    <div className="grid max-w-[760px] gap-6 sm:grid-cols-[1fr_1.1fr]">
+    <div className="grid gap-6 md:grid-cols-2 md:gap-10">
       <div className="flex flex-col gap-4">
         <p className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">Amount</p>
         <div className="flex flex-wrap gap-2">

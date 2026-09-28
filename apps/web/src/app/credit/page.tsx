@@ -32,7 +32,7 @@ export default async function CreditPage() {
   const onSale = options.selling && paddleConfig !== null;
 
   return (
-    <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
+    <main className="mx-auto w-full max-w-[880px] flex-1 px-5 py-12">
       <h1 className="font-serif text-4xl leading-tight text-ink">Credit</h1>
       <p className="mt-4 max-w-prose leading-relaxed text-ink-dim">
         Games against paid models are charged per move, at what the model cost. Games against free
