@@ -255,19 +255,19 @@ function loadPaddle(): Promise<Paddle | undefined> {
 function Checkout({ amount }: { amount: string | null }) {
   const { getToken, userId } = useAuth();
   const { user } = useUser();
-  const [paddle, setPaddle] = useState<Paddle | undefined>();
   const [opening, setOpening] = useState(false);
   const [arrival, setArrival] = useState<Arrival>({ state: "idle" });
   const [error, setError] = useState<string | null>(null);
   const credit = useRef<string>("0");
   const mine = useRef(false);
 
+  /* Start loading Paddle.js now, so it is ready by the time Buy is pressed. Nothing on the page
+     waits for it: the button is rendered the same on the server and in the browser, and `buy`
+     awaits the load itself — a button gated on "has Paddle loaded" rendered disabled in the browser
+     and enabled on the server, which React reports as a hydration mismatch. */
   useEffect(() => {
     let alive = true;
-    loadPaddle().then(
-      (loaded) => alive && setPaddle(loaded),
-      () => alive && setError("The checkout did not load. Try reloading the page."),
-    );
+    loadPaddle().catch(() => alive && setError("The checkout did not load. Try reloading the page."));
     return () => {
       alive = false;
     };
@@ -323,11 +323,16 @@ function Checkout({ amount }: { amount: string | null }) {
   }, [waitFor]);
 
   async function buy() {
-    if (!paddle || !userId || !amount) return;
+    if (!amount) return;
     setError(null);
     setArrival({ state: "idle" });
     setOpening(true);
     try {
+      const paddle = await loadPaddle();
+      if (!paddle || !userId) {
+        setError("The checkout is not ready yet. Try again in a moment.");
+        return;
+      }
       const checkout = await startCheckout(amount, await getToken());
       credit.current = checkout.quote.credit_usd;
       mine.current = true;
@@ -353,7 +358,7 @@ function Checkout({ amount }: { amount: string | null }) {
       <button
         type="button"
         onClick={() => void buy()}
-        disabled={!paddle || !userId || !amount || opening}
+        disabled={!amount || opening}
         className={BUY}
       >
         {amount ? `buy $${amount} of credit` : "buy"}
