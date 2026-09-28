@@ -5,11 +5,11 @@ entry point is **idempotent on Paddle's own id** — the transaction for a purch
 for a refund — enforced by a unique constraint rather than by a read-then-write, so two concurrent
 deliveries of one event cannot both credit it.
 
-**What a purchase grants, and to whom, comes from its reservation** (ADR-0056): the API wrote both
-when it quoted the amount and created the Paddle transaction itself, with the reservation's id in
-the transaction's `custom_data`. Nothing a browser sends reaches this module. The webhook checks
-that what was paid is what was reserved, and a purchase that does not match is recorded and not
-credited.
+**Who a purchase credits, and for what amount, comes from its reservation** (ADR-0056): the API
+wrote both when it created the Paddle transaction itself, with the reservation's id in the
+transaction's `custom_data`. Nothing a browser sends reaches this module. The webhook checks that
+what was paid is what was reserved; the amount includes any tax, so the credit is then settled
+from the tax Paddle actually charged. A purchase that does not match is recorded and not credited.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.core.credit_pricing import AmountError, quote
 from chessmark.db.credits import move_for_purchase
 from chessmark.db.enums import CreditReason, PurchaseStatus, ReservationStatus
 from chessmark.db.models import (
@@ -93,7 +94,7 @@ async def _reservation_for(
 
 
 def _mismatch(
-    reservation: CreditReservation | None, transaction_id: str, subtotal: str | None
+    reservation: CreditReservation | None, transaction_id: str, total: str | None
 ) -> str | None:
     if reservation is None:
         return "no reservation matches this transaction"
@@ -101,8 +102,8 @@ def _mismatch(
         return f"its reservation belongs to {reservation.paddle_transaction_id}"
     if reservation.status is ReservationStatus.CONSUMED:
         return "its reservation was already paid for"
-    if subtotal != _cents(reservation.price_usd):
-        return f"paid {subtotal} cents before tax, reserved {_cents(reservation.price_usd)}"
+    if total != _cents(reservation.price_usd):
+        return f"paid {total} cents, reserved {_cents(reservation.price_usd)}"
     return None
 
 
@@ -126,9 +127,18 @@ async def record_transaction(session: AsyncSession, data: dict[str, Any]) -> Rec
     totals = totals if isinstance(totals, dict) else {}
 
     reservation = await _reservation_for(session, transaction_id, data.get("custom_data"))
-    problem = _mismatch(reservation, transaction_id, _text(totals.get("subtotal")))
+    problem = _mismatch(reservation, transaction_id, _text(totals.get("total")))
     user_id = reservation.user_id if reservation is not None else None
-    credit = reservation.credit_usd if reservation is not None and not problem else Decimal(0)
+    credit = Decimal(0)
+    if reservation is not None and not problem:
+        # The amount paid includes any tax, so the credit is settled here, from the tax Paddle
+        # actually charged — not from the checkout's quote, which could only estimate it. The
+        # reservation held the no-tax maximum, so this is never more than was reserved.
+        try:
+            tax = Decimal(_text(totals.get("tax")) or "0") / 100
+            credit = quote(reservation.price_usd, tax).credit_usd
+        except (ArithmeticError, AmountError):
+            problem = f"Paddle reported a tax of {totals.get('tax')!r} cents"
 
     inserted = await session.scalar(
         insert(Purchase)

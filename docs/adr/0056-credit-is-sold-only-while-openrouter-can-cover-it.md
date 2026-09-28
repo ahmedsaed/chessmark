@@ -4,8 +4,9 @@
 **Date:** 2026-09-28
 **Amends:** [0055](0055-credit-is-sold-as-fixed-packs-through-paddle.md). The fixed $5 / $10 / $25
 packs become any whole-dollar amount from $5 to $100. The breakdown gains an AI provider fee line.
-A purchase is credited from a reservation the server made, not from a catalogue price. Credit may
-now expire.
+The amount chosen now includes any tax, where 0055 added tax on top. A purchase is credited from a
+reservation the server made and the tax Paddle charged, not from a catalogue price. Credit may now
+expire.
 
 ## Context
 
@@ -36,7 +37,25 @@ The owner also wanted buyers to choose any amount rather than one of three.
 
 The first two round up to the cent. The credit is what pays for itself plus OpenRouter's 5.5%,
 rounded down, and the AI provider line is the remainder. So the lines always add up to the price, and
-rounding never grants more than the rule allows. Tax is still added on top.
+rounding never grants more than the rule allows. The table is a buyer who pays no tax.
+
+**The amount the buyer chooses is what they pay, tax included.** ADR-0055 added tax on top, so a
+buyer who chose $37 paid $41.54 and read two numbers for one purchase. Now tax comes out of the
+amount first, as one more line of the same sum, and the three shares are taken from what is left:
+
+| $37, 14% VAT | |
+| --- | --- |
+| Tax | −$4.54 |
+| Payment processor (5% + $0.50 of $37) | −$2.35 |
+| Running Chessmark (5% of $32.46) | −$1.63 |
+| AI provider fee (5.5%) | −$1.49 |
+| **Credit** | **$26.99** |
+
+The processor's share is on the whole $37, because Paddle's fee is on the total including tax. The
+other two are on the amount after tax, which is what actually reaches us. A buyer in a country with
+tax therefore gets less credit for the same amount than one without, where under 0055 they paid
+more for the same credit. Either way the tax is the state's, not ours; this way the number they
+chose is the number on their statement.
 
 **Any whole number of dollars from $5 to $100.** $5, $10 and $25 remain as quick picks.
 - The floor keeps Paddle's fixed $0.50 from eating most of a purchase: $5 buys 76% of its price in
@@ -77,10 +96,11 @@ than trusting a figure from before the worker stopped.
 visitor's country, detected from their IP address, but it previews only catalogue prices. Purchases
 use prices the server creates. So there is one catalogue price of $1, never sold, and the page
 previews it in the chosen quantity: $37 is a preview of 37. The breakdown then reads as one sum:
-what the buyer pays including tax, the tax (marked estimated) taken out first, the three shares,
-and the credit. The checkout dialog shows the same sum with Paddle's exact tax. It is an estimate
-because the final tax depends on the country the buyer confirms, a VAT number, or a US ZIP code.
-Without a preview price configured, the page shows the pre-tax price, as before.
+the amount, the tax (marked estimated) taken out first, the three shares, and the credit (marked
+"about"). The checkout dialog shows the same sum with the tax Paddle's checkout reports, and the
+credit it gives. It is an estimate because the final tax depends on the country the buyer confirms,
+a VAT number, or a US ZIP code. Without a preview price configured, the page shows the sum with no
+tax line, and says that any tax comes out of the amount at checkout.
 
 **One open checkout per person, and five a minute at most.** Without the first rule, pressing Buy
 repeatedly would hold the headroom for thirty minutes per press, and one person could sell the site
@@ -91,9 +111,12 @@ hammer OpenRouter.
 
 **The reservation is what a purchase grants.** Its id goes in the transaction's `custom_data`,
 written by the server. When Paddle reports the payment, the webhook:
-- checks that the pre-tax amount paid equals the amount reserved;
-- credits the reserved amount;
+- checks that the total paid, tax included, equals the amount reserved;
+- credits the quote for that amount less **the tax Paddle reports it charged**, not the estimate;
 - marks the reservation consumed.
+
+A reservation holds the credit the amount would buy with no tax, the most it can grant, so the
+headroom is never short by the difference.
 
 All three happen in one database transaction, so the credit moves from reserved to held without
 being counted twice or not at all. A payment that matches no reservation, or not its own, is
@@ -133,7 +156,10 @@ and nothing enforces it automatically.
   estimate needs it. Each change of amount makes one preview request, sent once typing pauses.
 * Selling needs the worker running, since it keeps the stored balance current. With no worker, the
   page reports buying as paused within ten minutes.
-* The margin still shrinks where there is tax (ADR-0055: Paddle's fee is on the total including tax),
-  and still loses Paddle's fee on a refund. The AI provider line covers OpenRouter's fee. It does not
+* Where there is tax, the buyer's credit shrinks and our margin doesn't: the processor's share is
+  taken on the total including tax, and the running share on what is left after it. A refund still
+  loses Paddle's fee.
+* The credit a buyer sees before paying is exact only in the checkout dialog. On the page it is an
+  estimate, and the webhook grants what the actual tax leaves. The AI provider line covers OpenRouter's fee. It does not
   cover OpenRouter's $0.80 minimum on a small top-up; buy OpenRouter credit in amounts well above $15
   and that minimum doesn't come into play.

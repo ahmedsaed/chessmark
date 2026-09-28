@@ -450,8 +450,10 @@ export function getTournament(
 /** A purchase as the sum the page lays out. Every figure is the API's; the page adds nothing up.
  *  Money arrives as decimal strings, as the API sends it. */
 export interface CreditQuote {
-  /** What the buyer pays before tax. */
+  /** What the buyer pays, tax included — a decimal string, as the API sends money. */
   price_usd: string;
+  /** The part of it that goes to tax: zero until Paddle has estimated or charged it. */
+  tax_usd: string;
   processor_fee_usd: string;
   upkeep_usd: string;
   /** OpenRouter's 5.5% on the credit we buy from it to pay for the usage. */
@@ -508,9 +510,19 @@ export async function getCreditAvailability(): Promise<CreditAvailability> {
   }
 }
 
-/** The breakdown of an amount a buyer typed, or the API's reason it cannot be bought. */
-export async function getCreditQuote(amount: string): Promise<CreditQuote> {
-  const response = await fetch(`${PUBLIC_API_URL}/credit/quote?amount=${encodeURIComponent(amount)}`, {
+/**
+ * The breakdown of an amount, or the API's reason it cannot be bought. With a tax, the breakdown
+ * takes it out of the amount — passed exactly as Paddle reported it, in cents from a price preview
+ * or in dollars from the checkout's events, so the page converts nothing.
+ */
+export async function getCreditQuote(
+  amount: string,
+  tax?: { cents: string } | { dollars: string },
+): Promise<CreditQuote> {
+  const query = new URLSearchParams({ amount });
+  if (tax && "cents" in tax) query.set("tax_cents", tax.cents);
+  if (tax && "dollars" in tax) query.set("tax", tax.dollars);
+  const response = await fetch(`${PUBLIC_API_URL}/credit/quote?${query}`, {
     headers: { accept: "application/json" },
   });
   const payload = await response.json().catch(() => null);

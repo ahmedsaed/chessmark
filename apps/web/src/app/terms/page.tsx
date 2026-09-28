@@ -108,8 +108,9 @@ export default function TermsPage() {
           Credit is sold by <strong className="text-ink">Paddle</strong>, our reseller and merchant
           of record. Paddle&apos;s buyer terms apply to the purchase itself. You choose the amount,
           and before you pay, the page shows what comes out of it (the payment processor&apos;s fee,
-          a share for running Chessmark, and the AI provider&apos;s fee) and the credit it adds. Tax
-          is added on top at checkout. We only sell credit that our AI provider account can cover,
+          a share for running Chessmark, and the AI provider&apos;s fee) and the credit it adds. The
+          amount includes any tax, which comes out of it first, so the credit depends on the tax
+          where you are; the checkout shows the exact figure before you pay. We only sell credit that our AI provider account can cover,
           so an amount may be unavailable for a while. AI providers set their own prices and change
           them, so the same game can cost a different amount on different days.
         </p>

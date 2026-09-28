@@ -5,19 +5,23 @@ amount; the API quotes it, reserves the credit, and creates the Paddle transacti
 itself. Paddle's signed webhook then reports what was paid, and the reservation — ours — says what
 it grants. Nothing the browser sends can change the credit.
 
-**No fee is absorbed** (the owner's rule), so a purchase is a sum the page lays out line by line:
+**The amount the buyer chooses is what they pay, tax included** (the owner's choice), and **no fee
+is absorbed** (the owner's rule). So a purchase is a sum the page lays out line by line, every line
+coming out of the amount:
 
-* the **payment processor**'s share: Paddle's 5% + $0.50 of the sale;
-* **running Chessmark**: 5% of the sale;
+* the **tax**, where the buyer's country charges one — Paddle's figure, which is why the credit is
+  only exact once Paddle knows the country (an estimate on the page, exact in the checkout, final
+  in the webhook);
+* the **payment processor**'s share: Paddle's 5% + $0.50 — of the whole amount, tax included,
+  which is what Paddle charges it on;
+* **running Chessmark**: 5% of what is left after tax;
 * the **AI provider**'s fee: OpenRouter charges 5.5% on the credit we buy from it to pay for the
   usage, so a dollar of Chessmark credit costs us $1.055 of OpenRouter's;
 * and the **credit**: what is left.
 
-The first two round *up* to the cent, the credit is what then pays for itself plus the AI provider's
-5.5%, rounded *down*, and the AI provider's line is the remainder — so the four lines always add up
-to the price, and rounding never grants more than the rule allows.
-
-Tax is not in the sum: it is added on top at checkout and goes to the tax authority through Paddle.
+The two shares round *up* to the cent, the credit is what then pays for itself plus the AI
+provider's 5.5%, rounded *down*, and the AI provider's line is the remainder — so the lines always
+add up to the amount, and rounding never grants more than the rule allows.
 """
 
 from __future__ import annotations
@@ -50,7 +54,9 @@ class AmountError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class Quote:
+    #: What the buyer pays, tax included.
     price_usd: Decimal
+    tax_usd: Decimal
     processor_fee_usd: Decimal
     upkeep_usd: Decimal
     provider_fee_usd: Decimal
@@ -78,14 +84,21 @@ def checked_amount(raw: Decimal | int | str) -> Decimal:
     return amount
 
 
-def quote(price: Decimal) -> Quote:
-    """The breakdown of a purchase at this price. Call `checked_amount` first for buyer input."""
+def quote(price: Decimal, tax: Decimal = Decimal(0)) -> Quote:
+    """The breakdown of a purchase at this price, with this much of it going to tax.
+
+    Call `checked_amount` first for buyer input. Without a tax — before Paddle knows the buyer's
+    country — this is also the most a purchase can grant, which is what a checkout reserves.
+    """
+    if not Decimal(0) <= tax < price:
+        raise AmountError("The tax must be at least zero and less than the amount.")
     processor = _up(price * PROCESSOR_RATE + PROCESSOR_FIXED)
-    upkeep = _up(price * UPKEEP_RATE)
-    left = price - processor - upkeep
+    upkeep = _up((price - tax) * UPKEEP_RATE)
+    left = price - tax - processor - upkeep
     credit = _down(left / (1 + PROVIDER_RATE))
     return Quote(
         price_usd=price,
+        tax_usd=tax,
         processor_fee_usd=processor,
         upkeep_usd=upkeep,
         provider_fee_usd=left - credit,

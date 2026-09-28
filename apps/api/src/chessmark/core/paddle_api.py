@@ -63,12 +63,16 @@ class PaddleApi:
                     "quantity": 1,
                     "price": {
                         "product_id": product_id,
-                        "name": f"${credit_usd:.2f} Chessmark credit",
-                        "description": f"${price_usd:.2f} for ${credit_usd:.2f} of credit",
+                        "name": "Chessmark credit",
+                        "description": (
+                            f"${price_usd:.2f} of credit purchase, tax included "
+                            f"(up to ${credit_usd:.2f} of credit before tax)"
+                        ),
                         "unit_price": {"amount": _cents(price_usd), "currency_code": "USD"},
-                        # Tax on top, as the fixed packs had: what reaches us is then the price less
-                        # Paddle's fee in every country, and the credit can be fixed in advance.
-                        "tax_mode": "external",
+                        # Tax included: the amount the buyer chose is what they pay, and any tax
+                        # comes out of it. The credit is therefore settled from the tax Paddle
+                        # charged, when its webhook arrives (`db.purchases`).
+                        "tax_mode": "internal",
                         "quantity": {"minimum": 1, "maximum": 1},
                     },
                 }

@@ -58,7 +58,9 @@ router = APIRouter(tags=["credit"])
 class QuoteOut(BaseModel):
     """A purchase as the sum the page lays out. The page does none of this arithmetic."""
 
+    #: What the buyer pays, tax included.
     price_usd: Decimal
+    tax_usd: Decimal
     processor_fee_usd: Decimal
     upkeep_usd: Decimal
     provider_fee_usd: Decimal
@@ -68,6 +70,7 @@ class QuoteOut(BaseModel):
     def of(cls, q: Quote) -> QuoteOut:
         return cls(
             price_usd=q.price_usd,
+            tax_usd=q.tax_usd,
             processor_fee_usd=q.processor_fee_usd,
             upkeep_usd=q.upkeep_usd,
             provider_fee_usd=q.provider_fee_usd,
@@ -134,10 +137,22 @@ async def credit_options(settings: SettingsDep) -> OptionsOut:
 
 
 @router.get("/credit/quote", response_model=QuoteOut)
-async def credit_quote(amount: Annotated[str, Query()]) -> QuoteOut:
-    """The breakdown of any amount a buyer types. 422 with the reason for one that cannot be bought."""
+async def credit_quote(
+    amount: Annotated[str, Query()],
+    tax: Annotated[str | None, Query()] = None,
+    tax_cents: Annotated[str | None, Query()] = None,
+) -> QuoteOut:
+    """The breakdown of an amount, with the tax that comes out of it: Paddle's estimate on the
+    credit page, its exact figure in the checkout. 422 with the reason for an amount or a tax that
+    cannot be. The credit is only final once Paddle's webhook reports the tax actually charged."""
     try:
-        return QuoteOut.of(quote(checked_amount(amount)))
+        # In dollars from the checkout's events, in cents from Paddle's price preview: each as
+        # Paddle reports it, so the page converts nothing.
+        try:
+            taxed = Decimal(int(tax_cents)) / 100 if tax_cents is not None else Decimal(tax or "0")
+        except (ArithmeticError, ValueError) as error:
+            raise AmountError("That is not an amount of tax.") from error
+        return QuoteOut.of(quote(checked_amount(amount), taxed))
     except AmountError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
 

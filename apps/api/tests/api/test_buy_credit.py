@@ -113,8 +113,11 @@ async def _checkout(client: AsyncClient, amount: int | str, clerk_id: str = BUYE
     )
 
 
-def _completed(txn: str, reservation_id: str | None, *, subtotal: str) -> dict[str, Any]:
-    tax = str(int(subtotal) * 14 // 100)
+def _completed(
+    txn: str, reservation_id: str | None, *, total: str, tax: str = "0"
+) -> dict[str, Any]:
+    """Paddle's `transaction.completed`. Prices include tax, so `total` is the amount the buyer
+    chose and `tax` is the part of it that went to tax."""
     return {
         "event_type": "transaction.completed",
         "data": {
@@ -127,9 +130,10 @@ def _completed(txn: str, reservation_id: str | None, *, subtotal: str) -> dict[s
             "details": {
                 "totals": {
                     "currency_code": "USD",
-                    "subtotal": subtotal,
+                    "subtotal": str(int(total) - int(tax)),
                     "tax": tax,
-                    "grand_total": str(int(subtotal) + int(tax)),
+                    "total": total,
+                    "grand_total": total,
                     "fee": "100",
                     "earnings": "900",
                 }
@@ -150,7 +154,7 @@ async def _buy(
     response = await _checkout(client, amount, clerk_id)
     assert response.status_code == 200, response.text
     txn = response.json()["transaction_id"]
-    event = _completed(txn, _reservation_of(selling), subtotal=str(amount * 100))
+    event = _completed(txn, _reservation_of(selling), total=str(amount * 100))
     assert (await _deliver(client, event)).status_code == 200
     return txn, event
 
@@ -370,7 +374,7 @@ async def test_concurrent_deliveries_of_one_purchase_credit_it_once(
     """The unique transaction id, not a read-then-write, is what stops the second credit."""
     await _buyer(db)
     txn = (await _checkout(client, 10)).json()["transaction_id"]
-    event = _completed(txn, _reservation_of(selling), subtotal="1000")
+    event = _completed(txn, _reservation_of(selling), total="1000")
     responses = await asyncio.gather(*(_deliver(client, event) for _ in range(5)))
     assert {r.status_code for r in responses} == {200}
     assert await _balance(db) == Decimal("8.05")
@@ -394,7 +398,7 @@ async def test_a_delivery_that_is_not_paddles_moves_nothing(
 ) -> None:
     await _buyer(db)
     txn = (await _checkout(client, 10)).json()["transaction_id"]
-    event = _completed(txn, _reservation_of(selling), subtotal="1000")
+    event = _completed(txn, _reservation_of(selling), total="1000")
     assert (await _deliver(client, event, secret="pdl_ntfset_forged")).status_code == 401
     assert await db.scalar(sa.select(sa.func.count()).select_from(Purchase)) == 0
     assert await _balance(db) == 0
@@ -406,12 +410,12 @@ async def test_a_payment_that_does_not_match_its_reservation_is_recorded_and_not
     await _buyer(db)
     txn = (await _checkout(client, 10)).json()["transaction_id"]
 
-    await _deliver(client, _completed(txn, _reservation_of(selling), subtotal="500"))
-    await _deliver(client, _completed("txn_nobody", None, subtotal="500"))
+    await _deliver(client, _completed(txn, _reservation_of(selling), total="500"))
+    await _deliver(client, _completed("txn_nobody", None, total="500"))
 
     purchases = {p.paddle_transaction_id: p for p in await db.scalars(sa.select(Purchase))}
     assert {p.status for p in purchases.values()} == {PurchaseStatus.UNMATCHED}
-    assert "reserved 1000" in (purchases[txn].problem or "")
+    assert "paid 500 cents, reserved 1000" in (purchases[txn].problem or "")
     assert "no reservation" in (purchases["txn_nobody"].problem or "")
     assert await _balance(db) == 0
 
@@ -423,7 +427,7 @@ async def test_a_payment_after_its_reservation_expired_is_still_credited(
     await _buyer(db)
     txn = (await _checkout(client, 5)).json()["transaction_id"]
     await _expire_reservations(db)
-    await _deliver(client, _completed(txn, _reservation_of(selling), subtotal="500"))
+    await _deliver(client, _completed(txn, _reservation_of(selling), total="500"))
     assert await _balance(db) == Decimal("3.79")
 
 
@@ -436,12 +440,12 @@ async def test_a_refund_takes_the_credit_back_once_it_is_approved(
     await _buyer(db)
     txn, _ = await _buy(client, selling, 10)
 
-    pending = _adjustment("adj_1", "refund", txn, total="1140", status="pending_approval")
+    pending = _adjustment("adj_1", "refund", txn, total="1000", status="pending_approval")
     await _deliver(client, pending)
     assert await _balance(db) == Decimal("8.05"), "a refund awaiting review has not happened"
 
     for _ in range(2):
-        await _deliver(client, _adjustment("adj_1", "refund", txn, total="1140"))
+        await _deliver(client, _adjustment("adj_1", "refund", txn, total="1000"))
     assert await _balance(db) == 0
     reasons = list(await db.scalars(sa.select(CreditLedger.reason).order_by(CreditLedger.id)))
     assert reasons == [CreditReason.PURCHASE, CreditReason.PURCHASE_REFUNDED]
@@ -451,8 +455,8 @@ async def test_a_partial_refund_takes_back_its_share(
     client: AsyncClient, db: AsyncSession, selling: Selling
 ) -> None:
     await _buyer(db)
-    txn, _ = await _buy(client, selling, 10)  # $11.40 with tax
-    await _deliver(client, _adjustment("adj_half", "refund", txn, total="570"))
+    txn, _ = await _buy(client, selling, 10)
+    await _deliver(client, _adjustment("adj_half", "refund", txn, total="500"))
     assert await _balance(db) == Decimal("4.025")
 
 
@@ -465,10 +469,10 @@ async def test_a_chargeback_can_leave_a_spent_balance_below_zero_and_its_reversa
     await db.execute(sa.update(User).where(User.id == user.id).values(balance_usd=Decimal("1")))
     await db.commit()
 
-    await _deliver(client, _adjustment("adj_cb", "chargeback", txn, total="1140"))
+    await _deliver(client, _adjustment("adj_cb", "chargeback", txn, total="1000"))
     assert await _balance(db) == Decimal("-7.05")
 
-    await _deliver(client, _adjustment("adj_cbr", "chargeback_reverse", txn, total="1140"))
+    await _deliver(client, _adjustment("adj_cbr", "chargeback_reverse", txn, total="1000"))
     assert await _balance(db) == Decimal("1")
 
 
@@ -477,8 +481,8 @@ async def test_refunds_and_chargebacks_never_take_back_more_than_was_granted(
 ) -> None:
     await _buyer(db)
     txn, _ = await _buy(client, selling, 10)
-    await _deliver(client, _adjustment("adj_r", "refund", txn, total="1140"))
-    await _deliver(client, _adjustment("adj_cb", "chargeback", txn, total="1140"))
+    await _deliver(client, _adjustment("adj_r", "refund", txn, total="1000"))
+    await _deliver(client, _adjustment("adj_cb", "chargeback", txn, total="1000"))
     assert await _balance(db) == 0
 
 
@@ -494,7 +498,7 @@ async def test_a_buyer_can_see_their_own_purchase_and_nobody_elses(
     txn = (await _checkout(client, 10)).json()["transaction_id"]
     assert (await client.get(f"/credit/purchases/{txn}", headers=mine)).status_code == 404
 
-    await _deliver(client, _completed(txn, _reservation_of(selling), subtotal="1000"))
+    await _deliver(client, _completed(txn, _reservation_of(selling), total="1000"))
     body = (await client.get(f"/credit/purchases/{txn}", headers=mine)).json()
     assert body == {"status": "credited", "credit_usd": "8.05000000", "balance_usd": "8.05000000"}
 
@@ -536,7 +540,7 @@ async def test_a_purchase_is_refundable_only_while_untouched_and_inside_fourteen
         txns[name], _ = await _buy(client, selling, amount)
         await _at(db, txns[name], now - age * day)
     await _spend_at(db, user_id, "0.30", now - 3 * day)
-    await _deliver(client, _adjustment("adj_e", "refund", txns["e"], total="570"))
+    await _deliver(client, _adjustment("adj_e", "refund", txns["e"], total="500"))
 
     db.expire_all()
     reports = {r.purchase.paddle_transaction_id: r for r in await purchases_of(db, user_id)}
@@ -641,3 +645,26 @@ async def test_checkouts_are_rate_limited_per_person(
     codes = [(await _checkout(client, 5)).status_code for _ in range(6)]
     assert codes == [200] * 5 + [429]
     assert selling.balance.fresh_reads == 5, "a refused request must not reach OpenRouter"
+
+
+async def test_the_credit_is_settled_from_the_tax_paddle_actually_charged(
+    client: AsyncClient, db: AsyncSession, selling: Selling
+) -> None:
+    """$37 paid from Egypt, with $4.54 of VAT inside it. The checkout could only reserve the
+    no-tax maximum ($31.09); the webhook grants what the amount pays for once tax is out of it."""
+    await _buyer(db)
+    txn = (await _checkout(client, 37)).json()["transaction_id"]
+    reserved = await db.scalar(sa.select(CreditReservation.credit_usd))
+    assert reserved == Decimal("31.09")
+    await _deliver(client, _completed(txn, _reservation_of(selling), total="3700", tax="454"))
+    assert await _balance(db) == Decimal("26.99")
+    purchase = await db.scalar(sa.select(Purchase))
+    assert purchase is not None and purchase.credit_usd == Decimal("26.99")
+
+
+async def test_the_quote_takes_the_tax_out_of_the_amount(client: AsyncClient) -> None:
+    for params in ({"amount": "37", "tax": "4.54"}, {"amount": "37", "tax_cents": "454"}):
+        body = (await client.get("/credit/quote", params=params)).json()
+        assert (body["price_usd"], body["tax_usd"], body["credit_usd"]) == ("37", "4.54", "26.99")
+    refused = await client.get("/credit/quote", params={"amount": "37", "tax": "40"})
+    assert refused.status_code == 422

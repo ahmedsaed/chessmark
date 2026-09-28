@@ -578,7 +578,7 @@ environment:
    * `PADDLE_API_KEY`, created in Developer tools → Authentication with permission to **write
      transactions** (`pdl_live_…` on production; the prefix picks the environment);
    * `PADDLE_PRODUCT_ID`, the product's `pro_…`;
-   * optionally `PADDLE_TAX_PREVIEW_PRICE_ID`: a $1 price of that product, one-time, tax on top,
+   * optionally `PADDLE_TAX_PREVIEW_PRICE_ID`: a $1 price of that product, one-time, tax included,
      quantity 5–100, never sold. `/credit` previews it to estimate the buyer's tax before checkout.
      Live: `pri_01m3mgceeknf3ybqeff8cjyn8d`;
    * `OPENROUTER_MANAGEMENT_KEY`, which reads OpenRouter's balance — without it nothing is sold.

@@ -106,6 +106,8 @@ export function BuyCredit({
     selling ? options.tax_preview_price_id : null,
     quote ? whole(quote.price_usd) : null,
   );
+  /* With an estimate, the breakdown with that tax taken out; without, the no-tax one. */
+  const shown = estimate?.quote ?? quote;
   const tooMuch = selling && wholeNumber && Number(amount) > largest && largest < Number(options.max_usd);
   const problem = tooMuch
     ? `Only up to $${largest} can be bought right now.`
@@ -195,39 +197,37 @@ export function BuyCredit({
       </div>
 
       <div className="flex flex-col gap-5 border border-line bg-surface px-5 py-5">
-        {/* A sum, top to bottom: what you pay, what comes out of it, what reaches your balance.
-            With a tax estimate, the top is what the buyer pays with tax and the tax is the first
-            thing taken out — the same one sum the checkout dialog shows. Every figure is Paddle's
-            or the API's; the page adds nothing up. */}
+        {/* A sum, top to bottom: what the buyer pays — the amount they chose, tax included — then
+            everything taken out of it, down to what reaches their balance. With a tax estimate the
+            tax is the first line and the credit is "about"; the checkout confirms both. Every
+            figure is the API's or Paddle's; the page adds nothing up. */}
         <div>
-          {estimate && (
-            <p className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">
-              You pay about
-            </p>
-          )}
-          <p className="tabular font-serif text-4xl text-ink">
-            {estimate ? estimate.total : quote ? dollars(quote.price_usd) : "—"}
+          <p className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">You pay</p>
+          <p className="tabular mt-1 font-serif text-4xl text-ink">
+            {quote ? dollars(quote.price_usd) : "—"}
           </p>
         </div>
         <dl className="tabular flex flex-col gap-1.5 font-mono text-meta">
           {estimate && (
             <div className="flex items-baseline justify-between gap-3 text-ink-faint">
               <dt>Tax ({estimate.country}, estimated)</dt>
-              <dd className="text-ink-dim">− {estimate.tax}</dd>
+              <dd className="text-ink-dim">− {dollars(shown?.tax_usd ?? "0")}</dd>
             </div>
           )}
-          <Line label="Payment processor" rule="5% + $0.50" amount={quote?.processor_fee_usd} />
-          <Line label="Running Chessmark" rule="5%" amount={quote?.upkeep_usd} />
-          <Line label="AI provider fee" rule="5.5%" amount={quote?.provider_fee_usd} />
+          <Line label="Payment processor" rule="5% + $0.50" amount={shown?.processor_fee_usd} />
+          <Line label="Running Chessmark" rule="5%" amount={shown?.upkeep_usd} />
+          <Line label="AI provider fee" rule="5.5%" amount={shown?.provider_fee_usd} />
           <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-line pt-2.5">
-            <dt className="uppercase tracking-[0.12em] text-ink">Your credit</dt>
-            <dd className="text-lg text-accent">{quote ? dollars(quote.credit_usd) : "—"}</dd>
+            <dt className="uppercase tracking-[0.12em] text-ink">
+              Your credit{estimate && <span className="text-ink-faint"> (about)</span>}
+            </dt>
+            <dd className="text-lg text-accent">{shown ? dollars(shown.credit_usd) : "—"}</dd>
           </div>
         </dl>
         <p className="-mt-2 text-xs text-ink-faint">
           {estimate
-            ? "Tax is estimated from your location; the checkout confirms it."
-            : "Tax is added at checkout where it applies."}
+            ? "Tax is estimated from your location; the checkout confirms it, and your credit."
+            : "Any tax comes out of this amount at checkout."}
         </p>
         {!selling || soldOut || paused ? (
           <div className="flex flex-col gap-2">
@@ -265,17 +265,16 @@ export function BuyCredit({
  *
  * `null` until Paddle answers for *this* amount — each answer is tagged with the amount it is for,
  * so a slow reply for an earlier choice is never shown against a later one — and whenever there is
- * nothing to estimate. The breakdown then shows the pre-tax price, as it always did.
+ * nothing to estimate. The breakdown then has no tax line, and says tax comes out at checkout.
  */
 function useTaxEstimate(
   priceId: string | null,
   amount: string | null,
-): { total: string; tax: string; country: string } | null {
+): { country: string; quote: CreditQuote } | null {
   const [answer, setAnswer] = useState<{
     amount: string;
-    total: string;
-    tax: string;
     country: string;
+    quote: CreditQuote;
   } | null>(null);
 
   useEffect(() => {
@@ -291,14 +290,16 @@ function useTaxEstimate(
         const line = preview.data.details.lineItems[0];
         const code = preview.data.address?.countryCode;
         if (!current || !line || !code) return;
+        /* The API takes the estimated tax out of the amount; Paddle's cents go as they came. */
+        const taxed = await getCreditQuote(amount, { cents: line.totals.tax });
+        if (!current) return;
         setAnswer({
           amount,
-          total: line.formattedTotals.total,
-          tax: line.formattedTotals.tax,
           country: new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code,
+          quote: taxed,
         });
       } catch {
-        /* No estimate is a fine answer: the breakdown shows the pre-tax price. */
+        /* No estimate is a fine answer: the breakdown shows the no-tax figures. */
       }
     }, QUOTE_AFTER_MS);
     return () => {
@@ -308,6 +309,34 @@ function useTaxEstimate(
   }, [priceId, amount]);
 
   return answer && answer.amount === amount ? answer : null;
+}
+
+/**
+ * The checkout's own breakdown: the tax Paddle is about to charge, taken out of the amount by the
+ * API. Tagged with the amount and tax it is for, so a change of country in the form never shows
+ * the credit for the previous one.
+ */
+function useCheckoutQuote(amount: string | null, tax: number | undefined): CreditQuote | null {
+  const [answer, setAnswer] = useState<{ key: string; quote: CreditQuote } | null>(null);
+  const key = amount !== null && tax !== undefined ? `${amount}:${tax}` : null;
+
+  useEffect(() => {
+    if (!key || amount === null || tax === undefined) return;
+    let current = true;
+    getCreditQuote(amount, { dollars: String(tax) }).then(
+      (quote) => {
+        if (current) setAnswer({ key, quote });
+      },
+      () => {
+        /* Keep the dashes; the webhook settles the credit whatever this shows. */
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [key, amount, tax]);
+
+  return answer && answer.key === key ? answer.quote : null;
 }
 
 function Line({ label, rule, amount }: { label: string; rule: string; amount?: string }) {
@@ -538,14 +567,13 @@ function Checkout({ amount }: { amount: string | null }) {
 const FRAME_TARGET = "paddle-checkout-frame";
 
 /**
- * The purchase as one sum, top to bottom: what the buyer pays, tax included, then everything that
- * comes out of it — the tax first, then the three shares — down to the credit that reaches their
- * balance. One set of numbers rather than two, so nothing reads as a second price.
+ * The purchase as one sum, top to bottom: what the buyer pays — the amount they chose, tax
+ * included — then everything taken out of it, the tax first, down to the credit.
  *
- * The total and the tax are Paddle's, so they are the buyer's own and change when they change
- * country in the form; the shares and the credit are our quote. Every line is a figure one of the
- * two already computed — the page lays them out and adds nothing up. Until Paddle has reported the
- * checkout, the top shows our pre-tax price and the tax line waits.
+ * The tax is what Paddle's checkout is about to charge, so it changes when the buyer changes
+ * country in the form; the API takes it out of the amount and quotes the rest. The lines wait as
+ * dashes until the API has answered for that tax. The webhook settles the credit from the tax
+ * Paddle finally charges, which is this figure.
  */
 function OrderSummary({
   summary,
@@ -556,27 +584,23 @@ function OrderSummary({
   quote: CreditQuote | null;
   paid: boolean;
 }) {
-  const paddleMoney = (value: number) =>
-    new Intl.NumberFormat("en", {
-      style: "currency",
-      currency: summary?.currency_code ?? "USD",
-    }).format(value);
-  const total = summary ? paddleMoney(summary.totals.total) : quote ? dollars(quote.price_usd) : "—";
-  const tax = summary ? `− ${paddleMoney(summary.totals.tax)}` : "—";
+  const exact = useCheckoutQuote(quote ? whole(quote.price_usd) : null, summary?.totals.tax);
   return (
     <div className="flex flex-col gap-5">
       <div>
         <p className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">You pay</p>
-        <p className="tabular mt-1 font-serif text-4xl text-ink">{total}</p>
+        <p className="tabular mt-1 font-serif text-4xl text-ink">
+          {quote ? dollars(quote.price_usd) : "—"}
+        </p>
       </div>
       <dl className="tabular flex flex-col gap-1.5 font-mono text-meta">
-        <SummaryLine label="Tax" value={tax} />
-        <Line label="Payment processor" rule="5% + $0.50" amount={quote?.processor_fee_usd} />
-        <Line label="Running Chessmark" rule="5%" amount={quote?.upkeep_usd} />
-        <Line label="AI provider fee" rule="5.5%" amount={quote?.provider_fee_usd} />
+        <SummaryLine label="Tax" value={exact ? `− ${dollars(exact.tax_usd)}` : "—"} />
+        <Line label="Payment processor" rule="5% + $0.50" amount={exact?.processor_fee_usd} />
+        <Line label="Running Chessmark" rule="5%" amount={exact?.upkeep_usd} />
+        <Line label="AI provider fee" rule="5.5%" amount={exact?.provider_fee_usd} />
         <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-line pt-2.5">
           <dt className="uppercase tracking-[0.12em] text-ink">Your credit</dt>
-          <dd className="text-lg text-accent">{quote ? dollars(quote.credit_usd) : "—"}</dd>
+          <dd className="text-lg text-accent">{exact ? dollars(exact.credit_usd) : "—"}</dd>
         </div>
       </dl>
 

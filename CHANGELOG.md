@@ -20,7 +20,7 @@ file is only the record of *what shipped when*.
 - **Buy any amount of credit** from $5 to $100, with $5, $10 and $25 as quick picks. Each purchase
   is shown as a sum: the payment processor's fee, 5% for running Chessmark, the **AI provider fee**
   (OpenRouter's 5.5% on the credit we buy from it, which the old packs did not cover), and the
-  credit left. $5 now buys $3.79, $10 buys $8.05, $25 buys $20.85. (AUTH-22,
+  credit left. $5 now buys $3.79, $10 buys $8.05, $25 buys $20.85 where there is no tax. (AUTH-22,
   [ADR-0056](docs/adr/0056-credit-is-sold-only-while-openrouter-can-cover-it.md))
 - **Credit is sold only while OpenRouter can pay for it.** A checkout reserves its credit against
   OpenRouter's remaining balance, less what users already hold and a $10 reserve, under a lock that
@@ -31,6 +31,12 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **The amount you choose is what you pay, tax included.** Tax used to be added on top at
+  checkout; it now comes out of the amount as the first line of the breakdown. `/credit` estimates
+  it from where you are browsing, the checkout shows the exact tax and credit before you pay, and
+  the credit granted is computed from the tax Paddle actually charged. (AUTH-22)
+- **Checkout opens inside the credit page**, in a dialog over the blurred page, with the same
+  breakdown beside the payment form, and closes itself once the payment goes through.
 - **Credit unused for 12 months may expire**, in the terms and on the credit page. OpenRouter can
   expire the credit we hold with it after a year, so a promise that ours never expires could not be
   kept.
