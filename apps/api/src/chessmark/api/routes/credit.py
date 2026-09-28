@@ -24,6 +24,7 @@ from chessmark.api.deps import (
     CurrentUser,
     PaddleApiDep,
     RedisDep,
+    SalesDep,
     SessionDep,
     SettingsDep,
 )
@@ -81,6 +82,8 @@ class QuoteOut(BaseModel):
 class OptionsOut(BaseModel):
     #: False until Paddle and OpenRouter's management key are configured. The amounts and their
     #: breakdowns are public either way — what credit costs is readable before it is on sale.
+    #: Configured is not open: whether it is on sale *now* is `/credit/availability`'s `paused`,
+    #: because this answer is cached and the switch is flipped at runtime (ADR-0057).
     selling: bool
     min_usd: Decimal
     max_usd: Decimal
@@ -93,11 +96,12 @@ class AvailabilityOut(BaseModel):
     """What can be bought right now, from the stored OpenRouter balance (ADR-0056).
 
     `available` with the largest amount that fits; `sold_out`; `unknown` when the stored balance is
-    missing or too old to stand for now; `off` when selling is not configured. A hint for the page:
-    Buy checks again against a fresh read before it promises anything.
+    missing or too old to stand for now; `paused` when the operator has not opened sales, or paused
+    them (ADR-0057); `off` when selling is not configured. A hint for the page: Buy checks again
+    against a fresh read before it promises anything.
     """
 
-    state: Literal["available", "sold_out", "unknown", "off"]
+    state: Literal["available", "sold_out", "unknown", "paused", "off"]
     largest_usd: Decimal | None = None
 
 
@@ -130,6 +134,8 @@ async def credit_options(settings: SettingsDep) -> OptionsOut:
         min_usd=MIN_USD,
         max_usd=MAX_USD,
         presets=[QuoteOut.of(quote(amount)) for amount in PRESETS],
+        # Offered while sales are paused too: what an amount comes to where the visitor lives is
+        # worth showing before it can be bought, and the preview charges nobody.
         tax_preview_price_id=(
             settings.paddle_tax_preview_price_id or None if settings.selling_credit else None
         ),
@@ -159,12 +165,14 @@ async def credit_quote(
 
 @router.get("/credit/availability", response_model=AvailabilityOut)
 async def credit_availability(
-    session: SessionDep, settings: SettingsDep, balance: BalanceDep
+    session: SessionDep, settings: SettingsDep, balance: BalanceDep, sales: SalesDep
 ) -> AvailabilityOut:
     """What can be bought now. Never calls OpenRouter: it reads the balance the worker stores once
     a minute, and adds up what users hold and what open checkouts reserve. Two statements."""
     if not settings.selling_credit:
         return AvailabilityOut(state="off")
+    if not await sales.is_open():
+        return AvailabilityOut(state="paused")
     remaining = await balance.stored()
     if remaining is None:
         return AvailabilityOut(state="unknown")
@@ -188,6 +196,7 @@ async def start_checkout(
     balance: BalanceDep,
     paddle: PaddleApiDep,
     redis: RedisDep,
+    sales: SalesDep,
 ) -> CheckoutOut:
     """Reserve an amount's credit, and create the Paddle transaction to pay for it.
 
@@ -202,6 +211,13 @@ async def start_checkout(
     if not settings.selling_credit:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE, detail="Credit is not on sale yet."
+        )
+    # Checked here, not only on the page: the page's answer can be a minute old, and a paused sale
+    # must refuse a checkout started from a tab opened before the pause (ADR-0057).
+    if not await sales.is_open():
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Buying credit is paused. Please try again later.",
         )
     try:
         q = quote(checked_amount(body.amount_usd))

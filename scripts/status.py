@@ -42,6 +42,7 @@ from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import KEY_PREFIX as COOLDOWN_PREFIX  # noqa: E402
 from chessmark.core.failures import FailureLog  # noqa: E402
 from chessmark.core.halt import Halt  # noqa: E402
+from chessmark.core.sales import Sales  # noqa: E402
 from chessmark.core.openrouter_billing import OpenRouterBilling  # noqa: E402
 from chessmark.db.capacity import headroom, largest_affordable  # noqa: E402
 from chessmark.db.enums import EventType, GameStatus, PurchaseStatus  # noqa: E402
@@ -441,7 +442,7 @@ async def show_billing(report: Report, session: Any) -> None:
     (report.warn if abs(difference) > BILLING_TOLERANCE_USD else report.ok)("month", line)
 
 
-async def show_selling(report: Report, session: Any) -> None:
+async def show_selling(report: Report, session: Any, redis: Any) -> None:
     """Whether credit can be bought, and how much more OpenRouter's balance can cover (ADR-0056).
 
     Sold out is a warning, not a fault — it means top OpenRouter up. What does need a person: a
@@ -453,6 +454,13 @@ async def show_selling(report: Report, session: Any) -> None:
     if not settings.selling_credit:
         report.ok("off", "Paddle or OPENROUTER_MANAGEMENT_KEY is not configured")
         return
+
+    # Paused is not a fault — sales start that way, and a person paused them on purpose.
+    sales = await Sales(redis).state()
+    if sales.open:
+        report.ok("open", "taking payments · pause with ./chessmark sales pause \"reason\"")
+    else:
+        report.ok("paused", f"{sales.reason} · open with ./chessmark sales open")
 
     remaining = await OpenRouterBilling(
         management_key=settings.openrouter_management_key,
@@ -809,7 +817,7 @@ async def main() -> int:
                 if everything:
                     await show_platform(report, session)
                     await show_billing(report, session)
-                    await show_selling(report, session)
+                    await show_selling(report, session, redis)
                 if everything or args.games:
                     await show_games(report, session)
                 if everything or args.tournaments:

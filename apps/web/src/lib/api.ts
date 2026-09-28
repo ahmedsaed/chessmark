@@ -489,7 +489,8 @@ export async function getCreditOptions(): Promise<CreditOptions> {
 }
 
 export interface CreditAvailability {
-  state: "available" | "sold_out" | "unknown" | "off";
+  /** `paused`: configured, but sales are not open — never opened, or paused by the operator. */
+  state: "available" | "sold_out" | "unknown" | "paused" | "off";
   /** The largest whole-dollar amount that fits right now, when `available`. */
   largest_usd: string | null;
 }

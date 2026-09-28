@@ -29,6 +29,7 @@ from chessmark.core.openrouter_balance import Balance, OpenRouterBalance
 from chessmark.core.openrouter_billing import OpenRouterBilling
 from chessmark.core.paddle_api import PaddleApi
 from chessmark.core.ratelimit import RateLimiter
+from chessmark.core.sales import Sales
 from chessmark.db.models import Game, User
 from chessmark.db.repositories import GameNotFoundError, get_game
 from chessmark.db.session import get_sessionmaker
@@ -92,8 +93,14 @@ def get_paddle_api(settings: SettingsDep) -> PaddleApi:
     return PaddleApi(settings.paddle_api_key)
 
 
+async def get_sales(redis: RedisDep) -> Sales:
+    """The operator's switch: whether credit is on sale right now (ADR-0057)."""
+    return Sales(redis)
+
+
 BalanceDep = Annotated[Balance, Depends(get_openrouter_balance)]
 PaddleApiDep = Annotated[PaddleApi, Depends(get_paddle_api)]
+SalesDep = Annotated[Sales, Depends(get_sales)]
 
 
 async def get_queue(redis: RedisDep) -> TurnQueue:

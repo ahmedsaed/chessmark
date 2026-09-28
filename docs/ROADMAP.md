@@ -1597,6 +1597,9 @@ without losing money on OpenRouter's own fee
 - [x] A sandbox checkout at a custom amount completes end to end: $37 from Egypt ($42.18 with VAT),
       the server-made transaction read "$31.09 Chessmark credit", the webhook credited $31.09 once
       and consumed the reservation, and a replayed delivery credited nothing more
+- [x] Sales open and pause at runtime and start paused, so the live settings can be in place before
+      Paddle verifies ([ADR-0057](adr/0057-credit-sales-are-a-switch-that-starts-closed.md)); a
+      paused sale refuses checkouts and still credits what was paid (`test_buy_credit.py`, mutated)
 - [ ] The live catalogue's fixed prices archived, and live settings in place once Paddle verifies
 
 **Covers:** AUTH-22, AUTH-23, AUTH-24

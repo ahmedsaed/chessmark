@@ -75,6 +75,7 @@ were live in this directory before it was written.
 | [0054](0054-a-game-is-charged-what-openrouter-billed.md) | A game is reconciled against what OpenRouter billed, and charged it | Accepted |
 | [0055](0055-credit-is-sold-as-fixed-packs-through-paddle.md) | Credit is sold as fixed packs through Paddle, and credited by its webhook | Amended by [0056](0056-credit-is-sold-only-while-openrouter-can-cover-it.md) |
 | [0056](0056-credit-is-sold-only-while-openrouter-can-cover-it.md) | Credit is sold only while OpenRouter can cover it, in any amount the buyer chooses | Accepted |
+| [0057](0057-credit-sales-are-a-switch-that-starts-closed.md) | Credit sales are a switch an operator flips, and it starts closed | Accepted |
 
 ## Template
 

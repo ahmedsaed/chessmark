@@ -27,7 +27,7 @@ from fastapi import FastAPI
 from httpx import AsyncClient, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.api.deps import get_openrouter_balance, get_paddle_api
+from chessmark.api.deps import get_openrouter_balance, get_paddle_api, get_sales
 from chessmark.core.config import Settings, get_settings
 from chessmark.core.paddle_api import PaddleApiError
 from chessmark.core.paddle_signature import sign
@@ -76,9 +76,20 @@ class FakePaddle:
 
 
 @dataclass
+class FakeSales:
+    """The operator's switch (ADR-0057). Open in these tests unless one pauses it."""
+
+    open_: bool = True
+
+    async def is_open(self) -> bool:
+        return self.open_
+
+
+@dataclass
 class Selling:
     balance: FakeBalance
     paddle: FakePaddle
+    sales: FakeSales
 
 
 @pytest.fixture
@@ -91,10 +102,11 @@ def selling(app: FastAPI) -> Selling:
         credit_reserve_usd=10.0,
         paddle_tax_preview_price_id="pri_preview",
     )
-    fakes = Selling(balance=FakeBalance(), paddle=FakePaddle())
+    fakes = Selling(balance=FakeBalance(), paddle=FakePaddle(), sales=FakeSales())
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_openrouter_balance] = lambda: fakes.balance
     app.dependency_overrides[get_paddle_api] = lambda: fakes.paddle
+    app.dependency_overrides[get_sales] = lambda: fakes.sales
     return fakes
 
 
@@ -702,3 +714,44 @@ async def test_a_quote_with_tax_that_is_not_a_number_says_so(
 ) -> None:
     response = await client.get("/credit/quote", params={"amount": "37", **params})
     assert response.status_code == 422
+
+
+# ------------------------------------------------------------------------------ the sales switch
+
+
+async def test_a_paused_sale_refuses_new_checkouts_before_asking_anybody(
+    client: AsyncClient, db: AsyncSession, selling: Selling
+) -> None:
+    """Paused, a checkout is refused before OpenRouter is asked or anything is reserved — from a
+    tab opened before the pause, too, which is why the API checks and not only the page."""
+    await _buyer(db)
+    selling.sales.open_ = False
+    response = await _checkout(client, 5)
+    assert response.status_code == 503
+    assert "paused" in response.json()["detail"]
+    assert selling.balance.fresh_reads == 0
+    assert selling.paddle.made == []
+    assert await db.scalar(sa.select(sa.func.count()).select_from(CreditReservation)) == 0
+
+
+async def test_a_paused_sale_still_shows_what_an_amount_comes_to(
+    client: AsyncClient, selling: Selling
+) -> None:
+    """The page says "paused" where Buy would be, and keeps the breakdown and the tax estimate."""
+    selling.sales.open_ = False
+    assert (await client.get("/credit/availability")).json() == {
+        "state": "paused",
+        "largest_usd": None,
+    }
+    assert (await client.get("/credit/options")).json()["tax_preview_price_id"] == "pri_preview"
+
+
+async def test_a_purchase_paid_before_the_pause_is_still_credited(
+    client: AsyncClient, db: AsyncSession, selling: Selling
+) -> None:
+    """The buyer was halfway through the checkout when sales paused. They paid; it is credited."""
+    await _buyer(db)
+    txn = (await _checkout(client, 10)).json()["transaction_id"]
+    selling.sales.open_ = False
+    await _deliver(client, _completed(txn, _reservation_of(selling), total="1000"))
+    assert await _balance(db) == Decimal("8.05")
