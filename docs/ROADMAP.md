@@ -1594,7 +1594,9 @@ without losing money on OpenRouter's own fee
       sessions held open at once (`tests/db/test_capacity.py`, fails without the lock)
 - [x] A purchase credits what its reservation says, once; a payment that does not match its
       reservation is recorded and not credited
-- [ ] A sandbox checkout at a custom amount completes end to end — needs a sandbox `PADDLE_API_KEY`
+- [x] A sandbox checkout at a custom amount completes end to end: $37 from Egypt ($42.18 with VAT),
+      the server-made transaction read "$31.09 Chessmark credit", the webhook credited $31.09 once
+      and consumed the reservation, and a replayed delivery credited nothing more
 - [ ] The live catalogue's fixed prices archived, and live settings in place once Paddle verifies
 
 **Covers:** AUTH-22, AUTH-23, AUTH-24
