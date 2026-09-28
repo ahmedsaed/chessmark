@@ -417,7 +417,10 @@ function Checkout({ amount }: { amount: string | null }) {
       )}
 
       {/* Our own dialog, over the page it was opened from — blurred, not replaced, so the buyer
-          can see they have not left Chessmark. Paddle's payment form is embedded in it (inline
+          can see they have not left Chessmark. The backdrop's colour and blur are literal values:
+          `::backdrop` does not inherit the page's custom properties in every browser (Firefox),
+          and Tailwind's `bg-ground/50` and `backdrop-blur-md` are both variables underneath, so
+          there they drew nothing at all. Paddle's payment form is embedded in it (inline
           checkout), and the order summary beside it is ours, drawn from what Paddle reports: an
           inline checkout must show what is bought, the subtotal, tax and total with their
           currency, Paddle's own footer, and the refund policy. */}
@@ -428,7 +431,7 @@ function Checkout({ amount }: { amount: string | null }) {
           mine.current = false;
           void loadPaddle().then((loaded) => loaded?.Checkout.close());
         }}
-        className="m-auto max-h-[calc(100dvh-1rem)] w-[min(960px,calc(100vw-1rem))] max-w-none overflow-y-auto overflow-x-hidden border border-line bg-ground p-0 text-ink backdrop:bg-ground/50 backdrop:backdrop-blur-md"
+        className="m-auto max-h-[calc(100dvh-1rem)] w-[min(960px,calc(100vw-1rem))] max-w-none overflow-y-auto overflow-x-hidden border border-line bg-ground p-0 text-ink backdrop:bg-[rgba(22,19,14,0.55)] backdrop:[backdrop-filter:blur(12px)]"
       >
         <div className="flex items-center justify-between border-b border-line px-3 py-3 sm:px-5 sm:py-4">
           <h2 id="checkout-title" className="font-serif text-2xl text-ink">
