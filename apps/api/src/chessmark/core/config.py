@@ -147,6 +147,11 @@ class Settings(BaseSettings):
     paddle_api_key: str = ""
     #: The catalogue product every purchase is a price of ("Chessmark credit", `pro_…`).
     paddle_product_id: str = ""
+    #: A $1 catalogue price of that product, never sold, that `/credit` previews in quantity to
+    #: estimate the buyer's tax before checkout ($37 is a preview of 37). Paddle previews only
+    #: catalogue prices, and purchases use prices the server creates per checkout. Optional: empty
+    #: hides the estimate, and the checkout still shows the exact tax.
+    paddle_tax_preview_price_id: str = ""
     #: OpenRouter credit kept back from sale for our own tournaments and benchmark games, and as a
     #: margin for turns in flight: credit is sold only while OpenRouter's balance covers everything
     #: users already hold, everything reserved by open checkouts, and this (ADR-0056).

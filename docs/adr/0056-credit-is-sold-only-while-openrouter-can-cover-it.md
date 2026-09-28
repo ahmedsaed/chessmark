@@ -73,6 +73,15 @@ read. So OpenRouter is asked once a minute, plus once per Buy, however many peop
 stored value more than ten minutes old stands for nothing: the page says buying is paused, rather
 than trusting a figure from before the worker stopped.
 
+**Tax is estimated on the page, and confirmed at checkout.** Paddle can preview the tax for a
+visitor's country, detected from their IP address, but it previews only catalogue prices. Purchases
+use prices the server creates. So there is one catalogue price of $1, never sold, and the page
+previews it in the chosen quantity: $37 is a preview of 37. The breakdown then reads as one sum:
+what the buyer pays including tax, the tax (marked estimated) taken out first, the three shares,
+and the credit. The checkout dialog shows the same sum with Paddle's exact tax. It is an estimate
+because the final tax depends on the country the buyer confirms, a VAT number, or a US ZIP code.
+Without a preview price configured, the page shows the pre-tax price, as before.
+
 **One open checkout per person, and five a minute at most.** Without the first rule, pressing Buy
 repeatedly would hold the headroom for thirty minutes per press, and one person could sell the site
 out for everyone without paying. A new checkout therefore releases the buyer's earlier one. If the
@@ -116,6 +125,12 @@ and nothing enforces it automatically.
 * The page's "sold out" and "up to $X" come from a balance up to a minute old, so they are a hint.
   Buy is what decides, and a buyer can be refused there after the page said yes, when the balance
   fell in between.
+* The $1 preview price is public, like every catalogue price, so a determined visitor could open a
+  Paddle checkout on it directly. Such a purchase has no reservation, so it is recorded as
+  `unmatched` and not credited, and an operator settles it. Its quantity is limited to 5–100, the
+  same range as real purchases.
+* `/credit` loads Paddle.js for every visitor while selling is on, not only for buyers, because the
+  estimate needs it. Each change of amount makes one preview request, sent once typing pauses.
 * Selling needs the worker running, since it keeps the stored balance current. With no worker, the
   page reports buying as paused within ten minutes.
 * The margin still shrinks where there is tax (ADR-0055: Paddle's fee is on the total including tax),

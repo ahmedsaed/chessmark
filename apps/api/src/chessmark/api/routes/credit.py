@@ -82,6 +82,8 @@ class OptionsOut(BaseModel):
     min_usd: Decimal
     max_usd: Decimal
     presets: list[QuoteOut]
+    #: The Paddle price the page previews in quantity to estimate tax, or `None` for no estimate.
+    tax_preview_price_id: str | None = None
 
 
 class AvailabilityOut(BaseModel):
@@ -125,6 +127,9 @@ async def credit_options(settings: SettingsDep) -> OptionsOut:
         min_usd=MIN_USD,
         max_usd=MAX_USD,
         presets=[QuoteOut.of(quote(amount)) for amount in PRESETS],
+        tax_preview_price_id=(
+            settings.paddle_tax_preview_price_id or None if settings.selling_credit else None
+        ),
     )
 
 

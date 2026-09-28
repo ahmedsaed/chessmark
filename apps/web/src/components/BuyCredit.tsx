@@ -102,6 +102,10 @@ export function BuyCredit({
   const typed = !preset && inRange;
   const answer = fetched?.amount === amount ? fetched : null;
   const quote = preset ?? answer?.quote ?? null;
+  const estimate = useTaxEstimate(
+    selling ? options.tax_preview_price_id : null,
+    quote ? whole(quote.price_usd) : null,
+  );
   const tooMuch = selling && wholeNumber && Number(amount) > largest && largest < Number(options.max_usd);
   const problem = tooMuch
     ? `Only up to $${largest} can be bought right now.`
@@ -191,11 +195,27 @@ export function BuyCredit({
       </div>
 
       <div className="flex flex-col gap-5 border border-line bg-surface px-5 py-5">
-        {/* A sum, top to bottom: what you pay, what comes out of it, what reaches your balance. */}
-        <p className="tabular font-serif text-4xl text-ink">
-          {quote ? dollars(quote.price_usd) : "—"}
-        </p>
+        {/* A sum, top to bottom: what you pay, what comes out of it, what reaches your balance.
+            With a tax estimate, the top is what the buyer pays with tax and the tax is the first
+            thing taken out — the same one sum the checkout dialog shows. Every figure is Paddle's
+            or the API's; the page adds nothing up. */}
+        <div>
+          {estimate && (
+            <p className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">
+              You pay about
+            </p>
+          )}
+          <p className="tabular font-serif text-4xl text-ink">
+            {estimate ? estimate.total : quote ? dollars(quote.price_usd) : "—"}
+          </p>
+        </div>
         <dl className="tabular flex flex-col gap-1.5 font-mono text-meta">
+          {estimate && (
+            <div className="flex items-baseline justify-between gap-3 text-ink-faint">
+              <dt>Tax ({estimate.country}, estimated)</dt>
+              <dd className="text-ink-dim">− {estimate.tax}</dd>
+            </div>
+          )}
           <Line label="Payment processor" rule="5% + $0.50" amount={quote?.processor_fee_usd} />
           <Line label="Running Chessmark" rule="5%" amount={quote?.upkeep_usd} />
           <Line label="AI provider fee" rule="5.5%" amount={quote?.provider_fee_usd} />
@@ -204,7 +224,11 @@ export function BuyCredit({
             <dd className="text-lg text-accent">{quote ? dollars(quote.credit_usd) : "—"}</dd>
           </div>
         </dl>
-        <p className="-mt-2 text-xs text-ink-faint">Tax is added at checkout where it applies.</p>
+        <p className="-mt-2 text-xs text-ink-faint">
+          {estimate
+            ? "Tax is estimated from your location; the checkout confirms it."
+            : "Tax is added at checkout where it applies."}
+        </p>
         {!selling || soldOut || paused ? (
           <div className="flex flex-col gap-2">
             <button type="button" disabled className={BUY}>
@@ -230,6 +254,60 @@ export function BuyCredit({
       </div>
     </div>
   );
+}
+
+/**
+ * The visitor's tax on an amount, estimated by Paddle from where they are browsing (ADR-0056).
+ *
+ * Paddle previews only catalogue prices, and purchases use a price the server creates per checkout,
+ * so this previews a $1 price that is never sold, in the chosen quantity. It is an estimate: the
+ * checkout confirms the tax once the buyer's country, VAT number or US ZIP code is known.
+ *
+ * `null` until Paddle answers for *this* amount — each answer is tagged with the amount it is for,
+ * so a slow reply for an earlier choice is never shown against a later one — and whenever there is
+ * nothing to estimate. The breakdown then shows the pre-tax price, as it always did.
+ */
+function useTaxEstimate(
+  priceId: string | null,
+  amount: string | null,
+): { total: string; tax: string; country: string } | null {
+  const [answer, setAnswer] = useState<{
+    amount: string;
+    total: string;
+    tax: string;
+    country: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!priceId || !amount) return;
+    let current = true;
+    const timer = setTimeout(async () => {
+      try {
+        const paddle = await loadPaddle();
+        if (!paddle || !current) return;
+        const preview = await paddle.PricePreview({
+          items: [{ priceId, quantity: Number(amount) }],
+        });
+        const line = preview.data.details.lineItems[0];
+        const code = preview.data.address?.countryCode;
+        if (!current || !line || !code) return;
+        setAnswer({
+          amount,
+          total: line.formattedTotals.total,
+          tax: line.formattedTotals.tax,
+          country: new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code,
+        });
+      } catch {
+        /* No estimate is a fine answer: the breakdown shows the pre-tax price. */
+      }
+    }, QUOTE_AFTER_MS);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [priceId, amount]);
+
+  return answer && answer.amount === amount ? answer : null;
 }
 
 function Line({ label, rule, amount }: { label: string; rule: string; amount?: string }) {

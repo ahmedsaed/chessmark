@@ -89,6 +89,7 @@ def selling(app: FastAPI) -> Selling:
         paddle_product_id="pro_test",
         openrouter_management_key="mgmt",
         credit_reserve_usd=10.0,
+        paddle_tax_preview_price_id="pri_preview",
     )
     fakes = Selling(balance=FakeBalance(), paddle=FakePaddle())
     app.dependency_overrides[get_settings] = lambda: settings
@@ -206,6 +207,7 @@ async def test_the_options_are_public_and_lay_out_each_preset_as_a_sum(
 ) -> None:
     body = (await client.get("/credit/options")).json()
     assert (body["selling"], body["min_usd"], body["max_usd"]) == (True, "5", "100")
+    assert body["tax_preview_price_id"] == "pri_preview"
     rows = [
         (
             p["price_usd"],
@@ -230,7 +232,9 @@ async def test_nothing_is_on_sale_until_paddle_and_openrouter_are_configured(
     app.dependency_overrides[get_settings] = lambda: Settings(
         paddle_webhook_secret="", paddle_api_key="", paddle_product_id=""
     )
-    assert (await client.get("/credit/options")).json()["selling"] is False
+    options = (await client.get("/credit/options")).json()
+    assert options["selling"] is False
+    assert options["tax_preview_price_id"] is None, "no estimate for a price nobody can buy"
     assert (await _checkout(client, 5)).status_code == 503
 
 

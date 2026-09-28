@@ -467,6 +467,9 @@ export interface CreditOptions {
   max_usd: string;
   /** The one-click amounts, already quoted. */
   presets: CreditQuote[];
+  /** A $1 Paddle price, never sold, previewed in quantity to estimate the visitor's tax; null for
+   *  no estimate. */
+  tax_preview_price_id: string | null;
 }
 
 /**
@@ -479,7 +482,7 @@ export async function getCreditOptions(): Promise<CreditOptions> {
     return await get<CreditOptions>("/credit/options", cached([]));
   } catch (error) {
     reportFailure("/credit/options", error);
-    return { selling: false, min_usd: "5", max_usd: "100", presets: [] };
+    return { selling: false, min_usd: "5", max_usd: "100", presets: [], tax_preview_price_id: null };
   }
 }
 
