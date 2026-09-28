@@ -275,3 +275,14 @@ input[type="checkbox"]:disabled {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Paddle's inline checkout frame (`BuyCredit`), made see-through over our dark dialog.
+   A browser paints an embedded page on an opaque canvas — white, for Paddle's — when the frame
+   element's colour scheme differs from the embedded page's root, which Paddle leaves `normal`
+   (light). This site is `color-scheme: dark`, so the frame must be told `light` to match. Paddle.js
+   sets the frame's scheme itself with a rule that outranks the inline style we pass in
+   `frameStyle`, so in Firefox the frame computed `auto` and stayed white whenever the system was in
+   dark mode; Chromium was unaffected. `!important` on a more specific selector is what wins. */
+.paddle-checkout-frame > iframe.paddle-frame {
+  color-scheme: light !important;
+}
