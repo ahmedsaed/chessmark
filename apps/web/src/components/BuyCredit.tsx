@@ -460,11 +460,14 @@ function Checkout({ amount }: { amount: string | null }) {
 const FRAME_TARGET = "paddle-checkout-frame";
 
 /**
- * The purchase laid out the way `/credit` lays it out — price, what comes out of it, the credit —
- * and then what the buyer pays, which is where tax comes in. The first half is our quote; the second
- * is what Paddle reports, so the tax is the buyer's own and changes here when they change country in
- * the form. Paddle sends amounts as numbers in the transaction's currency; they are only formatted,
- * never added up.
+ * The purchase as one sum, top to bottom: what the buyer pays, tax included, then everything that
+ * comes out of it — the tax first, then the three shares — down to the credit that reaches their
+ * balance. One set of numbers rather than two, so nothing reads as a second price.
+ *
+ * The total and the tax are Paddle's, so they are the buyer's own and change when they change
+ * country in the form; the shares and the credit are our quote. Every line is a figure one of the
+ * two already computed — the page lays them out and adds nothing up. Until Paddle has reported the
+ * checkout, the top shows our pre-tax price and the tax line waits.
  */
 function OrderSummary({
   summary,
@@ -475,33 +478,27 @@ function OrderSummary({
   quote: CreditQuote | null;
   paid: boolean;
 }) {
-  const money = (value: number | undefined) =>
-    summary && value !== undefined
-      ? new Intl.NumberFormat("en", { style: "currency", currency: summary.currency_code }).format(
-          value,
-        )
-      : "—";
+  const paddleMoney = (value: number) =>
+    new Intl.NumberFormat("en", {
+      style: "currency",
+      currency: summary?.currency_code ?? "USD",
+    }).format(value);
+  const total = summary ? paddleMoney(summary.totals.total) : quote ? dollars(quote.price_usd) : "—";
+  const tax = summary ? `− ${paddleMoney(summary.totals.tax)}` : "—";
   return (
     <div className="flex flex-col gap-5">
-      <p className="tabular font-serif text-4xl text-ink">
-        {quote ? dollars(quote.price_usd) : "—"}
-      </p>
+      <div>
+        <p className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">You pay</p>
+        <p className="tabular mt-1 font-serif text-4xl text-ink">{total}</p>
+      </div>
       <dl className="tabular flex flex-col gap-1.5 font-mono text-meta">
+        <SummaryLine label="Tax" value={tax} />
         <Line label="Payment processor" rule="5% + $0.50" amount={quote?.processor_fee_usd} />
         <Line label="Running Chessmark" rule="5%" amount={quote?.upkeep_usd} />
         <Line label="AI provider fee" rule="5.5%" amount={quote?.provider_fee_usd} />
         <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-line pt-2.5">
           <dt className="uppercase tracking-[0.12em] text-ink">Your credit</dt>
           <dd className="text-lg text-accent">{quote ? dollars(quote.credit_usd) : "—"}</dd>
-        </div>
-      </dl>
-
-      <dl className="tabular flex flex-col gap-1.5 border-t border-line pt-4 font-mono text-meta">
-        <SummaryLine label="Price" value={money(summary?.totals.subtotal)} />
-        <SummaryLine label="Tax" value={money(summary?.totals.tax)} />
-        <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-line pt-2.5">
-          <dt className="uppercase tracking-[0.12em] text-ink">You pay</dt>
-          <dd className="text-lg text-ink">{money(summary?.totals.total)}</dd>
         </div>
       </dl>
 
