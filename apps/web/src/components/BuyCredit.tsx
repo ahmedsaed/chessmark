@@ -538,7 +538,7 @@ function Checkout({ amount }: { amount: string | null }) {
           mine.current = false;
           void loadPaddle().then((loaded) => loaded?.Checkout.close());
         }}
-        className="m-auto max-h-[calc(100dvh-1rem)] w-[min(960px,calc(100vw-1rem))] max-w-none overflow-y-auto overflow-x-hidden border border-line bg-ground p-0 text-ink backdrop:bg-[rgba(22,19,14,0.55)] backdrop:[backdrop-filter:blur(12px)]"
+        className="m-auto max-h-[calc(100dvh-1rem)] w-[min(960px,calc(100vw-1rem))] max-w-none overflow-y-auto overflow-x-hidden border border-line bg-ground p-0 text-ink backdrop:bg-[rgba(22,19,14,0.55)] backdrop:[backdrop-filter:blur(6px)]"
       >
         <div className="flex items-center justify-between border-b border-line px-3 py-3 sm:px-5 sm:py-4">
           <h2 id="checkout-title" className="font-serif text-2xl text-ink">

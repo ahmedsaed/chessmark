@@ -593,6 +593,10 @@ environment:
    * **Developer tools → Notifications → New destination**: `https://<api>/webhooks/paddle`, with
      `transaction.completed`, `adjustment.created` and `adjustment.updated`.
    * On live, **Checkout → Website approval** for the site's domain.
+   * Optionally, once that domain is approved and the site deployed, **Checkout → Website approval →
+     Apple Pay verification → Verify**. The site serves Paddle's domain association file at
+     `/.well-known/apple-developer-merchantid-domain-association` (`apps/web/public`). Unverified,
+     Apple Pay still works, through a Paddle popup instead of from our page.
 
 **How much can be sold** is OpenRouter's remaining balance, less the credit users already hold, less
 open checkouts' reservations, less `CREDIT_RESERVE_USD` ($10 by default). `./chessmark status` shows
