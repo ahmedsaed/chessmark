@@ -111,7 +111,7 @@ hammer OpenRouter.
 
 **The reservation is what a purchase grants.** Its id goes in the transaction's `custom_data`,
 written by the server. When Paddle reports the payment, the webhook:
-- checks that the total paid, tax included, equals the amount reserved;
+- checks that the total paid, tax included, equals the amount reserved, in US dollars;
 - credits the quote for that amount less **the tax Paddle reports it charged**, not the estimate;
 - marks the reservation consumed.
 
@@ -119,8 +119,9 @@ A reservation holds the credit the amount would buy with no tax, the most it can
 headroom is never short by the difference.
 
 All three happen in one database transaction, so the credit moves from reserved to held without
-being counted twice or not at all. A payment that matches no reservation, or not its own, is
-recorded as `unmatched` and not credited.
+being counted twice or not at all. A payment that matches no reservation, or not its own, or
+reports a tax that would leave less than nothing — a negative credit would be a debit from the
+buyer — is recorded as `unmatched` and not credited.
 
 **When the balance can't be read or doesn't cover the amount, the buyer is told.** An unknown
 OpenRouter balance sells nothing (503); it is never treated as a large one. An amount the headroom

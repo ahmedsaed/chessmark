@@ -77,11 +77,17 @@ def checked_amount(raw: Decimal | int | str) -> Decimal:
         amount = Decimal(str(raw))
     except ArithmeticError as error:
         raise AmountError(f"{raw!r} is not an amount of dollars") from error
+    # Before any comparison: comparing a signalling NaN raises rather than answering, which would
+    # surface as a 500 instead of the reason.
+    if not amount.is_finite():
+        raise AmountError(f"{raw!r} is not an amount of dollars")
     if amount != amount.to_integral_value():
         raise AmountError("Choose a whole number of dollars.")
     if not MIN_USD <= amount <= MAX_USD:
         raise AmountError(f"Choose between ${MIN_USD} and ${MAX_USD}.")
-    return amount
+    # `1e1` and `25.00` are fine amounts, but kept as written they reach Paddle's line item as
+    # "$1E+1" — so the amount is a plain number of dollars from here on.
+    return Decimal(int(amount))
 
 
 def quote(price: Decimal, tax: Decimal = Decimal(0)) -> Quote:
@@ -90,11 +96,15 @@ def quote(price: Decimal, tax: Decimal = Decimal(0)) -> Quote:
     Call `checked_amount` first for buyer input. Without a tax — before Paddle knows the buyer's
     country — this is also the most a purchase can grant, which is what a checkout reserves.
     """
-    if not Decimal(0) <= tax < price:
+    if not tax.is_finite() or not Decimal(0) <= tax < price:
         raise AmountError("The tax must be at least zero and less than the amount.")
     processor = _up(price * PROCESSOR_RATE + PROCESSOR_FIXED)
     upkeep = _up((price - tax) * UPKEEP_RATE)
     left = price - tax - processor - upkeep
+    # A negative credit would reach the webhook as a debit from the person who just paid. No real
+    # tax rate comes near this, so a tax that does is refused and the purchase settled by hand.
+    if left < 0:
+        raise AmountError("The tax leaves nothing of the amount to buy credit with.")
     credit = _down(left / (1 + PROVIDER_RATE))
     return Quote(
         price_usd=price,

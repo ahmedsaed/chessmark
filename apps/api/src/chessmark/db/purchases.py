@@ -94,7 +94,10 @@ async def _reservation_for(
 
 
 def _mismatch(
-    reservation: CreditReservation | None, transaction_id: str, total: str | None
+    reservation: CreditReservation | None,
+    transaction_id: str,
+    total: str | None,
+    currency: str | None,
 ) -> str | None:
     if reservation is None:
         return "no reservation matches this transaction"
@@ -102,6 +105,9 @@ def _mismatch(
         return f"its reservation belongs to {reservation.paddle_transaction_id}"
     if reservation.status is ReservationStatus.CONSUMED:
         return "its reservation was already paid for"
+    # The transaction is created in dollars; 3700 of any other currency is not $37.
+    if currency != "USD":
+        return f"paid in {currency}, not USD"
     if total != _cents(reservation.price_usd):
         return f"paid {total} cents, reserved {_cents(reservation.price_usd)}"
     return None
@@ -127,7 +133,8 @@ async def record_transaction(session: AsyncSession, data: dict[str, Any]) -> Rec
     totals = totals if isinstance(totals, dict) else {}
 
     reservation = await _reservation_for(session, transaction_id, data.get("custom_data"))
-    problem = _mismatch(reservation, transaction_id, _text(totals.get("total")))
+    currency = _text(data.get("currency_code")) or _text(totals.get("currency_code"))
+    problem = _mismatch(reservation, transaction_id, _text(totals.get("total")), currency)
     user_id = reservation.user_id if reservation is not None else None
     credit = Decimal(0)
     if reservation is not None and not problem:
@@ -151,9 +158,7 @@ async def record_transaction(session: AsyncSession, data: dict[str, Any]) -> Rec
             paddle_price_id=_price_id(data.get("items")),
             paddle_customer_id=_text(data.get("customer_id")),
             credit_usd=credit,
-            currency_code=_text(data.get("currency_code"))
-            or _text(totals.get("currency_code"))
-            or "",
+            currency_code=currency or "",
             grand_total=_text(totals.get("grand_total")) or _text(totals.get("total")) or "0",
             tax=_text(totals.get("tax")),
             fee=_text(totals.get("fee")),

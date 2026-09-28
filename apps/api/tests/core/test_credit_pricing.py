@@ -44,10 +44,17 @@ def test_tax_comes_out_of_the_amount_before_the_shares() -> None:
     )
 
 
-@pytest.mark.parametrize("tax", ["-0.01", "37", "40"])
+@pytest.mark.parametrize("tax", ["-0.01", "37", "40", "NaN", "sNaN"])
 def test_a_tax_outside_the_amount_is_refused(tax: str) -> None:
     with pytest.raises(AmountError):
         quote(Decimal(37), Decimal(tax))
+
+
+def test_a_tax_that_would_leave_less_than_nothing_is_refused() -> None:
+    """$4.90 of tax on $5 leaves less than the processor's share. A negative credit would reach
+    the webhook as a *debit* from the buyer, so it is refused rather than granted."""
+    with pytest.raises(AmountError):
+        quote(Decimal(5), Decimal("4.90"))
 
 
 @pytest.mark.parametrize("price", range(5, 101))
@@ -63,7 +70,7 @@ def test_every_amount_adds_up_and_covers_its_provider_fee(price: int) -> None:
         assert q.credit_usd * Decimal("1.055") <= left
 
 
-@pytest.mark.parametrize("raw", ["4", "101", "5.50", "abc", "-5"])
+@pytest.mark.parametrize("raw", ["4", "101", "5.50", "abc", "-5", "NaN", "sNaN", "Infinity"])
 def test_an_amount_outside_the_range_or_not_whole_is_refused(raw: str) -> None:
     with pytest.raises(AmountError):
         checked_amount(raw)
@@ -72,3 +79,9 @@ def test_an_amount_outside_the_range_or_not_whole_is_refused(raw: str) -> None:
 @pytest.mark.parametrize("raw", ["5", "37", "100"])
 def test_a_whole_amount_in_range_is_accepted(raw: str) -> None:
     assert checked_amount(raw) == Decimal(raw)
+
+
+def test_an_amount_is_a_plain_number_of_dollars_however_it_was_written() -> None:
+    """`1e1` is ten, but as `Decimal('1E+1')` it would reach Paddle's description as written."""
+    assert str(checked_amount("1e1")) == "10"
+    assert str(checked_amount("25.00")) == "25"

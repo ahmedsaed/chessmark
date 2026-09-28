@@ -114,7 +114,7 @@ async def _checkout(client: AsyncClient, amount: int | str, clerk_id: str = BUYE
 
 
 def _completed(
-    txn: str, reservation_id: str | None, *, total: str, tax: str = "0"
+    txn: str, reservation_id: str | None, *, total: str, tax: str = "0", currency: str = "USD"
 ) -> dict[str, Any]:
     """Paddle's `transaction.completed`. Prices include tax, so `total` is the amount the buyer
     chose and `tax` is the part of it that went to tax."""
@@ -124,12 +124,12 @@ def _completed(
             "id": txn,
             "status": "completed",
             "customer_id": "ctm_1",
-            "currency_code": "USD",
+            "currency_code": currency,
             "custom_data": {"reservation_id": reservation_id} if reservation_id else None,
             "items": [{"price": {"id": "pri_nonCatalog"}, "quantity": 1}],
             "details": {
                 "totals": {
-                    "currency_code": "USD",
+                    "currency_code": currency,
                     "subtotal": str(int(total) - int(tax)),
                     "tax": tax,
                     "total": total,
@@ -668,3 +668,37 @@ async def test_the_quote_takes_the_tax_out_of_the_amount(client: AsyncClient) ->
         assert (body["price_usd"], body["tax_usd"], body["credit_usd"]) == ("37", "4.54", "26.99")
     refused = await client.get("/credit/quote", params={"amount": "37", "tax": "40"})
     assert refused.status_code == 422
+
+
+async def test_a_payment_in_another_currency_is_not_credited_as_dollars(
+    client: AsyncClient, db: AsyncSession, selling: Selling
+) -> None:
+    """3700 of anything is not $37. The transaction is created in dollars, so a completion in
+    another currency is something we did not sell, and an operator settles it."""
+    await _buyer(db)
+    txn = (await _checkout(client, 37)).json()["transaction_id"]
+    event = _completed(txn, _reservation_of(selling), total="3700", currency="EUR")
+    await _deliver(client, event)
+    purchase = await db.scalar(sa.select(Purchase))
+    assert purchase is not None and purchase.status is PurchaseStatus.UNMATCHED
+    assert "EUR" in (purchase.problem or "")
+    assert await _balance(db) == 0
+
+
+async def test_a_tax_that_leaves_less_than_nothing_never_debits_the_buyer(
+    client: AsyncClient, db: AsyncSession, selling: Selling
+) -> None:
+    await _buyer(db)
+    txn = (await _checkout(client, 5)).json()["transaction_id"]
+    await _deliver(client, _completed(txn, _reservation_of(selling), total="500", tax="490"))
+    purchase = await db.scalar(sa.select(Purchase))
+    assert purchase is not None and purchase.status is PurchaseStatus.UNMATCHED
+    assert await _balance(db) == 0
+
+
+@pytest.mark.parametrize("params", [{"tax": "NaN"}, {"tax": "sNaN"}, {"tax_cents": "x"}])
+async def test_a_quote_with_tax_that_is_not_a_number_says_so(
+    client: AsyncClient, params: dict[str, str]
+) -> None:
+    response = await client.get("/credit/quote", params={"amount": "37", **params})
+    assert response.status_code == 422
