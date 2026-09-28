@@ -9,7 +9,8 @@
  *
  * **This never moves a balance.** Buy asks the API to reserve the credit and create a Paddle
  * transaction at that price; the API refuses, with the largest amount it can sell, when OpenRouter's
- * balance cannot cover it. Paddle's overlay then opens on that transaction, and Paddle's signed
+ * balance cannot cover it. Our dialog then opens over the page with Paddle's payment form embedded in
+ * it (inline checkout), on that transaction, and Paddle's signed
  * webhook to our API is what credits the account — for what the reservation says, not for anything
  * this page sent.
  *
@@ -21,7 +22,12 @@
  */
 
 import { useAuth, useUser } from "@clerk/nextjs";
-import { initializePaddle, type Paddle, type PaddleEventData } from "@paddle/paddle-js";
+import {
+  initializePaddle,
+  type CheckoutEventsData,
+  type Paddle,
+  type PaddleEventData,
+} from "@paddle/paddle-js";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -258,6 +264,14 @@ function Checkout({ amount }: { amount: string | null }) {
   const [opening, setOpening] = useState(false);
   const [arrival, setArrival] = useState<Arrival>({ state: "idle" });
   const [error, setError] = useState<string | null>(null);
+  /* What Paddle says the checkout holds — item, subtotal, tax, total — for the summary beside the
+     payment form. `null` until Paddle has loaded it, and again after the dialog closes. */
+  const [summary, setSummary] = useState<CheckoutEventsData | null>(null);
+  const [paid, setPaid] = useState(false);
+  /* The credit this checkout grants, for the summary. Kept in state as well as in `credit`, which
+     the poll reads: a ref must not be read while rendering. */
+  const [granting, setGranting] = useState("0");
+  const dialog = useRef<HTMLDialogElement>(null);
   const credit = useRef<string>("0");
   const mine = useRef(false);
 
@@ -303,24 +317,36 @@ function Checkout({ amount }: { amount: string | null }) {
     [getToken],
   );
 
+  const close = useCallback(() => {
+    void loadPaddle().then((loaded) => loaded?.Checkout.close());
+    mine.current = false;
+    if (dialog.current?.open) dialog.current.close();
+  }, []);
+
   useEffect(() => {
     function onEvent(event: PaddleEventData) {
       if (!mine.current) return;
-      if (event.name === "checkout.completed" && event.data?.transaction_id) {
-        void waitFor(event.data.transaction_id);
-        /* Back to our page on its own. Paddle's success screen otherwise stays up until the buyer
-           finds "Return to …" — and what they want to see is their credit arriving, which this
-           page says as soon as the webhook lands. A moment's pause first, so the payment is seen
-           to have gone through. */
-        setTimeout(() => void loadPaddle().then((loaded) => loaded?.Checkout.close()), CLOSE_AFTER_MS);
+      if (
+        event.data &&
+        (event.name === "checkout.loaded" ||
+          event.name === "checkout.updated" ||
+          event.name === "checkout.items.updated")
+      ) {
+        setSummary(event.data);
       }
-      if (event.name === "checkout.closed") mine.current = false;
+      if (event.name === "checkout.completed" && event.data?.transaction_id) {
+        setPaid(true);
+        void waitFor(event.data.transaction_id);
+        /* Back to the page on its own, where the credit is reported as it arrives. A moment's
+           pause first, so the payment is seen to have gone through. */
+        setTimeout(close, CLOSE_AFTER_MS);
+      }
     }
     listeners.add(onEvent);
     return () => {
       listeners.delete(onEvent);
     };
-  }, [waitFor]);
+  }, [waitFor, close]);
 
   async function buy() {
     if (!amount) return;
@@ -335,12 +361,26 @@ function Checkout({ amount }: { amount: string | null }) {
       }
       const checkout = await startCheckout(amount, await getToken());
       credit.current = checkout.quote.credit_usd;
+      setGranting(checkout.quote.credit_usd);
       mine.current = true;
+      setSummary(null);
+      setPaid(false);
+      /* The dialog first, so the element Paddle renders into exists when it looks for it. */
+      dialog.current?.showModal();
       const email = user?.primaryEmailAddress?.emailAddress;
       paddle.Checkout.open({
         transactionId: checkout.transaction_id,
         ...(email ? { customer: { email } } : {}),
-        settings: { displayMode: "overlay", variant: "one-page", theme: "dark", allowLogout: !email },
+        settings: {
+          displayMode: "inline",
+          variant: "one-page",
+          theme: "dark",
+          frameTarget: FRAME_TARGET,
+          frameInitialHeight: 450,
+          frameStyle: "width: 100%; min-width: 312px; background-color: transparent; border: none;",
+          showAddDiscounts: false,
+          allowLogout: !email,
+        },
       });
     } catch (failure) {
       setError(
@@ -369,6 +409,107 @@ function Checkout({ amount }: { amount: string | null }) {
           {error}
         </p>
       )}
+
+      {/* Our own dialog, over the page it was opened from — blurred, not replaced, so the buyer
+          can see they have not left Chessmark. Paddle's payment form is embedded in it (inline
+          checkout), and the order summary beside it is ours, drawn from what Paddle reports: an
+          inline checkout must show what is bought, the subtotal, tax and total with their
+          currency, Paddle's own footer, and the refund policy. */}
+      <dialog
+        ref={dialog}
+        aria-labelledby="checkout-title"
+        onClose={() => {
+          mine.current = false;
+          void loadPaddle().then((loaded) => loaded?.Checkout.close());
+        }}
+        className="m-auto max-h-[calc(100dvh-1rem)] w-[min(960px,calc(100vw-1rem))] max-w-none overflow-y-auto overflow-x-hidden border border-line bg-ground p-0 text-ink backdrop:bg-ground/50 backdrop:backdrop-blur-md"
+      >
+        <div className="flex items-center justify-between border-b border-line px-3 py-3 sm:px-5 sm:py-4">
+          <h2 id="checkout-title" className="font-serif text-2xl text-ink">
+            Buy credit
+          </h2>
+          <button
+            type="button"
+            onClick={close}
+            aria-label="Close the checkout"
+            className="border border-line bg-surface px-2.5 py-1 font-mono text-meta text-ink-faint transition-colors hover:border-accent-dim hover:text-ink"
+          >
+            ✕
+          </button>
+        </div>
+        {/* Tight on a phone: Paddle's form needs 312px, which a 390px screen only just has. */}
+        <div className="grid gap-6 p-3 sm:p-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
+          <OrderSummary summary={summary} credit={granting} paid={paid} />
+          <div className={FRAME_TARGET} />
+        </div>
+      </dialog>
+    </div>
+  );
+}
+
+/** The class Paddle renders its payment form into. */
+const FRAME_TARGET = "paddle-checkout-frame";
+
+/**
+ * What is being bought and what it costs, as Paddle reports it — so tax is the buyer's own, and
+ * changes here when they change country in the form. Paddle sends the amounts as numbers in the
+ * transaction's currency; they are only formatted, never added up.
+ */
+function OrderSummary({
+  summary,
+  credit,
+  paid,
+}: {
+  summary: CheckoutEventsData | null;
+  credit: string;
+  paid: boolean;
+}) {
+  const item = summary?.items[0];
+  const money = (value: number | undefined) =>
+    summary && value !== undefined
+      ? new Intl.NumberFormat("en", { style: "currency", currency: summary.currency_code }).format(
+          value,
+        )
+      : "—";
+  return (
+    <div className="flex flex-col gap-5">
+      <div>
+        <p className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">
+          {item?.product.name ?? "Chessmark credit"}
+        </p>
+        <p className="mt-1 text-lg text-ink">
+          {item?.price_name ?? `${formatBalance(credit)} Chessmark credit`}
+        </p>
+      </div>
+      <dl className="tabular flex flex-col gap-1.5 font-mono text-meta">
+        <SummaryLine label="Subtotal" value={money(summary?.totals.subtotal)} />
+        <SummaryLine label="Tax" value={money(summary?.totals.tax)} />
+        <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-line pt-2.5">
+          <dt className="uppercase tracking-[0.12em] text-ink">Total</dt>
+          <dd className="text-lg text-accent">{money(summary?.totals.total)}</dd>
+        </div>
+      </dl>
+      <p className="text-sm leading-relaxed text-ink-dim">
+        {paid
+          ? "Paid. Adding the credit to your account…"
+          : `${formatBalance(credit)} is added to your credit as soon as the payment goes through.`}
+      </p>
+      <p className="text-xs text-ink-faint">
+        Sold by Paddle, our merchant of record. See our{" "}
+        <Link href="/refunds" className="text-accent underline underline-offset-4">
+          refund policy
+        </Link>
+        .
+      </p>
+    </div>
+  );
+}
+
+function SummaryLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 text-ink-faint">
+      <dt>{label}</dt>
+      <dd className="text-ink-dim">{value}</dd>
     </div>
   );
 }
