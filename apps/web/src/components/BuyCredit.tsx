@@ -270,7 +270,7 @@ function Checkout({ amount }: { amount: string | null }) {
   const [paid, setPaid] = useState(false);
   /* The credit this checkout grants, for the summary. Kept in state as well as in `credit`, which
      the poll reads: a ref must not be read while rendering. */
-  const [granting, setGranting] = useState("0");
+  const [granting, setGranting] = useState<CreditQuote | null>(null);
   const dialog = useRef<HTMLDialogElement>(null);
   const credit = useRef<string>("0");
   const mine = useRef(false);
@@ -361,7 +361,7 @@ function Checkout({ amount }: { amount: string | null }) {
       }
       const checkout = await startCheckout(amount, await getToken());
       credit.current = checkout.quote.credit_usd;
-      setGranting(checkout.quote.credit_usd);
+      setGranting(checkout.quote);
       mine.current = true;
       setSummary(null);
       setPaid(false);
@@ -377,7 +377,13 @@ function Checkout({ amount }: { amount: string | null }) {
           theme: "dark",
           frameTarget: FRAME_TARGET,
           frameInitialHeight: 450,
-          frameStyle: "width: 100%; min-width: 312px; background-color: transparent; border: none;",
+          /* `color-scheme: light` is what makes the frame see-through. The site declares
+             `color-scheme: dark`, and a browser gives an embedded page whose scheme differs from
+             its host an opaque canvas — white, behind Paddle's dark form — so its text stays
+             legible. Matching the frame's own scheme removes that canvas, and our dialog shows
+             through. It changes nothing inside the frame. */
+          frameStyle:
+            "width: 100%; min-width: 312px; background-color: transparent; border: none; color-scheme: light;",
           showAddDiscounts: false,
           allowLogout: !email,
         },
@@ -439,7 +445,7 @@ function Checkout({ amount }: { amount: string | null }) {
         </div>
         {/* Tight on a phone: Paddle's form needs 312px, which a 390px screen only just has. */}
         <div className="grid gap-6 p-3 sm:p-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">
-          <OrderSummary summary={summary} credit={granting} paid={paid} />
+          <OrderSummary summary={summary} quote={granting} paid={paid} />
           <div className={FRAME_TARGET} />
         </div>
       </dialog>
@@ -451,20 +457,21 @@ function Checkout({ amount }: { amount: string | null }) {
 const FRAME_TARGET = "paddle-checkout-frame";
 
 /**
- * What is being bought and what it costs, as Paddle reports it — so tax is the buyer's own, and
- * changes here when they change country in the form. Paddle sends the amounts as numbers in the
- * transaction's currency; they are only formatted, never added up.
+ * The purchase laid out the way `/credit` lays it out — price, what comes out of it, the credit —
+ * and then what the buyer pays, which is where tax comes in. The first half is our quote; the second
+ * is what Paddle reports, so the tax is the buyer's own and changes here when they change country in
+ * the form. Paddle sends amounts as numbers in the transaction's currency; they are only formatted,
+ * never added up.
  */
 function OrderSummary({
   summary,
-  credit,
+  quote,
   paid,
 }: {
   summary: CheckoutEventsData | null;
-  credit: string;
+  quote: CreditQuote | null;
   paid: boolean;
 }) {
-  const item = summary?.items[0];
   const money = (value: number | undefined) =>
     summary && value !== undefined
       ? new Intl.NumberFormat("en", { style: "currency", currency: summary.currency_code }).format(
@@ -473,26 +480,32 @@ function OrderSummary({
       : "—";
   return (
     <div className="flex flex-col gap-5">
-      <div>
-        <p className="font-mono text-meta uppercase tracking-[0.14em] text-ink-faint">
-          {item?.product.name ?? "Chessmark credit"}
-        </p>
-        <p className="mt-1 text-lg text-ink">
-          {item?.price_name ?? `${formatBalance(credit)} Chessmark credit`}
-        </p>
-      </div>
+      <p className="tabular font-serif text-4xl text-ink">
+        {quote ? dollars(quote.price_usd) : "—"}
+      </p>
       <dl className="tabular flex flex-col gap-1.5 font-mono text-meta">
-        <SummaryLine label="Subtotal" value={money(summary?.totals.subtotal)} />
-        <SummaryLine label="Tax" value={money(summary?.totals.tax)} />
+        <Line label="Payment processor" rule="5% + $0.50" amount={quote?.processor_fee_usd} />
+        <Line label="Running Chessmark" rule="5%" amount={quote?.upkeep_usd} />
+        <Line label="AI provider fee" rule="5.5%" amount={quote?.provider_fee_usd} />
         <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-line pt-2.5">
-          <dt className="uppercase tracking-[0.12em] text-ink">Total</dt>
-          <dd className="text-lg text-accent">{money(summary?.totals.total)}</dd>
+          <dt className="uppercase tracking-[0.12em] text-ink">Your credit</dt>
+          <dd className="text-lg text-accent">{quote ? dollars(quote.credit_usd) : "—"}</dd>
         </div>
       </dl>
+
+      <dl className="tabular flex flex-col gap-1.5 border-t border-line pt-4 font-mono text-meta">
+        <SummaryLine label="Price" value={money(summary?.totals.subtotal)} />
+        <SummaryLine label="Tax" value={money(summary?.totals.tax)} />
+        <div className="mt-1.5 flex items-baseline justify-between gap-3 border-t border-line pt-2.5">
+          <dt className="uppercase tracking-[0.12em] text-ink">You pay</dt>
+          <dd className="text-lg text-ink">{money(summary?.totals.total)}</dd>
+        </div>
+      </dl>
+
       <p className="text-sm leading-relaxed text-ink-dim">
         {paid
           ? "Paid. Adding the credit to your account…"
-          : `${formatBalance(credit)} is added to your credit as soon as the payment goes through.`}
+          : "The credit is added as soon as the payment goes through."}
       </p>
       <p className="text-xs text-ink-faint">
         Sold by Paddle, our merchant of record. See our{" "}
