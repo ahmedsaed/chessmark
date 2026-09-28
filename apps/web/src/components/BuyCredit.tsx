@@ -40,6 +40,8 @@ import { paddleConfig } from "@/lib/paddle";
 
 const POLL_MS = 2_000;
 const POLL_FOR_MS = 60_000;
+/** How long Paddle's own "payment successful" screen shows before the checkout closes itself. */
+const CLOSE_AFTER_MS = 1_500;
 /** A typed amount is quoted once the typing pauses, not on every keystroke. */
 const QUOTE_AFTER_MS = 300;
 
@@ -306,6 +308,11 @@ function Checkout({ amount }: { amount: string | null }) {
       if (!mine.current) return;
       if (event.name === "checkout.completed" && event.data?.transaction_id) {
         void waitFor(event.data.transaction_id);
+        /* Back to our page on its own. Paddle's success screen otherwise stays up until the buyer
+           finds "Return to …" — and what they want to see is their credit arriving, which this
+           page says as soon as the webhook lands. A moment's pause first, so the payment is seen
+           to have gone through. */
+        setTimeout(() => void loadPaddle().then((loaded) => loaded?.Checkout.close()), CLOSE_AFTER_MS);
       }
       if (event.name === "checkout.closed") mine.current = false;
     }
