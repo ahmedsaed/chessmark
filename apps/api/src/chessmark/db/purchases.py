@@ -13,7 +13,9 @@ for to a different account than their own — a gift, not a theft.
 
 from __future__ import annotations
 
+import datetime as dt
 import logging
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -25,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.core.credit_packs import Pack
 from chessmark.db.credits import move_for_purchase
 from chessmark.db.enums import CreditReason, PurchaseStatus
-from chessmark.db.models import Purchase, PurchaseAdjustment, User
+from chessmark.db.models import CreditLedger, Purchase, PurchaseAdjustment, User
 
 log = logging.getLogger(__name__)
 
@@ -221,4 +223,101 @@ async def apply_adjustment(
     return recorded
 
 
-__all__ = ["USER_KEY", "Recorded", "apply_adjustment", "record_transaction"]
+#: The refund policy's window for an untouched purchase (`/refunds`).
+REFUND_WINDOW = dt.timedelta(days=14)
+
+#: What counts as spending a purchase: a turn's charge, or a settlement that charged more.
+SPENDING = (CreditReason.TURN, CreditReason.SETTLEMENT)
+
+
+@dataclass(frozen=True, slots=True)
+class PurchaseReport:
+    """One purchase, and whether the refund policy lets it be refunded (`./chessmark purchases`)."""
+
+    purchase: Purchase
+    #: Credit charged to the account after this purchase — any at all makes it "touched".
+    spent_since: Decimal
+    #: What refunds and chargebacks have already done to its credit (zero or negative).
+    adjusted: Decimal
+    refundable: bool
+    why: str
+    window_ends: dt.datetime
+
+
+def _judge(
+    purchase: Purchase, spent: Decimal, adjusted: Decimal, now: dt.datetime
+) -> tuple[bool, str]:
+    """The refund policy, as a rule an operator can read the answer of. Money comes back only for
+    a purchase that is credited, not already refunded, inside the window, and untouched since."""
+    if purchase.status is not PurchaseStatus.CREDITED:
+        return False, "never credited (unmatched): settle it by hand"
+    if adjusted != 0:
+        return False, "already refunded or charged back"
+    if now > purchase.created_at + REFUND_WINDOW:
+        return False, "more than 14 days ago"
+    if spent > 0:
+        return False, "credit was spent after it"
+    return True, "untouched and inside 14 days"
+
+
+async def purchases_of(
+    session: AsyncSession, user_id: uuid.UUID, *, now: dt.datetime | None = None
+) -> list[PurchaseReport]:
+    """Every purchase of this account, oldest first, with whether each may be refunded.
+
+    **"Untouched" is judged on the pooled balance**, because credit is not tracked per purchase:
+    a purchase is untouched when nothing was charged to the account after it was made. So of two
+    purchases made before one game, neither is; a purchase made after the game still is.
+
+    One statement whatever the count: what was spent after each purchase and what adjustments did
+    to it are correlated subqueries, not a read per purchase.
+    """
+    now = now or dt.datetime.now(dt.UTC)
+    spent = (
+        sa.select(sa.func.coalesce(sa.func.sum(-CreditLedger.delta), 0))
+        .where(
+            CreditLedger.user_id == Purchase.user_id,
+            CreditLedger.reason.in_(SPENDING),
+            CreditLedger.delta < 0,
+            CreditLedger.created_at > Purchase.created_at,
+        )
+        .correlate(Purchase)
+        .scalar_subquery()
+    )
+    adjusted = (
+        sa.select(sa.func.coalesce(sa.func.sum(PurchaseAdjustment.credit_delta_usd), 0))
+        .where(PurchaseAdjustment.purchase_id == Purchase.id)
+        .correlate(Purchase)
+        .scalar_subquery()
+    )
+    rows = await session.execute(
+        sa.select(Purchase, spent, adjusted)
+        .where(Purchase.user_id == user_id)
+        .order_by(Purchase.created_at, Purchase.id)
+    )
+    reports = []
+    for purchase, spent_since, adjusted_by in rows.all():
+        spent_since, adjusted_by = Decimal(spent_since), Decimal(adjusted_by)
+        refundable, why = _judge(purchase, spent_since, adjusted_by, now)
+        reports.append(
+            PurchaseReport(
+                purchase=purchase,
+                spent_since=spent_since,
+                adjusted=adjusted_by,
+                refundable=refundable,
+                why=why,
+                window_ends=purchase.created_at + REFUND_WINDOW,
+            )
+        )
+    return reports
+
+
+__all__ = [
+    "REFUND_WINDOW",
+    "USER_KEY",
+    "PurchaseReport",
+    "Recorded",
+    "apply_adjustment",
+    "purchases_of",
+    "record_transaction",
+]

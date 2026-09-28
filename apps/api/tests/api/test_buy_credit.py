@@ -9,6 +9,7 @@ more — even below zero.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import json
 import time
 from decimal import Decimal
@@ -24,6 +25,7 @@ from chessmark.core.config import Settings, get_settings
 from chessmark.core.paddle_signature import sign
 from chessmark.db.enums import CreditReason, PurchaseStatus
 from chessmark.db.models import CreditLedger, Purchase, User
+from chessmark.db.purchases import purchases_of
 from tests.api.conftest import as_user
 
 pytestmark = pytest.mark.integration
@@ -268,3 +270,80 @@ async def test_a_buyer_can_see_their_own_purchase_and_nobody_elses(
 
     other = as_user("user_other")
     assert (await client.get("/credit/purchases/txn_1", headers=other)).status_code == 404
+
+
+async def _purchase_at(
+    client: AsyncClient, db: AsyncSession, txn: str, price: str, when: dt.datetime
+) -> None:
+    await _deliver(client, _transaction(txn, price=price))
+    await db.execute(
+        sa.update(Purchase).where(Purchase.paddle_transaction_id == txn).values(created_at=when)
+    )
+    await db.commit()
+
+
+async def _spend_at(db: AsyncSession, user: User, usd: str, when: dt.datetime) -> None:
+    db.add(
+        CreditLedger(
+            user_id=user.id,
+            delta=-Decimal(usd),
+            balance_after=Decimal(0),
+            reason=CreditReason.TURN,
+            created_at=when,
+        )
+    )
+    await db.commit()
+
+
+async def test_a_purchase_is_refundable_only_while_untouched_and_inside_fourteen_days(
+    client: AsyncClient, db: AsyncSession, selling: None
+) -> None:
+    """The refund policy on a pooled balance: of two purchases made before a game, neither is
+    untouched; one made after the game still is, until its fourteen days run out."""
+    user = await _buyer(db)
+    now = dt.datetime.now(dt.UTC)
+    day = dt.timedelta(days=1)
+    await _purchase_at(client, db, "txn_a", PRICES["5"], now - 5 * day)
+    await _purchase_at(client, db, "txn_b", PRICES["10"], now - 4 * day)
+    await _spend_at(db, user, "0.30", now - 3 * day)
+    await _purchase_at(client, db, "txn_c", PRICES["25"], now - 2 * day)
+    await _purchase_at(client, db, "txn_d", PRICES["5"], now - 20 * day)
+    await _purchase_at(client, db, "txn_e", PRICES["5"], now - 1 * day)
+    await _deliver(client, _adjustment("adj_e", "refund", txn="txn_e", total="1000"))
+
+    user_id = user.id
+    db.expire_all()
+    reports = {r.purchase.paddle_transaction_id: r for r in await purchases_of(db, user_id)}
+    verdicts = {txn: (r.refundable, r.why) for txn, r in reports.items()}
+    assert verdicts == {
+        "txn_d": (False, "more than 14 days ago"),
+        "txn_a": (False, "credit was spent after it"),
+        "txn_b": (False, "credit was spent after it"),
+        "txn_c": (True, "untouched and inside 14 days"),
+        "txn_e": (False, "already refunded or charged back"),
+    }
+    assert reports["txn_a"].spent_since == Decimal("0.3")
+    assert reports["txn_c"].spent_since == 0
+
+
+async def test_listing_purchases_costs_one_statement_whatever_the_count(
+    client: AsyncClient, db: AsyncSession, selling: None
+) -> None:
+    user = await _buyer(db)
+    for i in range(6):
+        await _deliver(client, _transaction(f"txn_{i}"))
+    user_id = user.id
+    db.expire_all()
+    statements: list[str] = []
+
+    def count(*args: Any) -> None:
+        statements.append(str(args[2]))
+
+    engine = db.bind.sync_engine  # type: ignore[union-attr]
+    sa.event.listen(engine, "before_cursor_execute", count)
+    try:
+        reports = await purchases_of(db, user_id)
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", count)
+    assert len(reports) == 6
+    assert len(statements) == 1, statements

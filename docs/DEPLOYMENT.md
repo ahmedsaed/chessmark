@@ -42,6 +42,7 @@ everything inside a container: no uv, no node, and no remembering which compose 
 | `halt` | stop every model call, or resume; `--clear` lifts it |
 | `tournament …` `standings <slug>` | events |
 | `credits` | grant or revoke credit, in dollars (`credits you@x.com 5`); `--show` prints a balance with its ledger |
+| `purchases` | an account's Paddle purchases, and whether each may be refunded under the refund policy (`purchases you@x.com`) |
 | `psql` `sql` `backup` `migrate` | the database |
 
 Four details that are deliberate rather than incidental:
@@ -588,6 +589,11 @@ Cloudflare quick tunnel in Docker and prints a public address for `127.0.0.1:801
 `*.trycloudflare.com`, new each time); point a sandbox notification destination at
 `<address>/webhooks/paddle`, put its secret in `.env`, and `make tunnel-down` when done. While it
 runs, anyone with the address reaches the local API.
+
+**A refund request** is answered by `./chessmark purchases <email>`: each purchase, what was spent
+after it, and whether the policy allows a refund (untouched and inside 14 days). Refund in Paddle's
+dashboard; the webhook takes the credit back once Paddle approves it. Nothing enforces the policy
+automatically, and Paddle may refund on its own within 14 days whatever it says (ADR-0055).
 
 A purchase that could not be credited is a `purchases` row with status `unmatched` and a `problem`
 saying why. Settle it with `./chessmark credits <email> <dollars>` once you know whose it was.
