@@ -483,6 +483,28 @@ export async function getCreditOptions(): Promise<CreditOptions> {
   }
 }
 
+export interface CreditAvailability {
+  state: "available" | "sold_out" | "unknown" | "off";
+  /** The largest whole-dollar amount that fits right now, when `available`. */
+  largest_usd: string | null;
+}
+
+/**
+ * What can be bought right now (ADR-0056). Read on every render and never cached: it moves as
+ * people buy and play. It is cheap for the reason it exists — the API answers from the OpenRouter
+ * balance the worker stores each minute, and never asks OpenRouter on a page view. Buy re-checks
+ * against a fresh read, so this is a hint. Never throws: an unreachable API is "unknown", which
+ * sells nothing.
+ */
+export async function getCreditAvailability(): Promise<CreditAvailability> {
+  try {
+    return await get<CreditAvailability>("/credit/availability", live([]));
+  } catch (error) {
+    reportFailure("/credit/availability", error);
+    return { state: "unknown", largest_usd: null };
+  }
+}
+
 /** The breakdown of an amount a buyer typed, or the API's reason it cannot be bought. */
 export async function getCreditQuote(amount: string): Promise<CreditQuote> {
   const response = await fetch(`${PUBLIC_API_URL}/credit/quote?amount=${encodeURIComponent(amount)}`, {

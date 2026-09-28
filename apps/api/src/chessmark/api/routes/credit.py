@@ -13,13 +13,20 @@ from __future__ import annotations
 import json
 import logging
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import sqlalchemy as sa
 from fastapi import APIRouter, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
-from chessmark.api.deps import BalanceDep, CurrentUser, PaddleApiDep, SessionDep, SettingsDep
+from chessmark.api.deps import (
+    BalanceDep,
+    CurrentUser,
+    PaddleApiDep,
+    RedisDep,
+    SessionDep,
+    SettingsDep,
+)
 from chessmark.core.credit_pricing import (
     MAX_USD,
     MIN_USD,
@@ -31,7 +38,8 @@ from chessmark.core.credit_pricing import (
 )
 from chessmark.core.paddle_api import PaddleApiError
 from chessmark.core.paddle_signature import WebhookError, verify
-from chessmark.db.capacity import NoHeadroomError, reserve
+from chessmark.core.ratelimit import RateLimiter
+from chessmark.db.capacity import NoHeadroomError, headroom, largest_affordable, reserve
 from chessmark.db.credits import balance_of
 from chessmark.db.enums import PurchaseStatus, ReservationStatus
 from chessmark.db.models import Purchase
@@ -76,6 +84,23 @@ class OptionsOut(BaseModel):
     presets: list[QuoteOut]
 
 
+class AvailabilityOut(BaseModel):
+    """What can be bought right now, from the stored OpenRouter balance (ADR-0056).
+
+    `available` with the largest amount that fits; `sold_out`; `unknown` when the stored balance is
+    missing or too old to stand for now; `off` when selling is not configured. A hint for the page:
+    Buy checks again against a fresh read before it promises anything.
+    """
+
+    state: Literal["available", "sold_out", "unknown", "off"]
+    largest_usd: Decimal | None = None
+
+
+#: Checkouts one person may start per minute. Each asks OpenRouter for its balance, so this is what
+#: stops a script turning our page into a way of hammering OpenRouter.
+CHECKOUTS_PER_MINUTE = 5
+
+
 class CheckoutIn(BaseModel):
     amount_usd: Decimal
 
@@ -112,6 +137,28 @@ async def credit_quote(amount: Annotated[str, Query()]) -> QuoteOut:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
 
 
+@router.get("/credit/availability", response_model=AvailabilityOut)
+async def credit_availability(
+    session: SessionDep, settings: SettingsDep, balance: BalanceDep
+) -> AvailabilityOut:
+    """What can be bought now. Never calls OpenRouter: it reads the balance the worker stores once
+    a minute, and adds up what users hold and what open checkouts reserve. Two statements."""
+    if not settings.selling_credit:
+        return AvailabilityOut(state="off")
+    remaining = await balance.stored()
+    if remaining is None:
+        return AvailabilityOut(state="unknown")
+    room = await headroom(
+        session,
+        openrouter_remaining=remaining,
+        house_reserve=Decimal(str(settings.credit_reserve_usd)),
+    )
+    largest = largest_affordable(room.available)
+    if largest is None:
+        return AvailabilityOut(state="sold_out")
+    return AvailabilityOut(state="available", largest_usd=largest)
+
+
 @router.post("/credit/checkout", response_model=CheckoutOut)
 async def start_checkout(
     body: CheckoutIn,
@@ -120,6 +167,7 @@ async def start_checkout(
     user: CurrentUser,
     balance: BalanceDep,
     paddle: PaddleApiDep,
+    redis: RedisDep,
 ) -> CheckoutOut:
     """Reserve an amount's credit, and create the Paddle transaction to pay for it.
 
@@ -140,7 +188,18 @@ async def start_checkout(
     except AmountError as error:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
 
-    remaining = await balance.remaining()
+    allowed = await RateLimiter(redis, limit=CHECKOUTS_PER_MINUTE, window_seconds=60).check(
+        str(user.id), action="checkout"
+    )
+    if not allowed:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many checkouts in a minute. Please wait a moment and try again.",
+            headers={"Retry-After": str(allowed.retry_after)},
+        )
+
+    # Fresh, not stored: this is about to promise credit, so it asks OpenRouter now.
+    remaining = await balance.fresh()
     if remaining is None:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,

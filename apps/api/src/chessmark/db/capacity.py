@@ -113,6 +113,19 @@ async def reserve(
     what releases the lock."""
     now = now or dt.datetime.now(dt.UTC)
     await session.execute(sa.select(sa.func.pg_advisory_xact_lock(LOCK_KEY)))
+    # **One open checkout per person.** Without this, clicking Buy over and over would hold the
+    # headroom thirty minutes a click, and one person could sell the site out for everyone without
+    # paying. A new checkout releases the buyer's earlier one; if that earlier checkout is paid
+    # after all, the webhook still credits it — the money has moved — and the fresh balance read
+    # before every reservation bounds what that can cost.
+    await session.execute(
+        sa.update(CreditReservation)
+        .where(
+            CreditReservation.user_id == user_id,
+            CreditReservation.status == ReservationStatus.OPEN,
+        )
+        .values(status=ReservationStatus.RELEASED)
+    )
     room = await headroom(
         session, openrouter_remaining=openrouter_remaining, house_reserve=house_reserve, now=now
     )

@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 
 import { BuyCredit } from "@/components/BuyCredit";
-import { getCreditOptions } from "@/lib/api";
+import { getCreditAvailability, getCreditOptions } from "@/lib/api";
 import { hasSessionCookie } from "@/lib/auth-scope";
 import { paddleConfig } from "@/lib/paddle";
 import { pageMetadata } from "@/lib/site";
@@ -28,7 +28,7 @@ export const metadata: Metadata = pageMetadata({
  */
 export default async function CreditPage() {
   const signedIn = hasSessionCookie((await cookies()).get("__client_uat")?.value);
-  const options = await getCreditOptions();
+  const [options, availability] = await Promise.all([getCreditOptions(), getCreditAvailability()]);
   const onSale = options.selling && paddleConfig !== null;
 
   return (
@@ -41,7 +41,12 @@ export default async function CreditPage() {
 
       <section className="mt-10">
         {options.presets.length > 0 ? (
-          <BuyCredit options={options} signedIn={signedIn} selling={onSale} />
+          <BuyCredit
+            options={options}
+            availability={availability}
+            signedIn={signedIn}
+            selling={onSale}
+          />
         ) : (
           <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
             Buying credit is not open yet.

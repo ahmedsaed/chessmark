@@ -31,6 +31,7 @@ import {
   getCreditQuote,
   getPurchase,
   startCheckout,
+  type CreditAvailability,
   type CreditOptions,
   type CreditQuote,
 } from "@/lib/api";
@@ -51,10 +52,14 @@ type Arrival =
 
 export function BuyCredit({
   options,
+  availability,
   signedIn,
   selling,
 }: {
   options: CreditOptions;
+  /** What can be bought right now, from the API's stored OpenRouter balance (ADR-0056). A hint:
+   *  Buy re-checks against a fresh read. */
+  availability: CreditAvailability;
   signedIn: boolean;
   /** False shows the amounts and their arithmetic with nothing to buy: what credit costs is public
    *  before it is on sale. */
@@ -71,6 +76,14 @@ export function BuyCredit({
   } | null>(null);
 
   const preset = options.presets.find((p) => whole(p.price_usd) === amount);
+  /* The most that can be bought now: the range's top, or less while the headroom is short. */
+  const largest =
+    availability.state === "available" && availability.largest_usd !== null
+      ? Math.min(Number(availability.largest_usd), Number(options.max_usd))
+      : Number(options.max_usd);
+  const soldOut = selling && availability.state === "sold_out";
+  const paused = selling && availability.state === "unknown";
+
   const wholeNumber = /^\d+$/.test(amount);
   /* The range is checked here too, so an amount the API would refuse is not sent to be refused.
      A comparison of the API's own bounds, not arithmetic on money. */
@@ -81,7 +94,10 @@ export function BuyCredit({
   const typed = !preset && inRange;
   const answer = fetched?.amount === amount ? fetched : null;
   const quote = preset ?? answer?.quote ?? null;
-  const problem = preset || !amount
+  const tooMuch = selling && wholeNumber && Number(amount) > largest && largest < Number(options.max_usd);
+  const problem = tooMuch
+    ? `Only up to $${largest} can be bought right now.`
+    : preset || !amount
     ? null
     : !wholeNumber
       ? "Choose a whole number of dollars."
@@ -123,8 +139,9 @@ export function BuyCredit({
                 key={value}
                 type="button"
                 aria-pressed={chosen}
+                disabled={selling && Number(value) > largest}
                 onClick={() => setAmount(value)}
-                className={`tabular border px-4 py-2 font-mono text-data transition-colors ${
+                className={`tabular border px-4 py-2 font-mono text-data transition-colors disabled:opacity-40 ${
                   chosen
                     ? "border-accent bg-accent text-on-accent"
                     : "border-line bg-surface text-ink-dim hover:border-accent-dim hover:text-ink"
@@ -137,7 +154,8 @@ export function BuyCredit({
         </div>
         <label className="flex flex-col gap-1.5">
           <span className="text-sm text-ink-dim">
-            Or any amount from ${whole(options.min_usd)} to ${whole(options.max_usd)}
+            Or any amount from ${whole(options.min_usd)} to ${selling ? largest : whole(options.max_usd)}
+            {selling && largest < Number(options.max_usd) && !soldOut && " right now"}
           </span>
           {/* The input is the whole field, "$" drawn inside it, so the site's one focus ring goes
               round all of it — a ring on an inner input cut through the "$" beside it. */}
@@ -179,12 +197,23 @@ export function BuyCredit({
           </div>
         </dl>
         <p className="-mt-2 text-xs text-ink-faint">Tax is added at checkout where it applies.</p>
-        {!selling ? (
-          <button type="button" disabled className={BUY}>
-            not on sale yet
-          </button>
+        {!selling || soldOut || paused ? (
+          <div className="flex flex-col gap-2">
+            <button type="button" disabled className={BUY}>
+              {!selling ? "not on sale yet" : soldOut ? "sold out for now" : "paused for a moment"}
+            </button>
+            {soldOut && (
+              <p className="text-xs text-ink-faint">
+                Credit is sold only while our AI provider balance can cover it. More will be on
+                sale soon.
+              </p>
+            )}
+            {paused && (
+              <p className="text-xs text-ink-faint">Buying is paused for a moment. Try again shortly.</p>
+            )}
+          </div>
         ) : signedIn ? (
-          <Checkout amount={quote ? whole(quote.price_usd) : null} />
+          <Checkout amount={quote && !tooMuch ? whole(quote.price_usd) : null} />
         ) : (
           <Link href="/sign-in?redirect=/credit" className={BUY}>
             sign in to buy

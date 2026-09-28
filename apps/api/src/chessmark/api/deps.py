@@ -25,7 +25,7 @@ from chessmark.core.auth import (
 from chessmark.core.budget import GlobalBudget
 from chessmark.core.clerk import get_directory
 from chessmark.core.config import Settings, get_settings
-from chessmark.core.openrouter_balance import Balance, CachedBalance
+from chessmark.core.openrouter_balance import Balance, OpenRouterBalance
 from chessmark.core.openrouter_billing import OpenRouterBilling
 from chessmark.core.paddle_api import PaddleApi
 from chessmark.core.ratelimit import RateLimiter
@@ -77,7 +77,7 @@ SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 async def get_openrouter_balance(redis: RedisDep, settings: SettingsDep) -> Balance:
     """OpenRouter's remaining credit, which bounds how much credit can be sold (ADR-0056)."""
-    return CachedBalance(
+    return OpenRouterBalance(
         redis,
         OpenRouterBilling(
             management_key=settings.openrouter_management_key,

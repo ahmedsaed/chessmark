@@ -44,12 +44,21 @@ BUYER = "user_buyer"
 
 @dataclass
 class FakeBalance:
-    """OpenRouter's remaining credit, as the test sets it. `None` is OpenRouter not answering."""
+    """OpenRouter's remaining credit, as the test sets it. `None` is OpenRouter not answering.
+
+    `value` is what a fresh read returns; `stored` is what the worker last stored, which the page
+    reads. Kept apart so a test can tell which one a path used."""
 
     value: Decimal | None = Decimal(1000)
+    stored_value: Decimal | None = Decimal(1000)
+    fresh_reads: int = 0
 
-    async def remaining(self) -> Decimal | None:
+    async def fresh(self) -> Decimal | None:
+        self.fresh_reads += 1
         return self.value
+
+    async def stored(self) -> Decimal | None:
+        return self.stored_value
 
 
 @dataclass
@@ -299,11 +308,12 @@ async def test_an_abandoned_checkout_gives_its_share_back_when_it_expires(
     client: AsyncClient, db: AsyncSession, selling: Selling
 ) -> None:
     await _buyer(db)
+    await _buyer(db, "user_other")
     selling.balance.value = Decimal(15)
     assert (await _checkout(client, 5)).status_code == 200
-    assert (await _checkout(client, 5)).status_code == 409
+    assert (await _checkout(client, 5, "user_other")).status_code == 409
     await _expire_reservations(db)
-    assert (await _checkout(client, 5)).status_code == 200
+    assert (await _checkout(client, 5, "user_other")).status_code == 200
 
 
 async def test_an_unknown_openrouter_balance_sells_nothing(
@@ -542,7 +552,7 @@ async def test_listing_purchases_costs_one_statement_whatever_the_count(
     client: AsyncClient, db: AsyncSession, selling: Selling
 ) -> None:
     user = await _buyer(db)
-    for _ in range(6):
+    for _ in range(5):  # the checkout rate limit's worth in one minute
         await _buy(client, selling, 5)
     user_id = user.id
     db.expire_all()
@@ -557,5 +567,73 @@ async def test_listing_purchases_costs_one_statement_whatever_the_count(
         reports = await purchases_of(db, user_id)
     finally:
         sa.event.remove(engine, "before_cursor_execute", count)
-    assert len(reports) == 6
+    assert len(reports) == 5
     assert len(statements) == 1, statements
+
+
+# ------------------------------------------------------------------------- before Buy is pressed
+
+
+async def test_the_page_learns_what_can_be_bought_without_asking_openrouter(
+    client: AsyncClient, db: AsyncSession, selling: Selling
+) -> None:
+    await _buyer(db)
+    selling.balance.stored_value = Decimal(30)  # $20 sellable: up to $24
+    assert (await client.get("/credit/availability")).json() == {
+        "state": "available",
+        "largest_usd": "24",
+    }
+    selling.balance.stored_value = Decimal(12)
+    assert (await client.get("/credit/availability")).json()["state"] == "sold_out"
+    selling.balance.stored_value = None  # never stored, or too old to stand for now
+    assert (await client.get("/credit/availability")).json()["state"] == "unknown"
+    assert selling.balance.fresh_reads == 0, "a page view must never call OpenRouter"
+
+
+async def test_availability_is_off_until_selling_is_configured(
+    app: FastAPI, client: AsyncClient
+) -> None:
+    app.dependency_overrides[get_settings] = lambda: Settings(
+        paddle_webhook_secret="", paddle_api_key="", paddle_product_id=""
+    )
+    assert (await client.get("/credit/availability")).json() == {
+        "state": "off",
+        "largest_usd": None,
+    }
+
+
+async def test_buying_reads_openrouter_fresh_not_the_stored_value(
+    client: AsyncClient, db: AsyncSession, selling: Selling
+) -> None:
+    """The stored value says plenty; OpenRouter, asked now, says otherwise. Buying believes the
+    fresh read, because it is about to promise credit."""
+    await _buyer(db)
+    selling.balance.stored_value = Decimal(1000)
+    selling.balance.value = Decimal(12)
+    assert (await _checkout(client, 5)).status_code == 409
+    assert selling.balance.fresh_reads == 1
+
+
+async def test_a_buyer_holds_one_open_checkout_at_a_time(
+    client: AsyncClient, db: AsyncSession, selling: Selling
+) -> None:
+    """Room for one $5 purchase. Pressing Buy again replaces the earlier checkout rather than
+    holding a second share of the headroom — or one person could sell the site out unpaid."""
+    await _buyer(db)
+    await _buyer(db, "user_other")
+    selling.balance.value = Decimal(15)
+    assert (await _checkout(client, 5)).status_code == 200
+    assert (await _checkout(client, 5)).status_code == 200, "the buyer's own hold was replaced"
+    db.expire_all()
+    statuses = sorted(await db.scalars(sa.select(CreditReservation.status)))
+    assert statuses == sorted([ReservationStatus.RELEASED, ReservationStatus.OPEN])
+    assert (await _checkout(client, 5, "user_other")).status_code == 409
+
+
+async def test_checkouts_are_rate_limited_per_person(
+    client: AsyncClient, db: AsyncSession, selling: Selling
+) -> None:
+    await _buyer(db)
+    codes = [(await _checkout(client, 5)).status_code for _ in range(6)]
+    assert codes == [200] * 5 + [429]
+    assert selling.balance.fresh_reads == 5, "a refused request must not reach OpenRouter"

@@ -52,7 +52,7 @@ that needs no key: a $1 catalogue price bought in quantity, whose checkout line 
 **Credit is sold only while OpenRouter can cover it:**
 
 ```
-headroom = OpenRouter remaining                  (/api/v1/credits, management key, cached a minute)
+headroom = OpenRouter remaining                  (/api/v1/credits, management key)
          − credit users already hold             (positive balances)
          − credit reserved by open checkouts
          − the house reserve                     ($10: our tournaments, and turns in flight)
@@ -64,6 +64,21 @@ buyer's check waits on the lock, and when it runs, the first buyer's reservation
 is counted. So two buyers cannot both take the last of the headroom. The lock is never held across
 the call to Paddle: the reservation commits first, and if Paddle then refuses, the reservation is
 released.
+
+**OpenRouter's balance is read in two ways, for two readers.** The worker reads it once a minute,
+beside its billing sweep, and stores it. The credit page reads that stored value, so it can say
+"sold out for now" or "up to $X right now" before anyone presses Buy, and **a page view never calls
+OpenRouter**. Buy reads OpenRouter fresh, because it is about to promise credit, and stores what it
+read. So OpenRouter is asked once a minute, plus once per Buy, however many people view the page. A
+stored value more than ten minutes old stands for nothing: the page says buying is paused, rather
+than trusting a figure from before the worker stopped.
+
+**One open checkout per person, and five a minute at most.** Without the first rule, pressing Buy
+repeatedly would hold the headroom for thirty minutes per press, and one person could sell the site
+out for everyone without paying. A new checkout therefore releases the buyer's earlier one. If the
+earlier one is paid after all, it is still credited: the money has moved, and the fresh read before
+every reservation limits what that can cost. The rate limit stops a script from using the page to
+hammer OpenRouter.
 
 **The reservation is what a purchase grants.** Its id goes in the transaction's `custom_data`,
 written by the server. When Paddle reports the payment, the webhook:
@@ -98,8 +113,11 @@ and nothing enforces it automatically.
 * New `credit_reservations` table, and a `reservation_id` column on `purchases`.
 * **"Sold out" is now a state the site can be in.** It means top OpenRouter up. `status` shows the
   headroom and the largest amount that can be bought.
-* A buyer only learns an amount is unavailable when they press Buy. The page does not read the
-  headroom on every view, because that would call OpenRouter on every render.
+* The page's "sold out" and "up to $X" come from a balance up to a minute old, so they are a hint.
+  Buy is what decides, and a buyer can be refused there after the page said yes, when the balance
+  fell in between.
+* Selling needs the worker running, since it keeps the stored balance current. With no worker, the
+  page reports buying as paused within ten minutes.
 * The margin still shrinks where there is tax (ADR-0055: Paddle's fee is on the total including tax),
   and still loses Paddle's fee on a refund. The AI provider line covers OpenRouter's fee. It does not
   cover OpenRouter's $0.80 minimum on a small top-up; buy OpenRouter credit in amounts well above $15

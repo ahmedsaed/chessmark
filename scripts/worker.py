@@ -37,6 +37,7 @@ from chessmark.core.budget import GlobalBudget  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import ProviderCooldown  # noqa: E402
 from chessmark.core.halt import Halt  # noqa: E402
+from chessmark.core.openrouter_balance import OpenRouterBalance  # noqa: E402
 from chessmark.core.openrouter_billing import OpenRouterBilling  # noqa: E402
 from chessmark.db.billing import settle_billing  # noqa: E402
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
@@ -58,6 +59,9 @@ SCRIPTED_REASONING = "Taking the first move the board offers. I am scripted; the
 #: would look each of them up twice.
 BILLING_LOCK = "chessmark:billing:lock"
 BILLING_LOCK_SECONDS = 600
+#: Shorter than a minute, so a worker that dies holding it costs one refresh, not ten.
+BALANCE_LOCK = "chessmark:openrouter:balance:lock"
+BALANCE_LOCK_SECONDS = 50
 
 
 async def reconcile_loop(
@@ -101,6 +105,16 @@ async def reconcile_loop(
                 log.info("billing: %s", billing)
         except Exception:
             log.exception("billing reconciliation failed")
+
+        # The OpenRouter balance the credit page reads, so page views never ask OpenRouter
+        # themselves (ADR-0056). Once a minute across all workers, under its own lock.
+        if get_settings().selling_credit:
+            try:
+                async with SingleFlight(redis, key=BALANCE_LOCK, ttl=BALANCE_LOCK_SECONDS) as mine:
+                    if mine:
+                        await OpenRouterBalance(redis, billing_client()).fresh()
+            except Exception:
+                log.exception("reading OpenRouter's balance failed")
 
 
 def billing_client() -> OpenRouterBilling:
