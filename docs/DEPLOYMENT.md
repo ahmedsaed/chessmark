@@ -42,6 +42,7 @@ everything inside a container: no uv, no node, and no remembering which compose 
 | `halt` | stop every model call, or resume; `--clear` lifts it |
 | `tournament …` `standings <slug>` | events |
 | `credits` | grant or revoke credit, in dollars (`credits you@x.com 5`); `--show` prints a balance with its ledger |
+| `purchases` | an account's Paddle purchases, and whether each may be refunded under the refund policy (`purchases you@x.com`) |
 | `psql` `sql` `backup` `migrate` | the database |
 
 Four details that are deliberate rather than incidental:
@@ -567,12 +568,22 @@ with **no build args at all**, which is the exact shape that failed.
 
 ## Selling credit
 
-Off until configured (ADR-0055). To turn it on, all of this, in the **same** Paddle environment:
+Off until configured (ADR-0055, ADR-0056). To turn it on, all of this, in the **same** Paddle
+environment:
 
-1. The catalogue: one product and three one-time prices, $5, $10 and $25, **tax added on top**
-   (`tax_mode: external`), each named with the credit it grants. Created in the sandbox already.
-2. On the server, `PADDLE_WEBHOOK_SECRET` (from the notification destination) and
-   `PADDLE_PRICE_IDS=5=pri_…,10=pri_…,25=pri_…`. Production refuses to start with only one.
+1. The catalogue: one product, "Chessmark credit" (tax category `saas`). There are no catalogue
+   prices — the API creates each purchase's price itself, at the amount the buyer chose.
+2. On the server:
+   * `PADDLE_WEBHOOK_SECRET`, from the notification destination;
+   * `PADDLE_API_KEY`, created in Developer tools → Authentication with permission to **write
+     transactions** (`pdl_live_…` on production; the prefix picks the environment);
+   * `PADDLE_PRODUCT_ID`, the product's `pro_…`;
+   * optionally `PADDLE_TAX_PREVIEW_PRICE_ID`: a $1 price of that product, one-time, tax included,
+     quantity 5–100, never sold. `/credit` previews it to estimate the buyer's tax before checkout.
+     Live: `pri_01m3mgceeknf3ybqeff8cjyn8d`;
+   * `OPENROUTER_MANAGEMENT_KEY`, which reads OpenRouter's balance — without it nothing is sold.
+
+   Production refuses to start with only some of the Paddle three.
 3. As repository variables for the web build, `NEXT_PUBLIC_PADDLE_CLIENT_TOKEN` (`live_…` on
    production) and `NEXT_PUBLIC_PADDLE_ENV=production`. The build refuses a token without its
    environment, or from the other one.
@@ -582,12 +593,26 @@ Off until configured (ADR-0055). To turn it on, all of this, in the **same** Pad
    * **Developer tools → Notifications → New destination**: `https://<api>/webhooks/paddle`, with
      `transaction.completed`, `adjustment.created` and `adjustment.updated`.
    * On live, **Checkout → Website approval** for the site's domain.
+   * Optionally, once that domain is approved and the site deployed, **Checkout → Website approval →
+     Apple Pay verification → Verify**. The site serves Paddle's domain association file at
+     `/.well-known/apple-developer-merchantid-domain-association` (`apps/web/public`). Unverified,
+     Apple Pay still works, through a Paddle popup instead of from our page.
+
+**How much can be sold** is OpenRouter's remaining balance, less the credit users already hold, less
+open checkouts' reservations, less `CREDIT_RESERVE_USD` ($10 by default). `./chessmark status` shows
+the figures under *selling credit*; "sold out" means top OpenRouter up. OpenRouter charges 5.5% on
+card top-ups, which is the "AI provider fee" line every purchase already pays for.
 
 **Developing against the sandbox** needs Paddle to reach the local API. `make tunnel` starts a
 Cloudflare quick tunnel in Docker and prints a public address for `127.0.0.1:8010` (a random
 `*.trycloudflare.com`, new each time); point a sandbox notification destination at
 `<address>/webhooks/paddle`, put its secret in `.env`, and `make tunnel-down` when done. While it
 runs, anyone with the address reaches the local API.
+
+**A refund request** is answered by `./chessmark purchases <email>`: each purchase, what was spent
+after it, and whether the policy allows a refund (untouched and inside 14 days). Refund in Paddle's
+dashboard; the webhook takes the credit back once Paddle approves it. Nothing enforces the policy
+automatically, and Paddle may refund on its own within 14 days whatever it says (ADR-0055).
 
 A purchase that could not be credited is a `purchases` row with status `unmatched` and a `problem`
 saying why. Settle it with `./chessmark credits <email> <dollars>` once you know whose it was.

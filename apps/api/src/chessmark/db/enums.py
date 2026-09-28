@@ -160,6 +160,17 @@ class CreditReason(StrEnum):
     CHARGEBACK_REVERSED = "chargeback_reversed"
 
 
+class ReservationStatus(StrEnum):
+    """A checkout's hold on OpenRouter headroom (ADR-0056)."""
+
+    #: Holding its credit until it is paid or `expires_at` passes.
+    OPEN = "open"
+    #: Paid: its credit is now in the buyer's balance.
+    CONSUMED = "consumed"
+    #: Paddle refused to create the checkout, so nothing was ever held for sale.
+    RELEASED = "released"
+
+
 class PurchaseStatus(StrEnum):
     """Where a Paddle purchase stands (ADR-0055)."""
 

@@ -122,6 +122,32 @@ class OpenRouterBilling:
                 found.append(BilledGeneration(generation_id=generation, usage_floor=usage))
         return found
 
+    async def remaining(self) -> Decimal | None:
+        """What is left of the account's prepaid OpenRouter credit: purchased less used.
+
+        Account-wide, so it counts every key's spending — ours, tournaments included — which is
+        what selling credit has to be measured against (ADR-0056). `None` if OpenRouter would not
+        say, which a caller must treat as "unknown", never as zero or as plenty.
+        """
+        try:
+            async with self._client() as http:
+                response = await http.get(
+                    f"{self._base_url}/credits",
+                    headers={"Authorization": f"Bearer {self._management_key}"},
+                )
+            if response.status_code != httpx.codes.OK:
+                log.info("credits answered %s", response.status_code)
+                return None
+            data = response.json()["data"]
+            purchased = _decimal(data.get("total_credits"))
+            used = _decimal(data.get("total_usage"))
+        except Exception:
+            log.info("credits did not answer", exc_info=True)
+            return None
+        if purchased is None or used is None:
+            return None
+        return purchased - used
+
     async def cost_of(self, generation_id: str) -> Decimal | None:
         """One generation's exact cost, or `None` if OpenRouter would not say."""
         try:

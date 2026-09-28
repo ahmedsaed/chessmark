@@ -445,39 +445,102 @@ export function getTournament(
   );
 }
 
-// ---------------------------------------------------------------------- credit (ADR-0055)
+// ---------------------------------------------------------------------- credit (ADR-0055, 0056)
 
-export interface CreditPack {
-  /** The price to check out with; null while selling is off, when the packs are shown unsold. */
-  price_id: string | null;
-  /** What the pack costs before tax, in dollars — a decimal string, as the API sends money. */
+/** A purchase as the sum the page lays out. Every figure is the API's; the page adds nothing up.
+ *  Money arrives as decimal strings, as the API sends it. */
+export interface CreditQuote {
+  /** What the buyer pays, tax included — a decimal string, as the API sends money. */
   price_usd: string;
-  /** The payment processor's share, and the share kept for running the site. The API computes
-   *  both, and `price − both = credit` holds exactly; the page only lays the sum out. */
+  /** The part of it that goes to tax: zero until Paddle has estimated or charged it. */
+  tax_usd: string;
   processor_fee_usd: string;
   upkeep_usd: string;
-  /** What it adds to a balance. */
+  /** OpenRouter's 5.5% on the credit we buy from it to pay for the usage. */
+  provider_fee_usd: string;
+  /** What reaches the balance: the price less the three fees. */
   credit_usd: string;
 }
 
-export interface CreditPacks {
+export interface CreditOptions {
   /** False until Paddle is configured on the API; the page says so instead of selling. */
   selling: boolean;
-  packs: CreditPack[];
+  min_usd: string;
+  max_usd: string;
+  /** The one-click amounts, already quoted. */
+  presets: CreditQuote[];
+  /** A $1 Paddle price, never sold, previewed in quantity to estimate the visitor's tax; null for
+   *  no estimate. */
+  tax_preview_price_id: string | null;
 }
 
 /**
- * The packs on sale. Configuration rather than data — it changes only with a deploy, which
- * restarts everything anyway — so it is cached for the fallback period with nothing to invalidate
- * it. Never throws: an unreachable API renders as "not on sale", which is true for that moment.
+ * The range and the one-click amounts. Configuration rather than data — it changes only with a
+ * deploy — so it is cached for the fallback period with nothing to invalidate it. Never throws: an
+ * unreachable API renders as "not on sale", which is true for that moment.
  */
-export async function getCreditPacks(): Promise<CreditPacks> {
+export async function getCreditOptions(): Promise<CreditOptions> {
   try {
-    return await get<CreditPacks>("/credit/packs", cached([]));
+    return await get<CreditOptions>("/credit/options", cached([]));
   } catch (error) {
-    reportFailure("/credit/packs", error);
-    return { selling: false, packs: [] };
+    reportFailure("/credit/options", error);
+    return { selling: false, min_usd: "5", max_usd: "100", presets: [], tax_preview_price_id: null };
   }
+}
+
+export interface CreditAvailability {
+  state: "available" | "sold_out" | "unknown" | "off";
+  /** The largest whole-dollar amount that fits right now, when `available`. */
+  largest_usd: string | null;
+}
+
+/**
+ * What can be bought right now (ADR-0056). Read on every render and never cached: it moves as
+ * people buy and play. It is cheap for the reason it exists — the API answers from the OpenRouter
+ * balance the worker stores each minute, and never asks OpenRouter on a page view. Buy re-checks
+ * against a fresh read, so this is a hint. Never throws: an unreachable API is "unknown", which
+ * sells nothing.
+ */
+export async function getCreditAvailability(): Promise<CreditAvailability> {
+  try {
+    return await get<CreditAvailability>("/credit/availability", live([]));
+  } catch (error) {
+    reportFailure("/credit/availability", error);
+    return { state: "unknown", largest_usd: null };
+  }
+}
+
+/**
+ * The breakdown of an amount, or the API's reason it cannot be bought. With a tax, the breakdown
+ * takes it out of the amount — passed exactly as Paddle reported it, in cents from a price preview
+ * or in dollars from the checkout's events, so the page converts nothing.
+ */
+export async function getCreditQuote(
+  amount: string,
+  tax?: { cents: string } | { dollars: string },
+): Promise<CreditQuote> {
+  const query = new URLSearchParams({ amount });
+  if (tax && "cents" in tax) query.set("tax_cents", tax.cents);
+  if (tax && "dollars" in tax) query.set("tax", tax.dollars);
+  const response = await fetch(`${PUBLIC_API_URL}/credit/quote?${query}`, {
+    headers: { accept: "application/json" },
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new ApiError(response.status, describe(payload) ?? "That amount cannot be bought.");
+  }
+  return payload as CreditQuote;
+}
+
+/**
+ * Reserve an amount's credit and create the Paddle transaction to pay for it (ADR-0056). Refused
+ * with a readable reason when OpenRouter's balance cannot cover it right now.
+ */
+export function startCheckout(
+  amountUsd: string,
+  token: string | null,
+): Promise<{ transaction_id: string; quote: CreditQuote }> {
+  return post("/credit/checkout", token, { amount_usd: amountUsd });
 }
 
 export interface PurchaseStatus {

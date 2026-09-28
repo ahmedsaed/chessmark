@@ -42,14 +42,18 @@ from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.core.cooldown import KEY_PREFIX as COOLDOWN_PREFIX  # noqa: E402
 from chessmark.core.failures import FailureLog  # noqa: E402
 from chessmark.core.halt import Halt  # noqa: E402
-from chessmark.db.enums import EventType, GameStatus  # noqa: E402
+from chessmark.core.openrouter_billing import OpenRouterBilling  # noqa: E402
+from chessmark.db.capacity import headroom, largest_affordable  # noqa: E402
+from chessmark.db.enums import EventType, GameStatus, PurchaseStatus  # noqa: E402
 from chessmark.db.models import (  # noqa: E402
+    CreditReservation,
     Game,
     GameEvent,
     LlmCall,
     ModelRegistry,
     Player,
     Ply,
+    Purchase,
     Tournament,
     TournamentGame,
     UnrecordedGeneration,
@@ -437,6 +441,63 @@ async def show_billing(report: Report, session: Any) -> None:
     (report.warn if abs(difference) > BILLING_TOLERANCE_USD else report.ok)("month", line)
 
 
+async def show_selling(report: Report, session: Any) -> None:
+    """Whether credit can be bought, and how much more OpenRouter's balance can cover (ADR-0056).
+
+    Sold out is a warning, not a fault — it means top OpenRouter up. What does need a person: a
+    purchase that was paid and not credited (unmatched), and one credited after its reservation
+    expired, which may have sold past the headroom.
+    """
+    report.head("selling credit")
+    settings = get_settings()
+    if not settings.selling_credit:
+        report.ok("off", "Paddle or OPENROUTER_MANAGEMENT_KEY is not configured")
+        return
+
+    remaining = await OpenRouterBilling(
+        management_key=settings.openrouter_management_key,
+        api_key=settings.openrouter_api_key,
+        base_url=settings.openrouter_base_url,
+    ).remaining()
+    if remaining is None:
+        report.warn("OpenRouter's balance is unknown", "nothing can be bought until it answers")
+    else:
+        room = await headroom(
+            session,
+            openrouter_remaining=remaining,
+            house_reserve=Decimal(str(settings.credit_reserve_usd)),
+        )
+        line = (
+            f"OpenRouter ${room.openrouter_remaining:.2f} · held ${room.held:.2f} · reserved "
+            f"${room.reserved:.2f} · kept back ${room.house_reserve:.2f} · "
+            f"sellable ${room.available:.2f}"
+        )
+        largest = largest_affordable(room.available)
+        if largest is None:
+            report.warn("sold out", f"{line} — top up OpenRouter")
+        else:
+            report.ok("headroom", f"{line} · up to ${largest} per purchase")
+
+    unmatched = await session.scalar(
+        sa.select(sa.func.count())
+        .select_from(Purchase)
+        .where(Purchase.status == PurchaseStatus.UNMATCHED)
+    )
+    if unmatched:
+        report.warn("paid, not credited", f"{unmatched} unmatched purchase(s): settle by hand")
+    late = await session.scalar(
+        sa.select(sa.func.count())
+        .select_from(Purchase)
+        .join(CreditReservation, CreditReservation.id == Purchase.reservation_id)
+        .where(
+            CreditReservation.expires_at < Purchase.created_at,
+            Purchase.created_at >= _now() - dt.timedelta(days=30),
+        )
+    )
+    if late:
+        report.warn("paid after the hold expired", f"{late} in 30 days — may have oversold")
+
+
 async def show_failures(report: Report, redis: Any) -> None:
     """Turns that crashed in the last day — the ones the worker had no rule for.
 
@@ -748,6 +809,7 @@ async def main() -> int:
                 if everything:
                     await show_platform(report, session)
                     await show_billing(report, session)
+                    await show_selling(report, session)
                 if everything or args.games:
                     await show_games(report, session)
                 if everything or args.tournaments:
