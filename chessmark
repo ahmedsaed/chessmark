@@ -198,6 +198,12 @@ cmd_credits() { # grant or revoke credits by email, Clerk id, or ours; --show to
   api_script grant_credits.py "$@"
 }
 
+cmd_sales() { # open or pause credit sales:  ./chessmark sales open | pause "reason"
+  # Paddle's keys make selling possible; this makes it open. Sales start paused, and a pause stops
+  # new checkouts only — anything already paid for is still credited (ADR-0057).
+  api_script sales.py "$@"
+}
+
 cmd_purchases() { # an account's purchases, and whether each may be refunded under the policy
   [ $# -gt 0 ] || die "who? e.g. ./chessmark purchases someone@example.com"
   api_script purchases.py "$@"
@@ -304,6 +310,12 @@ echo "select count(*) from games;" | ./chessmark sql'
 # A seat is forfeited exactly when its game ended by a forfeit against that seat. Anything
 # else is drift: a harness stop that set the flag, or a resume that left it behind.
 # Changes no result and reopens no game — for that, use resume.'
+  [sales]='./chessmark sales                        # open or paused, and why
+./chessmark sales open                   # take payments
+./chessmark sales pause "refunds need a look"
+
+# Sales start paused: the keys in .env make selling possible, this makes it open.
+# A pause stops new checkouts; a purchase already paid for is still credited.'
   [purchases]='./chessmark purchases someone@example.com   # each purchase, and whether it may be refunded'
   [credits]='./chessmark credits someone@example.com 50
 ./chessmark credits someone@example.com 10 --note "beta invite"
@@ -360,6 +372,7 @@ $(row standings)
 
 ${AMBER}people${OFF}
 $(row credits)
+$(row sales)
 $(row purchases)
 
 ${AMBER}the database${OFF}

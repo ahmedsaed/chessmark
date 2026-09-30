@@ -91,6 +91,10 @@ export function BuyCredit({
       : Number(options.max_usd);
   const soldOut = selling && availability.state === "sold_out";
   const paused = selling && availability.state === "unknown";
+  /* Configured, but the operator has not opened sales or has paused them (ADR-0057). The breakdown
+     and the tax estimate still show: what an amount comes to is worth knowing before it can be
+     bought. */
+  const closed = selling && availability.state === "paused";
 
   const wholeNumber = /^\d+$/.test(amount);
   /* The range is checked here too, so an amount the API would refuse is not sent to be refused.
@@ -229,10 +233,16 @@ export function BuyCredit({
             ? "Tax is estimated from your location; the checkout confirms it, and your credit."
             : "Any tax comes out of this amount at checkout."}
         </p>
-        {!selling || soldOut || paused ? (
+        {!selling || closed || soldOut || paused ? (
           <div className="flex flex-col gap-2">
             <button type="button" disabled className={BUY}>
-              {!selling ? "not on sale yet" : soldOut ? "sold out for now" : "paused for a moment"}
+              {!selling
+                ? "not on sale yet"
+                : closed
+                  ? "not on sale right now"
+                  : soldOut
+                    ? "sold out for now"
+                    : "paused for a moment"}
             </button>
             {soldOut && (
               <p className="text-xs text-ink-faint">

@@ -28,6 +28,11 @@ file is only the record of *what shipped when*.
   that does. `./chessmark status` shows the headroom. (AUTH-23)
 - **`./chessmark purchases <email>`** lists an account's purchases and whether the refund policy
   allows refunding each. (AUTH-24)
+- **`./chessmark sales open | pause "reason"`** opens and pauses credit sales without a restart.
+  Sales start paused, so Paddle's keys can go on the server before the live account is verified.
+  While paused, `/credit` shows the breakdown with the tax estimate and "not on sale right now". A
+  pause refuses new checkouts; anything already paid for is still credited. (AUTH-25,
+  [ADR-0057](docs/adr/0057-credit-sales-are-a-switch-that-starts-closed.md))
 
 ### Changed
 

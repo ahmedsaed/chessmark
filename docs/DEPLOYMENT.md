@@ -568,8 +568,11 @@ with **no build args at all**, which is the exact shape that failed.
 
 ## Selling credit
 
-Off until configured (ADR-0055, ADR-0056). To turn it on, all of this, in the **same** Paddle
-environment:
+Off until configured, and then paused until opened (ADR-0055, ADR-0056, ADR-0057). The settings
+make selling *possible*; `./chessmark sales open` makes it *open*. So the settings can go on the
+server as soon as they exist, before Paddle has verified the account: `/credit` then shows the real
+breakdown with the tax estimate, and "not on sale right now" where Buy would be. To turn it on, all
+of this, in the **same** Paddle environment:
 
 1. The catalogue: one product, "Chessmark credit" (tax category `saas`). There are no catalogue
    prices — the API creates each purchase's price itself, at the amount the buyer chose.
@@ -597,6 +600,9 @@ environment:
      Apple Pay verification → Verify**. The site serves Paddle's domain association file at
      `/.well-known/apple-developer-merchantid-domain-association` (`apps/web/public`). Unverified,
      Apple Pay still works, through a Paddle popup instead of from our page.
+5. Deploy, and once Paddle has verified the live account, `./chessmark sales open`.
+   `./chessmark sales pause "reason"` stops new checkouts at any time without a restart; a purchase
+   already paid for is still credited. `./chessmark status` shows which it is.
 
 **How much can be sold** is OpenRouter's remaining balance, less the credit users already hold, less
 open checkouts' reservations, less `CREDIT_RESERVE_USD` ($10 by default). `./chessmark status` shows
