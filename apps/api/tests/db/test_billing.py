@@ -399,3 +399,43 @@ async def test_games_already_checked_do_not_block_the_ones_behind_them(
 
     for fixture in games:
         assert (await _stored(sessionmaker, fixture.match.game.id)).billing_checks == 1
+
+
+async def test_a_game_nobody_started_is_settled_to_the_house(
+    db: AsyncSession, queue: Any, sessionmaker: Any, openrouter: FakeOpenRouter
+) -> None:
+    """ADR-0058: the house pays for a tournament's game, so reconciliation settles it too."""
+    from chessmark.db.house import HOUSE_CLERK_ID
+
+    house = User(clerk_user_id=HOUSE_CLERK_ID)
+    db.add(house)
+    await db.flush()
+    await grant(db, house.id, Decimal(10))
+    fixture = await _game(db, queue, None)
+    game_id = fixture.match.game.id
+    turn = Turn(game_id=game_id, player_id=fixture.white.id, status=TurnStatus.COMPLETED)
+    db.add(turn)
+    await db.flush()
+    db.add(
+        LlmCall(
+            game_id=game_id,
+            turn_id=turn.id,
+            sequence=1,
+            model_slug="scripted/white",
+            request={},
+            response={"id": "gen-a"},
+            cost_usd=Decimal("0.003"),
+        )
+    )
+    await spend(db, house.id, Decimal("0.003"), game_id=game_id, turn_id=turn.id)
+    openrouter.bill(game_id, "gen-a", "0.003")
+    openrouter.bill(game_id, "gen-lost", "0.002")
+    await _at_rest(db, fixture)
+
+    await _sweep(sessionmaker, openrouter, NOW)
+    await _sweep(sessionmaker, openrouter, NOW + CHECKS[0])
+
+    assert await _settlements(sessionmaker, game_id) == [Decimal("-0.002")]
+    async with sessionmaker() as session:
+        balance = await session.scalar(sa.select(User.balance_usd).where(User.id == house.id))
+    assert balance == Decimal("9.995")

@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from chessmark.core.openrouter_billing import OpenRouterBilling
 from chessmark.db.credits import charged_for, settle
 from chessmark.db.enums import CreditReason, GameStatus
+from chessmark.db.house import payer_of
 from chessmark.db.models import CreditLedger, Game, LlmCall, UnrecordedGeneration
 
 log = logging.getLogger(__name__)
@@ -188,7 +189,7 @@ async def reconcile_game(
     game.billing_checks += 1
     report.reconciled.append(str(game.id))
 
-    payer = game.created_by_user_id
+    payer = await payer_of(session, game)
     if payer is not None and await _paid_in_dollars(session, game):
         difference = total - await charged_for(session, game.id)
         if abs(difference) >= SETTLE_THRESHOLD:

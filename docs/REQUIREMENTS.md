@@ -153,6 +153,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | AUTH-23 | Credit is sold only while OpenRouter's remaining balance covers everything users hold, everything open checkouts reserve, and a house reserve. A checkout reserves its credit under a lock, so concurrent buyers cannot both take the last of it; the page learns what can be bought from a balance the worker stores each minute and never calls OpenRouter itself; a buyer holds one open checkout at a time; an unknown balance sells nothing ([ADR-0056](adr/0056-credit-is-sold-only-while-openrouter-can-cover-it.md)). | M |
 | AUTH-24 | An operator can see, per account, every purchase and whether the refund policy allows refunding it (`./chessmark purchases`). | S |
 | AUTH-25 | An operator can open and pause credit sales at runtime (`./chessmark sales`). Sales start paused, and an unreadable switch reads as paused. A pause refuses new checkouts in the API and keeps crediting purchases already paid for ([ADR-0057](adr/0057-credit-sales-are-a-switch-that-starts-closed.md)). | M |
+| AUTH-26 | Every game no person started — a tournament's, an operator's — is paid for by the house account, turn by turn, and pauses when it is empty. A tournament with paid entrants holds while the house is empty, and what the house holds counts against the sales headroom ([ADR-0058](adr/0058-the-house-account-pays-for-games-no-person-started.md)). | M |
 | AUTH-09 | Bring-your-own OpenRouter key to unlock expensive models. | W |
 
 ## 9. Platform & operations (OPS)

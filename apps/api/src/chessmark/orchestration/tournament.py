@@ -26,7 +26,9 @@ from chessmark.bench.service import compute_ratings
 from chessmark.core.cooldown import ProviderCooldown
 from chessmark.core.halt import SCOPE_ALL, Halt
 from chessmark.db import tournaments as repo
+from chessmark.db.credits import can_play
 from chessmark.db.enums import GameStatus, ModelRuntime, TournamentStatus
+from chessmark.db.house import house_id
 from chessmark.db.models import (
     Game,
     ModelEndpoint,
@@ -251,7 +253,34 @@ async def _holding(
             until = f", lifts in {state.until.isoformat()}" if state.until else ""
             return f"the harness is halted: {state.reason}{until}"
 
+    # **The house pays for every paid turn here, and it is empty** (ADR-0058). A game started now
+    # would pause at its first paid turn, and a pool would go on starting more, each holding
+    # nothing and moving nothing. So the event holds instead, and resumes on the first tick after
+    # the house is funded. A free-only event costs the house nothing and never holds for it.
+    house = await house_id(session)
+    if (
+        house is not None
+        and await _uses_paid_models(session, tournament)
+        and not await can_play(session, house)
+    ):
+        return "the house account is out of credit: ./chessmark credits house <usd>"
+
     return ""
+
+
+async def _uses_paid_models(session: AsyncSession, tournament: Tournament) -> bool:
+    """Whether any entrant is a paid model, and so draws on the house."""
+    found = await session.scalar(
+        sa.select(TournamentEntrant.id)
+        .join(ModelRegistry, ModelRegistry.id == TournamentEntrant.model_id)
+        .where(
+            TournamentEntrant.tournament_id == tournament.id,
+            TournamentEntrant.withdrawn.is_(False),
+            ModelRegistry.is_free.is_(False),
+        )
+        .limit(1)
+    )
+    return found is not None
 
 
 async def _uses_free_models(session: AsyncSession, tournament: Tournament) -> bool:
@@ -707,6 +736,23 @@ async def _form(session: AsyncSession, tournament: Tournament) -> dict[str, Form
 async def _is_complete(session: AsyncSession, tournament: Tournament) -> bool:
     """Every scheduled pairing settled, and no round left to schedule."""
     if await repo.unplayed(session, tournament.id) or await repo.in_flight(session, tournament.id):
+        return False
+
+    # **A paused game is neither.** It has a game, so it is not unplayed, and `in_flight` counts only
+    # games that can move, because a paused one holds no concurrency slot. So an event whose last
+    # game paused, for credit or a rate limit, closed as finished. It then never settled that
+    # pairing when the game played on, and the result was lost. Unsettled is not finished.
+    unsettled = await session.scalar(
+        sa.select(TournamentGame.id)
+        .where(
+            TournamentGame.tournament_id == tournament.id,
+            TournamentGame.game_id.is_not(None),
+            TournamentGame.white_score.is_(None),
+            TournamentGame.abandoned_reason.is_(None),
+        )
+        .limit(1)
+    )
+    if unsettled is not None:
         return False
 
     scheduled = await session.scalar(

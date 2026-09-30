@@ -50,6 +50,7 @@ from chessmark.core.credits import fetch_balance
 from chessmark.core.halt import Halt, HaltState
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import EventType, GameStatus, PlayerKind
+from chessmark.db.house import house_id, payer
 from chessmark.db.models import Game, GameEvent, Player, Tournament, TournamentGame, User
 from chessmark.db.repositories import append_event, finish_game, load_events, rebuild_referee
 from chessmark.game import Colour, GameResult, Outcome, Termination
@@ -319,7 +320,9 @@ class Waiting:
     """
 
     #: `clock` — the wait has not elapsed. `halt` — the harness is stopped. `owner` — the person
-    #: paying for it paused it. `credit` — their balance is not above zero (ADR-0052). `concurrency` — due, but its event is at its bound.
+    #: paying for it paused it. `credit` — their balance is not above zero (ADR-0052).
+    #: `house_credit` — a game no person started, and the house is not funded (ADR-0058).
+    #: `concurrency` — due, but its event is at its bound.
     #: `due` — nothing is in the way; the next sweep takes it.
     kind: str
     until: dt.datetime | None = None
@@ -353,7 +356,8 @@ async def what_it_waits_for(
         return Waiting(kind="owner")
 
     if game.id in await unfunded_games(session, [game]):
-        return Waiting(kind="credit")
+        # A game no person started waits on the house, not on an owner the page can't name.
+        return Waiting(kind="credit" if game.created_by_user_id is not None else "house_credit")
 
     pairing = await session.scalar(
         sa.select(TournamentGame).where(TournamentGame.game_id == game.id)
@@ -495,14 +499,18 @@ async def unfunded_games(session: AsyncSession, games: list[Game]) -> set[uuid.U
     pauses it for credit instead, at the cost of one job and no provider call.
     """
     waiting = [g for g in games if (g.pause_reason or "").startswith(CREDIT_PREFIX)]
-    payers = {g.created_by_user_id for g in waiting if g.created_by_user_id is not None}
+    if not waiting:
+        return set()
+    # The house pays for any game no person started (ADR-0058); looked up once for them all.
+    house = await house_id(session) if any(g.created_by_user_id is None for g in waiting) else None
+    payers = {p for g in waiting if (p := payer(g, house)) is not None}
     if not payers:
         return set()
 
     funded = set(
         await session.scalars(sa.select(User.id).where(User.id.in_(payers), User.balance_usd > 0))
     )
-    return {g.id for g in waiting if g.created_by_user_id not in funded}
+    return {g.id for g in waiting if payer(g, house) not in funded}
 
 
 async def lift_credit_halt(halt: Halt, *, api_key: str, redis: Any = None) -> bool:

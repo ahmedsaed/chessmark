@@ -48,6 +48,7 @@ from chessmark.core.halt import SCOPE_FREE, SOURCE_CREDITS, SOURCE_FREE_TIER, Ha
 from chessmark.core.pause_requests import PauseRequests
 from chessmark.db.credits import can_play
 from chessmark.db.enums import EventType, GameStatus, ModelRuntime, PlayerKind, TurnStatus
+from chessmark.db.house import payer_of
 from chessmark.db.models import Game, GameEvent, ModelRegistry, Player, Turn
 from chessmark.db.quotas import record_spend
 from chessmark.db.repositories import (
@@ -606,14 +607,12 @@ class TurnWorker:
             # paid seat: a `:free` turn costs nothing, so it is never stopped for credit. Above zero
             # is enough — the turn's cost is not known until it is played, and the debit that
             # follows is never refused, so a balance can end one turn below zero and the *next*
-            # turn is the one that stops here.
-            payer = game.created_by_user_id
-            if (
-                payer is not None
-                and not model_for(player).endswith(":free")
-                and not await can_play(session, payer)
-            ):
-                raise OutOfCreditError(payer)
+            # turn is the one that stops here. A game no person started is the house's to fund
+            # (ADR-0058), and it pauses the same way.
+            if not model_for(player).endswith(":free"):
+                payer = await payer_of(session, game)
+                if payer is not None and not await can_play(session, payer):
+                    raise OutOfCreditError(payer)
 
             # Route by *this player's* resolved policy. Per player rather than per game because
             # `only` names providers and providers are model-specific: one vendor's endpoint list
@@ -940,7 +939,7 @@ class TurnWorker:
             game.status = GameStatus.PAUSED
             game.resume_after = None
             game.pause_reason = reason
-            log.info("pausing %s at ply %s: its owner is out of credit", game.id, job.expected_ply)
+            log.info("pausing %s at ply %s: its payer is out of credit", game.id, job.expected_ply)
             await append_event(
                 session,
                 game_id=game.id,
@@ -1469,8 +1468,9 @@ class TurnWorker:
         if self.budget is not None:
             await self.budget.record(result.cost_usd)
 
-        if game.created_by_user_id is not None:
-            await record_spend(session, game.created_by_user_id, result.cost_usd)
+        payer = await payer_of(session, game)
+        if payer is not None:
+            await record_spend(session, payer, result.cost_usd)
 
     async def _enforce_budget(
         self, session: AsyncSession, game: Game, referee: Referee

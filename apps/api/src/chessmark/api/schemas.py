@@ -449,7 +449,8 @@ class WaitingOn(BaseModel):
     A lobby card says "paused"; only the game's own page says what for.
     """
 
-    #: `clock`, `halt`, `concurrency`, or `due`. See `reconciler.Waiting`.
+    #: `clock`, `halt`, `owner`, `credit`, `house_credit`, `concurrency`, or `due`. See
+    #: `reconciler.Waiting`.
     kind: str
     #: When the wait ends, for `clock`. Null for every other kind — nothing else is on a timer.
     until: dt.datetime | None = None

@@ -114,7 +114,8 @@ async def test_each_turn_is_charged_what_it_cost(
 async def test_a_game_nobody_started_charges_nobody(
     db: AsyncSession, game: Fixture, sessionmaker: Any, make_worker: Any
 ) -> None:
-    """A tournament's game, an operator's — no payer, and nothing on anyone's ledger."""
+    """Where there is no house row, a tournament's or an operator's game has no payer and nothing
+    reaches anyone's ledger. Every real database has one (ADR-0058, `test_house_account.py`)."""
     worker = make_worker(both_sides(["e4"], ["e5"], cost=float(TURN)))
 
     assert (await run_next(worker, game.queue)).outcome == ADVANCED

@@ -41,6 +41,8 @@ from chessmark.agents.registry import sync_model_registry  # noqa: E402
 from chessmark.agents.scripted_decisions import deciding  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db import tournaments as repo  # noqa: E402
+from chessmark.db.credits import balance_of, grant  # noqa: E402
+from chessmark.db.house import house_id  # noqa: E402
 from chessmark.db.enums import GameStatus, ModelRuntime  # noqa: E402
 from chessmark.db.models import (  # noqa: E402
     Game,
@@ -346,6 +348,20 @@ async def play_decision_game() -> str:
         await redis.aclose()
 
 
+async def fund_the_house(session: Any) -> None:
+    """Give the house a dollar, if it has nothing.
+
+    The seeded games are started by nobody, so the house pays for them (ADR-0058). A migrated
+    database creates the house empty, and an empty house pauses a paid seat before its first turn.
+    The scripted models report no cost, so the dollar is never spent; it only gets each turn past
+    the balance check. Topped up only when empty, so a rerun doesn't keep adding to it.
+    """
+    house = await house_id(session)
+    if house is not None and await balance_of(session, house) <= 0:
+        await grant(session, house, Decimal(1), note="e2e seed: scripted games cost nothing")
+        await session.commit()
+
+
 async def main() -> int:
     sessionmaker = get_sessionmaker()
     try:
@@ -356,6 +372,7 @@ async def main() -> int:
             tournament_slug = await ensure_tournament(session)
 
         async with sessionmaker() as session:
+            await fund_the_house(session)
             game_id = await existing_replay_game(session)
 
         if game_id is None:
