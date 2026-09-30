@@ -1732,6 +1732,7 @@ Not deploy steps — things that must be *true* before anyone else can reach the
 | --- | --- | --- |
 | Bring-your-own API key | AUTH-09 | Server keys plus caps are sufficient until cost actually becomes the binding constraint |
 | Selling credit | — | Research done: a merchant of record (Paddle) would let a person without a company sell worldwide and pay out to Egypt. Credit is priced at cost since Phase 28; what remains is the processor, legal pages and onboarding ([PAYMENTS.md](PAYMENTS.md)) |
+| A championship of the paid models | — | Planned in [TOURNAMENTS.md](TOURNAMENTS.md#a-championship-of-the-paid-models-in-three-stages-planned-not-run): 844 games in three stages instead of a 35,511-game round robin. Waits on measuring what a flagship game costs, and on the budget for it |
 | Spectator chat | TALK-07 | Moderation burden far exceeds the value |
 | Chess variants | — | Standard chess first; variants dilute the benchmark |
 | Multi-agent teams | — | Interesting, but a different benchmark |
