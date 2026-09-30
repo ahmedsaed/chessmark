@@ -939,7 +939,7 @@ class TurnWorker:
             game.status = GameStatus.PAUSED
             game.resume_after = None
             game.pause_reason = reason
-            log.info("pausing %s at ply %s: its owner is out of credit", game.id, job.expected_ply)
+            log.info("pausing %s at ply %s: its payer is out of credit", game.id, job.expected_ply)
             await append_event(
                 session,
                 game_id=game.id,

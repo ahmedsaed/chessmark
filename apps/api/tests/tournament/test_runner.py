@@ -505,6 +505,32 @@ async def test_a_completed_event_reports_finished_and_a_full_table(
     assert sum(s.played for s in table) == 12, "six games, two seats each"
 
 
+async def test_an_event_whose_last_game_is_paused_is_not_finished(
+    db: AsyncSession, sessionmaker: async_sessionmaker[AsyncSession], queue
+) -> None:
+    """A paused game is neither in flight nor settled, and "finished" once counted it as settled.
+    The event closed with its last game paused for credit, never settled the pairing when the game
+    played on, and its table was missing a result the board had reached."""
+    tournament_id, _ = await make_tournament(
+        db, models=2, config=TournamentConfig(format=Format.ROUND_ROBIN, max_concurrent=1)
+    )
+    await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+    (pairing,) = await repo.in_flight(db, tournament_id)
+    paused = await db.get(Game, pairing.game_id)
+    assert paused is not None
+    paused.status = GameStatus.PAUSED
+    paused.pause_reason = "out of credit: play resumes when credit is added"
+    await db.commit()
+
+    step = await advance(sessionmaker, queue, tournament_id=tournament_id)
+    db.expire_all()
+
+    assert step.status is not TournamentStatus.FINISHED
+    refreshed = await db.get(Tournament, tournament_id)
+    assert refreshed is not None and refreshed.status is not TournamentStatus.FINISHED
+
+
 # ====================================================================== a whole event
 
 

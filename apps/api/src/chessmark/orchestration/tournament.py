@@ -738,6 +738,23 @@ async def _is_complete(session: AsyncSession, tournament: Tournament) -> bool:
     if await repo.unplayed(session, tournament.id) or await repo.in_flight(session, tournament.id):
         return False
 
+    # **A paused game is neither.** It has a game, so it is not unplayed, and `in_flight` counts only
+    # games that can move, because a paused one holds no concurrency slot. So an event whose last
+    # game paused, for credit or a rate limit, closed as finished. It then never settled that
+    # pairing when the game played on, and the result was lost. Unsettled is not finished.
+    unsettled = await session.scalar(
+        sa.select(TournamentGame.id)
+        .where(
+            TournamentGame.tournament_id == tournament.id,
+            TournamentGame.game_id.is_not(None),
+            TournamentGame.white_score.is_(None),
+            TournamentGame.abandoned_reason.is_(None),
+        )
+        .limit(1)
+    )
+    if unsettled is not None:
+        return False
+
     scheduled = await session.scalar(
         sa.select(sa.func.count(TournamentGame.id)).where(
             TournamentGame.tournament_id == tournament.id
