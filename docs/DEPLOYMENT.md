@@ -604,8 +604,12 @@ of this, in the **same** Paddle environment:
    `./chessmark sales pause "reason"` stops new checkouts at any time without a restart; a purchase
    already paid for is still credited. `./chessmark status` shows which it is.
 
-**How much can be sold** is OpenRouter's remaining balance, less the credit users already hold, less
-open checkouts' reservations, less `CREDIT_RESERVE_USD` ($10 by default). `./chessmark status` shows
+**How much can be sold** is OpenRouter's remaining balance, less the credit users and the house
+already hold, less open checkouts' reservations, less `CREDIT_RESERVE_USD` ($10 by default).
+
+**Tournaments are paid for by the house account** (ADR-0058), `./chessmark credits house <usd>`. A
+tournament with paid models holds while it is empty, and `./chessmark status` shows its balance
+under *house account*. Fund it right after the deploy that adds it, or paid tournaments will hold. `./chessmark status` shows
 the figures under *selling credit*; "sold out" means top OpenRouter up. OpenRouter charges 5.5% on
 card top-ups, which is the "AI provider fee" line every purchase already pays for.
 

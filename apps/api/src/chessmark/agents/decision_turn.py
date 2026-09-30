@@ -42,6 +42,7 @@ from chessmark.agents.turn import TurnResult
 from chessmark.agents.types import LlmError
 from chessmark.db.credits import spend
 from chessmark.db.enums import EventType, TurnStatus
+from chessmark.db.house import payer_of
 from chessmark.db.models import Game, GameEvent, LlmCall, Player, Turn
 from chessmark.db.repositories import append_event, open_draw_offer, record_ply
 from chessmark.game import Colour, MoveOutcome, Referee
@@ -421,11 +422,12 @@ class DecisionTurnRunner:
         # **Charged here, and nowhere else** — the same number, in the same transaction, as the
         # two lines above (ADR-0052). A turn that is rolled back takes its charge with it, so the
         # person pays exactly what the game says it cost. A game nobody started — a tournament's,
-        # an operator's — has no payer.
-        if self.game.created_by_user_id is not None:
+        # an operator's — is paid for by the house (ADR-0058).
+        payer = await payer_of(self.session, self.game)
+        if payer is not None:
             await spend(
                 self.session,
-                self.game.created_by_user_id,
+                payer,
                 result.cost_usd,
                 game_id=self.game.id,
                 turn_id=turn.id,

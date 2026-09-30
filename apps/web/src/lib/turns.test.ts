@@ -1490,6 +1490,13 @@ describe("what a paused game says it is waiting for", () => {
     );
   });
 
+  it("says a tournament's game paused for credit waits on Chessmark, not an owner", () => {
+    /* ADR-0058. Nobody started it, so there is no owner to wait for. */
+    expect(waitText(null, { kind: "house_credit", until: null, tournament: null })).toBe(
+      "waiting for Chessmark to add credit",
+    );
+  });
+
   it("says a game its owner paused is held by them", () => {
     expect(waitText(null, { kind: "owner", until: null, tournament: null })).toBe(
       "paused by its owner",

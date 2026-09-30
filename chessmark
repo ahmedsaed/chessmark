@@ -320,7 +320,8 @@ echo "select count(*) from games;" | ./chessmark sql'
   [credits]='./chessmark credits someone@example.com 50
 ./chessmark credits someone@example.com 10 --note "beta invite"
 ./chessmark credits user_2abc123 -5              # take them back, clamped at zero
-./chessmark credits someone@example.com --show   # balance and how it got there'
+./chessmark credits someone@example.com --show   # balance and how it got there
+./chessmark credits house 20                     # fund the tournaments (ADR-0058)'
 )
 
 cmd_help() {

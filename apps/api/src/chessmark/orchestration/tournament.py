@@ -26,7 +26,9 @@ from chessmark.bench.service import compute_ratings
 from chessmark.core.cooldown import ProviderCooldown
 from chessmark.core.halt import SCOPE_ALL, Halt
 from chessmark.db import tournaments as repo
+from chessmark.db.credits import can_play
 from chessmark.db.enums import GameStatus, ModelRuntime, TournamentStatus
+from chessmark.db.house import house_id
 from chessmark.db.models import (
     Game,
     ModelEndpoint,
@@ -251,7 +253,34 @@ async def _holding(
             until = f", lifts in {state.until.isoformat()}" if state.until else ""
             return f"the harness is halted: {state.reason}{until}"
 
+    # **The house pays for every paid turn here, and it is empty** (ADR-0058). A game started now
+    # would pause at its first paid turn, and a pool would go on starting more, each holding
+    # nothing and moving nothing. So the event holds instead, and resumes on the first tick after
+    # the house is funded. A free-only event costs the house nothing and never holds for it.
+    house = await house_id(session)
+    if (
+        house is not None
+        and await _uses_paid_models(session, tournament)
+        and not await can_play(session, house)
+    ):
+        return "the house account is out of credit: ./chessmark credits house <usd>"
+
     return ""
+
+
+async def _uses_paid_models(session: AsyncSession, tournament: Tournament) -> bool:
+    """Whether any entrant is a paid model, and so draws on the house."""
+    found = await session.scalar(
+        sa.select(TournamentEntrant.id)
+        .join(ModelRegistry, ModelRegistry.id == TournamentEntrant.model_id)
+        .where(
+            TournamentEntrant.tournament_id == tournament.id,
+            TournamentEntrant.withdrawn.is_(False),
+            ModelRegistry.is_free.is_(False),
+        )
+        .limit(1)
+    )
+    return found is not None
 
 
 async def _uses_free_models(session: AsyncSession, tournament: Tournament) -> bool:

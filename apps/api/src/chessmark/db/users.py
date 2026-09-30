@@ -82,7 +82,8 @@ async def resolve_user(session: AsyncSession, identifier: str) -> User | None:
     """Find a user from whatever an administrator actually has to hand (AUTH-14).
 
     Three shapes, tried in order of certainty: our own UUID, a Clerk `user_...` id, an email
-    address. `None` for anything else, so a caller can refuse rather than guess.
+    address — and `house`, for Chessmark's own account. `None` for anything else, so a caller can
+    refuse rather than guess.
 
     **An email we do not hold is asked of Clerk**, and the row is provisioned if they know them.
     Our `users` row is created on a person's first request, so without that step credits could only
@@ -93,6 +94,13 @@ async def resolve_user(session: AsyncSession, identifier: str) -> User | None:
     implementations of "who is this" would eventually disagree about which shapes are accepted.
     """
     identifier = identifier.strip()
+
+    # Chessmark's own account (ADR-0058), by name: nobody should have to look its UUID up to fund
+    # the tournaments it pays for.
+    if identifier == "house":
+        from chessmark.db.house import HOUSE_CLERK_ID
+
+        return await get_by_clerk_id(session, HOUSE_CLERK_ID)
 
     try:
         found = await get_user(session, uuid.UUID(identifier))

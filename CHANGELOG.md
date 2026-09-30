@@ -17,6 +17,12 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **Tournaments are paid for by Chessmark's own house account.** Every game no person started is
+  now charged to it, turn by turn, and pauses when it is empty ("waiting for Chessmark to add
+  credit"). A tournament with paid models holds rather than starting games it can't fund. What the
+  house holds counts against the credit for sale, so tournaments can no longer spend the OpenRouter
+  balance that backs users' credit. Fund it with `./chessmark credits house <usd>`. (AUTH-26,
+  [ADR-0058](docs/adr/0058-the-house-account-pays-for-games-no-person-started.md))
 - **Buy any amount of credit** from $5 to $100, with $5, $10 and $25 as quick picks. Each purchase
   is shown as a sum: the payment processor's fee, 5% for running Chessmark, the **AI provider fee**
   (OpenRouter's 5.5% on the credit we buy from it, which the old packs did not cover), and the

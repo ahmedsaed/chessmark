@@ -43,6 +43,7 @@ from chessmark.core.cooldown import KEY_PREFIX as COOLDOWN_PREFIX  # noqa: E402
 from chessmark.core.failures import FailureLog  # noqa: E402
 from chessmark.core.halt import Halt  # noqa: E402
 from chessmark.core.sales import Sales  # noqa: E402
+from chessmark.db.house import HOUSE_CLERK_ID  # noqa: E402
 from chessmark.core.openrouter_billing import OpenRouterBilling  # noqa: E402
 from chessmark.db.capacity import headroom, largest_affordable  # noqa: E402
 from chessmark.db.enums import EventType, GameStatus, PurchaseStatus  # noqa: E402
@@ -58,6 +59,7 @@ from chessmark.db.models import (  # noqa: E402
     Tournament,
     TournamentGame,
     UnrecordedGeneration,
+    User,
 )
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
 from chessmark.orchestration.queue import DEFAULT_GROUP, DEFAULT_STREAM  # noqa: E402
@@ -442,6 +444,28 @@ async def show_billing(report: Report, session: Any) -> None:
     (report.warn if abs(difference) > BILLING_TOLERANCE_USD else report.ok)("month", line)
 
 
+async def show_house(report: Report, session: Any) -> None:
+    """Chessmark's own balance, which pays for every game no person started (ADR-0058).
+
+    Empty is a warning, not a fault: tournaments with paid models hold until it is funded, and
+    nothing else is affected. Missing means the migration that creates it has not run, and those
+    games are paid for by nobody, as before it existed.
+    """
+    report.head("house account")
+    balance = await session.scalar(
+        sa.select(User.balance_usd).where(User.clerk_user_id == HOUSE_CLERK_ID)
+    )
+    if balance is None:
+        report.warn("missing", "no house row: tournaments are charged to nobody — run migrations")
+    elif balance <= 0:
+        report.warn(
+            "empty",
+            f"${balance:.2f} — paid tournaments hold: ./chessmark credits house <usd>",
+        )
+    else:
+        report.ok("funded", f"${balance:.2f} for tournaments and operator games")
+
+
 async def show_selling(report: Report, session: Any, redis: Any) -> None:
     """Whether credit can be bought, and how much more OpenRouter's balance can cover (ADR-0056).
 
@@ -817,6 +841,7 @@ async def main() -> int:
                 if everything:
                     await show_platform(report, session)
                     await show_billing(report, session)
+                    await show_house(report, session)
                     await show_selling(report, session, redis)
                 if everything or args.games:
                     await show_games(report, session)

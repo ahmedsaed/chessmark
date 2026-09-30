@@ -26,6 +26,7 @@ sys.path.insert(0, str(API_ROOT / "src"))
 import sqlalchemy as sa  # noqa: E402
 
 from chessmark.core.clerk import ClerkDirectory  # noqa: E402
+from chessmark.db.house import HOUSE_CLERK_ID  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db.models import User  # noqa: E402
 from chessmark.db.session import dispose_engine, session_scope  # noqa: E402
@@ -45,7 +46,15 @@ async def main() -> int:
 
     try:
         async with session_scope() as session:
-            rows = list(await session.scalars(sa.select(User).where(User.email.is_(None))))
+            # Not the house (ADR-0058): it has no email because it is nobody, and Clerk has never
+            # heard of it.
+            rows = list(
+                await session.scalars(
+                    sa.select(User).where(
+                        User.email.is_(None), User.clerk_user_id != HOUSE_CLERK_ID
+                    )
+                )
+            )
             print(f"{len(rows)} user(s) without an email")
 
             filled = 0

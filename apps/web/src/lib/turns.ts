@@ -919,6 +919,10 @@ export function waitText(
       return "paused by its owner";
     case "credit":
       return "waiting for its owner to add credit";
+    /* A game no person started is paid for by Chessmark's own account (ADR-0058). "Its owner"
+       would point the reader at somebody who does not exist. */
+    case "house_credit":
+      return "waiting for Chessmark to add credit";
     case "concurrency":
       return waitingOn.tournament
         ? `waiting for a slot in ${waitingOn.tournament}`
