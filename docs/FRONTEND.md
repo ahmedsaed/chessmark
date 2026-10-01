@@ -130,6 +130,37 @@ A human drag to the last rank opens a picker. It used to be a queen either way, 
 every time and wrong in exactly the position that matters: the one where a rook or a knight wins and
 the player cannot say so.
 
+## Move sounds
+
+A ply makes one of six sounds — move, capture, castle, check, promote, game end — chosen from its
+SAN in `lib/sound.ts`, where the rules for *when* live too: never for the history a page loads
+with, one sound for a burst of plies, nothing for a scrubber jump, and the ending instead of the
+move that caused it. The live view and the replay make them; the landing page's boards never do.
+The toggle is in the game page's actions row, on by default, remembered per browser.
+
+* **On by default means on from the first gesture.** Browsers refuse audio until the visitor has
+  clicked or pressed a key, so a spectator who only watches hears nothing. The first `pointerdown`
+  or `keydown` anywhere unlocks it; there is no prompt. A move that lands before that is not
+  queued — hearing it late is worse than not at all.
+* **Fetched when idle, decoded on the gesture.** Six files, ~52 KB together, off the critical path.
+  They are served `immutable` (`next.config.ts`), so **a changed sound goes in a new `/sounds/vN/`
+  directory** — the same URL with new bytes never reaches a browser that has the old one.
+* **CC0, from Kenney's *Impact Sounds* and *Interface Sounds* packs** (kenney.nl). Chess.com's are
+  proprietary; lichess's default set is listed as non-free in its `COPYING.md`, and its other sets
+  are AGPL or non-commercial — none of which a source-available project can ship. The owner chose
+  them by ear from a set of candidates. Most are two samples mixed, the second delayed and
+  attenuated; every file is mono 96 kbps MP3 through `alimiter=limit=0.7`, so the six sit at one
+  level. To remake one, mix the second sample into the first with `adelay` and `volume`:
+
+  | file | first sample | second sample, delay, volume |
+  | --- | --- | --- |
+  | `move` | `impactWood_light_004` | — |
+  | `capture` | `impactWood_light_001` | `impactWood_heavy_000`, 70 ms, 1.0 |
+  | `castle` | `impactWood_light_000` | `impactWood_light_003`, 180 ms, 1.0 |
+  | `check` | `impactWood_light_002` | `glass_001` (Interface), 40 ms, 0.5 |
+  | `promote` | `impactWood_light_004` | `confirmation_001` (Interface), 60 ms, 0.6 |
+  | `game-end` | `impactWood_medium_003` | `impactBell_heavy_002`, 40 ms, 0.3 |
+
 ## A turn arrives twice
 
 The panel receives two kinds of frame, and only one of them is the record ([ADR-0035](adr/0035-live-frames-are-not-events.md)).

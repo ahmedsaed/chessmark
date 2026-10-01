@@ -17,6 +17,11 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **Move sounds on the game page.** A move, a capture, castling, a check, a promotion and the end
+  of a game each have their own sound, live and in replays. On by default; "sound on / off" in the
+  row beside "copy link" turns it off, and your browser remembers. Browsers only allow sound after
+  you have clicked or pressed a key on the page, so a game you only watch stays quiet until then.
+
 - **Tournaments are paid for by Chessmark's own house account.** Every game no person started is
   now charged to it, turn by turn, and pauses when it is empty ("waiting for Chessmark to add
   credit"). A tournament with paid models holds rather than starting games it can't fund. What the

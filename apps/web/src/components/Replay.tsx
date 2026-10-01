@@ -13,7 +13,7 @@
  * and a locally-derived position cannot be desynced by a malformed payload.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Board } from "@/components/Board";
 import { EventStream } from "@/components/EventStream";
@@ -24,6 +24,8 @@ import { Scrubber } from "@/components/Scrubber";
 import { PlayerBar } from "@/components/PlayerBar";
 import { StatsRail } from "@/components/StatsRail";
 import { buildFrames } from "@/lib/animation";
+import { replayCue } from "@/lib/sound";
+import { playSound, useMoveSounds } from "@/hooks/useMoveSounds";
 import { eventsThroughPly, plyCount, turnIdsByPly } from "@/lib/replay";
 import { foldEvents } from "@/lib/turns";
 import type { GameDetail, GameEvent, TurnSummary, TurnView } from "@/lib/types";
@@ -64,10 +66,22 @@ export function Replay({
 
      `buildFrames` is the same function the landing page's self-playing thumbnails use, so the two
      cannot disagree about what a position is. */
+  const allMoves = useMemo(() => foldEvents(events, []).moves, [events]);
   const frames = useMemo(
-    () => buildFrames(game.start_fen, foldEvents(events, []).moves),
-    [game.start_fen, events],
+    () => buildFrames(game.start_fen, allMoves),
+    [game.start_fen, allMoves],
   );
+
+  /* One step forward is heard, as the board animates it; a scrubber drag or a rewind is a jump
+     and is silent (`replayCue`). `null` first, so the page opening at the final position does not
+     announce a game that ended before the reader arrived. */
+  useMoveSounds();
+  const shownPly = useRef<number | null>(null);
+  useEffect(() => {
+    const cue = replayCue(shownPly.current, ply, allMoves);
+    shownPly.current = ply;
+    if (cue) playSound(cue);
+  }, [ply, allMoves]);
 
   const frame = frames[Math.min(ply, frames.length - 1)] ?? frames[0];
   const fen = frame.fen;
