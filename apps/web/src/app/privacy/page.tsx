@@ -16,6 +16,8 @@ export const metadata: Metadata = pageMetadata({
  * - `users` holds the Clerk id, email, display name and balance; nothing else about a person.
  * - A model request carries the game's id as `session_id` and never the player's identity.
  * - The only cookies are Clerk's session cookies. There is no analytics or advertising script.
+ * - The only thing kept in browser storage is the game-sound setting (`chessmark:sound` in
+ *   `localStorage`, `hooks/useMoveSounds.ts`). It is never sent to the server.
  * - Deleting an account (Clerk's `user.deleted`) removes the user and their ledgers by cascade,
  *   and leaves their games in place with the seat unattributed (`players.user_id` SET NULL).
  */
@@ -23,7 +25,7 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy policy"
-      updated="27 September 2026"
+      updated="1 October 2026"
       summary={
         <p>
           Chessmark collects what it needs to run your account and your games, and nothing for
@@ -67,7 +69,8 @@ export default function PrivacyPage() {
         </Points>
         <p>
           Cookies are used only to keep you signed in. There are no analytics or advertising
-          cookies, and nothing tracks you across other sites.
+          cookies, and nothing tracks you across other sites. Your browser also remembers whether
+          you turned game sounds off. That setting stays on your device and is never sent to us.
         </p>
       </Clause>
 
