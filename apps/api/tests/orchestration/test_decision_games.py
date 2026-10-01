@@ -17,6 +17,7 @@ from chessmark.agents.decision_request import (
     ACTION_QUESTION,
     CLAIM_DRAW,
     DECISION_VERSION,
+    MOVE_QUESTION,
     OFFER_DRAW,
 )
 from chessmark.agents.decisions import DecisionHttpError
@@ -39,7 +40,8 @@ from chessmark.db.models import (
 )
 from chessmark.game import GameResult, Termination
 from chessmark.orchestration.match import Seat, create_match, start_match
-from chessmark.orchestration.queue import TurnQueue
+from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
+from chessmark.orchestration.reconciler import resume
 from chessmark.orchestration.worker import PAUSED, TURN_FAILED
 from tests.support import run_next
 
@@ -50,8 +52,11 @@ KEV = "jaredpalmer/kev-4b"
 CHAT = "scripted/chat"
 
 
-async def _register(db: AsyncSession) -> None:
-    """The two decision models as the catalogue sync writes them, with the endpoint each pins."""
+async def _register(db: AsyncSession, limits: dict[str, int] | None = None) -> None:
+    """The two decision models as the catalogue sync writes them, with the endpoint each pins.
+
+    `limits` gives a model the most options a question it was found to take, as the check would.
+    """
     for slug, provider in ((JEV, "TypeSafe"), (KEV, "SiliconFlow")):
         row = ModelRegistry(
             openrouter_id=slug,
@@ -61,6 +66,7 @@ async def _register(db: AsyncSession) -> None:
             supports_tools=False,
             runtime=ModelRuntime.DECISION,
             decisions_checked=DECISION_VERSION,
+            decisions_max_choices=(limits or {}).get(slug),
         )
         db.add(row)
         await db.flush()
@@ -82,9 +88,10 @@ async def _start(
     *,
     white: str = JEV,
     black: str = KEV,
+    limits: dict[str, int] | None = None,
     **kwargs: Any,
 ) -> Game:
-    await _register(db)
+    await _register(db, limits)
     match = await create_match(
         db,
         white=Seat(display_name=white, model=white),
@@ -224,6 +231,113 @@ class TestATurn:
         assert str(reloaded.total_cost_usd) == "0.00200000"
         seats = list(await db.scalars(sa.select(Player).where(Player.game_id == game.id)))
         assert sorted(str(p.total_cost_usd) for p in seats) == ["0.00100000", "0.00100000"]
+
+
+class TestHeats:
+    """A model that cannot take every legal move in one question plays in heats (ADR-0059)."""
+
+    async def test_a_limited_model_is_asked_in_heats_and_a_final(
+        self, db: AsyncSession, queue: Any, make_worker: Any
+    ) -> None:
+        # Twenty opening moves under a limit of six: four heats of five, then a final of four. The
+        # host refuses any question over six, so a turn asked the old way fails here.
+        decide = deciding(moves=["Nf3"], max_choices=6, cost=0.00002)
+        game = await _start(db, queue, limits={JEV: 6})
+        await run_next(make_worker(plays([]), decide_fn=decide), queue)
+
+        assert [m.payload["san"] for m in await _events(db, game.id, EventType.MOVE_MADE)] == [
+            "Nf3"
+        ]
+        first, final = decide.calls  # type: ignore[attr-defined]
+        assert sorted(first["questions"]) == ["action", "heat_1", "heat_2", "heat_3", "heat_4"]
+        assert [len(q["criteria"]) for k, q in first["questions"].items() if k != "action"] == [
+            5,
+            5,
+            5,
+            5,
+        ]
+        assert list(final["questions"]) == [MOVE_QUESTION]
+        assert len(final["questions"][MOVE_QUESTION]["criteria"]) == 4
+
+        calls = list(
+            await db.scalars(
+                sa.select(LlmCall).where(LlmCall.game_id == game.id).order_by(LlmCall.sequence)
+            )
+        )
+        assert [c.sequence for c in calls] == [1, 2]
+        turn = (await db.scalars(sa.select(Turn).where(Turn.game_id == game.id))).one()
+        assert (turn.status, turn.llm_call_count) == (TurnStatus.COMPLETED, 2)
+        assert str(turn.cost_usd) == "0.00004000"
+        assert str((await _game(db, game.id)).total_cost_usd) == "0.00004000"
+
+        (decided,) = await _events(db, game.id, EventType.DECIDED)
+        payload = decided.payload
+        assert (payload["choice"], payload["options"]) == ("Nf3", 20)
+        assert len(payload["probabilities"]) == 4
+        assert payload["probabilities"][0][0] == "Nf3"
+        assert len(payload["heats"]) == 4
+        assert {h["round"] for h in payload["heats"]} == {1}
+        assert "Nf3" in {h["choice"] for h in payload["heats"]}
+
+    async def test_a_model_without_a_limit_is_asked_once_with_no_heats(
+        self, db: AsyncSession, queue: Any, make_worker: Any
+    ) -> None:
+        decide = deciding(moves=["e4"])
+        game = await _start(db, queue)
+        await run_next(make_worker(plays([]), decide_fn=decide), queue)
+
+        (request,) = decide.calls  # type: ignore[attr-defined]
+        assert set(request["questions"]) == {MOVE_QUESTION, "action"}
+        (decided,) = await _events(db, game.id, EventType.DECIDED)
+        assert "heats" not in decided.payload
+
+    async def test_a_heat_paid_for_is_kept_when_the_final_fails(
+        self, db: AsyncSession, queue: Any, make_worker: Any
+    ) -> None:
+        """ADR-0053: an answered call is real spend. Rolling it back would pay for it again."""
+        answering = deciding(moves=["Nf3"], max_choices=6, cost=0.00002)
+        state = {"calls": 0}
+
+        async def heats_then_unavailable(request: dict[str, Any]) -> dict[str, Any]:
+            state["calls"] += 1
+            if state["calls"] == 2:
+                response = httpx.Response(503, json={"error": {"message": "down", "code": 503}})
+                raise DecisionHttpError(503, response.text, response)
+            return await answering(request)  # type: ignore[no-any-return]
+
+        game = await _start(db, queue, limits={JEV: 6})
+        handled = await run_next(make_worker(plays([]), decide_fn=heats_then_unavailable), queue)
+        assert handled.outcome in {PAUSED, TURN_FAILED}
+
+        db.expunge_all()
+        turn = (await db.scalars(sa.select(Turn).where(Turn.game_id == game.id))).one()
+        assert turn.status is TurnStatus.INTERRUPTED
+        assert str(turn.cost_usd) == "0.00002000"
+        assert [
+            c.sequence
+            for c in await db.scalars(sa.select(LlmCall).where(LlmCall.game_id == game.id))
+        ] == [1]
+        assert str((await _game(db, game.id)).total_cost_usd) == "0.00002000"
+
+        # The retry asks the turn again from the start, on the same row, and adds to it.
+        stored = await db.get(Game, game.id)
+        assert stored is not None
+        if stored.status is GameStatus.PAUSED:
+            await queue.enqueue(await resume(db, stored))
+        else:
+            await queue.enqueue(AdvanceTurn(game_id=game.id, expected_ply=0))
+        await db.commit()
+        await run_next(make_worker(plays([]), decide_fn=answering), queue)
+
+        db.expunge_all()
+        turn = (await db.scalars(sa.select(Turn).where(Turn.game_id == game.id))).one()
+        assert (turn.status, turn.ply_number, turn.llm_call_count) == (TurnStatus.COMPLETED, 1, 3)
+        assert str(turn.cost_usd) == "0.00006000"
+        assert sorted(
+            c.sequence
+            for c in await db.scalars(sa.select(LlmCall).where(LlmCall.game_id == game.id))
+        ) == [1, 2, 3]
+        assert str((await _game(db, game.id)).total_cost_usd) == "0.00006000"
 
 
 class TestEndings:

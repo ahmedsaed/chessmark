@@ -146,7 +146,83 @@ async def test_the_check_asks_exactly_what_a_turn_asks(db: AsyncSession) -> None
     (request,) = asked.calls  # type: ignore[attr-defined]
     assert set(request["questions"]) == {MOVE_QUESTION, ACTION_QUESTION}
     assert isinstance(request["state"], dict) and "position" in request["state"]
-    assert decision_check.CHECK_MOVES == ("e4", "e5")
+    assert "opponent_last_move" in request["state"]
+    # Every legal move of the busiest position chess has, in one question.
+    assert len(request["questions"][MOVE_QUESTION]["criteria"]) == 218
+
+
+async def test_a_model_with_no_limit_is_recorded_as_having_none(db: AsyncSession) -> None:
+    await _model(db, "typesafe/jev-1.13")
+    report = await check_decision_models(db, _gateway(deciding()))
+    assert report.limits == {}
+    row = await _reload(db, "typesafe/jev-1.13")
+    assert row.decisions_max_choices is None
+
+
+async def test_a_limited_model_is_asked_smaller_until_it_answers_and_plays_in_heats(
+    db: AsyncSession,
+) -> None:
+    """Tev, exactly: 20 options at most. Halving finds 13, the largest size asked under 20."""
+    await _model(db, "togethercomputer/tev1-4b-experimental")
+    host = deciding(max_choices=20)
+    report = await check_decision_models(db, _gateway(host))
+
+    assert report.answered == ["togethercomputer/tev1-4b-experimental"]
+    assert report.limits == {"togethercomputer/tev1-4b-experimental": 13}
+    row = await _reload(db, "togethercomputer/tev1-4b-experimental")
+    assert (row.decisions_max_choices, row.decisions_refusal) == (13, None)
+    assert row.openrouter_id in {m.openrouter_id for m in await playable_models(db)}
+
+    sizes = [
+        {len(q["criteria"]) for k, q in call["questions"].items() if k != ACTION_QUESTION}
+        for call in host.calls  # type: ignore[attr-defined]
+    ]
+    assert sizes == [{218}, {109}, {54}, {27}, {13}]
+
+
+def test_each_smaller_request_asks_every_question_at_its_size() -> None:
+    """The host is shown its largest question as many times as a real turn could ask it."""
+    for size in decision_check.PROBE_SIZES[1:]:
+        body, expected = decision_check.check_request("vendor/model", size)
+        heats = {k: q for k, q in body["questions"].items() if k != ACTION_QUESTION}
+        assert len(heats) == -(-218 // size)
+        assert {len(q["criteria"]) for q in heats.values()} == {size}
+        assert ACTION_QUESTION in body["questions"]
+        assert set(expected) == set(body["questions"])
+
+
+async def test_a_model_refused_at_every_size_is_refused_after_six_requests(
+    db: AsyncSession,
+) -> None:
+    await _model(db, "respan/span-01")
+    host = _refusing(400, RESPAN_400)
+    report = await check_decision_models(db, _gateway(host))
+
+    assert report.refused == ["respan/span-01"]
+    assert len(host.calls) == len(decision_check.PROBE_SIZES) == 6  # type: ignore[attr-defined]
+    row = await _reload(db, "respan/span-01")
+    assert row.decisions_max_choices is None
+
+
+async def test_a_rate_limit_part_way_down_records_nothing(db: AsyncSession) -> None:
+    """A limit found by a check that did not finish would be a guess, so none is written."""
+    await _model(db, "upstage/solar-decide")
+    state = {"calls": 0}
+    refused = _refusing(422, "29 candidates exceed the 26 single-token labels")
+    limited = _refusing(429, "Rate limit exceeded: free-models-per-day")
+
+    async def refuse_then_limit(request: dict[str, Any]) -> dict[str, Any]:
+        state["calls"] += 1
+        return await (refused if state["calls"] == 1 else limited)(request)  # type: ignore[no-any-return]
+
+    report = await check_decision_models(db, _gateway(refuse_then_limit))
+    assert report.deferred == ["upstage/solar-decide"]
+    row = await _reload(db, "upstage/solar-decide")
+    assert (row.decisions_checked, row.decisions_max_choices, row.decisions_refusal) == (
+        None,
+        None,
+        None,
+    )
 
 
 async def test_an_answer_that_is_not_an_answer_counts_as_a_refusal(db: AsyncSession) -> None:

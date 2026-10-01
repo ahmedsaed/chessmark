@@ -334,12 +334,26 @@ export interface DecisionBlock {
   offersDraw: boolean;
   /** An ending the model ranked first on less than a majority, which was not taken (ADR-0051). */
   rankedFirst: string | null;
-  /** Every legal move, most likely first. */
+  /** Every move the deciding question offered, most likely first: every legal move, or with
+   *  heats the final's finalists. */
   probabilities: [string, number][] | null;
   confidence: number | null;
   /** The yes-probability of each other question it was asked: resign, offer, claim, accept. */
   answers: Record<string, number> | null;
   durationMs: number | null;
+  /** Its only legal move, which it was not asked about (ADR-0059). */
+  forced: boolean;
+  /** The heats a model that cannot take every move in one question was asked first (ADR-0059);
+   *  empty when it was asked once, and null while withheld, like the ranking they lead to. */
+  heats: DecisionHeat[] | null;
+}
+
+/** One heat: how many moves it offered, which won, and how sure the model was of it. */
+export interface DecisionHeat {
+  round: number;
+  moves: number;
+  choice: string;
+  probability: number | null;
 }
 
 /**
@@ -377,6 +391,8 @@ export type LiveFrame =
       probabilities?: [string, number][];
       confidence?: number | null;
       answers?: Record<string, number>;
+      forced?: boolean;
+      heats?: { round: number; choice: string; probabilities: [string, number][] }[];
     }
   /** A fragment of a block still being generated. Appended, then replaced by its `block`. */
   | {

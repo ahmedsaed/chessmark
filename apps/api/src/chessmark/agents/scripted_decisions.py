@@ -14,8 +14,12 @@ to misbehave says so explicitly (`malformed`).
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable
 from typing import Any
+
+from chessmark.agents.decision_request import HEAT_PREFIX
+from chessmark.agents.decisions import DecisionHttpError
 
 DecideFn = Callable[..., Any]
 
@@ -63,6 +67,7 @@ def deciding(
     input_tokens: int = 1_200,
     provider: str = "Scripted",
     malformed: bool = False,
+    max_choices: int | None = None,
 ) -> DecideFn:
     """A decision model that plays `moves` in order where it can, and the first option where not.
 
@@ -76,8 +81,12 @@ def deciding(
     one colour (`"white"`), read from the request's own `you_are`, for a test that needs the two
     seats to answer differently.
 
-    `malformed` answers the move question with an option that was never offered, which is the one
-    thing the gateway must refuse before a referee sees it.
+    `malformed` answers the move question, and every heat, with an option that was never offered,
+    which is the one thing the gateway must refuse before a referee sees it.
+
+    `max_choices` makes it a host like Tev's: a 422 for any `choice` with more options than that, or
+    fewer than two. A heat (`heat_1`, …) is won by the next scripted move when it is in the heat,
+    without consuming it — the final, asked as `move`, is where the script moves on.
     """
     script = list(moves)
     nouls = answers or {}
@@ -85,6 +94,15 @@ def deciding(
 
     async def _decide(request: dict[str, Any]) -> dict[str, Any]:
         calls.append(request)
+        if max_choices is not None:
+            for key, question in (request.get("questions") or {}).items():
+                size = len(question.get("criteria") or {})
+                if question.get("type") == "choice" and not 2 <= size <= max_choices:
+                    message = (
+                        f"question {key}: {size} options, and this route takes 2 to {max_choices}"
+                    )
+                    body = json.dumps({"error": {"message": message, "code": 422}})
+                    raise DecisionHttpError(422, body)
         out: dict[str, Any] = {}
         side = (by_side or {}).get(str((request.get("state") or {}).get("you_are")), {})
         for key, question in (request.get("questions") or {}).items():
@@ -95,6 +113,13 @@ def deciding(
                 wanted = script.pop(0) if script else None
                 chosen = wanted if wanted is not None and wanted in options else options[0]
                 out[key] = _choice(options, chosen)
+                if malformed:
+                    out[key]["choice"] = "not-an-option"
+            elif key.startswith(HEAT_PREFIX):
+                wanted = script[0] if script else None
+                out[key] = _choice(
+                    options, wanted if wanted is not None and wanted in options else options[0]
+                )
                 if malformed:
                     out[key]["choice"] = "not-an-option"
             else:

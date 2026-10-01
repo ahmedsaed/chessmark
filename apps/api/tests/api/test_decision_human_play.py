@@ -27,7 +27,9 @@ pytestmark = pytest.mark.integration
 MODEL = "typesafe/jev-1.13"
 
 
-async def _new_game(client: AsyncClient, db: AsyncSession) -> str:
+async def _new_game(
+    client: AsyncClient, db: AsyncSession, *, max_choices: int | None = None
+) -> str:
     await sync_model_registry(
         db,
         [
@@ -43,7 +45,7 @@ async def _new_game(client: AsyncClient, db: AsyncSession) -> str:
     await db.execute(
         sa.update(ModelRegistry)
         .where(ModelRegistry.openrouter_id == MODEL)
-        .values(decisions_checked=DECISION_VERSION)
+        .values(decisions_checked=DECISION_VERSION, decisions_max_choices=max_choices)
     )
     await db.commit()
     await fund(db)
@@ -98,6 +100,23 @@ async def test_the_models_answer_is_withheld_while_the_person_is_playing(
     (after,) = _decided((await client.get(f"/games/{game_id}/events")).json())
     assert after["probabilities"][0][0] == "e5"
     assert set(after["answers"]) == {"play_on", "resign", "offer_draw"}
+
+
+async def test_a_models_heats_are_withheld_with_the_rest_of_its_answer(
+    client: AsyncClient, db: AsyncSession, queue, make_worker
+) -> None:
+    """A heat's ranking is the model's ranking over fewer moves — the same plan (ADR-0059)."""
+    game_id = await _new_game(client, db, max_choices=6)
+    await client.post(f"/games/{game_id}/moves", json={"move": "e4"}, headers=as_user())
+    await run_next(make_worker(plays([]), decide_fn=deciding(moves=["e5"], max_choices=6)), queue)
+
+    (live,) = _decided((await client.get(f"/games/{game_id}/events")).json())
+    assert live["choice"] == "e5"
+    assert "heats" not in live
+
+    await client.post(f"/games/{game_id}/resign", headers=as_user())
+    (after,) = _decided((await client.get(f"/games/{game_id}/events")).json())
+    assert after["heats"] and "e5" in {heat["choice"] for heat in after["heats"]}
 
 
 async def test_a_decision_models_offer_can_be_accepted_by_the_person(

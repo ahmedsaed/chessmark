@@ -1,4 +1,4 @@
-"""A decision model's turn: one request, one answer, one action (ADR-0049).
+"""A decision model's turn: one answer, one action (ADR-0049).
 
 The counterpart of `turn.TurnRunner` for a seat whose model is asked through the Decisions API, and
 far smaller, because most of what makes a chat turn hard does not exist here. There is no
@@ -11,11 +11,16 @@ What it keeps from the chat turn is everything the rest of the system reads. One
 provider reported (invariant 4), `turn_started` and `move_made` events shaped exactly as a chat
 seat's are, and a `TurnResult` — so the worker pauses, retries and abandons a decision seat by the
 same rules, and the pages render its moves with the code they already have.
+
+**Usually one request; more for a model that cannot take every legal move in one question**
+(ADR-0059). Such a model is asked its move in heats and a final (`decision_rounds`), each request
+its own `llm_calls` row, and the turn's spend is all of them.
 """
 
 from __future__ import annotations
 
 import time
+from decimal import Decimal
 from typing import Any
 
 import sqlalchemy as sa
@@ -23,16 +28,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.decision_request import (
     ACCEPT_DRAW,
-    ACTION_QUESTION,
     CLAIM_DRAW,
     FIFTY_MOVES,
-    MOVE_QUESTION,
     OFFER_DRAW,
     RESIGN,
     THREEFOLD,
     DecisionRequest,
     build_request,
 )
+from chessmark.agents.decision_rounds import Answer, Ask, decide
 from chessmark.agents.decisions import Decision, DecisionGateway, MalformedDecisionError
 from chessmark.agents.live import LiveChannel, NullLive
 from chessmark.agents.live import block as live_block
@@ -43,7 +47,7 @@ from chessmark.agents.types import LlmError
 from chessmark.db.credits import spend
 from chessmark.db.enums import EventType, TurnStatus
 from chessmark.db.house import payer_of
-from chessmark.db.models import Game, GameEvent, LlmCall, Player, Turn
+from chessmark.db.models import Game, GameEvent, LlmCall, ModelRegistry, Player, Turn
 from chessmark.db.repositories import append_event, open_draw_offer, record_ply
 from chessmark.game import Colour, MoveOutcome, Referee
 
@@ -89,13 +93,25 @@ class DecisionTurnRunner:
         self.model = model
         self.live: LiveChannel = live or NullLive()
         self.colour = Colour(player.colour)
+        #: Calls this attempt made, and the sequence the next one is recorded under — continued
+        #: from a resumed turn's own, which `uq_llm_calls_turn_id_sequence` holds us to.
+        self._calls = 0
+        self._sequence = 0
+        #: What a resumed turn's row already holds from the attempt before. The row is the whole
+        #: turn and `TurnResult` is this attempt, so the money is added rather than replaced.
+        self._carried = (0, 0, Decimal(0))
+        #: The model's time across every request of the turn, which is what `duration_ms` reports.
+        self._latency_ms = 0
+        self._build: str | None = None
 
     async def run(self, resuming: Turn | None = None) -> TurnResult:
         """Play one turn.
 
-        `resuming` is accepted so the worker can treat both runners alike, and it is only ever an
-        `INTERRUPTED` chat turn's row — a decision turn is a single call and never keeps a partial
-        round (`TurnResult.keep_rounds` stays false), so there is nothing of its own to resume.
+        `resuming` is a turn interrupted after a call was paid for — a heat answered and the final
+        refused, say. **The calls stay and the turn is asked again from the start**: a heat's
+        answer was given about a position that is still on the board, but carrying it forward
+        would make one turn's move the work of two attempts, and the calls cost a fraction of a
+        cent. What carries is the record: the rows, their sequence and their spend.
         """
         turn = resuming
         if turn is None:
@@ -104,6 +120,15 @@ class DecisionTurnRunner:
             await self.session.flush()
         else:
             turn.status = TurnStatus.RUNNING
+            self._sequence = int(
+                await self.session.scalar(
+                    sa.select(sa.func.coalesce(sa.func.max(LlmCall.sequence), 0)).where(
+                        LlmCall.turn_id == turn.id
+                    )
+                )
+                or 0
+            )
+            self._carried = (turn.prompt_tokens, turn.completion_tokens, turn.cost_usd)
 
         result = TurnResult(turn_id=turn.id, status=TurnStatus.RUNNING)
         started = time.perf_counter()
@@ -145,6 +170,12 @@ class DecisionTurnRunner:
             result.status = TurnStatus.FAILED
             result.error = f"{self.model} returned an unusable decision: {error}"
 
+        if result.status is TurnStatus.FAILED and self._calls:
+            # **A call that was answered is kept** (ADR-0053): a heat paid for before the final
+            # failed is real spend with a real payload, and rolling it back would pay for it again
+            # on the retry and leave the record short of what OpenRouter billed.
+            result.keep_rounds = True
+
         result.latency_ms = int((time.perf_counter() - started) * 1000)
         await self._finalise(turn, result)
         return result
@@ -160,24 +191,13 @@ class DecisionTurnRunner:
             may_offer_draw=await self._may_offer(),
         )
 
-        # **Asked even with one legal move.** The move is then settled, but what to do with the turn
-        # is not, and a seat skipped on a forced move would be one never asked whether
-        # to resign in the positions most likely to deserve it.
-        decision = await self.gateway.decide(
-            request.body(model=self.model), session_id=session_for_game(self.game.id)
+        # **Asked even with one legal move** — though not about the move. The move is then settled,
+        # but what to do with the turn is not, and a seat skipped on a forced move would be one
+        # never asked whether to resign in the positions most likely to deserve it.
+        answer = await decide(
+            request, max_choices=await self._max_choices(), ask=self._ask(turn, result, request)
         )
-        # Recorded before it is read: a response that turns out to be unusable was still a call we
-        # made and paid for, and the verbatim row is how anyone finds out what came back.
-        await self._record_call(turn, decision)
-        result.llm_calls = 1
-        result.prompt_tokens = decision.usage.prompt
-        result.completion_tokens = decision.usage.completion
-        result.cost_usd = decision.cost_usd
-
-        # Both answers are read — and so validated — before anything is acted on, so a malformed
-        # one fails the turn cleanly rather than half-way through ending the game.
-        chosen, probabilities = decision.choice(MOVE_QUESTION, set(request.moves))
-        picked, answers = decision.choice(ACTION_QUESTION, set(request.actions))
+        picked, answers = answer.action, answer.answers
 
         # **The action the model ranked first is what happens** (ADR-0051) — unless it ends the
         # game on less than a majority, when its best non-ending action is played instead
@@ -193,14 +213,7 @@ class DecisionTurnRunner:
         action = taken if taken in ENDING_ACTIONS else "move"
 
         await self._record_decision(
-            decision,
-            request,
-            chosen=chosen,
-            probabilities=probabilities,
-            answers=answers,
-            action=action,
-            offers=offers,
-            ranked_first=picked,
+            request, answer, action=action, offers=offers, ranked_first=picked
         )
 
         result.status = TurnStatus.COMPLETED
@@ -214,9 +227,45 @@ class DecisionTurnRunner:
             result.outcome = self.referee.resign(self.colour)
             return
 
-        await self._move(turn, result, request.moves[chosen])
+        await self._move(turn, result, request.moves[answer.choice])
         if offers and not self.referee.is_over:
             await self._record_draw_offer()
+
+    def _ask(self, turn: Turn, result: TurnResult, request: DecisionRequest) -> Ask:
+        """How `decide` sends a request: each one recorded and paid for as soon as it answers."""
+
+        async def ask(questions: dict[str, Any]) -> Decision:
+            decision = await self.gateway.decide(
+                request.body(model=self.model, questions=questions),
+                session_id=session_for_game(self.game.id),
+            )
+            self._build = decision.model
+            # Recorded before it is read: a response that turns out to be unusable was still a call
+            # we made and paid for, and the verbatim row is how anyone finds out what came back.
+            await self._record_call(turn, decision)
+            self._calls += 1
+            result.llm_calls = self._calls
+            result.prompt_tokens += decision.usage.prompt
+            result.completion_tokens += decision.usage.completion
+            result.cost_usd += decision.cost_usd
+            self._latency_ms += decision.latency_ms
+            return decision
+
+        return ask
+
+    async def _max_choices(self) -> int | None:
+        """How many options this seat's model takes in one question, from its registry row.
+
+        Read per turn rather than per game, so a model re-checked mid-game plays its next turn by
+        what its host accepts now. `None`, no limit, when the row is gone or never had one.
+        """
+        if self.player.model_id is None:
+            return None
+        return await self.session.scalar(
+            sa.select(ModelRegistry.decisions_max_choices).where(
+                ModelRegistry.id == self.player.model_id
+            )
+        )
 
     async def _may_offer(self) -> bool:
         """Whether this seat may offer a draw now: not while its last offer stands declined.
@@ -276,7 +325,7 @@ class DecisionTurnRunner:
             LlmCall(
                 game_id=self.game.id,
                 turn_id=turn.id,
-                sequence=1,
+                sequence=self._sequence + 1,
                 model_slug=self.model,
                 provider=decision.provider,
                 request=decision.request,
@@ -291,16 +340,14 @@ class DecisionTurnRunner:
                 finish_reason=None,
             )
         )
+        self._sequence += 1
         await self.session.flush()
 
     async def _record_decision(
         self,
-        decision: Decision,
         request: DecisionRequest,
+        answer: Answer,
         *,
-        chosen: str,
-        probabilities: dict[str, float],
-        answers: dict[str, float],
         action: str,
         offers: bool,
         ranked_first: str,
@@ -311,28 +358,43 @@ class DecisionTurnRunner:
             "player_id": str(self.player.id),
             "colour": self.colour.value,
             "ply": self.referee.ply + 1,
-            "model": decision.model,
-            "duration_ms": decision.latency_ms,
+            # The build that answered, as the last response named it.
+            "model": self._build or self.model,
+            "duration_ms": self._latency_ms,
             # What the seat did — public the moment it happens, so never withheld.
             "action": action,
             # What the model ranked first, when that is not what happened — an ending it chose on
             # less than a majority. Said, so the record shows the rule acting rather than hiding it.
             **({"ranked_first": ranked_first} if overruled else {}),
-            "choice": chosen,
+            "choice": answer.choice,
             "offers_draw": offers,
             "options": len(request.moves),
-            # Every legal move, most likely first — the whole distribution is the model's answer,
-            # and the chosen move alone would hide how sure it was and what it nearly played.
+            # Every move the deciding question offered, most likely first — the whole distribution
+            # is the model's answer, and the chosen move alone would hide how sure it was and what
+            # it nearly played. With heats that question is the final, and each heat is below.
             "probabilities": [
                 [san, probability]
                 for san, probability in sorted(
-                    probabilities.items(), key=lambda kv: (-kv[1], kv[0])
+                    answer.probabilities.items(), key=lambda kv: (-kv[1], kv[0])
                 )
             ],
-            "confidence": decision.confidence(MOVE_QUESTION),
+            "confidence": answer.confidence,
             # How it ranked every action open to it this turn — `play_on` included, since how close
             # it came to resigning is only readable against how much it wanted to play on.
-            "answers": answers,
+            "answers": answer.answers,
+            # **Said rather than implied** (ADR-0059): a forced move was not asked about, and a
+            # move chosen in heats was chosen from a final, not from every legal move at once.
+            **({"forced": True} if answer.forced else {}),
+            **(
+                {
+                    "heats": [
+                        {"round": h.round, "choice": h.choice, "probabilities": h.probabilities}
+                        for h in answer.heats
+                    ]
+                }
+                if answer.heats
+                else {}
+            ),
         }
         await append_event(
             self.session, game_id=self.game.id, type=EventType.DECIDED, payload=payload
@@ -389,15 +451,22 @@ class DecisionTurnRunner:
         if result.status is TurnStatus.RUNNING:  # pragma: no cover - every path sets it
             result.status = TurnStatus.FAILED
 
-        turn.status = result.status
-        turn.llm_call_count = result.llm_calls
+        # `INTERRUPTED` says the row holds calls the next attempt carries on from (ADR-0045);
+        # the worker reads `keep_rounds` from the result to decide what to do about it.
+        turn.status = (
+            TurnStatus.INTERRUPTED
+            if result.status is TurnStatus.FAILED and result.keep_rounds
+            else result.status
+        )
+        carried_prompt, carried_completion, carried_cost = self._carried
+        turn.llm_call_count = self._sequence
         turn.tool_call_count = 0
         turn.illegal_attempts = 0
-        turn.prompt_tokens = result.prompt_tokens
-        turn.completion_tokens = result.completion_tokens
+        turn.prompt_tokens = carried_prompt + result.prompt_tokens
+        turn.completion_tokens = carried_completion + result.completion_tokens
         turn.reasoning_tokens = 0
         turn.cached_tokens = 0
-        turn.cost_usd = result.cost_usd
+        turn.cost_usd = carried_cost + result.cost_usd
         turn.latency_ms = result.latency_ms
         turn.error = result.error
         turn.ended_at = sa.func.now()

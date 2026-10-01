@@ -121,6 +121,8 @@ async def check_decisions(api_key: str) -> None:
     async with session_scope() as session:
         report = await check_decision_models(session, DecisionGateway(api_key=api_key))
     print(f"decisions : {report}")
+    for slug, limit in report.limits.items():
+        print(f"            {slug} takes at most {limit} options a question, and plays in heats")
     for slug in report.refused:
         print(f"            {slug} cannot answer our requests and will not be offered")
 
