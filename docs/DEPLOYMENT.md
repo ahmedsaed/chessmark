@@ -58,7 +58,9 @@ Four details that are deliberate rather than incidental:
   everything behind it, so the API stalled too.
 
   Stopping a worker mid-turn is safe by design: the turn is one transaction and rolls back whole,
-  and its job is redelivered (`expected_ply` idempotency, ADR-0007). If the migration fails, the
+  and its job is redelivered (`expected_ply` idempotency, ADR-0007) — within about a minute of the
+  restart, once the stopped worker's heartbeat has lapsed. The game shows its turn as in progress
+  until then, and the calls the stopped turn made are paid for and not in its record. If the migration fails, the
   workers come back on the old image and `deploy` returns non-zero.
 
   **Migrations wait at most `ALEMBIC_LOCK_TIMEOUT_SECONDS` (default 10) for a lock**, then fail

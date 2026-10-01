@@ -27,6 +27,20 @@ file is only the record of *what shipped when*.
   changes. The harness is `d2.1`, a minor version, so ratings and the decision pool's era carry
   on. ([ADR-0059](docs/adr/0059-a-decision-model-with-a-limit-plays-in-heats.md))
 
+### Fixed
+
+- **A game interrupted by a deploy resumes within a minute, not fifteen.** Stopping the workers
+  left the turn they were playing assigned to a worker that no longer existed, and the queue waited
+  fifteen minutes before handing it on, because it cannot tell a dead worker from one in a slow
+  turn. The game sat on "thinking" with nothing in its log. Each worker now keeps a heartbeat, and a
+  job whose worker has none is taken over at once. Nothing is played twice: the takeover is atomic,
+  and the game's row lock still refuses a second worker (ADR-0022).
+- **A turn longer than fifteen minutes is no longer run twice.** The same timeout took the job from
+  the slowest 1% of turns while their worker was still playing them, so the turn was rerun and its
+  calls paid for twice. A worker with a heartbeat now keeps its job however long the turn takes.
+  `./chessmark status` reads the heartbeat too, so a worker stopped mid-turn shows as gone rather
+  than as playing.
+
 ### Changed
 
 - **A forced move asks a decision model only what to do with the turn**, not which move to play.
