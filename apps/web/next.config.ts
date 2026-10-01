@@ -9,6 +9,20 @@ const nextConfig: NextConfig = {
   output: "standalone",
 
   /**
+   * Move sounds never change under a URL: a new mix goes in a new `/sounds/vN/` directory
+   * (`hooks/useMoveSounds.ts`). Without this they are served `max-age=0` like everything else in `public/`,
+   * and every game page revalidates six files that cannot have changed.
+   */
+  async headers() {
+    return [
+      {
+        source: "/sounds/:path*",
+        headers: [{ key: "Cache-Control", value: "public, max-age=31536000, immutable" }],
+      },
+    ];
+  },
+
+  /**
    * `/leaderboard/{slug}?q={precision}` was a page: one contestant's rating and the ratable games
    * behind it. `/models/{slug}` is now the only page about a model and carries that as a block per
    * precision, anchored so the `?q=` still lands on what it named.

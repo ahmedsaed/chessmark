@@ -24,8 +24,10 @@ import { StatsRail } from "@/components/StatsRail";
 import { legalTargets } from "@/lib/board";
 import { captures } from "@/lib/captures";
 import { announceSpend, modelMoveCharged } from "@/lib/credit";
+import { liveCue, soundFor, type SoundName } from "@/lib/sound";
 import { useGameDetail } from "@/hooks/useGameDetail";
 import { useGameStream } from "@/hooks/useGameStream";
+import { playSound, useMoveSounds } from "@/hooks/useMoveSounds";
 import { foldEvents, withLiveTurn } from "@/lib/turns";
 import type { Colour, GameDetail, GameEvent } from "@/lib/types";
 
@@ -146,6 +148,26 @@ export function LiveGame({
   }, [moves.length, mover, pays, seat]);
 
   const outcome = ended ?? terminalFrom(game);
+  const over = outcome !== null;
+
+  /* **A sound for a ply that arrives, never for the ones the page loaded with** (`liveCue`). The
+     viewer's own move is heard the moment it is played rather than when the server echoes it
+     back — a round trip of silence after setting a piece down reads as lag — so the echo is
+     remembered here and not played twice. */
+  useMoveSounds();
+  const heard = useRef<{ plies: number; ended: boolean } | null>(null);
+  const ownMove = useRef<{ ply: number; cue: SoundName } | null>(null);
+  useEffect(() => {
+    const cue = liveCue(heard.current, {
+      plies: moves.length,
+      ended: over,
+      lastSan: moves.at(-1) ?? null,
+    });
+    heard.current = { plies: moves.length, ended: over };
+    const echo = ownMove.current?.ply === moves.length && ownMove.current.cue === cue;
+    if (cue && !echo) playSound(cue);
+  }, [moves, over]);
+
   const yourMove = Boolean(seat && onMove && !outcome && toMove === seat);
 
   /* Validated locally before it leaves the browser, so a wrong drag is refused without a round
@@ -168,6 +190,9 @@ export function LiveGame({
          trip — a courtesy, not the rule. The referee checks it again (invariant 1). */
       const move = board.move({ from, to, promotion });
       onMove(move.san, moves.length);
+      const cue = soundFor(move.san);
+      ownMove.current = { ply: moves.length + 1, cue };
+      playSound(cue);
       return true;
     } catch {
       return false;

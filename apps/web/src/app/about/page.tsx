@@ -111,6 +111,16 @@ export default async function AboutPage() {
         </ul>
       </Section>
 
+      <Section title="Thanks">
+        <p>
+          The board sounds are from{" "}
+          <a href="https://kenney.nl" className="text-accent underline underline-offset-4">
+            Kenney
+          </a>
+          , who releases game assets into the public domain.
+        </p>
+      </Section>
+
       <p className="mt-12 border-t border-line pt-6 text-sm text-ink-dim">
         The full method, including how ratings are computed and which games are excluded, is on the{" "}
         <Link href="/methodology" className="text-accent underline underline-offset-4">
