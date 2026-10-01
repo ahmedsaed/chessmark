@@ -104,7 +104,7 @@ This buys three properties at once:
 | --- | --- |
 | **Idempotency** | A job carries `expected_ply`. If the game has moved on, the job is a no-op. Redelivery is harmless. |
 | **One owner per ply** | `expected_ply` covers redelivery and not *concurrency* — two jobs running at once both read the same ply and both play it. The turn takes a `FOR UPDATE NOWAIT` row lock on the game, so a second worker learns immediately and drops its job ([ADR-0022](adr/0022-one-owner-per-ply.md)). |
-| **Crash resilience** | Kill the worker mid-turn: the ply was never committed, the job is redelivered, the turn simply reruns. Worst case is one wasted LLM call, never a corrupt game. |
+| **Crash resilience** | Kill the worker mid-turn: the ply was never committed, the job is redelivered, the turn simply reruns. Worst case is one wasted LLM call, never a corrupt game. Each worker refreshes a heartbeat key (60s expiry) for as long as its process runs, turns included, so a job whose holder has none is taken over within a minute rather than after the queue's 15-minute idle timeout — which cannot tell a dead worker from one in a slow turn. |
 | **Uniformity** | Human-vs-model and model-vs-model use the identical code path. A human move is just a ply committed by the API instead of by a worker; it then enqueues the same `advance_turn` job. |
 
 ---

@@ -61,7 +61,7 @@ from chessmark.db.repositories import (
 )
 from chessmark.game import Colour, GameResult, Outcome, Referee, Termination
 from chessmark.orchestration.match import model_for
-from chessmark.orchestration.queue import AdvanceTurn, Delivery, TurnQueue
+from chessmark.orchestration.queue import BEAT_EVERY_SECONDS, AdvanceTurn, Delivery, TurnQueue
 from chessmark.orchestration.revalidation import notify_web
 
 log = logging.getLogger(__name__)
@@ -397,19 +397,47 @@ class TurnWorker:
 
     # ------------------------------------------------------------------ loop
 
-    async def run_forever(self, *, reclaim_every: int = 20) -> None:
+    async def run_forever(self, *, orphans_every: int = 5) -> None:
         await self.queue.ensure_group()
+        # **Alive before it takes anything**, so no other worker can ever find a job of ours held
+        # by a name with no heartbeat.
+        await self.queue.beat(self.consumer)
+        beating = asyncio.create_task(self._beat_forever())
         cycles = 0
 
-        while not self._stopping.is_set():
-            cycles += 1
-            deliveries = await self.queue.consume(self.consumer, block_ms=2000)
+        try:
+            while not self._stopping.is_set():
+                cycles += 1
+                deliveries = await self.queue.consume(self.consumer, block_ms=2000)
 
-            if not deliveries and cycles % reclaim_every == 0:
-                deliveries = await self.queue.reclaim_stalled(self.consumer)
+                # A dead worker's job, and often: it is a game stopped mid-turn, usually by a
+                # deploy, and every idle cycle is a chance to restart it (`reclaim_orphaned`).
+                #
+                # **Only a dead worker's.** The stream's own idle timeout (`reclaim_stalled`) is no
+                # longer asked: it cannot tell a dead worker from a slow turn, and the slowest 1% of
+                # turns outran its fifteen minutes and were taken from workers still playing them —
+                # safe, because the row lock refused the second one, but the first was rerun and
+                # paid for twice. A worker with no heartbeat is every case it was there for.
+                if not deliveries and cycles % orphans_every == 1:
+                    deliveries = await self.queue.reclaim_orphaned(self.consumer)
 
-            for delivery in deliveries:
-                await self.process(delivery)
+                for delivery in deliveries:
+                    await self.process(delivery)
+        finally:
+            beating.cancel()
+            with contextlib.suppress(Exception):
+                await self.queue.forget(self.consumer)
+
+    async def _beat_forever(self) -> None:
+        """Refresh the heartbeat until cancelled, turns included: a turn awaits I/O throughout."""
+        while True:
+            await asyncio.sleep(BEAT_EVERY_SECONDS)
+            try:
+                await self.queue.beat(self.consumer)
+            except Exception:
+                # A missed beat is not worth a worker. Six in a row are needed before anyone takes
+                # our job, and even then the game's row lock stops it running twice.
+                log.warning("heartbeat failed for %s", self.consumer, exc_info=True)
 
     def stop(self) -> None:
         self._stopping.set()

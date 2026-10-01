@@ -13,6 +13,14 @@ we need are exactly what streams provide:
 * **Reclaim.** `XAUTOCLAIM` hands a dead worker's in-flight jobs to a live one after an idle
   timeout, with no external bookkeeping.
 
+**And a heartbeat, so a dead worker's job is not left for that timeout.** The timeout has to be
+longer than a slow turn, because a stream cannot tell a worker that is busy from one that is gone:
+a worker mid-turn does not touch the stream, so its idle time grows either way — and across 3,157
+real turns, 34% ran longer than a minute and 10% longer than 224 seconds. That made every
+deploy cost each game that was mid-turn fifteen silent minutes. So each worker also refreshes a key
+with a short expiry for as long as its process runs, turns included, and a job whose holder has no
+key is taken over at once (`reclaim_orphaned`).
+
 A plain `LPUSH`/`BRPOP` list would lose any job a worker held when it died.
 """
 
@@ -44,6 +52,14 @@ DEFAULT_MIN_IDLE_MS = 15 * 60 * 1000
 #: the cost of being *aggressive* would be deleting a name while its process still believed it
 #: owned deliveries.
 DEFAULT_CONSUMER_TTL_MS = 10 * 60 * 1000
+
+#: A worker's proof of life: refreshed every `BEAT_EVERY_SECONDS` by its own process, during a turn
+#: as much as between them, and gone within `ALIVE_TTL_MS` of the process stopping. Six missed beats
+#: before a live worker would be taken for dead, which would also need its event loop blocked for a
+#: minute — and even then nothing runs twice (`reclaim_orphaned`).
+ALIVE_KEY = "chessmark:worker:alive:{consumer}"
+ALIVE_TTL_MS = 60 * 1000
+BEAT_EVERY_SECONDS = 10.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,7 +171,11 @@ class TurnQueue:
         min_idle_ms: int = DEFAULT_MIN_IDLE_MS,
         count: int = 10,
     ) -> list[Delivery]:
-        """Take over jobs a dead worker was holding (OPS-05).
+        """Take over every job idle for `min_idle_ms`, whoever holds it (OPS-05).
+
+        **Not what the worker asks** — that is `reclaim_orphaned`, which takes only a dead worker's.
+        This cannot tell the two apart, so at fifteen minutes it took jobs from the 1% of turns
+        that run longer, rerunning them. Kept for an operator, and for tests.
 
         The uncommitted turn simply reruns; `expected_ply` still matches because the crash rolled
         the transaction back, so nothing was half-written.
@@ -164,6 +184,50 @@ class TurnQueue:
             self.stream, self.group, consumer, min_idle_time=min_idle_ms, count=count
         )
         return self._to_deliveries([(self.stream, messages)], redelivered=True)
+
+    async def beat(self, consumer: str) -> None:
+        """Say this worker is alive for the next `ALIVE_TTL_MS`."""
+        await self.redis.set(ALIVE_KEY.format(consumer=consumer), "1", px=ALIVE_TTL_MS)
+
+    async def forget(self, consumer: str) -> None:
+        """Say this worker has stopped, so a job it still holds is taken over without waiting."""
+        await self.redis.delete(ALIVE_KEY.format(consumer=consumer))
+
+    async def reclaim_orphaned(
+        self, consumer: str, *, count: int = 100, min_idle_ms: int = ALIVE_TTL_MS
+    ) -> list[Delivery]:
+        """Take over the jobs held by workers that are no longer alive, without waiting.
+
+        **Nothing is played twice, by two guarantees, either of which would be enough.**
+
+        * The claim is atomic. `XCLAIM` with a minimum idle time skips an entry claimed since it was
+          read, because claiming resets its idle time — so of two workers reclaiming the same job,
+          one gets it.
+        * The game's row lock. Should a live worker ever be taken for dead and its job claimed,
+          the claimer's turn takes the row with `NOWAIT` and is refused while the owner holds it,
+          and drops the job (`GameInFlightError`, ADR-0022). `expected_ply` then covers a claim
+          that arrives after the owner committed (ADR-0007).
+
+        The minimum idle is the heartbeat's own expiry, so an entry delivered a moment ago to a
+        worker whose first beat has not landed is never touched.
+        """
+        entries = await self.redis.xpending_range(
+            self.stream, self.group, min="-", max="+", count=count
+        )
+        orphaned: list[str] = []
+        for entry in entries:
+            owner = _decode(_field(entry, "consumer", b""))
+            if owner == consumer or int(_field(entry, "time_since_delivered", 0)) < min_idle_ms:
+                continue
+            if await self.redis.exists(ALIVE_KEY.format(consumer=owner)):
+                continue
+            orphaned.append(_decode(_field(entry, "message_id", b"")))
+        if not orphaned:
+            return []
+        claimed = await self.redis.xclaim(  # type: ignore[no-untyped-call]
+            self.stream, self.group, consumer, min_idle_time=min_idle_ms, message_ids=orphaned
+        )
+        return self._to_deliveries([(self.stream, claimed)], redelivered=True)
 
     async def reap_consumers(self, *, idle_ms: int = DEFAULT_CONSUMER_TTL_MS) -> list[str]:
         """Forget consumer names whose process is gone. Returns the names removed.

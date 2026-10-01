@@ -62,7 +62,7 @@ from chessmark.db.models import (  # noqa: E402
     User,
 )
 from chessmark.db.session import dispose_engine, get_sessionmaker  # noqa: E402
-from chessmark.orchestration.queue import DEFAULT_GROUP, DEFAULT_STREAM  # noqa: E402
+from chessmark.orchestration.queue import ALIVE_KEY, DEFAULT_GROUP, DEFAULT_STREAM  # noqa: E402
 
 DIM, BOLD, OFF = "\033[2m", "\033[1m", "\033[0m"
 RED, GREEN, AMBER = "\033[31m", "\033[32m", "\033[33m"
@@ -82,9 +82,6 @@ PAUSE_WARN_FRACTION = 0.5
 #: deep · 3149 in the stream, 0 delivered and unacked", which was a warning about nothing.
 PENDING_WARN = 25
 
-#: When the queue takes an unacked delivery away from the consumer holding it.
-RECLAIM_AFTER = dt.timedelta(minutes=15)
-
 #: Past this a consumer is dead — **whether or not it is holding a job**.
 #:
 #: **Sixty seconds, because a live worker touches the server every two.** It blocks on
@@ -103,21 +100,6 @@ RECLAIM_AFTER = dt.timedelta(minutes=15)
 #: within milliseconds, so it can never sit on a delivery. Two pending entries for one ply always
 #: means at least one holder is gone.
 CONSUMER_DEAD_AFTER = dt.timedelta(seconds=60)
-
-#: How long a worker *holding a delivery* may be quiet before it is worth remarking on.
-#:
-#: **A worker mid-turn is silent by construction.** Redis measures a consumer's idle time from its
-#: last interaction with the group, and a worker running a turn neither reads nor acks — so its
-#: idle time is simply how long the turn has been going. Measured across 3,157 real turns: the
-#: median is 33 seconds, but the 90th percentile is 224 and **34% run longer than a minute**. Judged
-#: against `CONSUMER_DEAD_AFTER`, a third of all turns would report their worker as gone and their
-#: job as orphaned, while both were working perfectly well.
-#:
-#: The queue's own rule is the honest one, and `reap_dead_consumers` already follows it: a consumer
-#: holding a delivery is never treated as absent. It becomes *stuck* only once `XAUTOCLAIM` would
-#: take the job back, which is the same fifteen minutes the queue uses — and 1.1% of turns reach
-#: that, where the reclaim is correct and the turn simply reruns (ADR-0007).
-WORKER_STUCK_AFTER = RECLAIM_AFTER
 
 #: How far back crashed turns are reported. A day, the same window a paused game is given.
 FAILURES_SINCE = dt.timedelta(hours=24)
@@ -317,6 +299,20 @@ async def show_budgets(report: Report, redis: Any) -> None:
         (report.warn if share > Decimal("0.8") else report.ok)("spend", line)
 
 
+def is_alive(*, beating: bool, held: int, idle_seconds: int) -> bool:
+    """Whether a consumer name is a running worker.
+
+    **Its heartbeat decides** (`ALIVE_KEY`). Idle time cannot: a worker mid-turn neither reads nor
+    acks, so its idle time is the turn's length, and a third of real turns pass a minute. Without
+    a heartbeat, a name holding a job is a worker that is gone and whose job a live one is about to
+    take; a name holding nothing is alive only if it touched the queue within
+    `CONSUMER_DEAD_AFTER`, which still finds names left behind by earlier processes.
+    """
+    if beating:
+        return True
+    return not held and idle_seconds <= CONSUMER_DEAD_AFTER.total_seconds()
+
+
 async def show_workers(report: Report, redis: Any) -> None:
     """Who is consuming the queue, what each of them holds, and which game that is."""
     report.head("workers")
@@ -342,11 +338,12 @@ async def show_workers(report: Report, redis: Any) -> None:
         held = int(consumer.get("pending", 0))
         idle = int(int(consumer.get("idle", 0)) / 1000)
 
-        # A worker holding a job is *working*, and stays that way until the queue would reclaim it.
-        # One holding nothing has no reason to be quiet, so the shorter threshold still finds names
-        # left behind by earlier processes.
-        limit = WORKER_STUCK_AFTER if held else CONSUMER_DEAD_AFTER
-        alive = idle <= limit.total_seconds()
+        # **Its heartbeat answers first.** A worker beats for as long as its process runs, turns
+        # included, so a holder without one is gone however recently it was seen — and a live
+        # worker will take its job within a minute rather than fifteen. The idle thresholds below
+        # remain for a name from before heartbeats.
+        beating = bool(await redis.exists(ALIVE_KEY.format(consumer=name)))
+        alive = is_alive(beating=beating, held=held, idle_seconds=idle)
         if not alive and held == 0:
             dead += 1
             continue
@@ -357,10 +354,10 @@ async def show_workers(report: Report, redis: Any) -> None:
         if alive:
             doing = games or "waiting for work"
         else:
-            # Gone, but still named on a delivery nobody has acked. The queue takes it back at
-            # `RECLAIM_AFTER` and the turn simply reruns — it was rolled back whole (ADR-0007).
-            left = RECLAIM_AFTER.total_seconds() - idle
-            doing = f"{games or held} — stuck, reclaimed in {_span(int(max(left, 0)))}"
+            # Gone, but still named on a delivery nobody has acked. A live worker takes it within a
+            # minute of the heartbeat lapsing, and the turn simply reruns — it was rolled back
+            # whole (ADR-0007).
+            doing = f"{games or held} — its worker is gone, retaken within a minute"
             orphaned += held
 
         rows.append([_cut(name, 24, report.wide), doing, _span(idle)])
@@ -482,7 +479,7 @@ async def show_selling(report: Report, session: Any, redis: Any) -> None:
     # Paused is not a fault — sales start that way, and a person paused them on purpose.
     sales = await Sales(redis).state()
     if sales.open:
-        report.ok("open", "taking payments · pause with ./chessmark sales pause \"reason\"")
+        report.ok("open", 'taking payments · pause with ./chessmark sales pause "reason"')
     else:
         report.ok("paused", f"{sales.reason} · open with ./chessmark sales open")
 
