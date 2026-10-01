@@ -33,4 +33,14 @@ def session_for_game(game_id: UUID) -> str:
     return f"game-{game_id}"
 
 
-__all__ = ["session_for_game"]
+def session_for_decision_check(decision_version: str) -> str:
+    """The OpenRouter session id for the catalogue's decision check under one harness version.
+
+    The check's calls belong to no game, so without one they reached the key's usage and nowhere
+    else — an unexplained gap between the key and the record. One session per version groups a
+    whole re-check round, and OpenRouter's analytics still split it by model.
+    """
+    return f"decision-check-{decision_version}"
+
+
+__all__ = ["session_for_decision_check", "session_for_game"]
