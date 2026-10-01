@@ -27,7 +27,7 @@ from chessmark.core.cooldown import ProviderCooldown
 from chessmark.core.halt import SCOPE_ALL, Halt
 from chessmark.db import tournaments as repo
 from chessmark.db.credits import can_play
-from chessmark.db.enums import GameStatus, ModelRuntime, TournamentStatus
+from chessmark.db.enums import EventType, GameStatus, ModelRuntime, TournamentStatus
 from chessmark.db.house import house_id
 from chessmark.db.models import (
     Game,
@@ -40,6 +40,7 @@ from chessmark.db.models import (
 )
 from chessmark.orchestration.match import Seat, create_match, start_match
 from chessmark.orchestration.queue import AdvanceTurn, TurnQueue
+from chessmark.orchestration.revalidation import notify_web
 from chessmark.orchestration.worker import PAUSE_WINDOW
 from chessmark.tournament import Form, Format, matchmake, round_robin, swiss_round
 
@@ -207,6 +208,11 @@ async def advance(
     # exist — the same ordering the rest of the orchestration keeps (ADR-0007).
     for job in jobs:
         await queue.enqueue(job)
+        # After the commit, like the enqueue. `start_match` writes `game_started` but publishes
+        # nothing, so without this the site went on serving the previous game's end — the event
+        # page showed nothing live — until the new game's first move evicted it, which for a
+        # decision model was minutes (ADR-0046).
+        await notify_web(job.game_id, [EventType.GAME_STARTED])
 
     return Step(
         started=started, settled=settled, scheduled_round=scheduled, admitted=tuple(admitted)
