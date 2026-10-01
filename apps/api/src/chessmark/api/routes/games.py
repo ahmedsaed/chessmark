@@ -807,6 +807,9 @@ async def create_game_endpoint(
     # Enqueued only after the commit: a worker must never be handed a game that a rolled-back
     # transaction means does not exist.
     await queue.enqueue(job)
+    # `start_match` publishes nothing, and the lobby would otherwise not list this game until its
+    # first move evicted the cache (ADR-0046).
+    await notify_web(match.game.id, [EventType.GAME_STARTED])
 
     return CreateGameResponse(
         id=match.game.id,
@@ -970,6 +973,8 @@ async def create_human_game(
     await session.commit()
     if machine_to_move:
         await queue.enqueue(job)
+    # Not left to the first move: with the person on White that is theirs, and could be a while.
+    await notify_web(match.game.id, [EventType.GAME_STARTED])
 
     return CreateGameResponse(
         id=match.game.id,

@@ -29,6 +29,12 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **A new game now appears on the site as soon as it starts.** Nothing told the website's cache
+  that a game had begun, so a tournament's next game stayed invisible on its event page, even
+  after a reload, until the game's first move. For a decision model that took minutes. The
+  tournament runner, `POST /games` and `POST /games/human` now each invalidate the cache once the
+  start is committed. ([ADR-0046](docs/adr/0046-the-api-invalidates-the-cache-a-clock-does-not.md))
+
 - **A game interrupted by a deploy resumes within a minute, not fifteen.** Stopping the workers
   left the turn they were playing assigned to a worker that no longer existed, and the queue waited
   fifteen minutes before handing it on, because it cannot tell a dead worker from one in a slow
