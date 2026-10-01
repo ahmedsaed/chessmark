@@ -367,3 +367,59 @@ What a pool with `max_concurrent = 1` costs is not obvious and was measured: eve
 stalls the whole event, and a game whose pause expires waits for the single running game before it
 can move. Paused games hold no slot ([ADR-0017](adr/0017-rate-limits-pause-games.md)) and the
 matchmaker already skips resting providers, so the bound is doing less work here than it looks.
+
+## A championship of the paid models, in three stages (planned, not run)
+
+Every paid model in one event is too expensive as a round robin. With 267 entrants that's 35,511
+games, and the flagship tiers cost dollars a game. Real chess solves this with qualifiers: an open
+Swiss, then a smaller Swiss, then a small round robin, the way the Candidates is reached. This is
+the plan, worked out with the owner on 2026-09-30, to be run later.
+
+**The field**, as the local catalogue resolved it on 2026-09-30 (paid, tool-capable, currently
+served). Recount with `tournament field --paid --min-tier N --max-tier N` before running.
+
+| Tier | Models |
+| --- | --- |
+| 1 | 106 |
+| 2 | 100 |
+| 3 | 50 |
+| 4 | 11 |
+
+**The stages**, trimmed to the rounds needed to find a top 8. Finding a top 8 takes about
+log₂(field ÷ 8) rounds plus one or two, fewer than finding a single winner.
+
+| Stage | Field | Format | Games |
+| --- | --- | --- | --- |
+| 1. Open | tiers 1–2: 206 | Swiss, 6 rounds (103 games a round) | 618 |
+| 2. Flagship qualifier | top 8 of stage 1 + tiers 3–4 (61): 69 | Swiss, 5 rounds (34 games and one bye a round) | 170 |
+| 3. Final | top 8 of stage 2 | double round robin | 56 |
+| | | | **844** |
+
+For comparison, putting stage 1's top 8 straight into a double round robin with all 61 flagships is
+69 × 68 = 4,692 games. The second qualifier is what makes the flagship stage affordable.
+
+**Cost, estimated.**
+- **Stage 1** is only cheap models. A tier-1 seat averaged about $0.02 a game in local play, so
+  expect **~$15–60**.
+- **Stages 2 and 3** have not been measured. Tiers 3–4 have no played games to average, and $0.50–3
+  a game from list prices gives **~$110–680** for their 226 games.
+- **Measure before budgeting.** Play 5–10 flagship games under a small `--max-usd`, read the actual
+  average, and set stage 2's and stage 3's `--max-usd` from it.
+
+**Every stage is bounded twice:**
+- by its own `--max-usd`, `--max-usd-per-game` and `--max-plies` (120 suggested);
+- by the house account, which pays for tournament games and holds every paid event once it is empty
+  ([ADR-0058](adr/0058-the-house-account-pays-for-games-no-person-started.md)).
+
+Fund the house for one stage at a time.
+
+**To check before stage 1:**
+- **Swiss has only run on small fields.** Simulate the pairing for 206 entrants, which is free: the
+  pairing is pure and plays no games. Confirm that it is fast, and that byes are handled.
+- **Qualification is by hand.** A field is one filter, and a filter can't express "these 8, plus
+  tiers 3–4". So stage 2 is created with all 69 named by `--model`, the 8 read from stage 1's
+  `standings`.
+- **Prune first** (`./chessmark prune`). A model that can't finish a game forfeits a pairing that
+  still cost money, and at 206 entrants there are many of those.
+- **Swiss stages should be `--ranked`.** Their games should feed the leaderboard, since otherwise
+  they are about 800 games the benchmark never learns from.
