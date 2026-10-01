@@ -15,6 +15,24 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-01
+
+**Credit sold at any amount, and tournaments paid for by the house.** 24 commits since `v0.6.0`.
+Credit can be bought in any amount from $5 to $100, with the tax inside the amount you choose and
+every fee shown as a line of one sum, including OpenRouter's own 5.5%. It is sold only while
+OpenRouter's balance can cover it, and sales are a switch, `./chessmark sales open | pause`, that
+starts closed. Games no person started are now charged to Chessmark's house account, so
+tournaments can no longer spend the balance that backs users' credit. And the game page has
+sound.
+
+**Two things to do on the server after deploying.** Fund the house with
+`./chessmark credits house <usd>`: it is created empty, and every tournament holds until it has
+credit. Credit sales stay paused until `./chessmark sales open`.
+
+Two migrations, both additive: `871759676bb6` adds `credit_reservations` and a nullable
+`purchases.reservation_id`, and `9b1d4c7e2a10` inserts the house account's user row, with a zero
+balance.
+
 ### Added
 
 - **Move sounds on the game page.** A move, a capture, castling, a check, a promotion and the end
@@ -23,7 +41,6 @@ file is only the record of *what shipped when*.
   you have clicked or pressed a key on the page, so a game you only watch stays quiet until then.
   The privacy policy now says that setting is kept in your browser, and the sounds' author,
   Kenney, is thanked on the about page.
-
 - **Tournaments are paid for by Chessmark's own house account.** Every game no person started is
   now charged to it, turn by turn, and pauses when it is empty ("waiting for Chessmark to add
   credit"). A tournament with paid models holds rather than starting games it can't fund. What the
@@ -59,6 +76,11 @@ file is only the record of *what shipped when*.
   expire the credit we hold with it after a year, so a promise that ours never expires could not be
   kept.
 
+### Fixed
+
+- **A tournament whose last game is paused is no longer marked finished.** A game paused for
+  credit or a rate limit counted as done, so the event closed and never scored that game when it
+  played on.
 
 ## [0.6.0] — 2026-09-27
 
@@ -1453,6 +1475,7 @@ flags the old code wrote.
 [ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
 [ADR-0044]: docs/adr/0044-the-ladder-resets-on-an-answered-call.md
 [ADR-0045]: docs/adr/0045-a-turn-keeps-the-rounds-it-completed.md
+[0.7.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.7.0
 [0.6.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.6.0
 [0.5.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.5.0
 [0.4.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.4.0
