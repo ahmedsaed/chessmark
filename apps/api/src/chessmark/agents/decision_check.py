@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 import chess
@@ -47,6 +48,7 @@ from chessmark.agents.decision_request import (
     heat_key,
 )
 from chessmark.agents.decisions import DecisionGateway, MalformedDecisionError
+from chessmark.agents.sessions import session_for_decision_check
 from chessmark.agents.types import LlmError
 from chessmark.db.enums import ModelRuntime
 from chessmark.db.models import ModelRegistry
@@ -77,11 +79,14 @@ class CheckReport:
     deferred: list[str] = field(default_factory=list)
     #: The limit found for each answering model that has one.
     limits: dict[str, int] = field(default_factory=dict)
+    #: What the round cost, from the cost each answer reported (invariant 4). A refusal is not
+    #: billed and adds nothing.
+    cost_usd: Decimal = Decimal(0)
 
     def __str__(self) -> str:
         return (
             f"{len(self.answered)} answered, {len(self.refused)} refused, "
-            f"{len(self.deferred)} deferred"
+            f"{len(self.deferred)} deferred, ${self.cost_usd:.6f}"
         )
 
 
@@ -128,13 +133,19 @@ class _DeferredError(Exception):
     """The check could not be asked this time; nothing about the model is known."""
 
 
-async def _probe(gateway: DecisionGateway, slug: str) -> tuple[int | None, str | None]:
+async def _probe(
+    gateway: DecisionGateway, slug: str, report: CheckReport
+) -> tuple[int | None, str | None]:
     """The model's limit (`None` for none) and `None`, or no limit and the host's last refusal."""
     refusal = ""
     for size in PROBE_SIZES:
         body, expected = check_request(slug, size)
         try:
-            decision = await gateway.decide(body)
+            decision = await gateway.decide(
+                body, session_id=session_for_decision_check(DECISION_VERSION)
+            )
+            # Counted as soon as it answered: an unusable answer was still billed.
+            report.cost_usd += decision.cost_usd
             for key, options in expected.items():
                 decision.choice(key, options)
         except LlmError as error:
@@ -172,7 +183,7 @@ async def check_decision_models(
     report = CheckReport()
     for model in list(await session.scalars(query.order_by(ModelRegistry.openrouter_id))):
         try:
-            limit, refusal = await _probe(gateway, model.openrouter_id)
+            limit, refusal = await _probe(gateway, model.openrouter_id, report)
         except _DeferredError as error:
             # About the moment, not the model: nothing is recorded, the next refresh asks again.
             log.warning("decision check deferred for %s: %s", model.openrouter_id, error)

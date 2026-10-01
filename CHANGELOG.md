@@ -33,6 +33,9 @@ file is only the record of *what shipped when*.
   The page says "its only legal move".
 - **A decision turn that fails after an answered call keeps that call**, its record and its spend,
   as a chat turn does ([ADR-0053](docs/adr/0053-every-failure-keeps-its-rounds.md)).
+- **The decision check's calls are tagged and costed.** Each carries the session
+  `decision-check-<version>` on OpenRouter, and `./chessmark catalogue` prints what the round cost.
+  They used to show up only as unexplained usage on the key.
 
 ## [0.7.0] — 2026-10-01
 

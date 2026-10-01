@@ -229,3 +229,33 @@ async def test_an_answer_that_is_not_an_answer_counts_as_a_refusal(db: AsyncSess
     await _model(db, "odd/model")
     report = await check_decision_models(db, _gateway(deciding(malformed=True)))
     assert report.refused == ["odd/model"]
+
+
+async def test_every_check_call_is_tagged_with_the_versions_session(db: AsyncSession) -> None:
+    """Without one, the check's spend reached the key's usage and nothing that could explain it."""
+    await _model(db, "togethercomputer/tev1-4b-experimental")
+    host = deciding(max_choices=20)
+    await check_decision_models(db, _gateway(host))
+    sessions = {call.get("session_id") for call in host.calls}  # type: ignore[attr-defined]
+    assert sessions == {f"decision-check-{DECISION_VERSION}"}
+
+
+async def test_the_round_reports_what_the_answers_cost_and_refusals_add_nothing(
+    db: AsyncSession,
+) -> None:
+    await _model(db, "togethercomputer/tev1-4b-experimental")
+    await _model(db, "typesafe/jev-1.13")
+    state = {"calls": 0}
+    capped = deciding(max_choices=20, cost=0.0001)
+    unlimited = deciding(cost=0.0002)
+
+    async def host(request: dict[str, Any]) -> dict[str, Any]:
+        state["calls"] += 1
+        answer = capped if request["model"].startswith("together") else unlimited
+        return await answer(request)  # type: ignore[no-any-return]
+
+    report = await check_decision_models(db, _gateway(host))
+    # Tev: four refusals, then one answer at 13. Jev: one answer at 218.
+    assert state["calls"] == 6
+    assert str(report.cost_usd) == "0.0003"
+    assert str(report).endswith("$0.000300")
