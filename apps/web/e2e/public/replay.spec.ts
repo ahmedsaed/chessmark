@@ -82,9 +82,19 @@ test("the slider seeks to an arbitrary ply", async ({ page }) => {
   const board = page.locator("[data-fen]").first();
   await expect(slider).toHaveValue("7");
 
-  await slider.fill("3");
+  /* **Retried, because `goto` resolves before React has hydrated.** The `load` event fires ~100ms
+     before the scrubber has its handlers, and a `fill` in that window moves the DOM value to 3 while
+     the state behind it stays at 7 — this failed 3 runs in 5 before any change to the page. The
+     claim is unchanged: once the page is live, the slider seeks.
 
-  await expect(slider).toHaveAttribute("aria-valuetext", "ply 3 of 7");
+     Each attempt goes through 2 first. A lost `fill("3")` leaves the DOM at 3, and React then
+     adopts 3 as the input's last-known value — so every later `fill("3")` is no change to it, no
+     `onChange` fires, and a retry of the same value fails for the full minute. */
+  await expect(async () => {
+    await slider.fill("2");
+    await slider.fill("3");
+    await expect(slider).toHaveAttribute("aria-valuetext", "ply 3 of 7", { timeout: 500 });
+  }).toPass();
   // 1. e4 e5 2. Bc4 — the bishop is on c4 and it is Black to move.
   await expect(board).toHaveAttribute("data-fen", /2B1P3.* b /);
 });
