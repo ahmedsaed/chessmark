@@ -114,6 +114,10 @@ class ModelRegistry(Base):
     #: once per model per version, never on routine refreshes.
     decisions_checked: Mapped[str | None] = mapped_column(sa.Text)
     decisions_refusal: Mapped[str | None] = mapped_column(sa.Text)
+    #: The most options this model answered in one question, when the check found a limit; `None`
+    #: when it answered every legal move of the busiest position chess has, or was never asked.
+    #: A model with a limit is asked its move in heats of at most this many (ADR-0059).
+    decisions_max_choices: Mapped[int | None] = mapped_column(sa.Integer)
     is_free: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
     enabled: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
 

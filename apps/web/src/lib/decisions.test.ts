@@ -97,3 +97,39 @@ describe("a decision turn", () => {
     expect(block.probabilities).toEqual([["e4", 0.5]]);
   });
 });
+
+describe("a turn asked in heats (ADR-0059)", () => {
+  const HEATS = {
+    ...PAYLOAD,
+    probabilities: [
+      ["e4", 0.6],
+      ["Nf3", 0.4],
+    ],
+    heats: [
+      { round: 1, choice: "e4", probabilities: [["e4", 0.5], ["a3", 0.3], ["h3", 0.2]] },
+      { round: 1, choice: "Nf3", probabilities: [["Nf3", 0.7], ["Na3", 0.3]] },
+    ],
+  };
+
+  it("reads each heat as its size, its winner and how sure the model was of it", () => {
+    const block = decisionBlock(HEATS, 2);
+    expect(block.heats).toEqual([
+      { round: 1, moves: 3, choice: "e4", probability: 0.5 },
+      { round: 1, moves: 2, choice: "Nf3", probability: 0.7 },
+    ]);
+    expect(block.probabilities).toHaveLength(2);
+  });
+
+  it("has no heats when it was asked once, and withholds them with the ranking", () => {
+    expect(decisionBlock(PAYLOAD, 2).heats).toEqual([]);
+    const { probabilities, heats, confidence, answers, ...live } = HEATS;
+    void [probabilities, heats, confidence, answers];
+    expect(decisionBlock(live, 2).heats).toBeNull();
+  });
+
+  it("marks a forced move, which was not asked about", () => {
+    const block = decisionBlock({ ...PAYLOAD, forced: true, probabilities: [], options: 1 }, 2);
+    expect(block.forced).toBe(true);
+    expect(decisionBlock(PAYLOAD, 2).forced).toBe(false);
+  });
+});

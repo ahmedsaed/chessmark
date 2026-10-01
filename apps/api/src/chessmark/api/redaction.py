@@ -36,11 +36,12 @@ from chessmark.db.models import Game, Player
 #: **A decision model's probabilities are its reasoning** (ADR-0049). It writes no text, and the
 #: ranking it gives every legal move, with how sure it was, is as much a plan as a paragraph of
 #: thinking — and so is how near it came to resigning or offering a draw. What it *did* stays: the
-#: move, the claim, the resignation are all public a moment later.
+#: move, the claim, the resignation are all public a moment later. A heat's ranking is the same
+#: ranking over fewer moves (ADR-0059), and is withheld with it.
 WITHHELD_KEYS: dict[str, frozenset[str]] = {
     str(EventType.THINKING): frozenset({"reasoning"}),
     str(EventType.OUTPUT): frozenset({"content"}),
-    str(EventType.DECIDED): frozenset({"probabilities", "confidence", "answers"}),
+    str(EventType.DECIDED): frozenset({"probabilities", "confidence", "answers", "heats"}),
 }
 
 #: A game in one of these is over, and nothing needs holding back any more.

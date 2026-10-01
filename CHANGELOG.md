@@ -15,6 +15,25 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Added
+
+- **Decision models that cannot take every legal move in one question now play, in heats.** Tev
+  accepts at most 20 options per question and Solar 26, and a middlegame has 30 to 40 moves, so
+  both were refused. Such a model is now asked in heats of at most its limit, then in a final
+  between the heat winners. Its game page says "decided among 39 moves in 3 heats and a final",
+  and "how the heats went" shows each one. The catalogue check finds each model's limit by asking
+  over the busiest position in chess (218 moves) and halving the question size until the model
+  answers, at most six requests. Jev and Kev answered all 218 at once, so nothing they are asked
+  changes. The harness is `d2.1`, a minor version, so ratings and the decision pool's era carry
+  on. ([ADR-0059](docs/adr/0059-a-decision-model-with-a-limit-plays-in-heats.md))
+
+### Changed
+
+- **A forced move asks a decision model only what to do with the turn**, not which move to play.
+  The page says "its only legal move".
+- **A decision turn that fails after an answered call keeps that call**, its record and its spend,
+  as a chat turn does ([ADR-0053](docs/adr/0053-every-failure-keeps-its-rounds.md)).
+
 ## [0.7.0] — 2026-10-01
 
 **Credit sold at any amount, and tournaments paid for by the house.** 24 commits since `v0.6.0`.

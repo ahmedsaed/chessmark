@@ -9,6 +9,7 @@
 import type {
   Colour,
   DecisionBlock,
+  DecisionHeat,
   EventType,
   GameEvent,
   LiveFrame,
@@ -135,7 +136,33 @@ export function decisionBlock(payload: Record<string, unknown>, seq: number): De
     confidence: typeof payload.confidence === "number" ? payload.confidence : null,
     answers,
     durationMs: typeof payload.duration_ms === "number" ? payload.duration_ms : null,
+    forced: payload.forced === true,
+    heats: decisionHeats(payload.heats, ranked !== null),
   };
+}
+
+/**
+ * The heats, each reduced to what the panel says of it. Absent means asked once — unless the
+ * ranking itself is absent, when they were withheld with it (invariant 8), and `null` says so.
+ */
+function decisionHeats(raw: unknown, shown: boolean): DecisionHeat[] | null {
+  if (!Array.isArray(raw)) return shown ? [] : null;
+  return raw.flatMap((entry): DecisionHeat[] => {
+    const heat = asRecord(entry);
+    const ranked = Array.isArray(heat.probabilities) ? heat.probabilities : [];
+    const choice = asString(heat.choice);
+    const won = ranked.find((row) => Array.isArray(row) && row[0] === choice);
+    return choice
+      ? [
+          {
+            round: asNumber(heat.round) || 1,
+            moves: ranked.length,
+            choice,
+            probability: Array.isArray(won) && typeof won[1] === "number" ? won[1] : null,
+          },
+        ]
+      : [];
+  });
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

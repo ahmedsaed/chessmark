@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import type { DecisionBlock } from "@/lib/types";
+import type { DecisionBlock, DecisionHeat } from "@/lib/types";
 
 /** How many moves are drawn before "all N" — enough to show a contest, few enough to scan. */
 const SHOWN = 5;
@@ -29,6 +29,13 @@ function percent(probability: number): string {
   return `${Math.round(probability * 100)}%`;
 }
 
+/** "in 4 heats and a final", or with more than one round of heats, how many rounds it took. */
+function heatsText(heats: DecisionHeat[]): string {
+  const rounds = Math.max(...heats.map((heat) => heat.round));
+  const count = `${heats.length} heat${heats.length === 1 ? "" : "s"}`;
+  return rounds > 1 ? `in ${count} over ${rounds} rounds, then a final` : `in ${count} and a final`;
+}
+
 /**
  * A decision model's turn, which is its whole answer (ADR-0049).
  *
@@ -41,12 +48,21 @@ function percent(probability: number): string {
  */
 export function DecisionView({ block, edge }: { block: DecisionBlock; edge: string }) {
   const [all, setAll] = useState(false);
+  const [heatsOpen, setHeatsOpen] = useState(false);
   const ranked = block.probabilities;
   const shown = ranked && !all ? ranked.slice(0, SHOWN) : ranked;
   const acted = ACTION_TEXT[block.action];
+  const heats = block.heats ?? [];
 
+  /* **How it was asked, said on the first line** (ADR-0059). A move chosen from a final between
+     heat winners was not chosen from every legal move at once, and a forced move was not chosen at
+     all; a reader comparing two models' turns needs to know which they are looking at. */
   const head = [
-    `decided among ${block.options} move${block.options === 1 ? "" : "s"}`,
+    block.forced
+      ? "its only legal move"
+      : `decided among ${block.options} move${block.options === 1 ? "" : "s"}${
+          heats.length > 0 ? ` ${heatsText(heats)}` : ""
+        }`,
     block.durationMs !== null ? `${(block.durationMs / 1000).toFixed(1)}s` : null,
   ]
     .filter(Boolean)
@@ -74,14 +90,25 @@ export function DecisionView({ block, edge }: { block: DecisionBlock; edge: stri
         </p>
       )}
 
-      {shown === null ? (
+      {block.forced ? (
+        <p className="text-xs leading-relaxed text-ink-faint">
+          It was asked only what to do with the turn.
+        </p>
+      ) : shown === null ? (
         /* Invariant 8: the person reading this is playing the model, and its ranking of their
            position is its plan. What it did is on the board; how it weighed it waits. */
         <p className="text-xs leading-relaxed text-ink-faint">
           How it weighed its moves is shown when the game ends.
         </p>
       ) : (
-        <ol className="flex flex-col gap-0.5" aria-label="How the model weighed its moves">
+        <ol
+          className="flex flex-col gap-0.5"
+          aria-label={
+            heats.length > 0
+              ? "How the model weighed the heat winners in its final"
+              : "How the model weighed its moves"
+          }
+        >
           {shown.map(([san, probability]) => {
             /* Marked only when it was played. A seat that resigned or took a draw still ranked a
                move first, but drawing it as "chosen" would claim a move the board never saw. */
@@ -117,6 +144,29 @@ export function DecisionView({ block, edge }: { block: DecisionBlock; edge: stri
         >
           {all ? `top ${SHOWN} only` : `all ${ranked.length} moves`}
         </button>
+      )}
+
+      {heats.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setHeatsOpen((open) => !open)}
+          aria-expanded={heatsOpen}
+          className="self-start font-mono text-meta text-ink-faint underline underline-offset-4 hover:text-ink-dim"
+        >
+          {heatsOpen ? "hide the heats" : "how the heats went"}
+        </button>
+      )}
+
+      {heatsOpen && (
+        <ol className="flex flex-col gap-0.5 font-mono text-meta text-ink-dim" aria-label="Heats">
+          {heats.map((heat, index) => (
+            <li key={`${heat.round}-${index}`}>
+              {heats.some((h) => h.round > 1) ? `round ${heat.round} · ` : ""}
+              {heat.choice} won a heat of {heat.moves}
+              {heat.probability !== null ? ` at ${percent(heat.probability)}` : ""}
+            </li>
+          ))}
+        </ol>
       )}
 
       {block.answers && Object.keys(block.answers).length > 0 && (

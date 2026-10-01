@@ -25,7 +25,7 @@ of model and not the other made the two play different games (ADR-0049).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import chess
@@ -50,12 +50,48 @@ from chessmark.game.facts import (
 #: to Jev and 0.53 to Kev — so one gate for every model decided some games by how well a model's
 #: scale lined up with our number. A choice is relative: the option a model ranks first happens, on
 #: its own scale, with nothing to tune per model.
-DECISION_VERSION = "d2"
+#:
+#: `d2.1` on 2026-10-01: **heats, for a model that cannot take every legal move in one question**
+#: (ADR-0059). Tev accepts at most 20 options and Solar 26, and a middlegame has 30 to 40 moves.
+#: Such a model is asked its move in heats of at most its own limit, then in a final between the
+#: heat winners. A model with no limit is asked exactly what `d2` asked it, byte for byte, which is
+#: what makes this minor: Jev and Kev play the same task as before, and keep their ratings and
+#: their pool's era. And a forced move asks only the action question, because a question with one
+#: option is refused by a host that needs two, and asking it told the model nothing.
+DECISION_VERSION = "d2.1"
 
 #: The question keys. Ours, not the model's — the API never sends a key to the model, which is why
 #: every instruction below carries its full meaning on its own.
 MOVE_QUESTION = "move"
 ACTION_QUESTION = "action"
+#: A heat's question is `heat_1`, `heat_2`, …; the final is `MOVE_QUESTION`, so a request with no
+#: heats is the `d2` request unchanged.
+HEAT_PREFIX = "heat_"
+
+
+def heat_key(index: int) -> str:
+    """The question key of the heat at `index`, counted from zero and named from one."""
+    return f"{HEAT_PREFIX}{index + 1}"
+
+
+def split(moves: list[str], cap: int) -> list[list[str]]:
+    """`moves` in as few heats of at most `cap` as will hold them, as even in size as they can be.
+
+    **Even, not filled in order.** 34 moves under a cap of 20 are two heats of 17, not 20 and 14:
+    a heat is a contest, and one twice the size of another is a harder one to win for no reason.
+    Even heats are also never smaller than half the cap, so none falls below the two options a
+    host like Tev needs. Kept in the order given, so the same position always splits the same way.
+    """
+    count = -(-len(moves) // cap)
+    size, extra = divmod(len(moves), count)
+    heats: list[list[str]] = []
+    start = 0
+    for index in range(count):
+        end = start + size + (1 if index < extra else 0)
+        heats.append(moves[start:end])
+        start = end
+    return heats
+
 
 #: The options of the action question. `PLAY_ON` is always first, so an equal ranking — which a
 #: `choice` breaks by order — falls to the ordinary turn rather than to ending the game.
@@ -106,9 +142,46 @@ class DecisionRequest:
     moves: dict[str, str]
     #: The actions offered this turn, in the order the model was shown them.
     actions: tuple[str, ...] = ()
+    #: Every legal move's description, by key, so a heat or a final can offer a subset of them.
+    criteria: dict[str, str] = field(default_factory=dict)
+    #: Who is playing whom, for the wording of a heat's or a final's question.
+    sides: tuple[str, str] = ("white", "black")
 
-    def body(self, *, model: str) -> dict[str, Any]:
-        return {"model": model, "state": self.state, "questions": self.questions}
+    def body(self, *, model: str, questions: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "model": model,
+            "state": self.state,
+            "questions": self.questions if questions is None else questions,
+        }
+
+    def _subset(self, moves: list[str]) -> dict[str, Any]:
+        you, opponent = self.sides
+        return {
+            "type": "choice",
+            # **"These" moves, not "your legal moves in `position`".** A heat offers some of them,
+            # and an instruction that said all of them would be asking about options it then
+            # withheld.
+            "instructions": (
+                f"You are playing chess as {you} against {opponent}, and it is your move. Which of "
+                f"these legal moves is the strongest one to play? {RULES}"
+            ),
+            "criteria": {san: self.criteria[san] for san in moves},
+        }
+
+    def heats(self, groups: list[list[str]], *, with_action: bool) -> dict[str, Any]:
+        """One round of heats, one question each; the first round also asks the action question.
+
+        Only the first, because what to do with the turn is asked once and does not depend on which
+        move wins: a turn whose heats need a second round asks it with the first.
+        """
+        questions = {heat_key(i): self._subset(group) for i, group in enumerate(groups)}
+        if with_action:
+            questions[ACTION_QUESTION] = self.questions[ACTION_QUESTION]
+        return questions
+
+    def final(self, moves: list[str]) -> dict[str, Any]:
+        """The final between the heat winners, asked as the move question."""
+        return {MOVE_QUESTION: self._subset(moves)}
 
 
 def _describe(move: MoveFacts) -> str:
@@ -259,16 +332,20 @@ def build_request(
         if before != (own_material, their_material):
             state["position"]["material"]["before_opponents_last_move"] = _standing(*before)
 
-    questions: dict[str, Any] = {
-        MOVE_QUESTION: {
+    criteria = {move.san: _describe(move) for move in moves}
+    questions: dict[str, Any] = {}
+    # **A forced move is not asked about** (`d2.1`). Its answer is settled, a question with one
+    # option told the model nothing, and a host that needs two options — Tev — refused it, which
+    # would have failed every turn spent in check with one way out.
+    if len(moves) > 1:
+        questions[MOVE_QUESTION] = {
             "type": "choice",
             "instructions": (
                 f"You are playing chess as {you} against {opponent}, and it is your move. Which of "
                 f"your legal moves in `position` is the strongest one to play? {RULES}"
             ),
-            "criteria": {move.san: _describe(move) for move in moves},
+            "criteria": criteria,
         }
-    }
     # **What it does with the turn, as one choice among the actions open to it** (ADR-0051). The
     # actions are mutually exclusive — a player does exactly one — which is what a `choice` is for,
     # and a choice is relative, so the model's own ranking decides with no threshold of ours.
@@ -303,6 +380,8 @@ def build_request(
         questions=questions,
         moves={move.san: move.uci for move in moves},
         actions=tuple(actions),
+        criteria=criteria,
+        sides=(you, opponent),
     )
 
 
@@ -312,6 +391,7 @@ __all__ = [
     "CLAIM_DRAW",
     "DECISION_VERSION",
     "FIFTY_MOVES",
+    "HEAT_PREFIX",
     "MOVE_QUESTION",
     "OFFER_DRAW",
     "PLAY_ON",
@@ -320,4 +400,6 @@ __all__ = [
     "THREEFOLD",
     "DecisionRequest",
     "build_request",
+    "heat_key",
+    "split",
 ]

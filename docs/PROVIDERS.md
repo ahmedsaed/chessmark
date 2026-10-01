@@ -37,6 +37,14 @@ records `decisions_checked` and, on a refusal, `decisions_refusal` (the host's o
 model that answered is playable. The check runs once per model per version, never on routine
 refreshes; a refusal isn't billed, and a rate limit or outage defers the check to the next refresh.
 
+**Nor how many options one question may carry**
+([ADR-0059](adr/0059-a-decision-model-with-a-limit-plays-in-heats.md)). Tev takes 20 and Solar 26,
+and a middlegame has 30 to 40 legal moves. So the check asks over the busiest position chess has,
+218 legal moves. If the model is refused, the check halves the question size and asks again — 109,
+54, 27, 13, 6, at most six requests — and records the largest size the model answered as
+`decisions_max_choices`. A model with a limit plays its turns in heats and a final. A model with no
+limit is asked exactly what it was asked before. `./chessmark catalogue` prints each limit it finds.
+
 There are no per-model thresholds to set. What a seat does with its turn is one `choice`, and a
 game-ending action needs a majority of the model's own ranking, which means the same thing on every
 model's scale. `make probe-decisions` is a diagnostic of how a model judges, not a step.

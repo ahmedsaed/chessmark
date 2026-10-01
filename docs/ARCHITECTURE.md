@@ -195,8 +195,10 @@ is the difference between a viable public product and an unaffordable one.
 
 A seat whose model is a **decision model** (`players.runtime = decision`) never enters the loop
 above ([ADR-0049](adr/0049-decision-models-play-through-their-own-harness.md),
-[ADR-0051](adr/0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md)). A model
-is seated only once the catalogue refresh has checked it can answer this request. The worker forks
+[ADR-0051](adr/0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md),
+[ADR-0059](adr/0059-a-decision-model-with-a-limit-plays-in-heats.md)). A model is seated only once
+the catalogue refresh has checked it can answer this request, and found how many options it takes
+in one question. The worker forks
 on the runtime and runs `agents/decision_turn.DecisionTurnRunner`:
 
 ```
@@ -206,7 +208,9 @@ Worker job for (game, expected_ply)
        questions: move   (choice over legal moves, each with game/facts.py facts)
                   action (choice: play_on | offer_draw | resign | accept_draw | claim_draw)
   -> POST /api/alpha/decisions, pinned to the seat's endpoint (agents/decisions.py)
-  -> record the call verbatim in llm_calls, validate both answers
+       a model with a limit on options per question asks in heats, then a final
+       (agents/decision_rounds.py, ADR-0059); a forced move asks only the action
+  -> record each call verbatim in llm_calls, validate every answer
   -> act on the action ranked first — an ending only on a majority (ADR-0051) — via the referee
   -> append one `decided` event, then the `move_made` / ending, and return a TurnResult
 ```
