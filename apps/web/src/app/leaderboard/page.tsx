@@ -60,67 +60,86 @@ export default async function LeaderboardPage() {
 }
 
 function Table({ rows }: { rows: LeaderboardRow[] }) {
+  /* **On a phone the table scrolls, and `#` and the contestant stay put.** The secondary columns
+     used to be hidden below `sm`, because before that the whole 820px table scrolled and a phone at
+     rest showed `#` and `Contestant` with the rating off to the right and nothing saying so. Hiding
+     fixed that and made W/D/L, the illegal-move rate, cost and latency unreachable on a phone.
+
+     The pinned block is 60% of the scroller (`cqw`), which leaves the rating whole at rest and the
+     edge of W/D/L showing — the only sign there is more. Pinning the rating too was tried and left
+     a 3.5rem window that no column wider than that could ever be read through.
+
+     Below `sm` every pinned cell needs three things or the pinning breaks: a solid background
+     (the scrolled columns show through without one), a fixed width (a sticky offset is a
+     constant), and borders on the cells rather than the row — under `border-collapse` the row's
+     line is the table's to paint, and a sticky cell drawn over it cut it in half. */
+  const stuck = "sticky z-[1] bg-ground group-hover:bg-surface-2 sm:static sm:bg-transparent";
   return (
-    /* **The secondary columns are hidden on a phone, not scrolled to.** This was an 820px table
-       inside a 333px scroller, which kept the page from moving sideways and cost more than it
-       saved: at rest a phone showed `#` and `Contestant`, and Rating — the reason the page exists —
-       needed a sideways swipe with nothing on screen to say it was there. `ModelTable` already
-       solved this by dropping columns at `sm`; this is the same rule, on the page that needed it
-       more. The `min-w` and the scroller come back at `sm`, where the table fits anyway. */
-    <div className="mt-8 overflow-x-auto border border-line">
-      {/* `table-fixed` below `sm` is what makes hiding the columns work. Hiding them alone left the
-          table `auto`-sized to a contestant slug that will not shrink — 463px inside a 333px
-          wrapper — so the page scrolled sideways anyway and the fix had bought nothing. Fixed
-          layout lets the widths below bind and the slug truncate; the scroller stays for `sm` up,
-          where the table really is 820px. */}
-      <table className="w-full table-fixed border-collapse text-left sm:table-auto sm:min-w-[820px]">
+    <div className="@container mt-8 overflow-x-auto border border-line">
+      <table className="w-max min-w-full border-separate border-spacing-0 text-left sm:w-full sm:min-w-[820px] [&_td]:border-b [&_td]:border-line-soft [&_tr:last-child_td]:border-0">
         <thead>
-          <tr className="border-b border-line bg-surface-3 font-mono text-label uppercase tracking-[0.12em] text-ink-faint">
-            <th className="w-7 px-2 py-2 font-normal sm:w-auto sm:px-3">#</th>
-            <th className="px-2 py-2 font-normal sm:px-3">Contestant</th>
-            <th className="w-24 px-2 py-2 text-right font-normal sm:w-auto sm:px-3" title="Glicko-2 rating and deviation">
+          <tr className="font-mono text-label uppercase tracking-[0.12em] text-ink-faint [&_th]:border-b [&_th]:border-line [&_th]:bg-surface-3">
+            <th className={`${stuck} left-0 w-8 px-2 py-2 font-normal sm:w-auto sm:px-3`}>#</th>
+            <th
+              className={`${stuck} left-8 px-2 py-2 font-normal shadow-[inset_-1px_0_0_var(--color-line)] sm:px-3 sm:shadow-none`}
+            >
+              Contestant
+            </th>
+            <th
+              className="w-24 px-2 py-2 text-right font-normal sm:w-auto sm:px-3"
+              title="Glicko-2 rating and deviation"
+            >
               Rating
             </th>
-            <th className="hidden px-3 py-2 text-right font-normal sm:table-cell">W/D/L</th>
+            <th className="px-3 py-2 text-right font-normal">W/D/L</th>
             <th
-              className="hidden px-3 py-2 text-right font-normal sm:table-cell"
+              className="px-3 py-2 text-right font-normal"
               title="Illegal move attempts per move played — the benchmark's headline number"
             >
               Illegal/move
             </th>
-            <th className="hidden px-3 py-2 text-right font-normal sm:table-cell">Forfeits</th>
-            <th className="hidden px-3 py-2 text-right font-normal sm:table-cell">Cost/game</th>
-            <th className="hidden px-3 py-2 text-right font-normal sm:table-cell">Latency</th>
+            <th className="px-3 py-2 text-right font-normal">Forfeits</th>
+            <th className="px-3 py-2 text-right font-normal">Cost/game</th>
+            <th className="px-3 py-2 text-right font-normal">Latency</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr
-              key={`${row.model_id}-${row.quantization}`}
-              className="border-b border-line-soft last:border-0 hover:bg-surface-2"
-            >
-              <td className="tabular px-2 py-2.5 font-mono text-data text-ink-faint sm:px-3">
+            <tr key={`${row.model_id}-${row.quantization}`} className="group hover:bg-surface-2">
+              <td
+                className={`${stuck} left-0 w-8 px-2 py-2.5 font-mono text-data text-ink-faint tabular sm:px-3`}
+              >
                 {index + 1}
               </td>
-              <td className="min-w-0 px-2 py-2.5 sm:px-3">
-                {/* Drills through to the games that produced the row (BENCH-02). */}
-                {/* `prefetch={false}` because a visible link to `/models/[...slug]` prefetches a
-                    payload the router cannot store — every route here is dynamic, so it comes back
-                    `no-store` — and reschedules itself for as long as it is on screen. This page
-                    was serving ~90 requests in twelve seconds per row on production (FRONTEND.md). */}
-                <Link
-                  prefetch={false}
-                  href={`/models/${row.model_slug}#c-${encodeURIComponent(row.quantization)}`}
-                  className="block truncate font-mono text-xs text-ink transition-colors hover:text-accent sm:inline"
-                >
-                  {row.model_slug}
-                </Link>
-                <span className="mt-0.5 inline-block border border-good/40 px-1 py-px font-mono text-label uppercase tracking-wider text-good sm:ml-1.5 sm:mt-0">
-                  {row.quantization}
-                </span>
-                <RuntimeBadge runtime={row.runtime} className="ml-1.5 mt-0.5 sm:mt-0" />
+              <td
+                className={`${stuck} left-8 px-2 py-2.5 shadow-[inset_-1px_0_0_var(--color-line)] sm:px-3 sm:shadow-none`}
+              >
+                {/* A width on the cell's content, not the cell: a table cell grows to the
+                    min-content of what is inside it, and a `truncate` slug's min-content is the
+                    whole slug — 463px in a 333px scroller, the bug the first phone pass had. */}
+                <div className="w-[calc(60cqw-3rem)] sm:w-auto">
+                  {/* Drills through to the games that produced the row (BENCH-02). */}
+                  {/* `prefetch={false}` because a visible link to `/models/[...slug]` prefetches a
+                      payload the router cannot store — every route here is dynamic, so it comes
+                      back `no-store` — and reschedules itself for as long as it is on screen. This
+                      page was serving ~90 requests in twelve seconds per row on production
+                      (FRONTEND.md). */}
+                  <Link
+                    prefetch={false}
+                    href={`/models/${row.model_slug}#c-${encodeURIComponent(row.quantization)}`}
+                    className="block truncate font-mono text-xs text-ink transition-colors hover:text-accent sm:inline"
+                  >
+                    {row.model_slug}
+                  </Link>
+                  <span className="mt-0.5 inline-block border border-good/40 px-1 py-px font-mono text-label uppercase tracking-wider text-good sm:ml-1.5 sm:mt-0">
+                    {row.quantization}
+                  </span>
+                  <RuntimeBadge runtime={row.runtime} className="ml-1.5 mt-0.5 sm:mt-0" />
+                </div>
               </td>
-              <td className="tabular whitespace-nowrap px-2 py-2.5 text-right font-mono text-xs text-ink sm:px-3">
+              <td
+                className="w-24 whitespace-nowrap px-2 py-2.5 text-right font-mono text-xs text-ink tabular sm:px-3"
+              >
                 {Math.round(row.rating)}
                 {/* The `?` is the deviation said in a word. "± 208" is honest and most readers
                     cannot act on it; the mark is the same fact in a form they can. The number
@@ -136,26 +155,27 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
                 {/* The deviation is not decoration: it is what stops a three-game rating being
                     read as a three-hundred-game one. */}
                 {/* The deviation is the first thing to go on a narrow screen: the `?` above already
-                    says "provisional", which is the part a reader acts on. */}
+                    says "provisional", which is the part a reader acts on, and the pinned block
+                    has no width to spare for a number its title already carries. */}
                 <span className="ml-1 hidden text-ink-faint sm:inline">
                   ± {Math.round(row.rating_deviation)}
                 </span>
               </td>
-              <td className="tabular hidden px-3 py-2.5 text-right font-mono text-xs text-ink-dim sm:table-cell">
+              <td className="tabular px-3 py-2.5 text-right font-mono text-xs text-ink-dim">
                 {row.wins}/{row.draws}/{row.losses}
               </td>
               {/* A decision model is offered only legal moves (ADR-0049), so its zero is not a
                   result — a dash, rather than a green 0.000 that reads as one. */}
               {row.runtime === "decision" ? (
                 <td
-                  className="tabular hidden px-3 py-2.5 text-right font-mono text-xs text-ink-faint sm:table-cell"
+                  className="tabular px-3 py-2.5 text-right font-mono text-xs text-ink-faint"
                   title="A decision model is offered only legal moves, so it cannot play an illegal one"
                 >
                   —
                 </td>
               ) : (
                 <td
-                  className={`tabular hidden px-3 py-2.5 text-right font-mono text-xs sm:table-cell ${
+                  className={`tabular px-3 py-2.5 text-right font-mono text-xs ${
                     row.illegal_per_move > 0 ? "text-bad" : "text-good"
                   }`}
                   title={`${row.illegal_attempts} attempts over ${row.moves_played} moves`}
@@ -164,16 +184,16 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
                 </td>
               )}
               <td
-                className={`tabular hidden px-3 py-2.5 text-right font-mono text-xs sm:table-cell ${
+                className={`tabular px-3 py-2.5 text-right font-mono text-xs ${
                   row.forfeits > 0 ? "text-bad" : "text-ink-faint"
                 }`}
               >
                 {row.forfeits}
               </td>
-              <td className="tabular hidden px-3 py-2.5 text-right font-mono text-xs text-ink-dim sm:table-cell">
+              <td className="tabular px-3 py-2.5 text-right font-mono text-xs text-ink-dim">
                 {usd(row.mean_cost_usd)}
               </td>
-              <td className="tabular hidden px-3 py-2.5 text-right font-mono text-xs text-ink-faint sm:table-cell">
+              <td className="tabular px-3 py-2.5 text-right font-mono text-xs text-ink-faint">
                 {row.mean_latency_ms > 0 ? `${(row.mean_latency_ms / 1000).toFixed(1)}s` : "—"}
               </td>
             </tr>

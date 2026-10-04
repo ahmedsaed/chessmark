@@ -1092,6 +1092,13 @@ class StandingOut(Schema):
     draws: int
     losses: int
     byes: int
+    #: Pairings this entrant was in that ended with no result, in the era shown.
+    #:
+    #: Not part of W/D/L and never a loss — an abandonment is a harness or provider failure, not a
+    #: finding about the player (invariant 11). It is shown because a 3/0/0 record reads very
+    #: differently once you know three more games never finished: `poolside/laguna-xs-2.1:free`
+    #: had exactly that in `pool-free`.
+    abandoned: int = 0
     score: float
     sonneborn_berger: float
     #: Whether the field would still admit this entrant today.

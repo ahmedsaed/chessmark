@@ -257,6 +257,19 @@ function Standings({ rows }: { rows: Standing[] }) {
      the data rather than re-deriving the format — one place makes the choice. */
   const rated = rows.some((row) => row.rating !== null);
 
+  /* Every row, header included, is the pinned block and then the trailing columns, so the two
+     templates below are the whole layout. Below `sm` the pinned block is sized to the scroller
+     (`cqw`), not the row: the row is wider than the screen by design, and a share of it would grow
+     with every column added. From `sm` the table fits and the block is an ordinary `1fr`. */
+  const row = `tabular grid items-center gap-2 ${
+    rated
+      ? "grid-cols-[60cqw_5.5rem_3rem_4.5rem_2rem] sm:grid-cols-[minmax(0,1fr)_5.5rem_3rem_4.5rem_2rem]"
+      : "grid-cols-[60cqw_3rem_4.5rem_3.5rem_2rem] sm:grid-cols-[minmax(0,1fr)_3rem_4.5rem_3.5rem_2rem]"
+  }`;
+  /* `sticky` with its own background, or the scrolled columns show through it; the inset line on
+     its right edge is the seam a reader sees the table slide under. */
+  const pinned = `sticky left-0 z-[1] grid items-center gap-2 pl-3 shadow-[inset_-1px_0_0_var(--color-line-soft)] grid-cols-[2rem_minmax(0,1fr)] sm:static sm:shadow-none`;
+
   return (
     <section>
       <div className="mb-4 flex items-baseline gap-3">
@@ -266,131 +279,144 @@ function Standings({ rows }: { rows: Standing[] }) {
         <span className="h-px flex-1 bg-line-soft" aria-hidden />
       </div>
 
-      <ul className="flex flex-col gap-px border border-line-soft bg-line-soft">
-        <li
-          /* **The trailing columns go below `sm`, and the name gets their width.** Five columns of
-             fixed widths left the `1fr` model column with **37px** on a phone —
-             `nemotron-3-nano-omni-30b-a3b-reasoning:free` needs 310px and showed four characters.
-             A pool is ranked by rating (ADR-0027), so rating is the column that has to survive;
-             points, W/D/L and SB are the ones a reader opens the page on a laptop for. */
-          className={`tabular grid ${
-            rated
-              ? "grid-cols-[2rem_1fr_5.5rem] sm:grid-cols-[2rem_1fr_5.5rem_3rem_4.5rem]"
-              : "grid-cols-[2rem_1fr_3rem] sm:grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem]"
-          } items-center gap-2 bg-surface-2 px-3 py-1.5 font-mono text-label uppercase tracking-[0.12em] text-ink-faint`}
-        >
-          <span>#</span>
-          <span>Model</span>
-          {rated ? (
-            <span
-              className="text-right"
-              title="Glicko-2 over this event's games only, so a place here cannot move because of a game played elsewhere"
-            >
-              Rating
+      {/* **On a phone the table scrolls, and `#` and the name stay put.** The trailing columns
+          used to be dropped below `sm`, which kept the rating on screen but left points and W/D/L
+          unreachable — the two columns a reader checks a rating against, on the table where "why
+          is this model third with ten wins?" was asked.
+
+          The pinned block is 60% of the scroller, which leaves the rating whole at rest (what the
+          first phone pass fixed) and the next column cut at the edge, the only sign there is more.
+          Pinning the rating as well was tried and left a 3.5rem window that W/D/L, at 4.5rem,
+          could never be read through. */}
+      <div className="@container overflow-x-auto border border-line-soft">
+        <ul className="flex w-max min-w-full flex-col gap-px bg-line-soft sm:w-auto">
+          <li className={`${row} bg-surface-2 py-1.5 pr-3 font-mono text-label uppercase tracking-[0.12em] text-ink-faint`}>
+            <span className={`${pinned} bg-surface-2`}>
+              <span>#</span>
+              <span>Model</span>
             </span>
-          ) : (
-            <span className="text-right">Pts</span>
-          )}
-          {rated ? (
-            <span className="hidden text-right sm:block">Pts</span>
-          ) : (
-            <span className="hidden text-right sm:block">W/D/L</span>
-          )}
-          {rated ? (
-            <span className="hidden text-right sm:block">W/D/L</span>
-          ) : (
-            <span
-              className="hidden text-right sm:block"
-              title="Sonneborn-Berger: beating strong opponents counts more"
-            >
-              SB
-            </span>
-          )}
-        </li>
-        {rows.map((row) => (
-          <li
-            key={row.key}
-            /* **A row that will never gain another game does not look like one still competing.**
-               A pool keeps a departed model's record — the games are real and the rating is real —
-               and stops pairing it, so the table has to show which kind of row this is. Dimmed
-               rather than hidden or struck through: the result stands, it is simply finished. */
-            title={
-              row.in_field
-                ? undefined
-                : "No longer in this field — its games and rating stand, but it will not be paired again"
-            }
-            className={`tabular grid ${
-              rated
-                ? "grid-cols-[2rem_1fr_5.5rem] sm:grid-cols-[2rem_1fr_5.5rem_3rem_4.5rem]"
-                : "grid-cols-[2rem_1fr_3rem] sm:grid-cols-[2rem_1fr_3rem_4.5rem_3.5rem]"
-            } items-center gap-2 bg-surface px-3 py-2 font-mono text-xs ${
-              /* Dimmed with the faintest AA colour, not `opacity-50`: halving the opacity took the
-                 already-faint secondary text to 2.5:1, below AA on every departed row. The `!` is
-                 needed to outrank each cell's own colour. */
-              row.in_field ? "" : "[&_*]:text-ink-faint!"
-            }`}
-          >
-            <span className={row.place === 1 ? "text-accent" : "text-ink-faint"}>{row.place}</span>
-            <Link
-              /* The prefetch storm `/leaderboard` had: an uncacheable payload the router keeps
-                 re-requesting. FRONTEND.md. */
-              prefetch={false}
-              href={`/models/${row.key.split("@")[0]}`}
-              className="min-w-0 truncate text-ink transition-colors hover:text-accent"
-            >
-              {row.key.split("/").slice(1).join("/") || row.key}
-              {!row.in_field && (
-                /* Read aloud, not hidden: the dimming and the `title` are the only other signs a
-                   model has left, and neither reaches a screen reader. */
-                <span className="ml-1.5 text-label text-ink-faint">· left the field</span>
-              )}
-            </Link>
-            {rated && (
-              <span className="text-right text-ink">
-                {row.rating === null ? (
-                  /* Not 1500. An unrated model is not an average one, and printing a number here
-                     would make exactly the claim the deviation exists to avoid. */
-                  <span className="text-meta text-ink-faint">unrated</span>
-                ) : (
-                  <>
-                    {Math.round(row.rating)}
-                    {/* Same mark as the leaderboard, for the same reason: a reader who does not
-                        think in deviations still has to be told this one is not settled yet. */}
-                    {row.rating_provisional && (
-                      <span
-                        className="text-ink-faint"
-                        title="Provisional — too few games in this event to settle the rating"
-                      >
-                        ?
-                      </span>
-                    )}
-                    {row.rating_deviation !== null && (
-                      /* The deviation is not decoration: it is what stops a two-game rating being
-                         read as a two-hundred-game one. */
-                      <span className="ml-1 hidden text-meta text-ink-faint sm:inline">
-                        ± {Math.round(row.rating_deviation)}
-                      </span>
-                    )}
-                  </>
-                )}
+            {rated ? (
+              <span
+                className="text-right"
+                title="Glicko-2 over this event's games only, so a place here cannot move because of a game played elsewhere"
+              >
+                Rating
+              </span>
+            ) : (
+              <span className="text-right">Pts</span>
+            )}
+            {rated ? (
+              <span className="text-right">Pts</span>
+            ) : (
+              <span className="text-right">W/D/L</span>
+            )}
+            {rated ? (
+              <span className="text-right">W/D/L</span>
+            ) : (
+              <span className="text-right" title="Sonneborn-Berger: beating strong opponents counts more">
+                SB
               </span>
             )}
-            <span
-              className={`hidden text-right sm:block ${rated ? "text-meta text-ink-faint" : "text-ink"}`}
+            {/* One letter because the column is one digit wide, and a word would make the table
+                wider than any value in it. `abbr` so the full name is announced, not only hovered. */}
+            <abbr
+              className="text-right no-underline"
+              title="Abandoned: pairings that ended with no result, through a provider or harness failure. Not counted as losses."
             >
-              {row.score.toFixed(1)}
-            </span>
-            <span className="hidden text-right text-meta text-ink-faint sm:block">
-              {row.wins}/{row.draws}/{row.losses}
-            </span>
-            {!rated && (
-              <span className="hidden text-right text-meta text-ink-faint sm:block">
-                {row.sonneborn_berger.toFixed(1)}
-              </span>
-            )}
+              A
+            </abbr>
           </li>
-        ))}
-      </ul>
+          {rows.map((entry) => (
+            <li
+              key={entry.key}
+              /* **A row that will never gain another game does not look like one still competing.**
+                 A pool keeps a departed model's record — the games are real and the rating is
+                 real — and stops pairing it, so the table has to show which kind of row this is.
+                 Dimmed rather than hidden or struck through: the result stands, it is simply
+                 finished. */
+              title={
+                entry.in_field
+                  ? undefined
+                  : "No longer in this field — its games and rating stand, but it will not be paired again"
+              }
+              className={`${row} bg-surface py-2 pr-3 font-mono text-xs ${
+                /* Dimmed with the faintest AA colour, not `opacity-50`: halving the opacity took
+                   the already-faint secondary text to 2.5:1, below AA on every departed row. The
+                   `!` is needed to outrank each cell's own colour. */
+                entry.in_field ? "" : "[&_*]:text-ink-faint!"
+              }`}
+            >
+              <span className={`${pinned} bg-surface`}>
+                <span className={entry.place === 1 ? "text-accent" : "text-ink-faint"}>
+                  {entry.place}
+                </span>
+                <Link
+                  /* The prefetch storm `/leaderboard` had: an uncacheable payload the router keeps
+                     re-requesting. FRONTEND.md. */
+                  prefetch={false}
+                  href={`/models/${entry.key.split("@")[0]}`}
+                  className="min-w-0 truncate text-ink transition-colors hover:text-accent"
+                >
+                  {entry.key.split("/").slice(1).join("/") || entry.key}
+                  {!entry.in_field && (
+                    /* Read aloud, not hidden: the dimming and the `title` are the only other signs
+                       a model has left, and neither reaches a screen reader. */
+                    <span className="ml-1.5 text-label text-ink-faint">· left the field</span>
+                  )}
+                </Link>
+              </span>
+              {rated ? (
+                <span className="text-right text-ink">
+                  {entry.rating === null ? (
+                    /* Not 1500. An unrated model is not an average one, and printing a number
+                       here would make exactly the claim the deviation exists to avoid. */
+                    <span className="text-meta text-ink-faint">unrated</span>
+                  ) : (
+                    <>
+                      {Math.round(entry.rating)}
+                      {/* Same mark as the leaderboard, for the same reason: a reader who does
+                          not think in deviations still has to be told this one is not settled. */}
+                      {entry.rating_provisional && (
+                        <span
+                          className="text-ink-faint"
+                          title="Provisional — too few games in this event to settle the rating"
+                        >
+                          ?
+                        </span>
+                      )}
+                      {entry.rating_deviation !== null && (
+                        /* The deviation is not decoration: it is what stops a two-game rating
+                           being read as a two-hundred-game one. */
+                        <span className="ml-1 hidden text-meta text-ink-faint sm:inline">
+                          ± {Math.round(entry.rating_deviation)}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </span>
+              ) : (
+                <span className="text-right text-ink">{entry.score.toFixed(1)}</span>
+              )}
+              {rated && (
+                <span className="text-right text-meta text-ink-faint">{entry.score.toFixed(1)}</span>
+              )}
+              <span className="text-right text-meta text-ink-faint">
+                {entry.wins}/{entry.draws}/{entry.losses}
+              </span>
+              {!rated && (
+                <span className="text-right text-meta text-ink-faint">
+                  {entry.sonneborn_berger.toFixed(1)}
+                </span>
+              )}
+              <span
+                className={`text-right text-meta ${entry.abandoned > 0 ? "text-ink-dim" : "text-ink-faint"}`}
+              >
+                {entry.abandoned}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
       {rows.length === 0 && (
         <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
           No entrants.
