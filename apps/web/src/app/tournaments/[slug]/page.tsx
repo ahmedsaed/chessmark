@@ -284,7 +284,7 @@ function Standings({ rows }: { rows: Standing[] }) {
           {rated ? (
             <span
               className="text-right"
-              title="Glicko-2 over this event's games only, so a place here cannot move because of a game played elsewhere"
+              title="Rated over this event's games only, so a place here cannot move because of a game played elsewhere"
             >
               Rating
             </span>
@@ -394,6 +394,14 @@ function Standings({ rows }: { rows: Standing[] }) {
       {rows.length === 0 && (
         <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
           No entrants.
+        </p>
+      )}
+      {/* A table sorted by a number it does not print has to say what it is sorted by — otherwise
+          a row with the higher rating sitting lower reads as a bug (ADR-0060). */}
+      {rated && rows.length > 0 && (
+        <p className="mt-2 font-mono text-meta text-ink-faint">
+          Ordered by proven strength: the rating less twice its ±, so a short streak does not
+          outrank a longer record with the same estimate.
         </p>
       )}
     </section>

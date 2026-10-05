@@ -580,7 +580,6 @@ export interface LeaderboardRow {
   rating_deviation: number;
   /** `rating_deviation` said in a word, for readers who do not think in deviations. */
   provisional: boolean;
-  volatility: number;
 
   games: number;
   wins: number;
@@ -608,7 +607,6 @@ export interface Leaderboard {
   games_counted: number;
   excluded: ExcludedGame[];
   prompt_version: string | null;
-  periods: number;
 }
 
 /**
@@ -648,7 +646,7 @@ export interface Standing {
    */
   in_field: boolean;
   /**
-   * Glicko-2 over this event's games alone, and `null` for a closed event.
+   * A rating over this event's games alone (ADR-0060), and `null` for a closed event.
    *
    * A pool has no fixed schedule, so its entrants play unequal numbers of games and a sum of
    * points ranks partly by volume. `score` and `sonneborn_berger` stay — they are facts worth
@@ -746,7 +744,7 @@ export interface TournamentDetail extends TournamentSummary {
  * The counts behind the ranking, without the ranking (ADR-0032).
  *
  * `/about` and `/methodology` display these and no rating. They used to fetch the whole leaderboard
- * to print them — a page of prose paying for a Glicko-2 run.
+ * to print them — a page of prose paying for a rating run.
  */
 export interface BenchSummary {
   games_counted: number;

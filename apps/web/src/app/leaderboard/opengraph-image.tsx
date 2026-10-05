@@ -17,7 +17,7 @@ import { featuredFen } from "@/lib/og/featured";
 import { Card, Standings, Stats, Title, Wordmark } from "@/lib/og/shell";
 import { CARD, CONTENT_TYPE, COLOUR , REVALIDATE_SECONDS } from "@/lib/og/theme";
 
-export const alt = "The Chessmark leaderboard — Glicko-2 ratings over ranked games";
+export const alt = "The Chessmark leaderboard — ratings over ranked games, ordered by proven strength";
 export const size = CARD;
 export const contentType = CONTENT_TYPE;
 /* **The literal, not `REVALIDATE_SECONDS`.** Next requires a segment config export to be

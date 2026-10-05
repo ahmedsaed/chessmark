@@ -1,30 +1,35 @@
 #!/usr/bin/env python3
-"""Glicko-2 as the site computes it, beside a Bradley-Terry fit over the same games.
+"""The site's rating beside Glicko-2, the method it replaced, over the same games (ADR-0060).
 
     make compare-ratings                       # the leaderboard's games, then every pool's
     make compare-ratings ARGS="--pool pool-free"
     make compare-ratings ARGS="--shuffles 500 --prior 350 --prior 200"   # fixed widths, not estimated
 
-Read-only, and it changes nothing the site shows. It exists to answer one question with
-production's numbers rather than an argument: **is Glicko-2 the right model for contestants that
-never change strength and often stop playing?** A model is a fixed set of weights — it does not
-improve between Tuesday and Friday — and a paid one may play six games in one event and never
-again. Glicko-2's machinery for time (rating periods, a deviation that widens while idle,
-volatility) models a drift that does not happen here, and as a consequence its answer depends on
-the order the games were played in.
+Read-only, and it changes nothing the site shows. It is the evidence behind ADR-0060, kept so the
+answer to "why two imaginary draws?" and "why not Glicko-2?" can be re-run on whatever the games
+are today, rather than taken from a table in a document.
 
-Three columns per contestant, all over exactly the games the leaderboard counts (`bench.service
-.scan`, so the eligibility rules are the site's own, not a re-implementation):
+The question it was written for: **is Glicko-2 the right model for contestants that never change
+strength and often stop playing?** A model is a fixed set of weights, and a paid one may play six
+games in one event and never return. Glicko-2's machinery for time (rating periods, a deviation
+that widens while idle, volatility) models a drift that does not happen here, and as a consequence
+its answer depends on the order the games were played in.
 
-* **Glicko-2** — the site's number, recomputed and checked against `compute_ratings` so a mismatch
-  is a loud failure rather than a quiet misreport.
+Per contestant, over exactly the games the leaderboard counts (`bench.service.scan`, so the
+eligibility rules are the site's own, not a re-implementation):
+
+* **Site** — the rating the site publishes and the place it gives (Bradley-Terry, two imaginary
+  draws, ordered by proven strength), checked against `compute_ratings` so a mismatch is a loud
+  failure rather than a quiet misreport.
+* **Glicko-2** — the method it replaced, from `glicko2_reference.py`, which is the deleted
+  `bench/glicko2.py` unchanged. Its replay matched the site's published numbers exactly on
+  production's data on 2026-10-05, the last day it was the site's engine.
 * **Order** — the range of places Glicko-2 gives the same contestant when the *same games* are
   dealt into the same periods in a different order. A rating of a fixed thing should not have one.
-* **Bradley-Terry** — every game at once, no dates, with a normal prior on strength (MAP estimate,
-  Laplace approximation for the ±). The prior is what lets a 3/0/0 record have a finite rating; it
-  is printed at each `--prior` width so its influence is visible rather than assumed.
+* **Bradley-Terry with a normal prior**, at each width — the estimate of how wide the prior should
+  be, printed two independent ways so the choice is visible rather than assumed.
 
-Both use the Elo logistic scale (400 points = 10:1 odds) and treat a draw as half a win, so the
+All use the Elo logistic scale (400 points = 10:1 odds) and treat a draw as half a win, so the
 numbers are on the same scale and differ only in the model.
 """
 
@@ -32,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import datetime as dt
 import math
 import random
 import sys
@@ -43,15 +49,16 @@ API_ROOT = Path(__file__).resolve().parents[1] / "apps" / "api"
 sys.path.insert(0, str(API_ROOT / "src"))
 
 import sqlalchemy as sa  # noqa: E402
+from glicko2_reference import Glicko2, Outcome  # noqa: E402
+from glicko2_reference import Rating as GlickoRating  # noqa: E402
 
-from chessmark.bench.glicko2 import Glicko2, Outcome  # noqa: E402
-from chessmark.bench.glicko2 import Rating as GlickoRating  # noqa: E402
+from chessmark.bench import fit as site_fit  # noqa: E402
+from chessmark.bench import standing_key  # noqa: E402
 from chessmark.bench.service import (  # noqa: E402
     Contestant,
     _contestant,
     _score,
     compute_ratings,
-    period_of,
     scan,
 )
 from chessmark.db.models import Tournament  # noqa: E402
@@ -61,6 +68,12 @@ from chessmark.game import Colour  # noqa: E402
 #: Elo's scale: a 400-point gap is 10:1 odds. Both systems are reported on it.
 ELO = 400.0 / math.log(10)
 CENTRE = 1500.0
+PERIOD_EPOCH = dt.date(2026, 1, 1)
+
+
+def period_of(when: dt.datetime) -> int:
+    """Glicko-2's rating period: one UTC day, as the site used it."""
+    return (when.astimezone(dt.UTC).date() - PERIOD_EPOCH).days
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,12 +324,13 @@ async def read(tournament_id: uuid.UUID | None) -> tuple[list[Played], dict[Cont
             wdl = record.setdefault(me, [0, 0, 0])
             wdl[0 if s == 1.0 else 1 if s == 0.5 else 2] += 1
 
-    # The replay must be the site's number, or every comparison below is against the wrong thing.
-    mine = glicko(games)
+    # The column labelled "site" must be the site's number, or every comparison below is against
+    # the wrong thing.
+    mine = site_fit([(g.white, g.black, g.score) for g in games])
     for contestant, rating in site.ratings.items():
         ours = mine[contestant]
         if abs(ours.rating - rating.rating) > 1e-6 or abs(ours.rd - rating.rd) > 1e-6:
-            raise SystemExit(f"replay disagrees with compute_ratings for {label(contestant)}")
+            raise SystemExit(f"site column disagrees with compute_ratings for {label(contestant)}")
     return games, record
 
 
@@ -334,33 +348,40 @@ def report(
     if not priors:
         by_evidence, by_held_out = estimate(games)
         priors = sorted({by_evidence, by_held_out}, reverse=True)
-    site = glicko(games)
-    g_place = places({c: r.rating for c, r in site.items()})
+    published = site_fit([(g.white, g.black, g.score) for g in games])
+    site_order = sorted(published, key=lambda c: (*standing_key(published[c]), label(c)))
+    site_place = {c: i + 1 for i, c in enumerate(site_order)}
+    old = glicko(games)
+    g_place = places({c: r.rating for c, r in old.items()})
     spread = order_range(games, shuffles, seed=1)
     fits = [bradley_terry(games, prior) for prior in priors]
     bt_place = [places({c: v[0] for c, v in fit.items()}) for fit in fits]
 
     print(
-        f"{len(games)} games, {len(site)} contestants, {len({g.period for g in games})} periods.\n"
+        f"{len(games)} games, {len(published)} contestants, "
+        f"{len({g.period for g in games})} Glicko-2 periods.\n"
     )
-    header = ["BT #", "Glicko #", "Contestant", "W/D/L", "Glicko-2", f"order ({shuffles})"]
+    header = ["Site #", "Contestant", "W/D/L", "Site", "proven", "Glicko #", "Glicko-2"]
+    header += [f"order ({shuffles})"]
     header += [f"BT prior {p:.0f}" for p in priors]
-    header += [f"BT # @{p:.0f}" for p in priors[1:]]
+    header += [f"BT # @{p:.0f}" for p in priors]
     print("| " + " | ".join(header) + " |")
     print("|" + "|".join("---" for _ in header) + "|")
-    for c in sorted(site, key=lambda c: bt_place[0][c]):
+    for c in site_order:
         w, d, lo = record[c]
         best, worst = spread[c]
         row = [
-            str(bt_place[0][c]),
-            str(g_place[c]),
+            str(site_place[c]),
             label(c),
             f"{w}/{d}/{lo}",
-            f"{site[c].rating:.0f} ± {site[c].rd:.0f}",
+            f"{published[c].rating:.0f} ± {published[c].rd:.0f}",
+            f"{published[c].proven:.0f}",
+            str(g_place[c]),
+            f"{old[c].rating:.0f} ± {old[c].rd:.0f}",
             f"{best}" if best == worst else f"{best}-{worst}",
         ]
         row += [f"{fit[c][0]:.0f} ± {fit[c][1]:.0f}" for fit in fits]
-        row += [str(p[c]) for p in bt_place[1:]]
+        row += [str(p[c]) for p in bt_place]
         print("| " + " | ".join(row) + " |")
 
 

@@ -4,7 +4,7 @@
 a page is read.
 
 The leaderboard was rebuilt from raw rows on every request, and four pages await it — two of which
-display no rating at all. `/methodology` renders three scalars and paid for a full Glicko-2 run to
+display no rating at all. `/methodology` renders three scalars and paid for a full rating run to
 get them. Games reach a terminal state around ten times a day; those pages are read on every visit,
 so the computation was on the wrong side of the ledger by three orders of magnitude.
 
@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.decision_request import DECISION_VERSION
 from chessmark.agents.prompts import PROMPT_VERSION
+from chessmark.bench.bradley_terry import Rating
 from chessmark.bench.service import (
     TERMINAL,
     Aggregate,
@@ -39,6 +40,11 @@ from chessmark.bench.service import (
     scan,
 )
 from chessmark.db.models import Game, LeaderboardSnapshot, ModelEndpoint
+
+#: Which engine produced a stored run. Part of the fingerprint, so changing the engine invalidates
+#: every stored run on its first read instead of serving the old method's numbers as current.
+#: Bump it whenever a change to `bench/bradley_terry.py` would move a published number.
+RATING_METHOD = "bt-2draws"
 
 
 async def fingerprint(session: AsyncSession, *, prompt_version: str | None) -> str:
@@ -53,7 +59,9 @@ async def fingerprint(session: AsyncSession, *, prompt_version: str | None) -> s
     * the prompt version, since a game played under an older prompt measured a different task;
     * the decision harness's version, for the same reason on the other harness (ADR-0049) — a bump
       retires decision games from the ratings, and a stored run that did not notice would go on
-      counting them.
+      counting them;
+    * the rating method (ADR-0060). The games did not change when the engine did, so without it a
+      run computed by Glicko-2 would match every other input and go on being served as current.
 
     Deliberately **not** covered: `model_registry.display_name`. It is a label, resolved at read,
     and baking it in would force a rebuild for a cosmetic rename.
@@ -70,7 +78,7 @@ async def fingerprint(session: AsyncSession, *, prompt_version: str | None) -> s
     ).one()
 
     return (
-        f"{prompt_version}|{DECISION_VERSION}|games={games[0]}@{games[1]}"
+        f"{RATING_METHOD}|{prompt_version}|{DECISION_VERSION}|games={games[0]}@{games[1]}"
         f"|endpoints={endpoints[0]}@{endpoints[1]}"
     )
 
@@ -129,13 +137,12 @@ async def build(
         "games_counted": run.games_counted,
         "excluded": [{"game_id": e.game_id, "reason": e.reason} for e in run.excluded],
         "prompt_version": prompt_version,
-        "periods": len(run.periods),
         "games_by_contestant": counted,
     }
     return dict(_jsonable(payload))
 
 
-def _row(contestant: Contestant, rating: Any, aggregate: Aggregate | None) -> dict[str, Any]:
+def _row(contestant: Contestant, rating: Rating, aggregate: Aggregate | None) -> dict[str, Any]:
     """One contestant's numbers. No `display_name` — that is resolved at read."""
     return {
         "model_id": contestant.model_id,
@@ -143,7 +150,6 @@ def _row(contestant: Contestant, rating: Any, aggregate: Aggregate | None) -> di
         "quantization": contestant.quantization,
         "rating": rating.rating,
         "rating_deviation": rating.rd,
-        "volatility": rating.volatility,
         "provisional": rating.provisional,
         "games": aggregate.games if aggregate else 0,
         "wins": aggregate.wins if aggregate else 0,

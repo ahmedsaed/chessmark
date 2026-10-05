@@ -151,6 +151,33 @@ async def test_a_tampered_snapshot_is_rebuilt_rather_than_served(db: AsyncSessio
     assert stored.fingerprint != "not-the-games-you-have"
 
 
+async def test_a_run_stored_by_the_previous_engine_is_rebuilt(db: AsyncSession) -> None:
+    """Changing the engine changes no game, so every other input to the fingerprint still matches
+    (ADR-0060). A run stored by Glicko-2 the day before deploy would go on being served as current —
+    its numbers, its `volatility`, its order — until the next game happened to end.
+
+    Simulated as exactly what production held: today's fingerprint *without* the method, over a
+    payload that cannot be today's answer.
+    """
+    await _two_models(db)
+    await _played(db, "snap/alpha", "snap/beta")
+    await db.flush()
+    current = await snapshot.fingerprint(db, prompt_version=None)
+    previous = current.removeprefix(f"{snapshot.RATING_METHOD}|")
+    assert previous != current, "the method has to be part of what is fingerprinted"
+
+    await snapshot.refresh(db, prompt_version=None)
+    stale = dict(await snapshot.build(db, prompt_version=None))
+    stale["rows"] = [{**row, "rating": 9999.0, "volatility": 0.06} for row in stale["rows"]]
+    await db.execute(sa.update(LeaderboardSnapshot).values(fingerprint=previous, payload=stale))
+    await db.flush()
+
+    served = await snapshot.current(db, prompt_version=None)
+
+    assert all(row["rating"] != 9999.0 for row in served["rows"])
+    assert all("volatility" not in row for row in served["rows"])
+
+
 async def test_storing_replaces_rather_than_accumulates(db: AsyncSession) -> None:
     """Inherited from the `ratings` table this replaced: a row left behind for a run that no longer
     holds is a number nothing supports. One row per prompt version, however often it is rebuilt."""

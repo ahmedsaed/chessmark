@@ -49,6 +49,16 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **Ratings are Bradley-Terry, and tables are ordered by proven strength.** Every model starts with
+  two draws against an imaginary 1500 opponent, and all games are fitted at once with no dates, so
+  the same games give the same ratings in any order. A model that stops playing keeps what it
+  proved. The leaderboard and pool tables are ordered by the rating less twice its ±, so a
+  three-game streak no longer outranks a long record with the same estimate. In `pool-free`, Qwen
+  (10/0/2) goes from third to first. Every rating changes once, on the first read after deploy.
+  ([ADR-0060](docs/adr/0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md))
+- **`volatility` and `periods` are gone from `GET /leaderboard`.** They were Glicko-2 parameters
+  with no equivalent now.
+
 - **A forced move asks a decision model only what to do with the turn**, not which move to play.
   The page says "its only legal move".
 - **A decision turn that fails after an answered call keeps that call**, its record and its spend,

@@ -46,7 +46,7 @@ export default async function Image() {
 
         <Stats
           items={[
-            { value: "Glicko-2", label: "ratings" },
+            { value: "Proven", label: "ranking" },
             { value: "Verbatim", label: "transcripts" },
             { value: "Ply by ply", label: "replay" },
           ]}

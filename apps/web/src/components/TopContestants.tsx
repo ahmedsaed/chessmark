@@ -97,8 +97,8 @@ export function TopContestants({ rows, counted }: { rows: LeaderboardRow[]; coun
           </div>
 
           <p className="tabular mt-3 font-mono text-meta text-ink-faint">
-            Glicko-2 over {counted} ranked game{counted === 1 ? "" : "s"} · ± is the rating
-            deviation, and a rating with a wide one has not settled
+            Ordered by proven strength over {counted} ranked game{counted === 1 ? "" : "s"} · ±
+            is the rating&rsquo;s uncertainty, and a rating with a wide one has not settled
           </p>
         </>
       )}

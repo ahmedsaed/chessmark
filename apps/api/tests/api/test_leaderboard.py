@@ -101,8 +101,8 @@ async def test_the_winner_ranks_above_the_loser(client: AsyncClient, db: AsyncSe
 
 
 async def test_every_row_carries_its_uncertainty(client: AsyncClient, db: AsyncSession) -> None:
-    """The reason Glicko-2 was chosen over Elo. A rating with no deviation lets a reader compare a
-    model with three games against one with three hundred as though they meant the same thing."""
+    """A rating with no deviation lets a reader compare a model with three games against one with
+    three hundred as though they meant the same thing — and the deviation now decides the order."""
     await _model(db, "test/alpha")
     await _model(db, "test/beta")
     await _played(db, "test/alpha", "test/beta", result=GameResult.WHITE_WINS)
@@ -110,6 +110,30 @@ async def test_every_row_carries_its_uncertainty(client: AsyncClient, db: AsyncS
     rows = (await client.get("/leaderboard")).json()["rows"]
 
     assert all(row["rating_deviation"] > 0 for row in rows)
+
+
+async def test_rows_are_ordered_by_proven_strength_not_rating(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """ADR-0060, through the endpoint. A 3/0/0 streak rates a few points above an 8/0/1 record, and
+    ordering by the rating put the streak first; what a reader means by "eight wins is better" is
+    that it has been shown more, which is the rating less two deviations. The assertion that the
+    two orders differ on this data is what keeps the test from passing under either rule."""
+    for slug in ("test/streak", "test/victim", "test/record", "test/foil"):
+        await _model(db, slug)
+    for _ in range(3):
+        await _played(db, "test/streak", "test/victim", result=GameResult.WHITE_WINS)
+    for _ in range(8):
+        await _played(db, "test/record", "test/foil", result=GameResult.WHITE_WINS)
+    await _played(db, "test/foil", "test/record", result=GameResult.WHITE_WINS)
+
+    rows = (await client.get("/leaderboard")).json()["rows"]
+    order = [row["model_slug"] for row in rows]
+    by_rating = sorted(rows, key=lambda row: -row["rating"])
+
+    assert by_rating[0]["model_slug"] == "test/streak", "the data must split the two rules"
+    assert order[:2] == ["test/record", "test/streak"]
+    assert "volatility" not in rows[0]
 
 
 async def test_a_row_carries_the_illegal_move_rate(client: AsyncClient, db: AsyncSession) -> None:

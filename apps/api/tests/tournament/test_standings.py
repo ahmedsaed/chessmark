@@ -155,7 +155,7 @@ class TestNobodyIsRatedYet:
         """The fallback must not swallow a real rating order. A pool where one model has finished a
         ratable game is ranked by rating, with the rest sharing last — which is what an unmeasured
         entrant is owed (ADR-0027)."""
-        table = standings(FIELD, [game("A", "B", 1.0)], {"B": (1800.0, 40.0, False)})
+        table = standings(FIELD, [game("A", "B", 1.0)], {"B": (1800.0, 40.0, False, 1720.0)})
 
         assert table[0].key == "B", "rated first, even having lost the only game"
         assert table[0].place == 1
@@ -164,6 +164,8 @@ class TestNobodyIsRatedYet:
     def test_a_rating_nobody_in_the_field_has_does_not_count(self) -> None:
         """A stale key — a model withdrawn from the event — must not switch the table into an order
         it has no data for."""
-        table = standings(FIELD, [game("A", "B", 1.0)], {"withdrawn/model": (1800.0, 40.0, False)})
+        table = standings(
+            FIELD, [game("A", "B", 1.0)], {"withdrawn/model": (1800.0, 40.0, False, 1720.0)}
+        )
 
         assert [(s.key, s.place) for s in table] == [("A", 1), ("B", 2), ("C", 2), ("D", 2)]

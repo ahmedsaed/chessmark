@@ -945,9 +945,10 @@ class MeOut(Schema):
 class LeaderboardRow(Schema):
     """One contestant's standing (BENCH-02).
 
-    `rd` is printed next to the rating on purpose. A rating without its deviation invites a reader
+    The deviation is printed next to the rating on purpose. A rating without its deviation invites a reader
     to compare a model with three games against one with three hundred as though the numbers meant
-    the same thing, and they do not — that is the whole reason Glicko-2 was chosen over Elo.
+    the same thing, and they do not. It also decides the order: rows are ranked by the rating less
+    two deviations, the strength a contestant has proven (ADR-0060).
     """
 
     model_id: uuid.UUID
@@ -960,8 +961,9 @@ class LeaderboardRow(Schema):
     runtime: ModelRuntime = ModelRuntime.LLM
 
     rating: float
+    #: The fit's ± in rating points (ADR-0060). Not a Glicko-2 deviation any more, but the same
+    #: thing to a reader, so the field kept its name rather than breaking every consumer.
     rating_deviation: float
-    volatility: float
     #: `rating_deviation` said in a word. Most readers do not know what to do with "± 208";
     #: "provisional" is the same fact in a form they can act on.
     provisional: bool
@@ -1006,7 +1008,6 @@ class LeaderboardRow(Schema):
             display_name=display_name or contestant.model_slug,
             rating=rating.rating,
             rating_deviation=rating.rd,
-            volatility=rating.volatility,
             provisional=rating.provisional,
             games=aggregate.games if aggregate else 0,
             wins=aggregate.wins if aggregate else 0,
@@ -1037,8 +1038,6 @@ class Leaderboard(Schema):
     games_counted: int = 0
     excluded: list[ExcludedGame] = Field(default_factory=list)
     prompt_version: str | None = None
-    #: Rating periods that contributed. One per UTC day.
-    periods: int = 0
 
 
 class BenchSummary(Schema):
@@ -1101,7 +1100,7 @@ class StandingOut(Schema):
     #: game deserves to be told which kind of row it is. `pool-free` seats 19 while the free tier
     #: serves 16.
     in_field: bool = True
-    #: Glicko-2 over this event's games alone, and `None` for a closed event.
+    #: A rating over this event's games alone (ADR-0060), and `None` for a closed event.
     #:
     #: A pool has no fixed schedule, so its entrants play unequal numbers of games and a sum of
     #: points ranks partly by volume — `score` and `sonneborn_berger` stay in the payload because

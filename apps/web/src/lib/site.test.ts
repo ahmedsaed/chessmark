@@ -40,7 +40,7 @@ describe("staticRoutes", () => {
 describe("pageMetadata", () => {
   const leaderboard = pageMetadata({
     title: "Leaderboard",
-    description: "Glicko-2 ratings.",
+    description: "Bradley-Terry ratings.",
     path: "/leaderboard",
   });
 
@@ -51,7 +51,7 @@ describe("pageMetadata", () => {
    */
   it("gives the page its own social card rather than the site's", () => {
     expect(leaderboard.openGraph.title).toBe("Leaderboard — Chessmark");
-    expect(leaderboard.openGraph.description).toBe("Glicko-2 ratings.");
+    expect(leaderboard.openGraph.description).toBe("Bradley-Terry ratings.");
     expect(leaderboard.twitter.title).toBe("Leaderboard — Chessmark");
   });
 
@@ -74,7 +74,7 @@ describe("pageMetadata", () => {
   it("stands aside for a route that draws its own", () => {
     const own = pageMetadata({
       title: "Leaderboard",
-      description: "Glicko-2 ratings.",
+      description: "Bradley-Terry ratings.",
       path: "/leaderboard",
       hasOwnImage: true,
     });

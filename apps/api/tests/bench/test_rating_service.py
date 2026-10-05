@@ -1,6 +1,6 @@
 """Rating and aggregating real games.
 
-`glicko2` and `ratable` are tested pure; this is the join to the database. The properties that
+`bradley_terry` and `ratable` are tested pure; this is the join to the database. The properties that
 matter here are that only eligible games move a rating, that recomputation is deterministic, and
 that the exclusions are *reported* rather than silently applied — a methodology page that cannot
 show its work is asking to be disbelieved (BENCH-10).
@@ -18,7 +18,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.bench.service import (
     compute_aggregates,
     compute_ratings,
-    period_of,
     scan,
 )
 from chessmark.db.models import ModelEndpoint, ModelRegistry
@@ -196,8 +195,8 @@ async def test_recomputing_reproduces_the_same_ratings_exactly(db: AsyncSession)
     first = await compute_ratings(db, prompt_version=None)
     second = await compute_ratings(db, prompt_version=None)
 
-    assert {c.label: (r.rating, r.rd, r.volatility) for c, r in first.ratings.items()} == {
-        c.label: (r.rating, r.rd, r.volatility) for c, r in second.ratings.items()
+    assert {c.label: (r.rating, r.rd) for c, r in first.ratings.items()} == {
+        c.label: (r.rating, r.rd) for c, r in second.ratings.items()
     }
 
 
@@ -245,20 +244,42 @@ async def test_illegal_rate_is_zero_rather_than_undefined_with_no_moves(
     assert all(a.illegal_per_move == 0.0 for a in aggregates.values())
 
 
-# ====================================================================== periods
+# ====================================================================== dates
 
 
-def test_a_period_is_a_day() -> None:
-    """Short enough to be responsive, long enough that the deviation can settle — a period holding
-    one game would keep every rating maximally uncertain forever."""
+async def test_when_a_game_was_played_does_not_move_a_rating(db: AsyncSession) -> None:
+    """A model is a fixed set of weights, so its rating is who it beat, not when (ADR-0060).
+
+    Under Glicko-2 this failed: games were batched into daily periods, so the same results moved
+    the ratings when their dates were swapped, and a model that stopped playing had its deviation
+    widened by every day the others played. Re-dating every game here — reversing the order and
+    spreading it over months — must leave every number exactly where it was.
+    """
     import datetime as dt
 
-    monday = dt.datetime(2026, 3, 2, 9, 0, tzinfo=dt.UTC)
-    later_that_day = dt.datetime(2026, 3, 2, 23, 59, tzinfo=dt.UTC)
-    tuesday = dt.datetime(2026, 3, 3, 0, 1, tzinfo=dt.UTC)
+    for slug in ("test/alpha", "test/beta", "test/gamma"):
+        await _model(db, slug)
+    games = [
+        await _played(db, "test/alpha", "test/beta", result=GameResult.WHITE_WINS),
+        await _played(db, "test/beta", "test/gamma", result=GameResult.WHITE_WINS),
+        await _played(db, "test/gamma", "test/alpha", result=GameResult.DRAW),
+        await _played(db, "test/alpha", "test/gamma", result=GameResult.WHITE_WINS),
+    ]
+    start = dt.datetime(2026, 3, 2, 9, 0, tzinfo=dt.UTC)
+    for day, game in enumerate(games):
+        game.ended_at = start + dt.timedelta(days=day)
+    await db.flush()
+    before = await compute_ratings(db, prompt_version=None)
 
-    assert period_of(monday) == period_of(later_that_day)
-    assert period_of(tuesday) == period_of(monday) + 1
+    for day, game in enumerate(reversed(games)):
+        game.ended_at = start + dt.timedelta(days=40 * day)
+    await db.flush()
+    after = await compute_ratings(db, prompt_version=None)
+
+    assert len(before.ratings) == 3
+    assert {c.label: (r.rating, r.rd) for c, r in before.ratings.items()} == {
+        c.label: (r.rating, r.rd) for c, r in after.ratings.items()
+    }
 
 
 # ====================================================================== cost

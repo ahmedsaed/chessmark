@@ -1,6 +1,6 @@
 """Turning finished games into ratings and aggregate metrics.
 
-The database half of Phase 12: `bench.glicko2` does the arithmetic and `bench.ratable` decides what
+The database half of Phase 12: `bench.bradley_terry` does the arithmetic and `bench.ratable` decides what
 counts, both without touching a session. This joins them to the tables.
 
 **Recomputed from scratch every time, never updated in place.** Ratings are a pure function of the
@@ -11,7 +11,6 @@ costs milliseconds; being unable to trust the number costs the whole leaderboard
 
 from __future__ import annotations
 
-import datetime as dt
 import uuid
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -22,8 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from chessmark.agents.decision_request import DECISION_VERSION
 from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.agents.tools import TOOL_SCHEMA_VERSION
-from chessmark.bench.glicko2 import Glicko2, Outcome
-from chessmark.bench.glicko2 import Rating as Glicko2Rating
+from chessmark.bench.bradley_terry import Rating, fit
 from chessmark.bench.ratable import GameFacts, judge
 from chessmark.db.enums import GameStatus, ModelRuntime, PlayerKind
 from chessmark.db.models import (
@@ -36,14 +34,6 @@ from chessmark.db.models import (
     Turn,
 )
 from chessmark.game import Colour, GameResult, Termination
-
-#: One rating period per calendar day, UTC. Glicko-2 is defined over batches, and a period short
-#: enough to hold a single game defeats the point — the deviation would never settle.
-PERIOD_EPOCH = dt.date(2026, 1, 1)
-
-
-def period_of(when: dt.datetime) -> int:
-    return (when.astimezone(dt.UTC).date() - PERIOD_EPOCH).days
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,10 +63,9 @@ class Excluded:
 
 @dataclass(slots=True)
 class RatingRun:
-    ratings: dict[Contestant, Glicko2Rating] = field(default_factory=dict)
+    ratings: dict[Contestant, Rating] = field(default_factory=dict)
     games_counted: int = 0
     excluded: list[Excluded] = field(default_factory=list)
-    periods: list[int] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -385,24 +374,23 @@ async def compute_ratings(
     *,
     prompt_version: str | None = PROMPT_VERSION,
     tool_schema_version: str | None = TOOL_SCHEMA_VERSION,
-    tau: float = 0.5,
     tournament_id: uuid.UUID | None = None,
     scanned: Scan | None = None,
 ) -> RatingRun:
-    """Rebuild every rating from every eligible game.
+    """Every rating, from every eligible game, in one fit (ADR-0060).
 
-    Games are grouped into periods and each period is rated as a batch — Glicko-2 is defined that
-    way, and rating game by game gives a different and less defensible answer.
+    No periods and no dates: the same games give the same ratings in any order, and a contestant
+    that stops playing keeps its rating rather than having its deviation widened by every day the
+    others play. It still moves when the models it beat are re-evaluated, which is correct — a win
+    is worth what the opponent turns out to be worth.
 
     `tournament_id` narrows the games to one event, which is what a pool's own table is ordered by.
-    Everything else is identical — the same eligibility, the same engine, the same daily periods —
-    so the two numbers differ only in what they were computed over, which is the whole point of
-    having a local one (ADR-0027).
+    Everything else is identical — the same eligibility, the same engine — so the two numbers differ
+    only in what they were computed over, which is the whole point of having a local one (ADR-0027).
 
     `scanned` lets a caller that also wants the aggregates pay for the read once. Omitting it reads
     afresh, which is what every test and script does.
     """
-    system = Glicko2(tau=tau)
     run = RatingRun()
 
     if scanned is None:
@@ -417,48 +405,21 @@ async def compute_ratings(
     # a second identical sweep of every game, and two sweeps are two chances to disagree.
     run.excluded = list(scanned.excluded)
 
-    by_period: dict[int, list[tuple[Game, list[Player], dict[uuid.UUID, str]]]] = {}
+    games: list[tuple[Contestant, Contestant, float]] = []
     for game, players, quantizations in scanned.counted:
-        by_period.setdefault(period_of(game.ended_at or game.created_at), []).append(
-            (game, players, quantizations)
-        )
-        run.games_counted += 1
+        seats = {
+            player.colour: contestant
+            for player in players
+            if (contestant := _contestant(player, quantizations)) is not None
+        }
+        white, black = seats.get(Colour.WHITE), seats.get(Colour.BLACK)
+        if white is None or black is None or len(players) != 2:
+            run.excluded.append(Excluded(game.id, "a seat could not be resolved to a contestant"))
+            continue
+        games.append((white, black, _score(game.result, Colour.WHITE)))
 
-    run.periods = sorted(by_period)
-
-    for period in run.periods:
-        # Every contestant seen so far is rated for this period, including those who did not play:
-        # an idle period must widen the deviation, or a stale rating keeps its confidence forever.
-        outcomes: dict[Contestant, list[Outcome]] = {c: [] for c in run.ratings}
-
-        for game, players, quantizations in by_period[period]:
-            seats: list[tuple[Contestant, Player]] = []
-            for player in players:
-                contestant = _contestant(player, quantizations)
-                if contestant is not None:
-                    seats.append((contestant, player))
-
-            if len(seats) != 2:
-                run.excluded.append(
-                    Excluded(game.id, "a seat could not be resolved to a contestant")
-                )
-                run.games_counted -= 1
-                continue
-
-            for (contestant, player), (other, _) in (seats, seats[::-1]):
-                outcomes.setdefault(contestant, [])
-                outcomes[contestant].append(
-                    Outcome(
-                        opponent=run.ratings.get(other, Glicko2Rating()),
-                        score=_score(game.result, player.colour),
-                    )
-                )
-
-        for contestant, contest_outcomes in outcomes.items():
-            run.ratings[contestant] = system.rate(
-                run.ratings.get(contestant, Glicko2Rating()), contest_outcomes
-            )
-
+    run.games_counted = len(games)
+    run.ratings = fit(games)
     return run
 
 
@@ -468,9 +429,9 @@ async def ratings_by_key(
     tournament_id: uuid.UUID,
     prompt_version: str | None = PROMPT_VERSION,
     tool_schema_version: str | None = TOOL_SCHEMA_VERSION,
-) -> dict[str, tuple[float, float, bool]]:
-    """One event's rating, deviation and provisional flag, keyed the way a tournament keys its
-    entrants (ADR-0027).
+) -> dict[str, tuple[float, float, bool, float]]:
+    """One event's rating, deviation, provisional flag and proven strength, keyed the way a
+    tournament keys its entrants (ADR-0027).
 
     The leaderboard is keyed by `Contestant` — model **and quantization**, because that is what is
     actually being rated (ADR-0015). A tournament's entrants are keyed by model slug alone, and the
@@ -500,13 +461,18 @@ async def ratings_by_key(
             if contestant is not None:
                 played[contestant] = played.get(contestant, 0) + 1
 
-    best: dict[str, tuple[float, float, bool]] = {}
+    best: dict[str, tuple[float, float, bool, float]] = {}
     chosen: dict[str, int] = {}
     for contestant, rating in run.ratings.items():
         games = played.get(contestant, 0)
         if contestant.model_slug not in best or games > chosen[contestant.model_slug]:
             chosen[contestant.model_slug] = games
-            best[contestant.model_slug] = (rating.rating, rating.rd, rating.provisional)
+            best[contestant.model_slug] = (
+                rating.rating,
+                rating.rd,
+                rating.provisional,
+                rating.proven,
+            )
 
     return best
 

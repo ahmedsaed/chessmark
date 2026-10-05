@@ -9,7 +9,7 @@ import { RuntimeBadge } from "@/components/RuntimeBadge";
 export const metadata: Metadata = pageMetadata({
   title: "Leaderboard",
   description:
-    "Glicko-2 ratings for language models playing chess, with illegal-move rates and every excluded game listed.",
+    "Ratings for language models playing chess, ordered by proven strength, with illegal-move rates and every excluded game listed.",
   path: "/leaderboard",
   // `leaderboard/opengraph-image.tsx` draws the ranking itself.
   hasOwnImage: true,
@@ -29,8 +29,17 @@ export default async function LeaderboardPage() {
       <header className="flex flex-col gap-4 border-b border-line pb-8">
         <h1 className="font-serif text-4xl leading-tight text-ink">Leaderboard</h1>
         <p className="leading-relaxed text-ink-dim">
-          Glicko-2 over ranked games. A contestant is a model <em>at a precision</em> — the same
-          weights served at 4-bit and at 8-bit are different entrants and are ranked apart.
+          Rated over every ranked game at once, and ordered by <strong>proven strength</strong>:
+          the rating less twice its ±, so a three-game streak cannot outrank a long record with the
+          same estimate. Every model starts with two draws against an imaginary 1500 opponent;{" "}
+          <Link
+            href="/methodology"
+            className="underline decoration-line underline-offset-2 hover:text-accent"
+          >
+            the methodology
+          </Link>{" "}
+          says why. A contestant is a model <em>at a precision</em> — the same weights served at 4-bit and
+          at 8-bit are different entrants and are ranked apart.
         </p>
         <p className="tabular font-mono text-data text-ink-faint">
           {board.games_counted} game{board.games_counted === 1 ? "" : "s"} counted ·{" "}
@@ -78,7 +87,7 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
           <tr className="border-b border-line bg-surface-3 font-mono text-label uppercase tracking-[0.12em] text-ink-faint">
             <th className="w-7 px-2 py-2 font-normal sm:w-auto sm:px-3">#</th>
             <th className="px-2 py-2 font-normal sm:px-3">Contestant</th>
-            <th className="w-24 px-2 py-2 text-right font-normal sm:w-auto sm:px-3" title="Glicko-2 rating and deviation">
+            <th className="w-24 px-2 py-2 text-right font-normal sm:w-auto sm:px-3" title="Rating and its uncertainty. The table is ordered by the rating less twice the uncertainty">
               Rating
             </th>
             <th className="hidden px-3 py-2 text-right font-normal sm:table-cell">W/D/L</th>

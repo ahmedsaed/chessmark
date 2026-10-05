@@ -221,8 +221,8 @@ async def admit_new_entrants(
 
     Only pools do this. A closed event's field is frozen because its fixture list is computed from
     it — a latecomer would invalidate the schedule, and a table whose rows played different
-    opponents means different things per row. A pool has neither problem: Glicko-2 is built for an
-    open population, so a model listed today can start at 1500 +/- 350 and settle by playing.
+    opponents means different things per row. A pool has neither problem: its rating is fitted over
+    whoever has played, so a model listed today starts at 1500 ± 246 and settles by playing.
 
     A model that has *left* the catalogue is not withdrawn here. Its games are real results and its
     rating is real; dropping it automatically would rewrite history because an endpoint went quiet
