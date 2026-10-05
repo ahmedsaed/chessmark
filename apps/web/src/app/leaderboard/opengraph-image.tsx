@@ -12,6 +12,7 @@
 import { ImageResponse } from "next/og";
 
 import { listGames, getLeaderboard } from "@/lib/api";
+import { rowsOf } from "@/lib/groups";
 import { Board } from "@/lib/og/board";
 import { featuredFen } from "@/lib/og/featured";
 import { Card, Standings, Stats, Title, Wordmark } from "@/lib/og/shell";
@@ -32,7 +33,10 @@ export default async function Image() {
     getLeaderboard({ cache: REVALIDATE_SECONDS }),
     listGames(undefined, 30, { cache: REVALIDATE_SECONDS }).then(featuredFen),
   ]);
-  const top = leaderboard.rows.slice(0, 5);
+  // The card is the chat models' table, as the page is by default (ADR-0063): a shared link to
+  // /leaderboard opens on chat models, and its preview should show the same five.
+  const chat = rowsOf(leaderboard.rows, "chat");
+  const top = chat.slice(0, 5);
 
   return new ImageResponse(
     (
@@ -67,7 +71,7 @@ export default async function Image() {
           <Stats
             items={[
               { value: String(leaderboard.games_counted), label: "games counted" },
-              { value: String(leaderboard.rows.length), label: "contestants" },
+              { value: String(chat.length), label: "chat models" },
               { value: String(leaderboard.excluded.length), label: "excluded", tone: COLOUR.inkDim },
             ]}
           />

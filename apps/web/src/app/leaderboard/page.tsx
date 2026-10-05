@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { getLeaderboard } from "@/lib/api";
+import { GROUPS, GROUP_LABEL, type ModelGroup, parseGroup, rowsOf } from "@/lib/groups";
 import type { LeaderboardRow } from "@/lib/types";
 import { pageMetadata } from "@/lib/site";
-import { RuntimeBadge } from "@/components/RuntimeBadge";
 
 export const metadata: Metadata = pageMetadata({
   title: "Leaderboard",
@@ -21,8 +21,14 @@ function usd(value: string): string {
   return amount < 0.001 ? `$${amount.toFixed(5)}` : `$${amount.toFixed(3)}`;
 }
 
-export default async function LeaderboardPage() {
+export default async function LeaderboardPage({ searchParams }: PageProps<"/leaderboard">) {
   const board = await getLeaderboard();
+  /* **Chat by default, decision models one control away** (ADR-0063). The choice lives in the
+     address, as the archive's filters do, so a link to the decision table is a link to it. Both
+     groups come from one stored run; the page only chooses which rows to show and numbers them
+     within that group, because a place among chat models is the only place a chat model has. */
+  const group = parseGroup((await searchParams).models);
+  const rows = rowsOf(board.rows, group);
 
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
@@ -47,14 +53,30 @@ export default async function LeaderboardPage() {
         </p>
       </header>
 
-      {board.rows.length === 0 ? (
+      <GroupControl
+        group={group}
+        counts={{ chat: rowsOf(board.rows, "chat").length, decision: rowsOf(board.rows, "decision").length }}
+      />
+
+      {group === "decision" && (
+        /* Said beside the table rather than left for the methodology page: a reader comparing a
+           decision model's 1600 with a chat model's needs to know the two are not one scale. */
+        <p className="mt-4 max-w-[760px] text-sm leading-relaxed text-ink-dim">
+          Decision models are ranked on their own. They are handed the legal moves and facts about
+          each, so they never play an illegal move. In a trial against a bot that moves at random,
+          the top four won material in every game but turned only 7 of 20 into wins. That is a
+          different game from the one chat models play, so it is a different table.
+        </p>
+      )}
+
+      {rows.length === 0 ? (
         <p className="mt-10 text-sm leading-relaxed text-ink-dim">
           No ranked games yet. Ratings only move on games played in the ranked configuration —
           fixed prompt version, trash talk off, one pinned endpoint per seat. Everything else is
           still recorded and replayable, it just does not count.
         </p>
       ) : (
-        <Table rows={board.rows} />
+        <Table rows={rows} />
       )}
 
       <Excluded excluded={board.excluded} counted={board.games_counted} />
@@ -65,6 +87,38 @@ export default async function LeaderboardPage() {
         </Link>
       </p>
     </main>
+  );
+}
+
+/**
+ * Which table is showing, as two links rather than a client-side toggle: the page is server-rendered
+ * from the address, so a choice that is a link needs no JavaScript and survives a reload or a share.
+ */
+function GroupControl({
+  group,
+  counts,
+}: {
+  group: ModelGroup;
+  counts: Record<ModelGroup, number>;
+}) {
+  return (
+    <nav aria-label="Which models" className="mt-8 flex gap-px border border-line bg-line w-fit">
+      {GROUPS.map((option) => {
+        const active = option === group;
+        return (
+          <Link
+            key={option}
+            href={option === "chat" ? "/leaderboard" : "/leaderboard?models=decision"}
+            aria-current={active ? "page" : undefined}
+            className={`px-3 py-1.5 font-mono text-label uppercase tracking-[0.12em] transition-colors ${
+              active ? "bg-surface-3 text-ink" : "bg-ground text-ink-faint hover:text-accent"
+            }`}
+          >
+            {GROUP_LABEL[option]} <span className="tabular text-ink-faint">{counts[option]}</span>
+          </Link>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -114,7 +168,14 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
         </thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={`${row.model_id}-${row.quantization}`} className="group hover:bg-surface-2">
+            <tr
+              key={`${row.model_id}-${row.quantization}`}
+              /* No decision badge on these rows: the control above already says which models the
+                 table holds, and a badge on every row of the decision view says it eight times.
+                 The attribute keeps that fact checkable for the browser suite. */
+              data-runtime={row.runtime}
+              className="group hover:bg-surface-2"
+            >
               <td
                 className={`${stuck} left-0 w-8 px-2 py-2.5 font-mono text-data text-ink-faint tabular sm:px-3`}
               >
@@ -143,7 +204,6 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
                   <span className="mt-0.5 inline-block border border-good/40 px-1 py-px font-mono text-label uppercase tracking-wider text-good sm:ml-1.5 sm:mt-0">
                     {row.quantization}
                   </span>
-                  <RuntimeBadge runtime={row.runtime} className="ml-1.5 mt-0.5 sm:mt-0" />
                 </div>
               </td>
               <td

@@ -7,6 +7,7 @@ import { GameCard } from "@/components/GameCard";
 import { HeroGame } from "@/components/HeroGame";
 import { ReplayBoard } from "@/components/ReplayBoard";
 import { TopContestants } from "@/components/TopContestants";
+import { rowsOf } from "@/lib/groups";
 import { TurnSpotlight } from "@/components/TurnSpotlight";
 import { TournamentsSection } from "@/components/TournamentsSection";
 import {
@@ -130,7 +131,9 @@ export default async function Home() {
 
       {spotlight && <TurnSpotlight game={spotlight.game} turn={spotlight.turn} />}
 
-      <TopContestants rows={board.rows} counted={board.games_counted} />
+      {/* Chat models only (ADR-0063): the front page shows the main table, and the decision
+          models' own table is one control away on /leaderboard. */}
+      <TopContestants rows={rowsOf(board.rows, "chat")} counted={board.games_counted} />
 
       {/* After the ranking, because it is the machinery behind it: the podium says who is ahead,
           this says what they are playing in. */}
@@ -140,7 +143,10 @@ export default async function Home() {
           to "could I beat one of those". */}
       <ChallengeSection
         record={humans}
-        rows={board.rows}
+        /* Chat models only. "Never tried an illegal move" was counting decision models, which are
+           only ever offered legal moves and cannot try one — so the clean share it printed was
+           partly a fact about their harness, not about any opponent's play (ADR-0063). */
+        rows={rowsOf(board.rows, "chat")}
         gamesCounted={board.games_counted}
       />
 

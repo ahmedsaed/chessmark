@@ -67,7 +67,7 @@ were live in this directory before it was written.
 | [0046](0046-the-api-invalidates-the-cache-a-clock-does-not.md) | The API invalidates the frontend's cache; a clock does not | Accepted |
 | [0047](0047-the-arithmetic-that-decides-a-request.md) | The arithmetic that decides whether a request can be sent | Accepted |
 | [0048](0048-the-archive-filters-on-the-server-and-pages-by-keyset.md) | The archive filters on the server, and pages by keyset | Accepted |
-| [0049](0049-decision-models-play-through-their-own-harness.md) | Decision models play through their own harness | Accepted |
+| [0049](0049-decision-models-play-through-their-own-harness.md) | Decision models play through their own harness | Amended by [0063](0063-chat-and-decision-models-are-ranked-on-separate-leaderboards.md) |
 | [0050](0050-a-pool-saturates-per-pair.md) | A pool saturates per pair | Accepted |
 | [0051](0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md) | A decision model chooses its action, and is checked before it plays | Amended by [0059](0059-a-decision-model-with-a-limit-plays-in-heats.md) |
 | [0052](0052-credit-is-dollars-spent-at-actual-cost.md) | Credit is dollars, spent at what each turn actually cost | Amended by [0058](0058-the-house-account-pays-for-games-no-person-started.md) |
@@ -81,6 +81,7 @@ were live in this directory before it was written.
 | [0060](0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md) | Models are rated by Bradley-Terry, and ranked by the strength they have proven | Accepted |
 | [0061](0061-every-rating-is-a-stored-run.md) | Every rating is a stored run, read rather than computed | Accepted |
 | [0062](0062-a-failed-call-is-recorded-and-a-refused-answer-is-re-split.md) | A failed call is recorded, and a refused answer is asked again in smaller heats | Accepted |
+| [0063](0063-chat-and-decision-models-are-ranked-on-separate-leaderboards.md) | Chat and decision models are ranked on separate leaderboards | Accepted |
 
 ## Template
 
