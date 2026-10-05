@@ -3,7 +3,7 @@
 
     make compare-ratings                       # the leaderboard's games, then every pool's
     make compare-ratings ARGS="--pool pool-free"
-    make compare-ratings ARGS="--shuffles 500 --prior 350 --prior 200"
+    make compare-ratings ARGS="--shuffles 500 --prior 350 --prior 200"   # fixed widths, not estimated
 
 Read-only, and it changes nothing the site shows. It exists to answer one question with
 production's numbers rather than an argument: **is Glicko-2 the right model for contestants that
@@ -135,41 +135,126 @@ def order_range(games: list[Played], shuffles: int, seed: int) -> dict[Contestan
 # --- Bradley-Terry with a normal prior ------------------------------------------------------------
 
 
-def bradley_terry(games: list[Played], prior_sd: float) -> dict[Contestant, tuple[float, float]]:
-    """MAP strengths and their Laplace standard deviations, in rating points.
+@dataclass(slots=True)
+class Fit:
+    players: list[Contestant]
+    #: Strengths on the natural-log scale, centred on 0.
+    theta: list[float]
+    #: The negative Hessian of the log posterior at `theta` — the posterior precision.
+    precision: list[list[float]]
+    #: Log likelihood of the games at `theta`, without the prior.
+    loglik: float
+    tau2: float
 
-    Newton's method on the log posterior. The prior makes it strictly concave, so it converges from
-    zero in a handful of steps and needs no connected comparison graph — a contestant whose games
-    are all against one opponent still gets an answer, and a wide one.
+
+def fit(games: list[Played], prior_sd: float, start: dict[Contestant, float] | None = None) -> Fit:
+    """MAP strengths under a normal prior, by Newton's method on the log posterior.
+
+    The prior makes it strictly concave, so it converges from zero in a handful of steps and needs
+    no connected comparison graph — a contestant whose games are all against one opponent still
+    gets an answer, and a wide one. A draw is half a win, as Glicko-2 and Elo both treat it, so the
+    two systems differ only in the model and not in what a result means.
     """
     players = sorted({c for g in games for c in (g.white, g.black)}, key=label)
     index = {c: i for i, c in enumerate(players)}
     n = len(players)
     tau2 = (prior_sd / ELO) ** 2
-    theta = [0.0] * n
+    theta = [(start or {}).get(c, 0.0) for c in players]
 
     for _ in range(100):
         grad = [-t / tau2 for t in theta]
-        hess = [[(-1.0 / tau2 if i == j else 0.0) for j in range(n)] for i in range(n)]
+        precision = [[(1.0 / tau2 if i == j else 0.0) for j in range(n)] for i in range(n)]
         for g in games:
             i, j = index[g.white], index[g.black]
             p = 1.0 / (1.0 + math.exp(theta[j] - theta[i]))
             grad[i] += g.score - p
             grad[j] -= g.score - p
             w = p * (1.0 - p)
-            hess[i][i] -= w
-            hess[j][j] -= w
-            hess[i][j] += w
-            hess[j][i] += w
-        step = solve(hess, grad)
-        theta = [t - s for t, s in zip(theta, step, strict=True)]
+            precision[i][i] += w
+            precision[j][j] += w
+            precision[i][j] -= w
+            precision[j][i] -= w
+        step = solve(precision, grad)
+        theta = [t + s for t, s in zip(theta, step, strict=True)]
         if max(abs(s) for s in step) < 1e-10:
             break
 
-    covariance = inverse([[-h for h in row] for row in hess])
+    loglik = 0.0
+    for g in games:
+        p = 1.0 / (1.0 + math.exp(theta[index[g.black]] - theta[index[g.white]]))
+        loglik += g.score * math.log(p) + (1.0 - g.score) * math.log(1.0 - p)
+    return Fit(players, theta, precision, loglik, tau2)
+
+
+def bradley_terry(games: list[Played], prior_sd: float) -> dict[Contestant, tuple[float, float]]:
+    """Strengths and their Laplace standard deviations, in rating points."""
+    result = fit(games, prior_sd)
+    covariance = inverse(result.precision)
     return {
-        c: (CENTRE + theta[i] * ELO, math.sqrt(covariance[i][i]) * ELO) for c, i in index.items()
+        c: (CENTRE + result.theta[i] * ELO, math.sqrt(covariance[i][i]) * ELO)
+        for i, c in enumerate(result.players)
     }
+
+
+# --- Choosing the prior's width from the games ----------------------------------------------------
+
+#: The widths tried, in rating points. 350 is Glickman's starting deviation, 500 Lichess's.
+GRID = (50, 75, 100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 500, 650, 800)
+
+
+def evidence(games: list[Played], prior_sd: float) -> float:
+    """Log marginal likelihood of the games under this prior width (Laplace approximation).
+
+    How probable the observed results are, averaged over every set of strengths the prior allows.
+    Too narrow and real differences cannot be explained; too wide and the prior spreads its belief
+    over strengths nothing needed. The peak is the width the games themselves argue for, which is
+    the point: the width decides who tops the table, so it must not be picked by taste.
+    """
+    result = fit(games, prior_sd)
+    n = len(result.players)
+    penalty = sum(t * t for t in result.theta) / (2 * result.tau2)
+    return (
+        result.loglik
+        - penalty
+        - 0.5 * n * math.log(result.tau2)
+        - 0.5 * log_determinant(result.precision)
+    )
+
+
+def held_out_loss(games: list[Played], prior_sd: float) -> float:
+    """Mean log loss predicting each game from a fit to all the others.
+
+    A second estimate that assumes nothing about the Laplace approximation: the width that best
+    predicts results it has not seen. If the two agree, the choice is not an artefact of either
+    method. Each fit starts from the full fit, so it converges in a step or two.
+    """
+    full = fit(games, prior_sd)
+    start = dict(zip(full.players, full.theta, strict=True))
+    loss = 0.0
+    for k, held in enumerate(games):
+        rest = fit(games[:k] + games[k + 1 :], prior_sd, start)
+        strength = dict(zip(rest.players, rest.theta, strict=True))
+        diff = strength.get(held.white, 0.0) - strength.get(held.black, 0.0)
+        p = 1.0 / (1.0 + math.exp(-diff))
+        loss -= held.score * math.log(p) + (1.0 - held.score) * math.log(1.0 - p)
+    return loss / len(games)
+
+
+def estimate(games: list[Played]) -> tuple[float, float]:
+    """The width each method prefers, after printing both curves."""
+    rows = [(sd, evidence(games, sd), held_out_loss(games, sd)) for sd in GRID]
+    by_evidence = max(rows, key=lambda r: r[1])[0]
+    by_held_out = min(rows, key=lambda r: r[2])[0]
+    print("| prior width | log evidence | held-out log loss |")
+    print("|---|---|---|")
+    for sd, ev, loss in rows:
+        marks = (" ◀ evidence" if sd == by_evidence else "") + (
+            " ◀ held-out" if sd == by_held_out else ""
+        )
+        print(f"| {sd} | {ev:.2f} | {loss:.4f}{marks} |")
+    # A coin flip scores ln 2 ≈ 0.6931; a fit that cannot beat it is not finding anything.
+    print(f"\nA coin flip's held-out loss is {math.log(2):.4f}.\n")
+    return float(by_evidence), float(by_held_out)
 
 
 def solve(a: list[list[float]], b: list[float]) -> list[float]:
@@ -190,6 +275,19 @@ def inverse(a: list[list[float]]) -> list[list[float]]:
     n = len(a)
     columns = [solve(a, [1.0 if i == j else 0.0 for i in range(n)]) for j in range(n)]
     return [[columns[j][i] for j in range(n)] for i in range(n)]
+
+
+def log_determinant(a: list[list[float]]) -> float:
+    """Of a positive-definite matrix: the sum of the logs of its elimination pivots."""
+    n = len(a)
+    m = [row[:] for row in a]
+    total = 0.0
+    for col in range(n):
+        total += math.log(m[col][col])
+        for r in range(col + 1, n):
+            f = m[r][col] / m[col][col]
+            m[r] = [x - f * y for x, y in zip(m[r], m[col], strict=True)]
+    return total
 
 
 # --- Reading the games, and the table -------------------------------------------------------------
@@ -232,13 +330,16 @@ def report(
     if not games:
         print(f"\n## {title}\n\nNo games count here.\n")
         return
+    print(f"\n## {title}\n")
+    if not priors:
+        by_evidence, by_held_out = estimate(games)
+        priors = sorted({by_evidence, by_held_out}, reverse=True)
     site = glicko(games)
     g_place = places({c: r.rating for c, r in site.items()})
     spread = order_range(games, shuffles, seed=1)
     fits = [bradley_terry(games, prior) for prior in priors]
     bt_place = [places({c: v[0] for c, v in fit.items()}) for fit in fits]
 
-    print(f"\n## {title}\n")
     print(
         f"{len(games)} games, {len(site)} contestants, {len({g.period for g in games})} periods.\n"
     )
@@ -266,10 +367,17 @@ def report(
 async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--pool", action="append", help="a tournament slug; repeatable")
-    parser.add_argument("--prior", type=float, action="append", help="prior sd, rating points")
+    parser.add_argument(
+        "--prior",
+        type=float,
+        action="append",
+        help="prior sd in rating points; repeatable. Omitted, it is estimated from the games",
+    )
     parser.add_argument("--shuffles", type=int, default=200)
     args = parser.parse_args()
-    priors = args.prior or [350.0, 200.0]
+    # Empty means "estimate it from each scope's own games", which is the default because the
+    # width is the decision under examination and should not be one this script makes.
+    priors: list[float] = args.prior or []
 
     try:
         games, record = await read(None)
