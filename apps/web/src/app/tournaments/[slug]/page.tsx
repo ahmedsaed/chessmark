@@ -263,8 +263,8 @@ function Standings({ rows }: { rows: Standing[] }) {
      with every column added. From `sm` the table fits and the block is an ordinary `1fr`. */
   const row = `tabular grid items-center gap-2 ${
     rated
-      ? "grid-cols-[60cqw_5.5rem_3rem_4.5rem_2rem] sm:grid-cols-[minmax(0,1fr)_5.5rem_3rem_4.5rem_2rem]"
-      : "grid-cols-[60cqw_3rem_4.5rem_3.5rem_2rem] sm:grid-cols-[minmax(0,1fr)_3rem_4.5rem_3.5rem_2rem]"
+      ? "grid-cols-[60cqw_5.5rem_3rem_6rem] sm:grid-cols-[minmax(0,1fr)_5.5rem_3rem_6rem]"
+      : "grid-cols-[60cqw_3rem_6rem_3.5rem] sm:grid-cols-[minmax(0,1fr)_3rem_6rem_3.5rem]"
   }`;
   /* `sticky` with its own background, or the scrolled columns show through it; the inset line on
      its right edge is the seam a reader sees the table slide under. */
@@ -305,26 +305,25 @@ function Standings({ rows }: { rows: Standing[] }) {
             ) : (
               <span className="text-right">Pts</span>
             )}
-            {rated ? (
-              <span className="text-right">Pts</span>
-            ) : (
-              <span className="text-right">W/D/L</span>
-            )}
-            {rated ? (
-              <span className="text-right">W/D/L</span>
-            ) : (
+            {rated && <span className="text-right">Pts</span>}
+            {/* **One column for the whole record.** Abandoned games sit after the result, not in
+                it: an abandonment is not a loss (ADR-0019), so it gets its own slot rather than a
+                share of W/D/L. One letter because a word would make the column wider than any
+                value in it; `abbr` so the full name is announced, not only hovered. */}
+            <span className="text-right">
+              W/D/L/
+              <abbr
+                className="no-underline"
+                title="Abandoned: pairings that ended with no result, through a provider or harness failure. Not counted as losses."
+              >
+                A
+              </abbr>
+            </span>
+            {!rated && (
               <span className="text-right" title="Sonneborn-Berger: beating strong opponents counts more">
                 SB
               </span>
             )}
-            {/* One letter because the column is one digit wide, and a word would make the table
-                wider than any value in it. `abbr` so the full name is announced, not only hovered. */}
-            <abbr
-              className="text-right no-underline"
-              title="Abandoned: pairings that ended with no result, through a provider or harness failure. Not counted as losses."
-            >
-              A
-            </abbr>
           </li>
           {rows.map((entry) => (
             <li
@@ -401,18 +400,18 @@ function Standings({ rows }: { rows: Standing[] }) {
                 <span className="text-right text-meta text-ink-faint">{entry.score.toFixed(1)}</span>
               )}
               <span className="text-right text-meta text-ink-faint">
-                {entry.wins}/{entry.draws}/{entry.losses}
+                {entry.wins}/{entry.draws}/{entry.losses}/
+                {/* Brighter when there is something to see: a run of abandonments is the part of
+                    the record a reader most needs to notice, and a zero is not. */}
+                <span className={entry.abandoned > 0 ? "text-ink-dim" : undefined}>
+                  {entry.abandoned}
+                </span>
               </span>
               {!rated && (
                 <span className="text-right text-meta text-ink-faint">
                   {entry.sonneborn_berger.toFixed(1)}
                 </span>
               )}
-              <span
-                className={`text-right text-meta ${entry.abandoned > 0 ? "text-ink-dim" : "text-ink-faint"}`}
-              >
-                {entry.abandoned}
-              </span>
             </li>
           ))}
         </ul>
