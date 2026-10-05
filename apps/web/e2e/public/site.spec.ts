@@ -647,3 +647,26 @@ test("every answer on the lobby leads somewhere", async ({ page }) => {
     expect(response.status(), `${href} should not be an error page`).toBeLessThan(400);
   }
 });
+
+test("the leaderboard opens on chat models, and decision models are one control away", async ({
+  page,
+}) => {
+  /* ADR-0063. Chat is the default with no parameter; the control is links, so the choice is in
+     the address and a reload keeps it. The structural property is that the chat view holds no
+     decision model — checked by the badge every decision row carries, not by counting rows,
+     which a seeded database may not have. */
+  await page.goto("/leaderboard");
+  const control = page.getByRole("navigation", { name: "Which models" });
+  await expect(control.getByRole("link", { name: /Chat models/ })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
+  await expect(page.locator("table").getByText("decision", { exact: true })).toHaveCount(0);
+
+  await control.getByRole("link", { name: /Decision models/ }).click();
+  await expect(page).toHaveURL(/\?models=decision$/);
+  await expect(
+    page.getByRole("navigation", { name: "Which models" }).getByRole("link", { name: /Decision models/ }),
+  ).toHaveAttribute("aria-current", "page");
+  await expect(page.getByText("Decision models are ranked on their own.")).toBeVisible();
+});

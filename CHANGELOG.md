@@ -34,6 +34,10 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **The landing page no longer counts decision models as never having tried an illegal move.**
+  They are only ever offered legal moves, so the "clean" share it printed was partly a fact about
+  their harness.
+
 - **The stored leaderboard was never actually stored.** A rebuild was written through the
   request's session, which is never committed, so every read of the leaderboard recomputed it
   from scratch. It is now written and committed in a transaction of its own. A warm read went
@@ -62,6 +66,13 @@ file is only the record of *what shipped when*.
   than as playing.
 
 ### Changed
+
+- **Chat models and decision models are ranked separately.** `/leaderboard` shows chat models by
+  default, with a control for decision models; the landing page and the leaderboard's preview card
+  show chat models only. In a trial against a bot that moves at random, the top four decision
+  models won material in every game but turned only 7 of 20 into wins, so they no longer share a
+  scale with chat models.
+  ([ADR-0063](docs/adr/0063-chat-and-decision-models-are-ranked-on-separate-leaderboards.md))
 
 - **A pool's standings and the matchmaker read stored ratings instead of computing their own.**
   Every rating on the site now comes from one stored, fingerprinted run, so what the matchmaker
