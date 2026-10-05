@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import json
 from dataclasses import dataclass, field
@@ -91,6 +92,64 @@ class ParsedResponse:
 
 
 @dataclass(frozen=True, slots=True)
+class FailedAttempt:
+    """One provider call that did not answer, kept so it can be written down (invariant 3).
+
+    A failure never produced a `Completion` or a `Decision`, so it never produced a row either: the
+    request we sent and what the provider said back were lost, and with them the only evidence of
+    *why*. Tev1 was rejected by its own host on a valid answer four games running, and none of the
+    twenty failed calls was on record to show it.
+    """
+
+    request: dict[str, Any]
+    """Verbatim, redacted — the same request the attempt sent."""
+    error: str
+    status_code: int | None
+    response: dict[str, Any] | None
+    """What came back, `{"status_code": …, "body": …}`, or `None` when nothing did (a timeout)."""
+    latency_ms: int
+
+
+def failed_attempt(
+    error: BaseException, *, request: dict[str, Any], latency_ms: int, message: str | None = None
+) -> FailedAttempt:
+    """A `FailedAttempt` from whatever a provider library raised.
+
+    The body is read from wherever the exception keeps it — `body` on our own Decisions error, the
+    `httpx.Response` on LiteLLM's — and parsed when it is JSON, so the row holds the provider's own
+    error object rather than a string of it.
+    """
+    status = getattr(error, "status_code", None)
+    text: Any = getattr(error, "body", None)
+    if not isinstance(text, str):
+        text = None
+        response = getattr(error, "response", None)
+        if response is not None:
+            try:
+                text = response.text
+            except Exception:  # a response never read, or not an httpx one
+                text = None
+    if not isinstance(text, str) or not text:
+        text = str(error) or None
+    body: Any = text
+    if isinstance(text, str):
+        # LiteLLM prefixes the provider's own JSON with its exception name
+        # (`litellm.RateLimitError: OpenrouterException - {"error": …}`), so the object is read
+        # from its first brace. The whole message is still kept, as the row's `error`.
+        start = text.find("{")
+        if start >= 0:
+            with contextlib.suppress(ValueError):
+                body, _ = json.JSONDecoder().raw_decode(text[start:])
+    return FailedAttempt(
+        request=request,
+        error=message or str(error) or type(error).__name__,
+        status_code=status if isinstance(status, int) else None,
+        response=None if body is None else {"status_code": status, "body": body},
+        latency_ms=latency_ms,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class Completion:
     """One completed provider round-trip, with everything needed to persist an `llm_calls` row."""
 
@@ -118,6 +177,9 @@ class Completion:
 
     reasoning_details: list[dict[str, Any]] | None = None
     """Replayed verbatim on the next turn — see `ParsedResponse.reasoning_details`."""
+
+    failed_attempts: tuple[FailedAttempt, ...] = ()
+    """The attempts that failed before this one answered, to be recorded beside it."""
 
     @property
     def has_tool_calls(self) -> bool:
@@ -280,6 +342,12 @@ class LlmError(Exception):
     #: differ on a later turn, so a job that requeues it is spending five attempts to be told the
     #: same thing five times.
     request_rejected: bool = False
+    #: The question whose answer the decision host refused although it was one of the options —
+    #: Tev1's fault mode. Deterministic for a given set of options, so the caller asks again with
+    #: the options split differently rather than retrying the same request (`decision_rounds`).
+    answer_rejected: str | None = None
+    #: Every attempt this call made, the last one included — each to be recorded as a row.
+    failed: tuple[FailedAttempt, ...] = ()
 
     def __str__(self) -> str:
         return f"{self.message} (status={self.status_code}, attempts={self.attempts})"

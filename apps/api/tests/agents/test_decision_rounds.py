@@ -129,3 +129,62 @@ def test_a_heat_offers_only_its_moves_and_does_not_claim_they_are_all_of_them() 
     final = request.final(["e4", "d4"])
     assert list(final) == [MOVE_QUESTION]
     assert list(final[MOVE_QUESTION]["criteria"]) == ["e4", "d4"]
+
+
+# ====================================================================== a refused answer (ADR-0062)
+
+#: The position four games were abandoned in: ply 18 of `2dcc4e1f`, White to move, 26 legal moves.
+REFUSED_AT = "4kb1r/rbp2ppp/2p2n2/4p3/2p5/2N5/PP2PPPP/R3KBNR w KQk - 0 10"
+
+
+async def test_a_refused_answer_is_asked_again_with_one_more_heat() -> None:
+    """The fallback, on the position that abandoned three games. Tev1's host refused exactly this
+    `heat_1` on every attempt; split into one more heat the sets change and the turn is answered —
+    9/9/8 here, which is the split that was answered when tried live."""
+    request = build_request(chess.Board(REFUSED_AT))
+    refused = frozenset(split(list(request.moves), 20)[0])
+    host = deciding(moves=["Nd5"], max_choices=20, refuses=lambda options: options == refused)
+
+    answer = await decide(request, max_choices=20, ask=_asking(host, request))
+
+    assert answer.choice == "Nd5"
+    assert answer.resplits == 1
+    asked = [
+        sorted(len(q["criteria"]) for k, q in call["questions"].items() if k.startswith("heat_"))
+        for call in host.calls  # type: ignore[attr-defined]
+    ]
+    assert asked[0] == [13, 13], "the first request is the one production sent"
+    assert asked[1] == [8, 9, 9], "the retry is one heat more, as even as it can be"
+
+
+async def test_a_refusal_every_split_repeats_is_handed_back_not_looped() -> None:
+    """Bounded: a host that refuses whatever the split is not asked forever. The rejection is raised
+    with the question it named, so the turn can fail with it rather than as an outage."""
+    from chessmark.agents.decision_rounds import MAX_RESPLITS
+    from chessmark.agents.types import LlmError
+
+    request = build_request(chess.Board(REFUSED_AT))
+    host = deciding(moves=["Nd5"], max_choices=20, refuses=lambda options: "Kd1" in options)
+
+    with pytest.raises(LlmError) as raised:
+        await decide(request, max_choices=20, ask=_asking(host, request))
+
+    assert raised.value.answer_rejected is not None
+    assert len(host.calls) == MAX_RESPLITS + 1  # type: ignore[attr-defined]
+
+
+async def test_another_failure_is_not_re_split() -> None:
+    """Only the refused answer is. A rate limit re-split would be four requests to a host that has
+    just said to come back later."""
+    from chessmark.agents.decisions import DecisionHttpError
+    from chessmark.agents.types import LlmError
+
+    request = build_request(chess.Board(REFUSED_AT))
+
+    async def limited(_request: dict[str, Any]) -> dict[str, Any]:
+        raise DecisionHttpError(429, '{"error": {"message": "slow down", "code": 429}}')
+
+    with pytest.raises(LlmError) as raised:
+        await decide(request, max_choices=20, ask=_asking(limited, request))
+
+    assert raised.value.answer_rejected is None

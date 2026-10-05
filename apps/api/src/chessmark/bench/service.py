@@ -575,7 +575,9 @@ async def _call_totals(
         )
         .select_from(LlmCall)
         .join(Turn, Turn.id == LlmCall.turn_id)
-        .where(Turn.player_id.in_(player_ids))
+        # Answered calls only (ADR-0062). A failed attempt is recorded too, and a timeout's ten
+        # minutes would otherwise be read as the model's latency.
+        .where(Turn.player_id.in_(player_ids), LlmCall.error.is_(None))
         .group_by(Turn.player_id)
     )
     return {player_id: (int(total or 0), int(calls or 0)) for player_id, total, calls in rows}

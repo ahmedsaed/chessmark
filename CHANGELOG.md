@@ -34,6 +34,15 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **A call that fails is now on record.** Neither harness wrote a row for a provider error, so the
+  request we sent and the provider's reply were lost. Each failed attempt is now an `llm_calls`
+  row with its error and the provider's own error body, visible in the turn inspector. It costs
+  nothing and doesn't count against a model's rounds.
+  ([ADR-0062](docs/adr/0062-a-failed-call-is-recorded-and-a-refused-answer-is-re-split.md))
+- **A decision game is no longer abandoned when Tev1's host refuses its own answer.** OpenRouter
+  rejected a valid Tev1 answer for some sets of options, the same way on every attempt, and four
+  games were abandoned for it. The refusal is now recognised and not retried, and the turn is
+  asked again with the moves split into one more heat. The game page says when that happened.
 - **The landing page no longer counts decision models as never having tried an illegal move.**
   They are only ever offered legal moves, so the "clean" share it printed was partly a fact about
   their harness.

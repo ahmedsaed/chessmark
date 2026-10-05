@@ -127,6 +127,12 @@ describe("a turn asked in heats (ADR-0059)", () => {
     expect(decisionBlock(live, 2).heats).toBeNull();
   });
 
+  it("says when the host refused an answer and the turn was re-asked (ADR-0062)", () => {
+    expect(decisionBlock({ ...PAYLOAD, resplits: 1 }, 2).resplits).toBe(1);
+    // An event written before the fallback existed was never re-asked, and reads as zero.
+    expect(decisionBlock(PAYLOAD, 2).resplits).toBe(0);
+  });
+
   it("marks a forced move, which was not asked about", () => {
     const block = decisionBlock({ ...PAYLOAD, forced: true, probabilities: [], options: 1 }, 2);
     expect(block.forced).toBe(true);

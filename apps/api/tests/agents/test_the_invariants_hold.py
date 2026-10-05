@@ -383,8 +383,35 @@ class TestAnInterruptedTurnKeepsItsWork:
         assert result.keep_rounds, "a refusal between rounds should keep what came before it"
 
         calls = list(await db.scalars(sa.select(LlmCall).where(LlmCall.game_id == table.game.id)))
-        assert len(calls) == 2, f"{len(calls)} of 2 answered calls survived the failure"
-        assert all(call.request and call.response for call in calls), "a call kept no payload"
+        answered = [call for call in calls if call.error is None]
+        assert len(answered) == 2, f"{len(answered)} of 2 answered calls survived the failure"
+        assert all(call.request and call.response for call in answered), "a call kept no payload"
+
+    async def test_the_calls_that_failed_are_recorded_too(
+        self, db: AsyncSession, table: Table
+    ) -> None:
+        """Invariant 3, for the calls that did not answer (ADR-0062). The refusal that stopped the
+        turn is the one thing a reader most needs to see, and it used to leave no row at all: the
+        request we sent, and the provider's own error body, are both kept, with no cost and no
+        provider, after the answered calls in sequence."""
+        await play_turn(db, table, answers_then_stops(2), colour=Colour.WHITE)
+
+        calls = list(
+            await db.scalars(
+                sa.select(LlmCall)
+                .where(LlmCall.game_id == table.game.id)
+                .order_by(LlmCall.sequence)
+            )
+        )
+        failed = [call for call in calls if call.error is not None]
+
+        assert failed, "the refused attempts left no record"
+        assert [call.sequence for call in calls] == list(range(1, len(calls) + 1))
+        assert all(call.error is None for call in calls[:2]), "the answered calls come first"
+        for call in failed:
+            assert call.request, "a failed call kept no request"
+            assert call.response is not None and call.response["body"]["error"]["code"] == 429
+            assert call.cost_usd == 0 and call.provider is None
 
     async def test_the_turn_is_interrupted_rather_than_failed(
         self, db: AsyncSession, table: Table
@@ -399,6 +426,9 @@ class TestAnInterruptedTurnKeepsItsWork:
         )
         assert [t.status for t in turns] == [TurnStatus.INTERRUPTED]
         assert turns[0].ply_number is None
+        # Answered calls only. The refused attempts are rows too (ADR-0062), but this count seeds
+        # the iteration bound on resume, and a provider's refusals must not spend a model's rounds
+        # (invariant 11) — counting them made eight rate-limit pauses end a turn as "out of rounds".
         assert turns[0].llm_call_count == 2
 
     async def test_the_transcript_it_leaves_is_sendable(

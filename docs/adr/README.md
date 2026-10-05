@@ -71,17 +71,19 @@ were live in this directory before it was written.
 | [0050](0050-a-pool-saturates-per-pair.md) | A pool saturates per pair | Accepted |
 | [0051](0051-a-decision-model-chooses-its-action-and-is-checked-before-it-plays.md) | A decision model chooses its action, and is checked before it plays | Amended by [0059](0059-a-decision-model-with-a-limit-plays-in-heats.md) |
 | [0052](0052-credit-is-dollars-spent-at-actual-cost.md) | Credit is dollars, spent at what each turn actually cost | Amended by [0058](0058-the-house-account-pays-for-games-no-person-started.md) |
-| [0053](0053-every-failure-keeps-its-rounds.md) | Every failure keeps its rounds, and a crash spends an attempt | Accepted |
+| [0053](0053-every-failure-keeps-its-rounds.md) | Every failure keeps its rounds, and a crash spends an attempt | Amended by [0062](0062-a-failed-call-is-recorded-and-a-refused-answer-is-re-split.md) |
 | [0054](0054-a-game-is-charged-what-openrouter-billed.md) | A game is reconciled against what OpenRouter billed, and charged it | Accepted |
 | [0055](0055-credit-is-sold-as-fixed-packs-through-paddle.md) | Credit is sold as fixed packs through Paddle, and credited by its webhook | Amended by [0056](0056-credit-is-sold-only-while-openrouter-can-cover-it.md) |
 | [0056](0056-credit-is-sold-only-while-openrouter-can-cover-it.md) | Credit is sold only while OpenRouter can cover it, in any amount the buyer chooses | Accepted |
 | [0057](0057-credit-sales-are-a-switch-that-starts-closed.md) | Credit sales are a switch an operator flips, and it starts closed | Accepted |
 | [0058](0058-the-house-account-pays-for-games-no-person-started.md) | The house account pays for games no person started | Accepted |
-| [0059](0059-a-decision-model-with-a-limit-plays-in-heats.md) | A decision model that cannot take every move at once plays in heats | Accepted |
+| [0059](0059-a-decision-model-with-a-limit-plays-in-heats.md) | A decision model that cannot take every move at once plays in heats | Amended by [0062](0062-a-failed-call-is-recorded-and-a-refused-answer-is-re-split.md) |
 | [0060](0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md) | Models are rated by Bradley-Terry, and ranked by the strength they have proven | Accepted |
 | [0061](0061-every-rating-is-a-stored-run.md) | Every rating is a stored run, read rather than computed | Accepted |
 | [0063](0063-chat-and-decision-models-are-ranked-on-separate-leaderboards.md) | Chat and decision models are ranked on separate leaderboards | Amended by [0064](0064-a-game-with-a-person-or-across-harnesses-is-never-ranked.md) |
 | [0064](0064-a-game-with-a-person-or-across-harnesses-is-never-ranked.md) | A game with a person, or between a chat and a decision model, is never ranked | Accepted |
+| [0062](0062-a-failed-call-is-recorded-and-a-refused-answer-is-re-split.md) | A failed call is recorded, and a refused answer is asked again in smaller heats | Accepted |
+| [0063](0063-chat-and-decision-models-are-ranked-on-separate-leaderboards.md) | Chat and decision models are ranked on separate leaderboards | Accepted |
 
 ## Template
 

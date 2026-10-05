@@ -80,7 +80,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 
 | ID | Requirement | Pri |
 | --- | --- | --- |
-| LOG-01 | Every LLM call stores the verbatim request and response payloads, with secrets redacted. | M |
+| LOG-01 | Every LLM call stores the verbatim request and response payloads, with secrets redacted — **including a call that failed**, with the provider's error body as its response and the error recorded (ADR-0062). | M |
 | LOG-02 | Per call: model ID, provider, prompt/completion/reasoning/cached token counts, USD cost, latency, finish reason. | M |
 | LOG-03 | Every tool invocation stores arguments, result, success/failure, and duration. | M |
 | LOG-04 | Structured JSON application logs carrying `game_id`, `player_id`, `ply`, and `turn_id` for correlation. | M |
