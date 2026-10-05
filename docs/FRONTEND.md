@@ -377,6 +377,29 @@ On a phone the secondary filters fold behind a checkbox toggle (`peer-checked`, 
 eight stacked controls filled the first screen. The checkbox needs `sr-only!`: `globals.css` themes
 every checkbox with unlayered rules, which outrank a Tailwind utility.
 
+## A wide table scrolls on a phone, and its name stays put
+
+The leaderboard and a tournament's standings scroll sideways below `sm`, with `#` and the name
+pinned. They used to hide every secondary column instead, which kept the rating on screen and made
+W/D/L, points, cost and latency unreachable on a phone. That stopped being a trade-off the day a
+reader asked why a model was third with ten wins: the columns that answer it were the hidden ones.
+
+The rules that make it work, each of which broke it once:
+
+* **Pin the name, not the rating.** The pinned block is `60cqw` of the scroller (a `@container`).
+  The first attempt pinned the rating too, sized to the scroller less `3.5rem`; that left a 3.5rem
+  window that W/D/L, at 4.5rem, could never be read through. At 60% the rating is whole at rest and
+  the next column shows its edge, the only sign there is more.
+* **A pinned cell needs a solid background**, or the scrolled columns show through it.
+* **On a `<table>`, borders go on the cells and the table is `border-separate`.** Under
+  `border-collapse` the row's line belongs to the table, and a sticky cell drawn over it cuts it.
+* **The width goes on the cell's content, not the cell.** A cell grows to the min-content of what is
+  in it, and a `truncate` slug's min-content is the whole slug.
+
+The layout is held by the `mobile` project: the last column has to scroll fully into view and the name
+has to stay where it was while it does, which together fail against both a table that does not
+scroll and one with nothing pinned.
+
 ## Traps
 
 **The site must load without Clerk keys.** `src/proxy.ts` called `clerkMiddleware()`

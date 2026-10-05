@@ -59,6 +59,23 @@ test.describe("at phone width", () => {
     ).toBeLessThanOrEqual(width);
   });
 
+  test("the leaderboard's other columns are a swipe away, and the name stays put", async ({
+    page,
+  }) => {
+    await page.goto("/leaderboard");
+    const rating = page.getByRole("columnheader", { name: "Rating" });
+    test.skip((await rating.count()) === 0, "no ranked games in this database — nothing to rank");
+
+    /* They were `hidden` below `sm`, so a phone could never see W/D/L, the illegal-move rate, cost
+       or latency at all — asserting the rating was visible stayed green the whole time. What has to
+       hold now is that the last column can be scrolled fully into view, and that `#` and the
+       contestant do not leave with it. */
+    expect(await pinnedAfterScrolling(page, "table", "td:nth-child(2)", "th:last-child")).toEqual({
+      pinned: true,
+      lastColumnOnScreen: true,
+    });
+  });
+
   test("the standings put the model name before the arithmetic", async ({ page }) => {
     const slug = fixtures().tournament;
     test.skip(slug === null, "the catalogue was too small to field a tournament");
@@ -66,17 +83,33 @@ test.describe("at phone width", () => {
     await page.goto(`/tournaments/${slug}`);
 
     /* The same rule as the leaderboard's, on the table that always has rows here. Five fixed
-       columns left the `1fr` model column with 37px; dropping the trailing ones gives it 173px.
-       Measured against the row rather than a constant, so it holds at any phone width. */
+       columns left the `1fr` model column with 37px. Measured against the visible width of the
+       table, not the row: the row is wider than the screen on purpose now, and a share of it would
+       shrink every time a column was added without the name losing a pixel. */
     const share = await page.evaluate(() => {
       const link = document.querySelector("li a[href^='/models/']");
       if (!link) return null;
-      const row = link.closest("li")!;
-      return link.getBoundingClientRect().width / row.getBoundingClientRect().width;
+      const scroller = link.closest("ul")!.parentElement!;
+      return link.getBoundingClientRect().width / scroller.clientWidth;
     });
 
     expect(share, "the standings should list entrants").not.toBeNull();
     expect(share!, "the name should get most of the row, not a tenth of it").toBeGreaterThan(0.4);
+  });
+
+  test("the standings' trailing columns are a swipe away, and the name stays put", async ({
+    page,
+  }) => {
+    const slug = fixtures().tournament;
+    test.skip(slug === null, "the catalogue was too small to field a tournament");
+    await page.goto(`/tournaments/${slug}`);
+
+    /* Points, W/D/L and the abandoned count were dropped below `sm`, which left a reader no way to
+       check a rating against a record on a phone. The last column is the abandoned count; it has
+       to be reachable, and the name has to stay where it was while it is. */
+    expect(
+      await pinnedAfterScrolling(page, "li:has(a[href^='/models/'])", "a", "li > :last-child"),
+    ).toEqual({ pinned: true, lastColumnOnScreen: true });
   });
 
   test("a player's name gets the whole row, so it has nothing to be cut off by", async ({
@@ -386,3 +419,35 @@ test("an archive row keeps a long model name whole", async ({ page }) => {
   );
   expect(clipped, "a player's name should wrap, not overflow its row").toBe(0);
 });
+
+/**
+ * Scroll a table's own scroller to the end, and report whether `anchor` (the name) stayed where it
+ * was and the last column came fully into view.
+ *
+ * Both halves, because each alone passes against a broken layout: a scroller that never scrolls
+ * keeps the name pinned trivially, and one with nothing pinned shows the last column trivially.
+ */
+async function pinnedAfterScrolling(
+  page: import("@playwright/test").Page,
+  within: string,
+  anchor: string,
+  last: string,
+) {
+  return page.evaluate(
+    ([within, anchor, last]) => {
+      const host = document.querySelector(within)!;
+      const scroller = host.closest(".\\@container") as HTMLElement;
+      const name = host.querySelector(anchor)!;
+      const before = name.getBoundingClientRect().left;
+      scroller.scrollLeft = scroller.scrollWidth;
+      const after = name.getBoundingClientRect().left;
+      const edge = scroller.getBoundingClientRect().right;
+      const column = scroller.querySelector(last)!.getBoundingClientRect();
+      return {
+        pinned: scroller.scrollLeft > 0 && Math.abs(after - before) < 1,
+        lastColumnOnScreen: column.right <= edge + 0.5,
+      };
+    },
+    [within, anchor, last] as const,
+  );
+}

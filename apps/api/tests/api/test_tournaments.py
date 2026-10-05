@@ -190,6 +190,57 @@ async def test_a_resumed_game_outranks_the_verdict_its_pairing_still_holds(
     assert body["stats"]["live"] == 1, "the count the page leads with has to agree"
 
 
+async def test_each_row_counts_its_abandoned_pairings_from_their_derived_state(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The standings' abandoned count agrees with the pairings list, row by row.
+
+    It is read from the same derived state rather than from `abandoned_reason`, so a pairing that
+    was abandoned, resumed and finished is not counted — the column would otherwise accuse a model
+    of a game it went on to play out.
+    """
+    tournament_id, _ = await make_event(db, models=4)
+
+    from chessmark.tournament import round_robin
+
+    entrants = await repo.entrants_of(db, tournament_id)
+    for games in round_robin(entrants):
+        await repo.record_round(db, tournament_id, games)
+    await db.commit()
+
+    rows = list(
+        await db.scalars(
+            sa.select(TournamentGame)
+            .where(TournamentGame.tournament_id == tournament_id)
+            .order_by(TournamentGame.id)
+        )
+    )
+    resumed = Game(status=GameStatus.FINISHED, start_fen="8/8/8/8/8/8/8/8 w - - 0 1", ply_count=60)
+    db.add(resumed)
+    await db.flush()
+    rows[0].abandoned_reason = "rate-limited"
+    rows[1].abandoned_reason = "rate-limited"
+    rows[2].abandoned_reason = "provider returned 404"  # outgrown: its game finished
+    rows[2].game_id = resumed.id
+    await db.commit()
+
+    body = (await client.get("/tournaments/test-cup")).json()
+    expected: dict[str, int] = {}
+    for pairing in body["pairings"]:
+        if pairing["state"] == "abandoned":
+            for key in (pairing["white_key"], pairing["black_key"]):
+                expected[key] = expected.get(key, 0) + 1
+
+    assert sum(expected.values()) == 4, "two abandoned pairings, two seats each"
+    assert {row["key"]: row["abandoned"] for row in body["standings"]} == {
+        row["key"]: expected.get(row["key"], 0) for row in body["standings"]
+    }
+    resumed_keys = {rows[2].white_key, rows[2].black_key}
+    for row in body["standings"]:
+        if row["key"] in resumed_keys and row["key"] not in expected:
+            assert row["abandoned"] == 0, "a resumed and finished game is not an abandonment"
+
+
 async def test_money_comes_from_the_games_not_a_running_total(
     client: AsyncClient, db: AsyncSession
 ) -> None:

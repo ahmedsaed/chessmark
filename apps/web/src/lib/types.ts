@@ -637,6 +637,8 @@ export interface Standing {
   draws: number;
   losses: number;
   byes: number;
+  /** Pairings that ended with no result, in the era shown. Not a loss and not part of W/D/L. */
+  abandoned: number;
   score: number;
   sonneborn_berger: number;
   /**

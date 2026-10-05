@@ -275,6 +275,15 @@ async def get_tournament(
     ).all()
     pairing_rows = [row for row, _ in pairing_pairs]
     pairing_status = {row.id: status for row, status in pairing_pairs}
+    states = {row.id: _state(row, pairing_status.get(row.id)) for row in pairing_rows}
+
+    # Counted from the same derived state the pairings list shows, so a game that was abandoned,
+    # resumed and finished counts as played in both places rather than abandoned in one of them.
+    abandoned: dict[str, int] = {}
+    for row in pairing_rows:
+        if states[row.id] == "abandoned":
+            for key in (row.white_key, row.black_key):
+                abandoned[key] = abandoned.get(key, 0) + 1
 
     game_ids = [row.game_id for row in pairing_rows if row.game_id]
     games: list[GameSummary] = []
@@ -321,6 +330,7 @@ async def get_tournament(
                 draws=s.draws,
                 losses=s.losses,
                 byes=s.byes,
+                abandoned=abandoned.get(s.key, 0),
                 score=s.score,
                 sonneborn_berger=s.sonneborn_berger,
                 rating=s.rating,
@@ -336,7 +346,7 @@ async def get_tournament(
                 white_key=row.white_key,
                 black_key=row.black_key,
                 white_score=row.white_score,
-                state=_state(row, pairing_status.get(row.id)),
+                state=states[row.id],
                 game_id=row.game_id,
                 abandoned_reason=row.abandoned_reason,
                 started_at=row.started_at,
