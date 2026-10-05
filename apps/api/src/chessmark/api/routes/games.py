@@ -77,7 +77,12 @@ from chessmark.game import Colour, GameResult, IllegalMoveError, Termination
 from chessmark.game.pgn import PgnMetadata, to_pgn
 from chessmark.orchestration import human as human_play
 from chessmark.orchestration import owner
-from chessmark.orchestration.match import Seat, create_match, start_match
+from chessmark.orchestration.match import (
+    Seat,
+    UnrankableMatchError,
+    create_match,
+    start_match,
+)
 from chessmark.orchestration.queue import AdvanceTurn
 from chessmark.orchestration.reconciler import what_it_waits_for
 from chessmark.orchestration.revalidation import notify_web
@@ -800,6 +805,13 @@ async def create_game_endpoint(
         # The caller named a precision nobody serves. That is a bad request, not a server fault —
         # and seating them at a different precision would quietly measure another contestant.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
+    except UnrankableMatchError as error:
+        # A ranked game asked for between seats that can never make one (ADR-0064). The reason is
+        # the rule's own sentence, so the person who asked reads why rather than a status code.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"This game cannot be ranked: {error}.",
+        ) from error
 
     job = await start_match(session, queue, game_id=match.game.id)
     await session.commit()

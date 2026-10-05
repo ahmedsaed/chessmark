@@ -80,7 +80,8 @@ were live in this directory before it was written.
 | [0059](0059-a-decision-model-with-a-limit-plays-in-heats.md) | A decision model that cannot take every move at once plays in heats | Accepted |
 | [0060](0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md) | Models are rated by Bradley-Terry, and ranked by the strength they have proven | Accepted |
 | [0061](0061-every-rating-is-a-stored-run.md) | Every rating is a stored run, read rather than computed | Accepted |
-| [0063](0063-chat-and-decision-models-are-ranked-on-separate-leaderboards.md) | Chat and decision models are ranked on separate leaderboards | Accepted |
+| [0063](0063-chat-and-decision-models-are-ranked-on-separate-leaderboards.md) | Chat and decision models are ranked on separate leaderboards | Amended by [0064](0064-a-game-with-a-person-or-across-harnesses-is-never-ranked.md) |
+| [0064](0064-a-game-with-a-person-or-across-harnesses-is-never-ranked.md) | A game with a person, or between a chat and a decision model, is never ranked | Accepted |
 
 ## Template
 

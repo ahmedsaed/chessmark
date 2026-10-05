@@ -559,3 +559,56 @@ class TestFailures:
         reloaded = await _game(db, game.id)
         assert reloaded.status is GameStatus.PAUSED
         assert reloaded.termination is None
+
+
+class TestWhoMayMeetInARankedGame:
+    """ADR-0064: a ranked game is refused when it is asked for, not made unranked behind the
+    caller's back — and only for the two pairings that can never be one contest."""
+
+    async def test_a_chat_model_against_a_decision_model_cannot_be_ranked(
+        self, db: AsyncSession
+    ) -> None:
+        from chessmark.bench.ratable import MIXED_HARNESSES
+        from chessmark.orchestration.match import UnrankableMatchError
+
+        await _register(db)
+        with pytest.raises(UnrankableMatchError, match=MIXED_HARNESSES):
+            await create_match(
+                db,
+                white=Seat(display_name="chat", model="test/chat"),
+                black=Seat(display_name="jev", model=JEV),
+                is_ranked=True,
+            )
+
+    async def test_the_same_pairing_is_played_unranked(self, db: AsyncSession) -> None:
+        await _register(db)
+        match = await create_match(
+            db,
+            white=Seat(display_name="chat", model="test/chat"),
+            black=Seat(display_name="jev", model=JEV),
+        )
+        assert match.game.is_ranked is False
+
+    async def test_a_person_cannot_be_in_a_ranked_game(self, db: AsyncSession) -> None:
+        from chessmark.bench.ratable import PERSON_PLAYED
+        from chessmark.db.enums import PlayerKind
+        from chessmark.orchestration.match import UnrankableMatchError
+
+        await _register(db)
+        with pytest.raises(UnrankableMatchError, match=PERSON_PLAYED):
+            await create_match(
+                db,
+                white=Seat(display_name="a person", kind=PlayerKind.HUMAN),
+                black=Seat(display_name="jev", model=JEV),
+                is_ranked=True,
+            )
+
+    async def test_two_decision_models_can_still_be_ranked(self, db: AsyncSession) -> None:
+        await _register(db)
+        match = await create_match(
+            db,
+            white=Seat(display_name="jev", model=JEV),
+            black=Seat(display_name="kev", model=KEV),
+            is_ranked=True,
+        )
+        assert match.game.is_ranked is True

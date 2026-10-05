@@ -67,6 +67,12 @@ file is only the record of *what shipped when*.
 
 ### Changed
 
+- **A game with a person, or between a chat model and a decision model, is never ranked.** Asking
+  for one as ranked is refused with the reason, and the ratings exclude any such game whatever its
+  flag says. Chat and decision models are ranked separately, and games between them would have
+  coupled the two tables through pairings people chose.
+  ([ADR-0064](docs/adr/0064-a-game-with-a-person-or-across-harnesses-is-never-ranked.md))
+
 - **Chat models and decision models are ranked separately.** `/leaderboard` shows chat models by
   default, with a control for decision models; the landing page and the leaderboard's preview card
   show chat models only. In a trial against a bot that moves at random, the top four decision

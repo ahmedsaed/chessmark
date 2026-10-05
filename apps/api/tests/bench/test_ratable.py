@@ -11,10 +11,13 @@ import pytest
 
 from chessmark.bench.ratable import (
     HARNESS_TERMINATIONS,
+    MIXED_HARNESSES,
+    PERSON_PLAYED,
     RATED_TERMINATIONS,
     GameFacts,
     judge,
     same_task,
+    unrankable,
 )
 from chessmark.game import Termination
 
@@ -317,3 +320,43 @@ class TestTheToolSchemaVersion:
         )
 
         assert not verdict, "matching the prompt is no longer enough"
+
+
+# ====================================================================== who may meet (ADR-0064)
+
+
+@pytest.mark.parametrize(
+    ("harnesses", "reason"),
+    [
+        (("llm", "llm"), None),
+        (("decision", "decision"), None),
+        (("llm", "decision"), MIXED_HARNESSES),
+        (("decision", "llm"), MIXED_HARNESSES),
+        (("none", "llm"), PERSON_PLAYED),
+        (("decision", "none"), PERSON_PLAYED),
+    ],
+)
+def test_only_two_of_a_kind_can_make_a_ranked_game(
+    harnesses: tuple[str, str], reason: str | None
+) -> None:
+    """Chat models and decision models are ranked on separate leaderboards (ADR-0063), so a game
+    between them belongs to neither; a person is never a contestant at all."""
+    assert unrankable(harnesses) == reason
+
+
+def test_a_ranked_game_between_a_chat_and_a_decision_model_never_counts() -> None:
+    """The rule every game passes through, whatever its flag says. `create_match` refuses to make
+    one ranked, and this is what stops one made any other way from coupling the two boards."""
+    verdict = judge(
+        facts(harnesses=("llm", "decision"), decision_version="d2"), decision_version="d2"
+    )
+
+    assert not verdict
+    assert verdict.reason == MIXED_HARNESSES
+
+
+def test_a_ranked_game_with_a_person_never_counts() -> None:
+    verdict = judge(facts(harnesses=("none", "llm")))
+
+    assert not verdict
+    assert verdict.reason == PERSON_PLAYED

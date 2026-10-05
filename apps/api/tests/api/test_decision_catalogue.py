@@ -98,14 +98,20 @@ async def test_a_chat_model_without_tools_is_still_refused(
     assert "tool calling" in response.json()["detail"]
 
 
-async def _finished(db: AsyncSession, white: str, black: str, result: GameResult) -> None:
+async def _finished(
+    db: AsyncSession, white: str, black: str, result: GameResult, *, flagged_ranked: bool = False
+) -> None:
+    """A finished ranked game. `flagged_ranked` creates it unranked and sets the flag afterwards —
+    a row from before `create_match` refused the pairing (ADR-0064), which only the rating rule
+    can still keep out."""
     match = await create_match(
         db,
         white=Seat(display_name=white, model=white),
         black=Seat(display_name=black, model=black),
-        is_ranked=True,
+        is_ranked=not flagged_ranked,
     )
     game = match.game
+    game.is_ranked = True
     game.status = GameStatus.FINISHED
     game.result = result
     game.termination = Termination.CHECKMATE
@@ -113,24 +119,27 @@ async def _finished(db: AsyncSession, white: str, black: str, result: GameResult
     await db.commit()
 
 
-async def test_decision_models_share_the_leaderboard_and_are_marked(
+async def test_decision_models_are_rated_and_marked_and_a_mixed_game_is_not(
     client: AsyncClient, db: AsyncSession
 ) -> None:
+    """Decision models are rated on their own games and marked by runtime, so the page can show
+    them as a table of their own (ADR-0063). A game against a chat model is played and recorded,
+    and never counts (ADR-0064) — listed with its reason rather than silently dropped."""
+    from chessmark.bench.ratable import MIXED_HARNESSES
+
     await _model(db, "typesafe/jev-1.13", decision=True)
     await _model(db, "jaredpalmer/kev-4b", decision=True)
     await _model(db, "vendor/chat", decision=False)
-    # One game between two decision models, and one against a chat model: both count.
     await _finished(db, "typesafe/jev-1.13", "jaredpalmer/kev-4b", GameResult.WHITE_WINS)
-    await _finished(db, "vendor/chat", "typesafe/jev-1.13", GameResult.BLACK_WINS)
+    await _finished(
+        db, "vendor/chat", "typesafe/jev-1.13", GameResult.BLACK_WINS, flagged_ranked=True
+    )
 
     body = (await client.get("/leaderboard")).json()
-    assert body["games_counted"] == 2
+    assert body["games_counted"] == 1
     runtimes = {row["model_slug"]: row["runtime"] for row in body["rows"]}
-    assert runtimes == {
-        "typesafe/jev-1.13": "decision",
-        "jaredpalmer/kev-4b": "decision",
-        "vendor/chat": "llm",
-    }
+    assert runtimes == {"typesafe/jev-1.13": "decision", "jaredpalmer/kev-4b": "decision"}
+    assert [e["reason"] for e in body["excluded"]] == [MIXED_HARNESSES]
 
 
 def test_a_decision_frame_is_dropped_from_a_person_mid_game() -> None:

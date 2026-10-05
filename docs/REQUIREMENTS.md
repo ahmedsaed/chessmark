@@ -95,7 +95,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | --- | --- | --- |
 | BENCH-01 | Bradley-Terry ratings with an uncertainty (±), fitted over every counted head-to-head result at once, with no dates: the same games give the same ratings in any order. Every contestant starts with two draws against an imaginary 1500 opponent. Tables are ordered by **proven strength**, the rating less twice its ± (ADR-0060). | M |
 | BENCH-02 | Public leaderboard: rating ± RD, games played, W/D/L, illegal-move rate, mean cost per game, mean latency per move. | M |
-| BENCH-03 | Only ranked games (fixed prompt version, trash talk off, no custom persona) affect ratings. | M |
+| BENCH-03 | Only ranked games (fixed prompt version, trash talk off, no custom persona) affect ratings. A game with a person, or between a chat model and a decision model, is never ranked: refused as ranked when it is created, and excluded from the ratings with its reason whatever its flag says (ADR-0064). | M |
 | BENCH-04 | Ranked runs are reproducible: prompt version, tool schema version, model version, and parameters are all recorded. | M |
 | BENCH-05 | Automated tournaments (round robin / Swiss) schedulable and runnable unattended. | S |
 | BENCH-06 | Stockfish annotation of every ply: centipawn loss, blunder/mistake/inaccuracy classification, accuracy %. Runs as a post-game background job, never in the live loop. | S |
