@@ -3,7 +3,7 @@ SHELL := /bin/bash
 API := apps/api
 WEB := apps/web
 
-.PHONY: help setup up down tunnel tunnel-down logs psql redis api web dev test lint fmt typecheck check clean dev-pull harvest-cassettes probe-decisions
+.PHONY: help setup up down tunnel tunnel-down logs psql redis api web dev test lint fmt typecheck check clean dev-pull harvest-cassettes probe-decisions compare-ratings
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -148,6 +148,9 @@ test-e2e-mobile: ## Just the phone layout (UI-11)
 
 test-e2e-all: ## Run the whole browser suite, signed-in flows included. Needs Clerk keys
 	cd $(WEB) && pnpm exec playwright test $(ARGS)
+
+compare-ratings: ## Glicko-2 as the site computes it, beside Bradley-Terry over the same games (read-only)
+	cd $(API) && uv run python ../../scripts/compare_ratings.py $(ARGS)
 
 verify-streaming: ## Check that each model keeps its reasoning through a streamed call (ADR-0036)
 	cd $(API) && uv run python ../../scripts/verify_streaming.py $(ARGS)
