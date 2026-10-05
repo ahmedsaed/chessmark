@@ -653,14 +653,16 @@ test("the leaderboard opens on chat models, and decision models are one control 
 }) => {
   /* ADR-0063. Chat is the default with no parameter; the control is links, so the choice is in
      the address and a reload keeps it. The structural property is that the chat view holds no
-     decision model — checked by the badge every decision row carries, not by counting rows,
-     which a seeded database may not have. */
+     decision model — checked by each row's own runtime, not by counting rows, which a seeded
+     database may not have. */
   await page.goto("/leaderboard");
   const control = page.getByRole("navigation", { name: "Which models" });
   await expect(control.getByRole("link", { name: /Chat models/ })).toHaveAttribute(
     "aria-current",
     "page",
   );
+  await expect(page.locator('tr[data-runtime="decision"]')).toHaveCount(0);
+  // The control says which models these are, so the rows carry no badge saying it again.
   await expect(page.locator("table").getByText("decision", { exact: true })).toHaveCount(0);
 
   await control.getByRole("link", { name: /Decision models/ }).click();
@@ -669,4 +671,6 @@ test("the leaderboard opens on chat models, and decision models are one control 
     page.getByRole("navigation", { name: "Which models" }).getByRole("link", { name: /Decision models/ }),
   ).toHaveAttribute("aria-current", "page");
   await expect(page.getByText("Decision models are ranked on their own.")).toBeVisible();
+  await expect(page.locator('tr[data-runtime="llm"]')).toHaveCount(0);
+  await expect(page.locator("table").getByText("decision", { exact: true })).toHaveCount(0);
 });

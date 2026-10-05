@@ -5,7 +5,6 @@ import { getLeaderboard } from "@/lib/api";
 import { GROUPS, GROUP_LABEL, type ModelGroup, parseGroup, rowsOf } from "@/lib/groups";
 import type { LeaderboardRow } from "@/lib/types";
 import { pageMetadata } from "@/lib/site";
-import { RuntimeBadge } from "@/components/RuntimeBadge";
 
 export const metadata: Metadata = pageMetadata({
   title: "Leaderboard",
@@ -169,7 +168,14 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
         </thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={`${row.model_id}-${row.quantization}`} className="group hover:bg-surface-2">
+            <tr
+              key={`${row.model_id}-${row.quantization}`}
+              /* No decision badge on these rows: the control above already says which models the
+                 table holds, and a badge on every row of the decision view says it eight times.
+                 The attribute keeps that fact checkable for the browser suite. */
+              data-runtime={row.runtime}
+              className="group hover:bg-surface-2"
+            >
               <td
                 className={`${stuck} left-0 w-8 px-2 py-2.5 font-mono text-data text-ink-faint tabular sm:px-3`}
               >
@@ -198,7 +204,6 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
                   <span className="mt-0.5 inline-block border border-good/40 px-1 py-px font-mono text-label uppercase tracking-wider text-good sm:ml-1.5 sm:mt-0">
                     {row.quantization}
                   </span>
-                  <RuntimeBadge runtime={row.runtime} className="ml-1.5 mt-0.5 sm:mt-0" />
                 </div>
               </td>
               <td
