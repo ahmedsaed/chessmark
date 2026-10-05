@@ -63,6 +63,11 @@ export function DecisionView({ block, edge }: { block: DecisionBlock; edge: stri
       : `decided among ${block.options} move${block.options === 1 ? "" : "s"}${
           heats.length > 0 ? ` ${heatsText(heats)}` : ""
         }`,
+    /* The host refused an answer and the turn was asked again in smaller heats (ADR-0062). Said,
+       because the heats below are the second shape of the question, not the first. */
+    block.resplits > 0
+      ? `re-asked ${block.resplits === 1 ? "once" : `${block.resplits} times`} after the host refused an answer`
+      : null,
     block.durationMs !== null ? `${(block.durationMs / 1000).toFixed(1)}s` : null,
   ]
     .filter(Boolean)

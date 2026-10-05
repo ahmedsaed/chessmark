@@ -173,7 +173,10 @@ async def model_stats(session: AsyncSession, model: ModelRegistry) -> ModelStats
                 sa.func.coalesce(sa.func.sum(LlmCall.cached_tokens), 0).label("cached"),
                 sa.func.coalesce(sa.func.sum(LlmCall.cost_usd), 0).label("cost"),
                 sa.func.avg(LlmCall.latency_ms).label("latency"),
-            ).where(LlmCall.model_slug == model.openrouter_id)
+            )
+            # Answered calls only (ADR-0062): a failed attempt is a row too, with no tokens, no
+            # cost and a latency that measures the provider failing rather than the model working.
+            .where(LlmCall.model_slug == model.openrouter_id, LlmCall.error.is_(None))
         )
     ).one()
 

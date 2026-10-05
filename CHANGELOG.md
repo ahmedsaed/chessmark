@@ -34,6 +34,16 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **A call that fails is now on record.** Neither harness wrote a row for a provider error, so the
+  request we sent and the provider's reply were lost. Each failed attempt is now an `llm_calls`
+  row with its error and the provider's own error body, visible in the turn inspector. It costs
+  nothing and doesn't count against a model's rounds.
+  ([ADR-0062](docs/adr/0062-a-failed-call-is-recorded-and-a-refused-answer-is-re-split.md))
+- **A decision game is no longer abandoned when Tev1's host refuses its own answer.** OpenRouter
+  rejected a valid Tev1 answer for some sets of options, the same way on every attempt, and four
+  games were abandoned for it. The refusal is now recognised and not retried, and the turn is
+  asked again with the moves split into one more heat. The game page says when that happened.
+
 - **The stored leaderboard was never actually stored.** A rebuild was written through the
   request's session, which is never committed, so every read of the leaderboard recomputed it
   from scratch. It is now written and committed in a transaction of its own. A warm read went

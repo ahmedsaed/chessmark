@@ -343,6 +343,8 @@ export interface DecisionBlock {
   durationMs: number | null;
   /** Its only legal move, which it was not asked about (ADR-0059). */
   forced: boolean;
+  /** Times the turn was asked again in smaller heats after the host refused an answer (ADR-0062). */
+  resplits: number;
   /** The heats a model that cannot take every move in one question was asked first (ADR-0059);
    *  empty when it was asked once, and null while withheld, like the ranking they lead to. */
   heats: DecisionHeat[] | null;
@@ -393,6 +395,8 @@ export type LiveFrame =
       answers?: Record<string, number>;
       forced?: boolean;
       heats?: { round: number; choice: string; probabilities: [string, number][] }[];
+      /** Times the turn was asked again in smaller heats after the host refused an answer. */
+      resplits?: number;
     }
   /** A fragment of a block still being generated. Appended, then replaced by its `block`. */
   | {
