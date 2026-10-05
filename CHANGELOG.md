@@ -17,6 +17,10 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **The standings show how many of each entrant's pairings were abandoned**, in a column headed
+  **A** with the full name on hover. A model with a 3/0/0 record and three abandoned games is a
+  different finding from one with 3/0/0 and nothing lost, and the table could not tell them apart.
+
 - **Decision models that cannot take every legal move in one question now play, in heats.** Tev
   accepts at most 20 options per question and Solar 26, and a middlegame has 30 to 40 moves, so
   both were refused. Such a model is now asked in heats of at most its limit, then in a final
@@ -58,6 +62,10 @@ file is only the record of *what shipped when*.
   ([ADR-0060](docs/adr/0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md))
 - **`volatility` and `periods` are gone from `GET /leaderboard`.** They were Glicko-2 parameters
   with no equivalent now.
+- **On a phone, the leaderboard and the standings scroll sideways instead of hiding columns.** `#`
+  and the name stay pinned while the rest slides under them, so W/D/L, points, illegal moves, cost
+  and latency are a swipe away rather than unavailable. The rating is still on screen without
+  scrolling.
 
 - **A forced move asks a decision model only what to do with the turn**, not which move to play.
   The page says "its only legal move".
