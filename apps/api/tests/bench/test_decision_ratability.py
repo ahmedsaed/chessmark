@@ -45,11 +45,12 @@ def test_a_new_decision_version_does_not_retire_chat_games() -> None:
     assert judge(facts(("llm", "llm")), **{**CURRENT, "decision_version": "d2"})
 
 
-def test_a_mixed_game_is_held_to_both_versions() -> None:
+def test_a_mixed_game_never_counts_whatever_its_versions() -> None:
+    """It was held to both harnesses' versions (ADR-0049); now it is not rated at all, because
+    chat and decision models are ranked on separate leaderboards (ADR-0064)."""
     mixed = facts(("llm", "decision"))
-    assert judge(mixed, **CURRENT)
+    assert not judge(mixed, **CURRENT)
     assert not judge(mixed, **{**CURRENT, "decision_version": "d2"})
-    assert not judge(mixed, **{**CURRENT, "prompt_version": "v4"})
 
 
 def test_a_minor_decision_bump_is_the_same_task() -> None:

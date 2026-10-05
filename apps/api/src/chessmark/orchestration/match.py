@@ -15,6 +15,7 @@ from chessmark.agents.registry import NoEndpointError, select_endpoint
 from chessmark.agents.routing import ProviderRouting
 from chessmark.agents.tools import TOOL_SCHEMA_VERSION
 from chessmark.agents.turn import ensure_system_prompt
+from chessmark.bench.ratable import unrankable
 from chessmark.db.enums import EventType, GameStatus, ModelRuntime, PlayerKind
 from chessmark.db.models import Game, ModelRegistry, Player
 from chessmark.db.repositories import add_player, append_event, create_game, get_game
@@ -60,6 +61,10 @@ class Match:
         return self.player(colour.opponent)
 
 
+class UnrankableMatchError(ValueError):
+    """A ranked game asked for between seats that can never make one (ADR-0064)."""
+
+
 async def create_match(
     session: AsyncSession,
     *,
@@ -96,6 +101,20 @@ async def create_match(
         colour: await runtime_for(session, seat)
         for colour, seat in ((Colour.WHITE, white), (Colour.BLACK, black))
     }
+    # **Refused, not quietly made unranked** (ADR-0064). A person asked for a ranked game, and
+    # changing what they asked for without saying so is worse than telling them why it cannot be.
+    if is_ranked:
+        harnesses = tuple(
+            "none"
+            if seat.kind is not PlayerKind.MODEL
+            else "decision"
+            if runtimes[colour] is ModelRuntime.DECISION
+            else "llm"
+            for colour, seat in ((Colour.WHITE, white), (Colour.BLACK, black))
+        )
+        if (reason := unrankable(harnesses)) is not None:
+            raise UnrankableMatchError(reason)
+
     chat_seat = ModelRuntime.LLM in {
         runtime
         for colour, runtime in runtimes.items()

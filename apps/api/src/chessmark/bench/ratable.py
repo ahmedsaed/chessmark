@@ -17,6 +17,9 @@ kinds of thing fail that, and all four exist in the games already recorded:
   over time, so a rating computed across it rates nothing in particular.
 * **It was not a ranked configuration.** Trash talk, a persona, or a non-current prompt version all
   change what is being measured (BENCH-03, TALK-03).
+* **The two seats are not the same kind of contestant.** A person is not rated at all, and a chat
+  model and a decision model are ranked on separate leaderboards (ADR-0063), so a game between them
+  belongs to neither (ADR-0064).
 
 A forfeit **does** count. `illegal_move_forfeit` and `error_forfeit` are the benchmark's whole
 subject: a model that cannot operate its tools has lost, and hiding that would make the leaderboard
@@ -214,6 +217,27 @@ def is_floating(model_slug: str) -> bool:
     return model_slug.startswith("~") or model_slug.endswith("-latest")
 
 
+#: Why a pairing can never be ranked, whatever the game's flag says (ADR-0064). Worded for a reader,
+#: because the API returns them to the person who asked for a ranked game and the methodology page
+#: lists them beside every excluded game.
+PERSON_PLAYED = "a person played; games with people are never ranked"
+MIXED_HARNESSES = "a chat model played a decision model; they are ranked on separate leaderboards"
+
+
+def unrankable(harnesses: tuple[str, ...]) -> str | None:
+    """Why two seats can never make a ranked game, or `None` when they can (ADR-0064).
+
+    `harnesses` is one entry per seat — `"llm"`, `"decision"`, or `"none"` for a person — as
+    `GameFacts.harnesses` spells it. One function, so the rule that refuses a ranked game when it
+    is created and the rule that keeps one out of the ratings cannot drift apart.
+    """
+    if "none" in harnesses:
+        return PERSON_PLAYED
+    if "llm" in harnesses and "decision" in harnesses:
+        return MIXED_HARNESSES
+    return None
+
+
 def judge(
     facts: GameFacts,
     *,
@@ -235,6 +259,12 @@ def judge(
     """
     if not facts.is_ranked:
         return Verdict(False, "not a ranked game")
+
+    # Ahead of every other rule: no configuration makes these two seats one contest. The flag that
+    # says "ranked" is set when a game is created, and `create_match` refuses it for these pairings
+    # — but this is the rule every game passes through, scripts and old rows included.
+    if (reason := unrankable(facts.harnesses)) is not None:
+        return Verdict(False, reason)
 
     if facts.trash_talk_enabled:
         # Belt and braces: `create_match` already forces this off for ranked games, and a ranked

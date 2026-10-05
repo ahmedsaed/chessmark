@@ -330,6 +330,43 @@ async def test_a_ranked_game_is_forced_silent(client: AsyncClient, db: AsyncSess
     assert body["trash_talk_enabled"] is False
 
 
+async def test_a_ranked_game_between_a_chat_and_a_decision_model_is_refused(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """ADR-0064, through the endpoint. Refused with the reason, not quietly made unranked: the
+    caller asked for a ranked game and should learn why it cannot be one."""
+    from chessmark.agents.decision_request import DECISION_VERSION
+    from chessmark.db.enums import ModelRuntime
+    from chessmark.db.models import ModelEndpoint, ModelRegistry
+
+    await sync_model_registry(db, [{"openrouter_id": "test/a", "display_name": "A"}])
+    decider = ModelRegistry(
+        openrouter_id="test/decider",
+        display_name="Decider",
+        provider="test",
+        context_length=32_000,
+        supports_tools=False,
+        runtime=ModelRuntime.DECISION,
+        decisions_checked=DECISION_VERSION,
+    )
+    db.add(decider)
+    await db.flush()
+    db.add(
+        ModelEndpoint(model_id=decider.id, provider_name="P", supports_tools=False, is_active=True)
+    )
+    await db.commit()
+    await fund(db, "user_mixed")
+
+    response = await client.post(
+        "/games",
+        json={"white": "test/a", "black": "test/decider", "is_ranked": True},
+        headers=as_user("user_mixed"),
+    )
+
+    assert response.status_code == 422, response.json()
+    assert "separate leaderboards" in response.json()["detail"]
+
+
 # ====================================================================== models
 
 
