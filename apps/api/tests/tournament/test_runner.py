@@ -675,8 +675,8 @@ async def test_a_pool_admits_a_model_listed_after_it_started(
     """The whole reason pools exist.
 
     A closed event's field is frozen because its fixture list is computed from it. A pool has no
-    fixture list, and Glicko-2 is built for an open population — so a model listed today starts at
-    1500 ± 350 and settles by playing, rather than waiting for the next event.
+    fixture list, and its rating is fitted over whoever has played — so a model listed today starts
+    at 1500 ± 246 and settles by playing, rather than waiting for the next event.
     """
     tournament_id, _ = await make_tournament(
         db,

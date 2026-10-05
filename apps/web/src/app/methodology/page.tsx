@@ -21,7 +21,7 @@ export const metadata: Metadata = pageMetadata({
 export default async function MethodologyPage() {
   /* The counts, not the ranking. This page shows no rating — it links to the leaderboard for the
      exclusions themselves — and asking for the whole board to print three integers is what put a
-     Glicko-2 run on the critical path of a page of prose (ADR-0032). */
+     rating run on the critical path of a page of prose (ADR-0032). */
   const summary = await getBenchSummary();
   const finished = summary.games_finished;
 
@@ -49,33 +49,39 @@ export default async function MethodologyPage() {
 
       <Section title="Ratings">
         <p>
-          <strong>Glicko-2</strong>, implemented from Glickman&rsquo;s paper. Elo would give an
-          order; Glicko-2 gives an order <em>and</em> a deviation, which is why every rating is
-          printed as <Code>1650 ± 40</Code>. A model with three games and one with three hundred
-          cannot honestly be shown as equally well known.
+          <strong>Bradley-Terry</strong>, fitted over every counted game at once. It is the model
+          behind Elo&rsquo;s scale — a 400-point gap is 10:1 odds — so the numbers read the way
+          chess ratings do. It gives each model a rating <em>and</em> an uncertainty, which is why
+          every rating is printed as <Code>1650 ± 40</Code>. A model with three games and one with
+          three hundred cannot honestly be shown as equally well known.
         </p>
         <p>
-          A new contestant starts at <Code>1500 ± 500</Code>, a wider prior than Glickman&rsquo;s
-          350 and the same one Lichess uses. 350 suits a pool where a new player is rare among many
-          settled ones; ours is the opposite, because the matchmaker deliberately pairs whoever is
-          least known — so most of what we spend is spent on models that have barely played, and
-          their first games should be allowed to say more.
+          <strong>Every model starts with two draws against an imaginary 1500-rated
+          opponent.</strong> Without some starting assumption, a model that wins its first three
+          games would be rated infinitely strong; with two imaginary draws, a short streak counts
+          for what it is worth and no more. Two was not picked by taste: it is what the games
+          themselves support, estimated two independent ways from the results so far.
+        </p>
+        <p>
+          <strong>The table is ordered by proven strength</strong> — the rating less twice its
+          uncertainty, the level a model has shown it is at least. A model on 10 wins from 12 and
+          one on 3 from 3 can have the same best estimate; the first has proven more, so it ranks
+          higher. A model that stops playing keeps what it proved and stops adding to it.
+        </p>
+        <p>
+          <strong>When a game was played does not matter.</strong> A model is a fixed set of
+          weights; it does not get better between Tuesday and Friday. The same games give the same
+          ratings in any order, and a model that has not played for a month is not made less certain
+          by the calendar. Its rating can still move, for one reason: if the models it beat later
+          prove stronger, beating them was worth more.
         </p>
         <p>
           A rating above <Code>± 110</Code> is marked <strong>provisional</strong>, Lichess&rsquo;s
-          threshold, adopted as it stands rather than tuned to flatter this table. Today it flags{" "}
-          <em>every</em> contestant, which is the correct thing for the page to say: nine games do
-          not settle a rating.
+          threshold, adopted as it stands rather than tuned to flatter this table.
         </p>
         <p>
-          Ratings are computed over <strong>rating periods of one UTC day</strong>, in batches, as
-          the system specifies — rating game by game gives a different and less defensible answer.
-          A period in which a contestant plays nothing widens its deviation: a rating from March is
-          not still worth ± 40 in December.
-        </p>
-        <p>
-          The whole table is <strong>recomputed from scratch</strong> on every request. Ratings are
-          a pure function of the games behind them, and a stored number that had drifted from that
+          The table is <strong>rebuilt from scratch</strong> whenever the games behind it change.
+          Ratings are a pure function of those games, and a stored number that had drifted from that
           function would be undetectable.
         </p>
       </Section>

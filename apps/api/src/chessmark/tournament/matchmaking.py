@@ -2,12 +2,12 @@
 
 A closed event knows its fixture list from the field. A **pool** does not: it runs indefinitely,
 its field changes as the catalogue does, and there is no winner — only ratings that get sharper.
-So instead of a schedule it needs a policy, and the policy follows from what Glicko-2 actually
-measures.
+So instead of a schedule it needs a policy, and the policy follows from what the rating actually
+measures (ADR-0060).
 
 Two facts drive it:
 
-- **A rating deviation is the point.** A model at 1500 ± 350 has told us nothing yet; one at
+- **A rating deviation is the point.** A model at 1500 ± 246 has told us nothing yet; one at
   1500 ± 40 has. The most valuable next game is the one involving whoever we know least about,
   which is exactly what makes a newly-listed model settle quickly rather than sitting unrated.
 - **A game between mismatched players teaches little.** If the result is a foregone conclusion,
@@ -149,14 +149,16 @@ _POLICIES: dict[Policy, tuple[_HomeKey, _AwayKey]] = {
 class Form:
     """What is known about an entrant, as far as matchmaking cares.
 
-    Deliberately not a Glicko-2 type. The pool policy needs a number for strength and a number for
+    Deliberately not a rating-engine type. The pool policy needs a number for strength and a number for
     confidence; where they came from is the caller's business, and keeping it that way is what lets
     this be tested with hand-written fixtures.
     """
 
     key: str
     rating: float = 1500.0
-    #: Glicko-2's rating deviation. 350 is "never seen"; a settled model is nearer 50.
+    #: The rating's ±. A fitted rating starts at about 246 (two imaginary draws, ADR-0060) and a
+    #: settled one is nearer 50. The default stays above anything a fit produces, so an entrant with
+    #: no rating at all is always the least known — which is what it is.
     deviation: float = 350.0
 
     #: **There was a `games` counter here and nothing ever set it.** `_form` in

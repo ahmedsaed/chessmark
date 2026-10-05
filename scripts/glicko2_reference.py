@@ -1,4 +1,8 @@
-"""Glicko-2, as specified by Mark Glickman (BENCH-01).
+"""Glicko-2, as specified by Mark Glickman — the engine ADR-0060 replaced, kept as a reference.
+
+Not imported by the site. `compare_ratings.py` uses it to show what the old engine would publish
+over today's games; this is `apps/api/src/chessmark/bench/glicko2.py` as it was deleted, unchanged
+below this paragraph.
 
 Chosen over Elo because a benchmark's central problem is **confidence, not just order**. A model
 that has played three games and one that has played three hundred should not be presented as

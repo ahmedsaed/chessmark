@@ -104,5 +104,5 @@ Deliberately unresolved, to be answered with data rather than argument:
   different models may prefer different representations.
 - Should reasoning-effort settings be normalised across providers, or reported as-is?
 - Is a draw against a strong model worth more benchmark signal than a win against a weak one?
-  (Glicko-2 says yes; the leaderboard presentation must not obscure it.)
+  (The rating says yes — who you beat matters; the leaderboard presentation must not obscure it.)
 - How do we stop a model from simply *knowing* the opening book, and does that even matter?

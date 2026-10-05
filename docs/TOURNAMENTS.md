@@ -23,7 +23,7 @@ On a server, `./chessmark tournament <subcommand>` and `./chessmark standings <s
 ## A pool is the open case
 
 `--format pool` never ends, re-resolves its field every tick so a newly listed model joins by
-itself, and ranks by Glicko-2 rather than points — which is what makes an open population rankable
+itself, and ranks by rating rather than points — which is what makes an open population rankable
 at all.
 
 Its matchmaker balances the field: **the entrant with the fewest pairings plays first**, against
@@ -305,7 +305,8 @@ A **closed** event — round robin or Swiss — is ranked by **score**, then Son
 direct encounter. Everybody plays the same schedule, and that is exactly what makes a sum of points
 a ranking.
 
-A **pool** is ranked by **Glicko-2 computed over that pool's games**, deviation as the tiebreak.
+A **pool** is ranked by **a rating computed over that pool's games**, ordered by **proven strength**:
+the rating less twice its ± ([ADR-0060](adr/0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md)).
 It has to be: a pool has no schedule, it pairs whoever is least known, and its entrants finish very
 unequal numbers of games. In `pool-free`, entrants had completed between 0 and 10 — and two models
 that had won *every* game they played stood third and fourth behind one that had lost a game in
@@ -320,7 +321,15 @@ of W/D/L and never a loss (ADR-0019), but `3/0/0` reads very differently next to
 from the same derived state the schedule shows, so a pairing that was abandoned, resumed and
 finished counts as played in both places.
 
-Three things worth knowing about that rating ([ADR-0027](adr/0027-a-pool-is-ranked-by-its-own-rating.md)):
+Things worth knowing about that rating ([ADR-0027](adr/0027-a-pool-is-ranked-by-its-own-rating.md),
+[ADR-0060](adr/0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md)):
+
+- **It is Bradley-Terry, fitted over every game at once.** Every model starts with two draws
+  against an imaginary 1500 opponent, which is what keeps a three-game streak finite and cautious.
+  When a game was played does not matter, and the same games give the same table in any order.
+- **A model that leaves keeps what it proved.** Its rating does not decay with time; it moves only
+  when the models it beat are re-measured. Models still playing overtake it as they prove more,
+  which is why `nex-n2.5-pro`, 3/0/0 and retired, no longer sits first.
 
 - **It is that pool's, not the platform's.** A place here cannot move because of a game played in
   another event. It will therefore disagree with the leaderboard, which is correct — they were

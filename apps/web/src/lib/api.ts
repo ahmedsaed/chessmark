@@ -398,7 +398,6 @@ export async function getLeaderboard(options?: ReadOptions): Promise<Leaderboard
       games_counted: 0,
       excluded: [],
       prompt_version: null,
-      periods: 0,
     };
   }
 }

@@ -28,7 +28,7 @@ class Format(StrEnum):
     ROUND_ROBIN = "round_robin"
     SWISS = "swiss"
     #: A ladder that never ends. Its field is re-resolved as the catalogue changes, so a newly
-    #: listed model joins by itself, and its "standings" are Glicko-2 ratings rather than points —
+    #: listed model joins by itself, and its "standings" are ratings rather than points —
     #: which is what lets an open population be ranked at all (BENCH-01).
     POOL = "pool"
 

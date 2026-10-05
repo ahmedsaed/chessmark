@@ -7,15 +7,26 @@ completed between **0 and 10** games. A sum then partly measures how many games 
 Sonneborn-Berger is another sum and does not help.
 
 The first test is that shape exactly, because it is the one a reader notices.
+
+The order within a rating is **proven strength**, the rating less two deviations (ADR-0060), so
+ratings are built here through `bench.Rating` rather than written as tuples by hand: the rule is
+the rating system's, and a test that restated it could agree with a wrong copy.
 """
 
 from __future__ import annotations
 
+from chessmark.bench import Rating
 from chessmark.tournament import Entrant, Result, standings
 
 
 def _field(*keys: str) -> list[Entrant]:
     return [Entrant(key=key, label=key, seed=index + 1) for index, key in enumerate(keys)]
+
+
+def _rated(rating: float, rd: float) -> tuple[float, float, bool, float]:
+    """What `ratings_by_key` hands the table for one entrant."""
+    r = Rating(rating=rating, rd=rd)
+    return (r.rating, r.rd, r.provisional, r.proven)
 
 
 def test_a_perfect_record_outranks_a_longer_one() -> None:
@@ -26,7 +37,7 @@ def test_a_perfect_record_outranks_a_longer_one() -> None:
         Result(white="perfect", black="prolific", white_score=1.0, round_number=n + 1)
         for n in range(5)
     ]
-    ratings = {"perfect": (1780.0, 90.0, False), "prolific": (1610.0, 70.0, False)}
+    ratings = {"perfect": _rated(1780.0, 90.0), "prolific": _rated(1610.0, 70.0)}
 
     table = standings(field, results, ratings)
 
@@ -49,13 +60,28 @@ def test_points_still_rank_a_closed_event() -> None:
 
 
 def test_the_deviation_breaks_a_tie_on_rating() -> None:
-    """Two equal ratings are not equally known, and the better-measured one is the stronger claim."""
+    """Two equal ratings are not equally known, and the better-measured one has proven more."""
     field = _field("vague", "settled")
-    ratings = {"vague": (1600.0, 300.0, True), "settled": (1600.0, 45.0, False)}
+    ratings = {"vague": _rated(1600.0, 300.0), "settled": _rated(1600.0, 45.0)}
 
     table = standings(field, [], ratings)
 
     assert [s.key for s in table] == ["settled", "vague"]
+
+
+def test_a_longer_record_outranks_a_streak_with_the_same_estimate() -> None:
+    """The question that produced ADR-0060, with `pool-free`'s own numbers. Nex-N2.5-Pro at 3/0/0
+    and Qwen3.8-27B at 10/0/2 have best estimates 38 points apart — level, to any reader who knows
+    what ± 209 means — and ordering on the estimate put the streak first. Proven strength puts
+    the record first, which is what "ten wins is better" means."""
+    field = _field("streak", "record")
+    ratings = {"streak": _rated(1781.0, 209.0), "record": _rated(1743.0, 134.0)}
+
+    table = standings(field, [], ratings)
+
+    assert [s.key for s in table] == ["record", "streak"]
+    assert table[0].rating is not None and table[1].rating is not None
+    assert table[0].rating < table[1].rating, "the order is not the rating's"
 
 
 def test_an_unrated_entrant_sorts_last_not_mid_table() -> None:
@@ -64,7 +90,7 @@ def test_an_unrated_entrant_sorts_last_not_mid_table() -> None:
     deviation exists to avoid making. `pool-free` had three such entrants, all of whom had never
     completed a game."""
     field = _field("strong", "weak", "unseen")
-    ratings = {"strong": (1700.0, 80.0, False), "weak": (1300.0, 80.0, False)}
+    ratings = {"strong": _rated(1700.0, 80.0), "weak": _rated(1300.0, 80.0)}
 
     table = standings(field, [], ratings)
 
@@ -77,7 +103,7 @@ def test_the_unrated_share_a_place_and_the_rated_never_do() -> None:
     different games are only equal by accident, and sharing a place on that would claim an
     inseparability the arithmetic never found."""
     field = _field("rated", "nothing", "also-nothing")
-    ratings = {"rated": (1700.0, 80.0, False)}
+    ratings = {"rated": _rated(1700.0, 80.0)}
 
     table = standings(field, [], ratings)
 
@@ -93,7 +119,7 @@ def test_the_score_columns_survive_the_reordering() -> None:
     results = [Result(white="winner", black="loser", white_score=1.0, round_number=1)]
 
     table = standings(
-        field, results, {"winner": (1700.0, 80.0, False), "loser": (1300.0, 80.0, True)}
+        field, results, {"winner": _rated(1700.0, 80.0), "loser": _rated(1300.0, 80.0)}
     )
 
     assert table[0].score == 1.0
@@ -103,11 +129,11 @@ def test_the_score_columns_survive_the_reordering() -> None:
 
 
 def test_the_provisional_flag_is_carried_but_never_reorders() -> None:
-    """A provisional rating is still the best estimate there is, so it ranks where it ranks. The
-    flag is a caveat for the reader, not a penalty — demoting an unsure model below a sure one
-    would be a second, hidden ranking rule nobody asked for."""
+    """The deviation moves a row — that is what proven strength is — but the `?` derived from it
+    is a caveat for the reader, not a second rule. A provisional entrant that has proven more still
+    ranks above a settled one that has proven less."""
     field = _field("unsure", "sure")
-    ratings = {"unsure": (1900.0, 260.0, True), "sure": (1600.0, 50.0, False)}
+    ratings = {"unsure": _rated(1950.0, 115.0), "sure": _rated(1600.0, 50.0)}
 
     table = standings(field, [], ratings)
 
@@ -119,7 +145,7 @@ def test_the_provisional_flag_is_carried_but_never_reorders() -> None:
 def test_an_unrated_entrant_is_not_provisional() -> None:
     """Two different statements. "Provisional" says we measured it and are unsure; "unrated" says
     we have not measured it. Flagging the second as the first would imply a number exists."""
-    table = standings(_field("rated", "unseen"), [], {"rated": (1700.0, 80.0, True)})
+    table = standings(_field("rated", "unseen"), [], {"rated": _rated(1700.0, 80.0)})
 
     unseen = next(s for s in table if s.key == "unseen")
     assert unseen.rating is None

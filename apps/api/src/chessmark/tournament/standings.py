@@ -41,7 +41,7 @@ class Standing:
     #: Sum of the scores of every opponent beaten, plus half of each opponent drawn with.
     sonneborn_berger: float
     place: int = 0
-    #: Glicko-2 over this event's games alone, when the caller computed one. `None` for a closed
+    #: A rating over this event's games alone, when the caller computed one. `None` for a closed
     #: event, where points are the answer and a rating would be a second one nobody asked for.
     rating: float | None = None
     #: The honest half. A rating without it says "1650" where the truth is "1650, and we have seen
@@ -51,6 +51,10 @@ class Standing:
     #: rating system, not to a table, so the caller decides it and hands the answer in — the same
     #: bargain as the rating itself, and what keeps this module free of `bench`.
     rating_provisional: bool = False
+    #: What a rated table is ordered by: the rating less two deviations, the strength this entrant
+    #: has proven (ADR-0060). Handed in with the rating, for the same reason — the rule belongs to
+    #: the rating system, and computing it here would be a second copy of it.
+    rating_proven: float | None = None
 
     @property
     def key(self) -> str:
@@ -60,7 +64,7 @@ class Standing:
 def standings(
     entrants: Sequence[Entrant],
     results: Sequence[Result],
-    ratings: Mapping[str, tuple[float, float, bool]] | None = None,
+    ratings: Mapping[str, tuple[float, float, bool, float]] | None = None,
 ) -> list[Standing]:
     """The table, best first, with places assigned.
 
@@ -68,9 +72,8 @@ def standings(
     be recomputed after a model was withdrawn, and losing the whole table over one stale row would
     be a worse failure than omitting it.
 
-    `ratings` maps an entrant key to `(rating, deviation, provisional)` and, when given, decides
-    the order:
-    highest rating first, then narrowest deviation, then seed. Pass it for a pool, where games
+    `ratings` maps an entrant key to `(rating, deviation, provisional, proven)` and, when given,
+    decides the order: most strength proven first, then highest rating, then seed (ADR-0060). Pass it for a pool, where games
     played are unequal and a sum of points ranks partly by volume; omit it for a closed event,
     where every entrant plays the same schedule and points are what the event is for.
 
@@ -125,6 +128,7 @@ def standings(
             rating=ratings[key][0] if ratings and key in ratings else None,
             rating_deviation=ratings[key][1] if ratings and key in ratings else None,
             rating_provisional=ratings[key][2] if ratings and key in ratings else False,
+            rating_proven=ratings[key][3] if ratings and key in ratings else None,
         )
         for key in known
     ]
@@ -133,12 +137,12 @@ def standings(
     # describe the same table; only the argument differs, and sorting on a column where every cell
     # is null is not an order.
     if ratings is not None and any(key in ratings for key in known):
-        # `math.inf` for the unrated, so they sort last under a descending rating rather than
+        # `math.inf` for the unrated, so they sort last under a descending order rather than
         # landing wherever 1500 happens to fall in this field.
         table.sort(
             key=lambda s: (
+                -(s.rating_proven if s.rating_proven is not None else -math.inf),
                 -(s.rating if s.rating is not None else -math.inf),
-                s.rating_deviation if s.rating_deviation is not None else math.inf,
                 s.entrant.seed,
                 s.key,
             )

@@ -45,9 +45,9 @@ were live in this directory before it was written.
 | [0024](0024-endpoint-output-ceilings-are-not-findings.md) | An endpoint's output ceiling is not a finding about a model | Accepted |
 | [0025](0025-finishing-a-game-beats-starting-one.md) | A game due to resume keeps its slot, and patience is measured from the last move | Accepted |
 | [0026](0026-a-repeated-question-gets-a-different-answer.md) | A repeated read-only tool call is answered with a nudge | Accepted |
-| [0027](0027-a-pool-is-ranked-by-its-own-rating.md) | A pool is ranked by a rating over its own games; a closed event by points | Amended by [0028](0028-a-wider-prior-and-a-provisional-mark.md) |
-| [0028](0028-a-wider-prior-and-a-provisional-mark.md) | A wider prior, and a rating that says when it is not settled | Amended by [0029](0029-a-deviation-has-a-ceiling.md) |
-| [0029](0029-a-deviation-has-a-ceiling.md) | A rating deviation is capped at the prior | Accepted |
+| [0027](0027-a-pool-is-ranked-by-its-own-rating.md) | A pool is ranked by a rating over its own games; a closed event by points | Amended by [0028](0028-a-wider-prior-and-a-provisional-mark.md), [0060](0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md) |
+| [0028](0028-a-wider-prior-and-a-provisional-mark.md) | A wider prior, and a rating that says when it is not settled | Amended by [0029](0029-a-deviation-has-a-ceiling.md); prior superseded by [0060](0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md) |
+| [0029](0029-a-deviation-has-a-ceiling.md) | A rating deviation is capped at the prior | Superseded by [0060](0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md) |
 | [0030](0030-a-halt-pauses-the-board.md) | A halt pauses every game it covers, and says so on the page | Accepted |
 | [0031](0031-a-turn-may-not-inflate-its-own-context.md) | A turn may not inflate its own context | Accepted |
 | [0032](0032-the-leaderboard-is-stored-not-recomputed-per-request.md) | The leaderboard is stored, not recomputed on every request | Accepted |
@@ -78,6 +78,7 @@ were live in this directory before it was written.
 | [0057](0057-credit-sales-are-a-switch-that-starts-closed.md) | Credit sales are a switch an operator flips, and it starts closed | Accepted |
 | [0058](0058-the-house-account-pays-for-games-no-person-started.md) | The house account pays for games no person started | Accepted |
 | [0059](0059-a-decision-model-with-a-limit-plays-in-heats.md) | A decision model that cannot take every move at once plays in heats | Accepted |
+| [0060](0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md) | Models are rated by Bradley-Terry, and ranked by the strength they have proven | Accepted |
 
 ## Template
 

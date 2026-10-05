@@ -27,6 +27,7 @@ from chessmark.api.schemas import (
     LeaderboardRow,
 )
 from chessmark.bench import snapshot
+from chessmark.bench.bradley_terry import Rating, standing_key
 from chessmark.bench.service import TERMINAL
 from chessmark.db.enums import ModelRuntime
 from chessmark.db.models import Game, ModelRegistry, Player
@@ -38,7 +39,7 @@ router = APIRouter(prefix="/leaderboard", tags=["leaderboard"])
 async def get_leaderboard(session: SessionDep) -> Leaderboard:
     """The ranking, read from the run stored when the last game ended (ADR-0032).
 
-    No scan, no Glicko-2, no aggregates on a request. `snapshot.current` rebuilds first if the
+    No scan, no fit, no aggregates on a request. `snapshot.current` rebuilds first if the
     stored run does not match the games behind it, so this is never the stale answer — it is either
     the current one cheaply or the current one slowly.
     """
@@ -63,9 +64,15 @@ async def get_leaderboard(session: SessionDep) -> Leaderboard:
         for row in stored["rows"]
     ]
 
-    # Rating first, but a wide deviation is not a high rank — ties on rating go to whoever we are
-    # more sure about.
-    rows.sort(key=lambda row: (-row.rating, row.rating_deviation))
+    # By proven strength — the rating less two deviations — not the rating alone (ADR-0060). A
+    # 3/0/0 streak and a 10/0/2 record have level best estimates; what a reader means by "ten wins
+    # is better" is that it has been shown more. The label breaks what is left, so the order is total.
+    rows.sort(
+        key=lambda row: (
+            *standing_key(Rating(rating=row.rating, rd=row.rating_deviation)),
+            row.label,
+        )
+    )
 
     return Leaderboard(
         rows=rows,
@@ -75,7 +82,6 @@ async def get_leaderboard(session: SessionDep) -> Leaderboard:
             for entry in stored["excluded"]
         ],
         prompt_version=PROMPT_VERSION,
-        periods=stored["periods"],
     )
 
 
@@ -84,7 +90,7 @@ async def get_summary(session: SessionDep) -> BenchSummary:
     """The counts, without the ranking.
 
     `/about` and `/methodology` show these and no rating. Fetching the whole leaderboard to print
-    three integers is what put a Glicko-2 run on the critical path of a page of prose.
+    three integers is what put a full rating run on the critical path of a page of prose.
 
     Registered **before** `/{model_slug:path}/games` so the path converter cannot swallow it.
     """
