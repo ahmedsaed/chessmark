@@ -725,7 +725,7 @@ class ModelEndpoint(Base):
 
 
 class LeaderboardSnapshot(Base):
-    """The computed leaderboard, stored when a game ends (ADR-0032).
+    """A computed rating run — the leaderboard's, or one pool's — stored (ADR-0032, ADR-0061).
 
     A **cache, not a source of truth.** Derived entirely from `games` and disposable: delete every
     row and the next request rebuilds it. Nothing may read this to decide anything a game record
@@ -739,12 +739,22 @@ class LeaderboardSnapshot(Base):
     """
 
     __tablename__ = "leaderboard_snapshots"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "prompt_version", "scope", name="uq_leaderboard_snapshots_prompt_version_scope"
+        ),
+    )
 
     id: Mapped[int] = bigint_pk()
 
-    prompt_version: Mapped[str] = mapped_column(sa.Text, unique=True)
+    prompt_version: Mapped[str] = mapped_column(sa.Text)
     """One snapshot per prompt version. A game played under an older prompt measured a different
     task (BENCH-04), so the runs are separate and switching back does not force a rebuild."""
+
+    scope: Mapped[str] = mapped_column(sa.Text, default="", server_default="")
+    """Which games the run covers: `""` for the leaderboard, `tournament:<id>` for one pool's own
+    ratings (ADR-0061). One table and one mechanism for every stored rating, so the standings, the
+    matchmaker and the leaderboard cannot each compute their own and disagree."""
 
     fingerprint: Mapped[str] = mapped_column(sa.Text)
     """What the run was computed from. A read that disagrees recomputes rather than serving this

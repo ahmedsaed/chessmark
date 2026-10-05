@@ -429,9 +429,11 @@ async def ratings_by_key(
     tournament_id: uuid.UUID,
     prompt_version: str | None = PROMPT_VERSION,
     tool_schema_version: str | None = TOOL_SCHEMA_VERSION,
-) -> dict[str, tuple[float, float, bool, float]]:
-    """One event's rating, deviation, provisional flag and proven strength, keyed the way a
-    tournament keys its entrants (ADR-0027).
+) -> dict[str, Rating]:
+    """One event's ratings, keyed the way a tournament keys its entrants (ADR-0027).
+
+    Computed here and **stored** by `snapshot.pool_ratings`, which is what a request reads
+    (ADR-0061). Call this directly only to build that run.
 
     The leaderboard is keyed by `Contestant` — model **and quantization**, because that is what is
     actually being rated (ADR-0015). A tournament's entrants are keyed by model slug alone, and the
@@ -461,18 +463,13 @@ async def ratings_by_key(
             if contestant is not None:
                 played[contestant] = played.get(contestant, 0) + 1
 
-    best: dict[str, tuple[float, float, bool, float]] = {}
+    best: dict[str, Rating] = {}
     chosen: dict[str, int] = {}
     for contestant, rating in run.ratings.items():
         games = played.get(contestant, 0)
         if contestant.model_slug not in best or games > chosen[contestant.model_slug]:
             chosen[contestant.model_slug] = games
-            best[contestant.model_slug] = (
-                rating.rating,
-                rating.rd,
-                rating.provisional,
-                rating.proven,
-            )
+            best[contestant.model_slug] = rating
 
     return best
 

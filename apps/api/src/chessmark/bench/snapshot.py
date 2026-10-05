@@ -1,7 +1,14 @@
-"""The stored leaderboard, and how it is kept honest (ADR-0032).
+"""Stored rating runs — the leaderboard's and each pool's — and how they are kept honest
+(ADR-0032, ADR-0061).
 
-`service.py` computes the ranking; this decides **when**. The answer is: when a game ends, not when
-a page is read.
+`service.py` computes the ranking; this decides **when**. The answer is: when the games behind it
+change, not when a page is read.
+
+**Every rating the site shows or acts on comes from here.** The leaderboard did; a pool's standings
+and the matchmaker each fitted their own on every call, which was three paths to one number and
+three chances for them to disagree. A run is keyed by prompt version and *scope* — `""` for the
+leaderboard, `tournament:<id>` for one pool's own games — and every scope is kept honest the same
+way.
 
 The leaderboard was rebuilt from raw rows on every request, and four pages await it — two of which
 display no rating at all. `/methodology` renders three scalars and paid for a full rating run to
@@ -20,6 +27,7 @@ ended by a path that forgot to trigger, costs one slow request and then self-hea
 
 from __future__ import annotations
 
+import logging
 import uuid
 from decimal import Decimal
 from typing import Any
@@ -37,17 +45,33 @@ from chessmark.bench.service import (
     Contestant,
     compute_aggregates,
     compute_ratings,
+    ratings_by_key,
     scan,
 )
-from chessmark.db.models import Game, LeaderboardSnapshot, ModelEndpoint
+from chessmark.db.models import Game, LeaderboardSnapshot, ModelEndpoint, TournamentGame
+
+log = logging.getLogger(__name__)
 
 #: Which engine produced a stored run. Part of the fingerprint, so changing the engine invalidates
 #: every stored run on its first read instead of serving the old method's numbers as current.
 #: Bump it whenever a change to `bench/bradley_terry.py` would move a published number.
 RATING_METHOD = "bt-2draws"
 
+#: The leaderboard's scope: every counted game.
+LEADERBOARD = ""
 
-async def fingerprint(session: AsyncSession, *, prompt_version: str | None) -> str:
+
+def pool_scope(tournament_id: uuid.UUID) -> str:
+    """One pool's scope: that pool's games alone (ADR-0027)."""
+    return f"tournament:{tournament_id}"
+
+
+async def fingerprint(
+    session: AsyncSession,
+    *,
+    prompt_version: str | None,
+    tournament_id: uuid.UUID | None = None,
+) -> str:
     """What a run was computed from, in two cheap indexed aggregates.
 
     Covers the inputs that can change a *number*:
@@ -63,14 +87,19 @@ async def fingerprint(session: AsyncSession, *, prompt_version: str | None) -> s
     * the rating method (ADR-0060). The games did not change when the engine did, so without it a
       run computed by Glicko-2 would match every other input and go on being served as current.
 
+    For a pool the games are that pool's, so a game finishing in another event does not rebuild it.
+
     Deliberately **not** covered: `model_registry.display_name`. It is a label, resolved at read,
     and baking it in would force a rebuild for a cosmetic rename.
     """
-    games = (
-        await session.execute(
-            sa.select(sa.func.count(), sa.func.max(Game.ended_at)).where(Game.status.in_(TERMINAL))
+    terminal = sa.select(sa.func.count(), sa.func.max(Game.ended_at)).where(
+        Game.status.in_(TERMINAL)
+    )
+    if tournament_id is not None:
+        terminal = terminal.join(TournamentGame, TournamentGame.game_id == Game.id).where(
+            TournamentGame.tournament_id == tournament_id
         )
-    ).one()
+    games = (await session.execute(terminal)).one()
     endpoints = (
         await session.execute(
             sa.select(sa.func.count(), sa.func.max(ModelEndpoint.id)).select_from(ModelEndpoint)
@@ -167,45 +196,109 @@ def _row(contestant: Contestant, rating: Rating, aggregate: Aggregate | None) ->
 async def refresh(
     session: AsyncSession, *, prompt_version: str | None = PROMPT_VERSION
 ) -> dict[str, Any]:
-    """Recompute and store. Called when a game reaches a terminal state, and by a stale read.
-
-    Upserted on `prompt_version`, so a run never accumulates rows and switching prompt versions
-    keeps both rather than thrashing between them.
-    """
-    payload = await build(session, prompt_version=prompt_version)
+    """Recompute the leaderboard's run and store it. Called by a stale read."""
     mark = await fingerprint(session, prompt_version=prompt_version)
-
-    statement = pg_insert(LeaderboardSnapshot).values(
-        prompt_version=prompt_version or "",
-        fingerprint=mark,
-        payload=payload,
-    )
-    await session.execute(
-        statement.on_conflict_do_update(
-            index_elements=[LeaderboardSnapshot.prompt_version],
-            set_={"fingerprint": mark, "payload": payload, "computed_at": sa.func.now()},
-        )
-    )
+    payload = await build(session, prompt_version=prompt_version)
+    await _store(session, prompt_version, LEADERBOARD, mark, payload)
     return payload
 
 
 async def current(
     session: AsyncSession, *, prompt_version: str | None = PROMPT_VERSION
 ) -> dict[str, Any]:
-    """The stored run, rebuilt first if it does not match the games behind it.
+    """The leaderboard's stored run, rebuilt first if it does not match the games behind it.
 
     **Never serves a row whose fingerprint disagrees.** That is the whole bargain: the ranking is
     allowed to be stored precisely because a stored value that stopped matching its games would be
     caught here rather than published.
     """
-    stored = await session.scalar(
-        sa.select(LeaderboardSnapshot).where(
-            LeaderboardSnapshot.prompt_version == (prompt_version or "")
-        )
-    )
+    stored = await _stored(session, prompt_version, LEADERBOARD)
     mark = await fingerprint(session, prompt_version=prompt_version)
-
     if stored is not None and stored.fingerprint == mark:
         return dict(stored.payload)
-
     return await refresh(session, prompt_version=prompt_version)
+
+
+async def pool_ratings(
+    session: AsyncSession,
+    *,
+    tournament_id: uuid.UUID,
+    prompt_version: str | None = PROMPT_VERSION,
+) -> dict[str, Rating]:
+    """One pool's ratings over its own games, keyed by entrant, from its stored run (ADR-0061).
+
+    The same bargain as `current`: read, check the fingerprint, rebuild only if it disagrees. What
+    is stored is the rating and its deviation; `provisional` and `proven` are derived from them on
+    the way out, so neither can drift from the numbers it describes (ADR-0028).
+    """
+    scope = pool_scope(tournament_id)
+    stored = await _stored(session, prompt_version, scope)
+    mark = await fingerprint(session, prompt_version=prompt_version, tournament_id=tournament_id)
+    if stored is not None and stored.fingerprint == mark:
+        payload = dict(stored.payload)
+    else:
+        ratings = await ratings_by_key(
+            session, tournament_id=tournament_id, prompt_version=prompt_version
+        )
+        payload = {
+            "ratings": {
+                key: {"rating": rating.rating, "rating_deviation": rating.rd}
+                for key, rating in ratings.items()
+            }
+        }
+        await _store(session, prompt_version, scope, mark, payload)
+    return {
+        key: Rating(rating=value["rating"], rd=value["rating_deviation"])
+        for key, value in payload["ratings"].items()
+    }
+
+
+async def _stored(
+    session: AsyncSession, prompt_version: str | None, scope: str
+) -> LeaderboardSnapshot | None:
+    row: LeaderboardSnapshot | None = await session.scalar(
+        sa.select(LeaderboardSnapshot).where(
+            LeaderboardSnapshot.prompt_version == (prompt_version or ""),
+            LeaderboardSnapshot.scope == scope,
+        )
+    )
+    return row
+
+
+async def _store(
+    session: AsyncSession,
+    prompt_version: str | None,
+    scope: str,
+    mark: str,
+    payload: dict[str, Any],
+) -> None:
+    """Upsert on `(prompt_version, scope)`, **in a transaction of its own**, and commit it.
+
+    Its own because of where it is called from. A request's session is never committed, so a run
+    written through it was rolled back when the request ended — every read of the leaderboard
+    rebuilt it, for as long as ADR-0032 had been live, and no test noticed because they all share
+    one session and read their own uncommitted write. And the matchmaker calls this mid-tick, where
+    committing the caller's session would commit half a tick. A cache write belongs to neither.
+
+    **A failed write is logged, not raised.** The payload is already computed and correct; losing
+    the cache costs the next reader a rebuild, while raising would cost this one the page.
+
+    The fingerprint is taken **before** the build, by both callers. Taken after, a game that ended
+    during the build would be in the mark and not in the run, and the stale run would then match.
+    """
+    statement = pg_insert(LeaderboardSnapshot).values(
+        prompt_version=prompt_version or "",
+        scope=scope,
+        fingerprint=mark,
+        payload=payload,
+    )
+    statement = statement.on_conflict_do_update(
+        index_elements=[LeaderboardSnapshot.prompt_version, LeaderboardSnapshot.scope],
+        set_={"fingerprint": mark, "payload": payload, "computed_at": sa.func.now()},
+    )
+    try:
+        async with AsyncSession(bind=session.bind, expire_on_commit=False) as writer:
+            await writer.execute(statement)
+            await writer.commit()
+    except sa.exc.SQLAlchemyError:
+        log.warning("could not store the %s rating run", scope or "leaderboard", exc_info=True)

@@ -17,7 +17,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Query, status
 
 from chessmark.api.deps import SessionDep
-from chessmark.api.routes.games import _served_by as served_by
+from chessmark.api.routes.games import _served_by_many as served_by_many
 from chessmark.api.schemas import (
     GameSummary,
     StandingOut,
@@ -26,7 +26,7 @@ from chessmark.api.schemas import (
     TournamentStats,
     TournamentSummary,
 )
-from chessmark.bench.service import ratings_by_key
+from chessmark.bench import snapshot
 from chessmark.db import tournaments as repo
 from chessmark.db.enums import GameStatus
 from chessmark.db.models import (
@@ -255,8 +255,16 @@ async def get_tournament(
     # **A pool is ordered by rating; a closed event by points** (ADR-0027). The format decides,
     # rather than a flag, because it is the format that decides whether a sum of points means
     # anything: a round robin gives everybody the same schedule and a pool gives nobody one.
+    #
+    # Read from the pool's stored run, not fitted here (ADR-0061): a request never computes a
+    # rating, and the order a reader sees is the one the matchmaker and the leaderboard use too.
     ratings = (
-        await ratings_by_key(session, tournament_id=tournament.id)
+        {
+            key: (rating.rating, rating.rd, rating.provisional, rating.proven)
+            for key, rating in (
+                await snapshot.pool_ratings(session, tournament_id=tournament.id)
+            ).items()
+        }
         if tournament.format == str(Format.POOL)
         else None
     )
@@ -293,11 +301,12 @@ async def get_tournament(
         by_game: dict[uuid.UUID, list[Player]] = {}
         for player in players:
             by_game.setdefault(player.game_id, []).append(player)
+        # One query for every game's endpoints, not one per game: `pool-free` has 84 pairings,
+        # and asking per game made this page's cost grow with the event it describes.
+        served = await served_by_many(session, game_ids)
         games = [
             GameSummary.from_model(
-                game,
-                by_game.get(game.id, []),
-                served_by=await served_by(session, game.id),
+                game, by_game.get(game.id, []), served_by=served.get(game.id, {})
             )
             for game in rows
         ]

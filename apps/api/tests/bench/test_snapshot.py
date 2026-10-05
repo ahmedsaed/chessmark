@@ -14,6 +14,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.bench import snapshot
 from chessmark.bench.service import compute_aggregates, compute_ratings, scan
 from chessmark.db.models import LeaderboardSnapshot, ModelEndpoint, ModelRegistry
@@ -141,7 +142,9 @@ async def test_a_tampered_snapshot_is_rebuilt_rather_than_served(db: AsyncSessio
     await snapshot.current(db, prompt_version=None)
 
     await db.execute(sa.update(LeaderboardSnapshot).values(fingerprint="not-the-games-you-have"))
-    await db.flush()
+    # Committed: the stored run is written in a transaction of its own, which would wait
+    # on this one's row lock for as long as it stayed open.
+    await db.commit()
 
     rebuilt = await snapshot.current(db, prompt_version=None)
 
@@ -170,12 +173,91 @@ async def test_a_run_stored_by_the_previous_engine_is_rebuilt(db: AsyncSession) 
     stale = dict(await snapshot.build(db, prompt_version=None))
     stale["rows"] = [{**row, "rating": 9999.0, "volatility": 0.06} for row in stale["rows"]]
     await db.execute(sa.update(LeaderboardSnapshot).values(fingerprint=previous, payload=stale))
-    await db.flush()
+    # Committed: the stored run is written in a transaction of its own, which would wait
+    # on this one's row lock for as long as it stayed open.
+    await db.commit()
 
     served = await snapshot.current(db, prompt_version=None)
 
     assert all(row["rating"] != 9999.0 for row in served["rows"])
     assert all("volatility" not in row for row in served["rows"])
+
+
+async def test_a_game_that_ends_during_a_rebuild_is_not_hidden_by_it(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fingerprint is taken before the build, not after (ADR-0061).
+
+    Taken after, a game ending while the run was being computed is in the fingerprint and not in
+    the run — so the run matches, and is served as current without that game until another one
+    ends. Taken before, the next read sees the difference and rebuilds.
+    """
+    await _two_models(db)
+    await _played(db, "snap/alpha", "snap/beta")
+    await db.flush()
+
+    original = snapshot.build
+
+    async def a_game_ends_meanwhile(session: AsyncSession, **kwargs: Any) -> dict[str, Any]:
+        payload = await original(session, **kwargs)
+        await _played(db, "snap/beta", "snap/alpha")
+        await db.flush()
+        return payload
+
+    monkeypatch.setattr(snapshot, "build", a_game_ends_meanwhile)
+    assert (await snapshot.current(db, prompt_version=None))["games_counted"] == 1
+
+    monkeypatch.setattr(snapshot, "build", original)
+    assert (await snapshot.current(db, prompt_version=None))["games_counted"] == 2
+
+
+async def test_the_matchmaker_pairs_on_the_stored_ratings(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The matchmaker used to fit its own ratings on every tick — a third copy of a number the
+    leaderboard holds (ADR-0061). It must read the stored run: the stored rating is altered here,
+    fingerprint intact, and fitting is made to fail, so only a read of the stored run can pass."""
+    from chessmark.bench import service
+    from chessmark.db import tournaments as repo
+    from chessmark.orchestration.tournament import _form
+    from chessmark.tournament import FieldFilter, Format, TournamentConfig
+
+    await _two_models(db)
+    await _played(db, "snap/alpha", "snap/beta")
+    await db.flush()
+    await snapshot.current(db, prompt_version=PROMPT_VERSION)
+
+    stored = await db.scalar(sa.select(LeaderboardSnapshot))
+    assert stored is not None
+    payload = dict(stored.payload)
+    payload["rows"] = [{**row, "rating": 1234.0} for row in payload["rows"]]
+    await db.execute(sa.update(LeaderboardSnapshot).values(payload=payload))
+    # Committed: the stored run is written in a transaction of its own, which would wait
+    # on this one's row lock for as long as it stayed open.
+    await db.commit()
+
+    async def refuse(*_: Any, **__: Any) -> Any:
+        raise AssertionError("the matchmaker fitted ratings instead of reading them")
+
+    monkeypatch.setattr(service, "compute_ratings", refuse)
+    monkeypatch.setattr(snapshot, "compute_ratings", refuse)
+
+    config = TournamentConfig(format=Format.POOL, field=FieldFilter(free_only=False))
+    tournament = await repo.create_tournament(
+        db,
+        name="pairs",
+        slug="pairs",
+        config=config,
+        entrants=await repo.resolve_field(db, config.field),
+    )
+    await db.flush()
+
+    form = await _form(db, tournament)
+
+    assert {key: f.rating for key, f in form.items()} == {
+        "snap/alpha": 1234.0,
+        "snap/beta": 1234.0,
+    }
 
 
 async def test_storing_replaces_rather_than_accumulates(db: AsyncSession) -> None:
@@ -201,7 +283,9 @@ async def test_an_empty_store_rebuilds_rather_than_failing(db: AsyncSession) -> 
     await snapshot.current(db, prompt_version=None)
 
     await db.execute(sa.delete(LeaderboardSnapshot))
-    await db.flush()
+    # Committed: the stored run is written in a transaction of its own, which would wait
+    # on this one's row lock for as long as it stayed open.
+    await db.commit()
 
     assert (await snapshot.current(db, prompt_version=None))["games_counted"] == 1
 

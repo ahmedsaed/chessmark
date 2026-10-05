@@ -50,7 +50,7 @@ were live in this directory before it was written.
 | [0029](0029-a-deviation-has-a-ceiling.md) | A rating deviation is capped at the prior | Superseded by [0060](0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md) |
 | [0030](0030-a-halt-pauses-the-board.md) | A halt pauses every game it covers, and says so on the page | Accepted |
 | [0031](0031-a-turn-may-not-inflate-its-own-context.md) | A turn may not inflate its own context | Accepted |
-| [0032](0032-the-leaderboard-is-stored-not-recomputed-per-request.md) | The leaderboard is stored, not recomputed on every request | Accepted |
+| [0032](0032-the-leaderboard-is-stored-not-recomputed-per-request.md) | The leaderboard is stored, not recomputed on every request | Amended by [0061](0061-every-rating-is-a-stored-run.md) |
 | [0033](0033-a-tail-budget-in-tokens-and-a-provider-that-cannot-count.md) | A tail budget in tokens, and a provider that cannot count | Accepted |
 | [0034](0034-one-page-per-model.md) | One page per model, and the contestant is a section on it | Accepted |
 | [0035](0035-live-frames-are-not-events.md) | A turn streams as it happens, and what streams is not an event | Accepted |
@@ -79,6 +79,7 @@ were live in this directory before it was written.
 | [0058](0058-the-house-account-pays-for-games-no-person-started.md) | The house account pays for games no person started | Accepted |
 | [0059](0059-a-decision-model-with-a-limit-plays-in-heats.md) | A decision model that cannot take every move at once plays in heats | Accepted |
 | [0060](0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md) | Models are rated by Bradley-Terry, and ranked by the strength they have proven | Accepted |
+| [0061](0061-every-rating-is-a-stored-run.md) | Every rating is a stored run, read rather than computed | Accepted |
 
 ## Template
 

@@ -33,6 +33,15 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **The stored leaderboard was never actually stored.** A rebuild was written through the
+  request's session, which is never committed, so every read of the leaderboard recomputed it
+  from scratch. It is now written and committed in a transaction of its own. A warm read went
+  from about 50 ms to 8 ms. ([ADR-0061](docs/adr/0061-every-rating-is-a-stored-run.md))
+
+- **A game that ended while the leaderboard was being rebuilt could be left out until the next
+  game ended.** The rebuild recorded what it was computed from *after* computing it, so the
+  incomplete run passed its own check.
+
 - **A new game now appears on the site as soon as it starts.** Nothing told the website's cache
   that a game had begun, so a tournament's next game stayed invisible on its event page, even
   after a reload, until the game's first move. For a decision model that took minutes. The
@@ -52,6 +61,13 @@ file is only the record of *what shipped when*.
   than as playing.
 
 ### Changed
+
+- **A pool's standings and the matchmaker read stored ratings instead of computing their own.**
+  Every rating on the site now comes from one stored, fingerprinted run, so what the matchmaker
+  pairs on is exactly what the site shows. A pool's run is rebuilt only when one of its own games
+  ends. The standings page also reads every game's endpoints in one query instead of one per
+  game, so its cost no longer grows with the event.
+  ([ADR-0061](docs/adr/0061-every-rating-is-a-stored-run.md))
 
 - **Ratings are Bradley-Terry, and tables are ordered by proven strength.** Every model starts with
   two draws against an imaginary 1500 opponent, and all games are fitted at once with no dates, so

@@ -136,6 +136,35 @@ async def test_rows_are_ordered_by_proven_strength_not_rating(
     assert "volatility" not in rows[0]
 
 
+async def test_a_rebuilt_ranking_outlives_the_request_that_built_it(
+    client: AsyncClient, db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR-0032's whole point, through the endpoint — which is the only place it can be seen.
+
+    A request's session is opened per request and never committed, so a rebuild written through it
+    was rolled back when the request ended. Every bench test passed regardless: they share one
+    session across calls and read their own uncommitted write. On the live site every read of the
+    leaderboard rebuilt it from scratch, which is the cost the stored run was built to remove.
+    Here the second request must be answered without building anything.
+    """
+    from chessmark.bench import snapshot
+
+    await _model(db, "test/alpha")
+    await _model(db, "test/beta")
+    await _played(db, "test/alpha", "test/beta", result=GameResult.WHITE_WINS)
+
+    assert (await client.get("/leaderboard")).status_code == 200
+
+    async def refuse(*_: object, **__: object) -> object:
+        raise AssertionError("the stored run was not there for the next request")
+
+    monkeypatch.setattr(snapshot, "build", refuse)
+    second = await client.get("/leaderboard")
+
+    assert second.status_code == 200
+    assert len(second.json()["rows"]) == 2
+
+
 async def test_a_row_carries_the_illegal_move_rate(client: AsyncClient, db: AsyncSession) -> None:
     """The headline number, and the reason the project exists."""
     await _model(db, "test/alpha")

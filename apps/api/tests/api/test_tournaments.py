@@ -406,6 +406,7 @@ async def _seat_a_tournament_game(
     era: str | None = "v3+v4",
     white: str = "scripted/white",
     black: str | None = "scripted/black",
+    round_number: int = 217,
 ):
     """Create a real game and record it as an event pairing, the way the runner would."""
     from chessmark.orchestration.match import Seat, create_match
@@ -419,7 +420,7 @@ async def _seat_a_tournament_game(
         TournamentGame(
             tournament_id=tournament_id,
             era=era,
-            round_number=217,
+            round_number=round_number,
             white_key=white,
             black_key=black,
             game_id=match.game.id,
@@ -504,6 +505,56 @@ async def test_naming_the_event_costs_one_query(client: AsyncClient, db: AsyncSe
         f"a game in an event took {evented} queries against {plain} for one outside — the card is "
         "reading the tournament separately from the pairing that points at it"
     )
+
+
+async def test_a_pool_s_page_costs_the_same_however_many_games_it_has(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """CLAUDE.md, *a new read endpoint is measured*, applied late to this one (ADR-0061).
+
+    Two things grew with the event. Each game's endpoints were read one game at a time — 84 reads
+    for `pool-free` — and the pool's ratings were fitted on every request. Now the endpoints are
+    one batched read and the ratings are a stored run, so a warm read of a pool with six games must
+    cost exactly what one with one game does.
+    """
+    from chessmark.tournament import FieldFilter, Format, TournamentConfig
+
+    await make_event(db, slug="seed-models")
+    config = TournamentConfig(format=Format.POOL, field=FieldFilter(free_only=False))
+    pool = await repo.create_tournament(
+        db,
+        name="Measured",
+        slug="measured",
+        config=config,
+        entrants=await repo.resolve_field(db, config.field),
+    )
+    era = repo.era_of(pool)
+    await db.commit()
+
+    statements: list[str] = []
+
+    def record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    async def warm_read() -> int:
+        await client.get("/tournaments/measured")
+        statements.clear()
+        sa.event.listen(db.bind.sync_engine, "before_cursor_execute", record)
+        try:
+            response = await client.get("/tournaments/measured")
+        finally:
+            sa.event.remove(db.bind.sync_engine, "before_cursor_execute", record)
+        assert response.status_code == 200
+        return len(statements)
+
+    await _seat_a_tournament_game(db, pool.id, era=era, round_number=1)
+    one = await warm_read()
+    for round_number in range(2, 7):
+        await _seat_a_tournament_game(db, pool.id, era=era, round_number=round_number)
+    six = await warm_read()
+
+    assert len((await client.get("/tournaments/measured")).json()["games"]) == 6
+    assert six == one, f"a pool's page took {one} queries with one game and {six} with six"
 
 
 async def test_a_delisted_entrant_that_never_played_is_not_a_row(
