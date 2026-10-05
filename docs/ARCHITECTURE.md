@@ -250,7 +250,7 @@ erDiagram
 | `tool_calls` | Every tool invocation | name, arguments, result, ok, duration |
 | `messages` | Trash talk | author, ply, content, moderation status |
 | `game_events` | **Ordered event log per game** | monotonic `seq`; the single source for both SSE replay and the replay UI |
-| `leaderboard_snapshots` | The stored ranking (ADR-0032) | one Bradley-Terry fit over every counted game, fingerprinted by the games and the rating method (ADR-0060) |
+| `leaderboard_snapshots` | Every stored rating run (ADR-0032, ADR-0061) | one Bradley-Terry fit per `(prompt_version, scope)` — `""` for the leaderboard, `tournament:<id>` for a pool — fingerprinted by the games in scope and the rating method (ADR-0060) |
 | `analysis_jobs` | Stockfish work queue | status, engine version, depth |
 | `usage_ledger` | Quota + spend accounting | per user per day |
 

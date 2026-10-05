@@ -22,7 +22,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from chessmark.bench.service import compute_ratings
+from chessmark.bench import snapshot
 from chessmark.core.cooldown import ProviderCooldown
 from chessmark.core.halt import SCOPE_ALL, Halt
 from chessmark.db import tournaments as repo
@@ -711,30 +711,38 @@ async def _form(session: AsyncSession, tournament: Tournament) -> dict[str, Form
     Ratings come from the leaderboard over *ranked* games (BENCH-03) rather than from this pool's
     own results: a model that arrives already rated is not unknown, and pairing it as though it
     were would spend games rediscovering what is already measured.
+
+    **Read from the leaderboard's stored run, not fitted here** (ADR-0061). The matchmaker used to
+    run its own fit on every tick, a third copy of a number the leaderboard already holds — and it
+    pairs on what the site shows only if it reads what the site shows.
     """
-    run = await compute_ratings(session)
+    stored = await snapshot.current(session)
 
     # A contestant is `(model, quantization)`, but a pool's entrants are usually keyed by slug
     # alone — the precision is decided per game by the router. Both are looked up, so a pool that
     # does pin one still finds its rating.
-    by_key: dict[str, Any] = {}
-    by_slug: dict[str, Any] = {}
-    for contestant, rating in run.ratings.items():
-        by_key[f"{contestant.model_slug}@{contestant.quantization}"] = rating
+    by_key: dict[str, Form] = {}
+    by_slug: dict[str, Form] = {}
+    for row in stored["rows"]:
+        slug, quantization = str(row["model_slug"]), str(row["quantization"])
+        known = Form(
+            key=slug,
+            rating=float(row["rating"]),
+            deviation=float(row["rating_deviation"]),
+        )
+        by_key[f"{slug}@{quantization}"] = known
         # If a model is served at several precisions, the least certain of them stands in: it is
         # the one a game would tell us most about.
-        current = by_slug.get(contestant.model_slug)
-        if current is None or rating.rd > current.rd:
-            by_slug[contestant.model_slug] = rating
+        current = by_slug.get(slug)
+        if current is None or known.deviation > current.deviation:
+            by_slug[slug] = known
 
     form: dict[str, Form] = {}
     for entrant in await repo.entrants_of(session, tournament.id):
-        known = by_key.get(entrant.key) or by_slug.get(entrant.key.split("@", 1)[0])
-        if known is not None:
+        known_form = by_key.get(entrant.key) or by_slug.get(entrant.key.split("@", 1)[0])
+        if known_form is not None:
             form[entrant.key] = Form(
-                key=entrant.key,
-                rating=float(known.rating),
-                deviation=float(known.rd),
+                key=entrant.key, rating=known_form.rating, deviation=known_form.deviation
             )
     return form
 

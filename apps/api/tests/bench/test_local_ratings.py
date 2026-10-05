@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from chessmark.bench import snapshot
 from chessmark.bench.service import compute_ratings, ratings_by_key
 from chessmark.db import tournaments as repo
 from chessmark.db.models import ModelEndpoint, ModelRegistry, TournamentGame
@@ -120,7 +121,7 @@ async def test_a_local_rating_ignores_another_events_games(db: AsyncSession) -> 
 
     local = await ratings_by_key(db, tournament_id=here, prompt_version=None)
 
-    assert local["test/beta"][0] > local["test/alpha"][0]
+    assert local["test/beta"].rating > local["test/alpha"].rating
 
     # And globally the other way, from the same games — which is exactly why the event page must
     # not show the global number.
@@ -178,3 +179,66 @@ async def test_a_model_with_no_ratable_game_is_absent_rather_than_1500(db: Async
 
     assert set(local) == {"test/alpha", "test/beta"}
     assert "test/never-played" not in local
+
+
+# ====================================================================== stored (ADR-0061)
+
+
+def _no_fitting(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make any attempt to compute a pool's ratings fail loudly, so a pass proves it read storage."""
+
+    async def refuse(*_: Any, **__: Any) -> Any:
+        raise AssertionError("a pool's ratings were fitted where they should have been read")
+
+    monkeypatch.setattr(snapshot, "ratings_by_key", refuse)
+
+
+async def test_a_pool_s_ratings_are_read_from_its_stored_run(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The standings used to fit a pool's ratings on every request. The second read here has to be
+    answered without fitting anything — the same bargain the leaderboard already had."""
+    for slug in ("test/alpha", "test/beta"):
+        await _model(db, slug)
+    here = await _event(db, "here")
+    await _played(db, "test/alpha", "test/beta", result=GameResult.WHITE_WINS, event=here)
+
+    first = await snapshot.pool_ratings(db, tournament_id=here, prompt_version=None)
+    _no_fitting(monkeypatch)
+    second = await snapshot.pool_ratings(db, tournament_id=here, prompt_version=None)
+
+    assert second == first
+    assert second["test/alpha"].rating > second["test/beta"].rating
+
+
+async def test_a_game_in_another_pool_does_not_rebuild_this_one(
+    db: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A pool's fingerprint covers its own games. Keyed on every game, `pool-free` would be
+    rebuilt each time the decision pool finished one, for a number that cannot have moved."""
+    for slug in ("test/alpha", "test/beta"):
+        await _model(db, slug)
+    here, elsewhere = await _event(db, "here"), await _event(db, "elsewhere")
+    await _played(db, "test/alpha", "test/beta", result=GameResult.WHITE_WINS, event=here)
+    await snapshot.pool_ratings(db, tournament_id=here, prompt_version=None)
+
+    await _played(db, "test/beta", "test/alpha", result=GameResult.WHITE_WINS, event=elsewhere)
+    _no_fitting(monkeypatch)
+
+    assert "test/alpha" in await snapshot.pool_ratings(db, tournament_id=here, prompt_version=None)
+
+
+async def test_a_game_in_this_pool_rebuilds_it(db: AsyncSession) -> None:
+    """The other half: a stored run that stopped matching its games is rebuilt, never served."""
+    for slug in ("test/alpha", "test/beta"):
+        await _model(db, slug)
+    here = await _event(db, "here")
+    await _played(db, "test/alpha", "test/beta", result=GameResult.WHITE_WINS, event=here)
+    before = await snapshot.pool_ratings(db, tournament_id=here, prompt_version=None)
+
+    await _played(
+        db, "test/beta", "test/alpha", result=GameResult.WHITE_WINS, event=here, round_number=2
+    )
+    after = await snapshot.pool_ratings(db, tournament_id=here, prompt_version=None)
+
+    assert after["test/beta"].rating > before["test/beta"].rating
