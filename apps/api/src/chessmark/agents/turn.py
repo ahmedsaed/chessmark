@@ -44,7 +44,13 @@ from chessmark.agents.tools import (
     TurnState,
     tool_schemas,
 )
-from chessmark.agents.types import Completion, LlmError, RateLimit, ToolInvocation
+from chessmark.agents.types import (
+    Completion,
+    FailedAttempt,
+    LlmError,
+    RateLimit,
+    ToolInvocation,
+)
 from chessmark.db.credits import spend
 from chessmark.db.enums import EventType, ModelRuntime, ModerationStatus, TurnStatus
 from chessmark.db.house import payer_of
@@ -429,6 +435,10 @@ class TurnRunner:
         )
         self._tools = tool_schemas(trash_talk_enabled=game.trash_talk_enabled)
         self._llm_sequence = 0
+        #: Answered calls, which is what `llm_call_count` counts and what the iteration bound is
+        #: seeded from. Not `_llm_sequence`: that numbers failed attempts too (ADR-0062), and a
+        #: provider's refusals must not spend a model's rounds (invariant 11).
+        self._answered = 0
         self._carried = _Carried()
         self._tool_sequence = 0
         self._nudges = 0
@@ -508,6 +518,7 @@ class TurnRunner:
         # forty-five minutes later. The counters stay what they are: the tool bound is about tools
         # that ran. The sequence is about rows, so it asks the rows.
         self._llm_sequence = carried.llm_calls
+        self._answered = carried.llm_calls
         self._tool_sequence = carried.tool_calls
         if resuming is not None:
             self._llm_sequence = max(
@@ -885,7 +896,8 @@ class TurnRunner:
             )
             return None
 
-        completion = await self.gateway.complete(
+        completion = await self._complete(
+            turn,
             model=self.model,
             messages=compaction.summary_request(plan),
             # No tools: a model handed its schema mid-summary calls one, and the call would have to
@@ -1048,7 +1060,8 @@ class TurnRunner:
                 projected = self._projected_prompt_tokens(window)
 
             try:
-                completion = await self.gateway.complete(
+                completion = await self._complete(
+                    turn,
                     model=self.model,
                     messages=messages,
                     tools=self._tools,
@@ -1548,8 +1561,52 @@ class TurnRunner:
             for call in completion.tool_calls
         ]
 
+    async def _complete(self, turn: Turn, **kwargs: Any) -> Completion:
+        """`gateway.complete`, with every failed attempt written down whatever happens next.
+
+        The one place a chat turn calls the provider, so no call site can forget it. Failures are
+        written before the error is raised, because the caller may recover (a reactive compaction)
+        or may not — and the record should not depend on which (ADR-0062).
+        """
+        try:
+            completion = await self.gateway.complete(**kwargs)
+        except LlmError as error:
+            await self._record_failures(turn, error.failed)
+            raise
+        await self._record_failures(turn, completion.failed_attempts)
+        return completion
+
+    async def _record_failures(self, turn: Turn, attempts: tuple[FailedAttempt, ...]) -> None:
+        """One row per failed attempt, verbatim, with `error` set and no cost (ADR-0062).
+
+        No cost because none is known — a failure carries no usage — and billing is reconciled
+        against OpenRouter's own ledger (ADR-0054), which finds any failure it did charge for. No
+        provider either: it did not serve the call, and "served by" reads this column.
+        """
+        for attempt in attempts:
+            self._llm_sequence += 1
+            self.session.add(
+                LlmCall(
+                    game_id=self.game.id,
+                    turn_id=turn.id,
+                    sequence=self._llm_sequence,
+                    model_slug=self.model,
+                    provider=None,
+                    request=attempt.request,
+                    response=attempt.response,
+                    reasoning_text=None,
+                    cost_usd=Decimal(0),
+                    latency_ms=attempt.latency_ms,
+                    finish_reason=None,
+                    error=attempt.error,
+                )
+            )
+        if attempts:
+            await self.session.flush()
+
     async def _record_llm_call(self, turn: Turn, completion: Completion) -> None:
         self._llm_sequence += 1
+        self._answered += 1
         self.session.add(
             LlmCall(
                 game_id=self.game.id,
@@ -1737,7 +1794,7 @@ class TurnRunner:
     async def _finalise(self, turn: Turn, result: TurnResult) -> None:
         result.illegal_attempts = self.state.illegal_attempts
         result.tool_calls = self.state.tool_calls
-        result.llm_calls = self._llm_sequence
+        result.llm_calls = self._answered
         result.said = list(self.state.said)
 
         if result.status is TurnStatus.RUNNING:

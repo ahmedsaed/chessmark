@@ -20,7 +20,7 @@ from chessmark.bench.service import (
     compute_ratings,
     scan,
 )
-from chessmark.db.models import ModelEndpoint, ModelRegistry
+from chessmark.db.models import ModelEndpoint, ModelRegistry, Player
 from chessmark.game import GameResult, Termination
 from chessmark.orchestration.match import Seat, create_match
 
@@ -341,3 +341,36 @@ async def _leaderboard(db: AsyncSession) -> None:
     scanned = await scan(db, prompt_version=None)
     await compute_ratings(db, prompt_version=None, scanned=scanned)
     await compute_aggregates(db, prompt_version=None, scanned=scanned)
+
+
+async def test_a_failed_call_is_not_part_of_a_models_latency(db: AsyncSession) -> None:
+    """Failed attempts are recorded now (ADR-0062), and a timeout's ten minutes is the provider
+    failing, not the model thinking. The leaderboard's latency is over answered calls only."""
+    from chessmark.db.models import LlmCall, Turn
+
+    await _model(db, "test/alpha")
+    await _model(db, "test/beta")
+    game = await _played(db, "test/alpha", "test/beta", result=GameResult.WHITE_WINS)
+    white = next(p for p in await db.scalars(sa.select(Player).where(Player.game_id == game.id)))
+    turn = Turn(game_id=game.id, player_id=white.id, ply_number=1)
+    db.add(turn)
+    await db.flush()
+    for sequence, latency, error in ((1, 600_000, "provider did not answer"), (2, 2_000, None)):
+        db.add(
+            LlmCall(
+                game_id=game.id,
+                turn_id=turn.id,
+                sequence=sequence,
+                model_slug=white.sampling["model"],
+                request={"model": white.sampling["model"]},
+                response=None if error else {"id": "gen-1"},
+                latency_ms=latency,
+                error=error,
+            )
+        )
+    await db.flush()
+
+    aggregates = await compute_aggregates(db, prompt_version=None)
+    by_label = {c.label: a for c, a in aggregates.items()}
+
+    assert by_label[f"{white.sampling['model']}@fp8"].mean_latency_ms == 2_000

@@ -243,3 +243,52 @@ async def test_the_real_transport_turns_an_error_status_into_a_classifiable_erro
     finally:
         decisions.httpx.AsyncClient = real  # type: ignore[misc]
     assert caught.value.status_code == 429
+
+
+# ====================================================================== failed calls (ADR-0062)
+
+
+async def test_a_host_refusing_its_own_answer_is_not_retried() -> None:
+    """Tev1's host refused the same valid answer twelve times out of twelve. Retrying it is the
+    twenty wasted calls and the abandoned game; the gateway hands it back at once, naming the
+    question, so the caller can ask with the moves split differently."""
+    refused = _refusal(
+        502, {"error": {"message": 'Tev1 answered "Kd1" for question "heat_1"', "code": 502}}
+    )
+    gateway, sent = _gateway(refused, refused, refused)
+
+    with pytest.raises(LlmError) as caught:
+        await gateway.decide(BODY)
+
+    assert len(sent) == 1
+    assert caught.value.answer_rejected == "heat_1"
+    assert not caught.value.retryable
+
+
+async def test_every_failed_attempt_is_handed_back_with_what_the_provider_said() -> None:
+    """Invariant 3 for the calls that did not answer. Each attempt carries the request we sent and
+    the provider's own error object, parsed, so the row can hold it rather than a string of it."""
+    limited = _refusal(429, {"error": {"message": "slow down", "code": 429}})
+    gateway, _ = _gateway(limited, limited)
+
+    with pytest.raises(LlmError) as caught:
+        await gateway.decide(BODY)
+
+    assert len(caught.value.failed) == 2
+    for attempt in caught.value.failed:
+        assert attempt.status_code == 429
+        assert attempt.request["model"] == BODY["model"]
+        assert attempt.response == {
+            "status_code": 429,
+            "body": {"error": {"message": "slow down", "code": 429}},
+        }
+
+
+async def test_an_answer_after_a_failure_brings_the_failure_with_it() -> None:
+    """The retry that worked is not the whole story: the refusal before it is recorded too."""
+    limited = _refusal(429, {"error": {"message": "slow down", "code": 429}})
+    gateway, _ = _gateway(limited, ANSWERED)
+
+    decision = await gateway.decide(BODY)
+
+    assert [a.status_code for a in decision.failed_attempts] == [429]

@@ -68,6 +68,7 @@ def deciding(
     provider: str = "Scripted",
     malformed: bool = False,
     max_choices: int | None = None,
+    refuses: Callable[[frozenset[str]], bool] | None = None,
 ) -> DecideFn:
     """A decision model that plays `moves` in order where it can, and the first option where not.
 
@@ -87,6 +88,12 @@ def deciding(
     `max_choices` makes it a host like Tev's: a 422 for any `choice` with more options than that, or
     fewer than two. A heat (`heat_1`, …) is won by the next scripted move when it is in the heat,
     without consuming it — the final, asked as `move`, is where the script moves on.
+
+    `refuses` is Tev1's host fault (ADR-0062): a question whose option set it is true for is
+    refused with the 502 the host sent — `Tev1 answered "Kd1" for question "heat_1"` — on every
+    attempt. A predicate rather than a rule, because the host's rule is not known: live, one
+    thirteen-move set was refused twelve times out of twelve, and the same moves split nine ways
+    were answered, with `Kd1` and `Nd1` still sharing a heat.
     """
     script = list(moves)
     nouls = answers or {}
@@ -103,6 +110,13 @@ def deciding(
                     )
                     body = json.dumps({"error": {"message": message, "code": 422}})
                     raise DecisionHttpError(422, body)
+        if refuses is not None:
+            for key, question in (request.get("questions") or {}).items():
+                offered = frozenset(question.get("criteria") or {})
+                if question.get("type") == "choice" and refuses(offered):
+                    message = f'Tev1 answered "{min(offered)}" for question "{key}"'
+                    body = json.dumps({"error": {"message": message, "code": 502}})
+                    raise DecisionHttpError(502, body)
         out: dict[str, Any] = {}
         side = (by_side or {}).get(str((request.get("state") or {}).get("you_are")), {})
         for key, question in (request.get("questions") or {}).items():
