@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import datetime as dt
 import logging
 import random
@@ -31,7 +32,14 @@ from chessmark.agents.normalise import normalise_response
 from chessmark.agents.pricing import PricingTable, compute_cost
 from chessmark.agents.redaction import redact
 from chessmark.agents.routing import ProviderRouting
-from chessmark.agents.types import Completion, CostSource, LlmError, RateLimit
+from chessmark.agents.types import (
+    Completion,
+    CostSource,
+    FailedAttempt,
+    LlmError,
+    RateLimit,
+    failed_attempt,
+)
 
 CompletionFn = Callable[..., Awaitable[Any]]
 SleepFn = Callable[[float], Awaitable[None]]
@@ -822,13 +830,15 @@ class LlmGateway:
         # than fixed before the first attempt.
         allowed = self.retry.max_attempts
         attempt = 0
+        # Every attempt that fails is kept and handed to the turn runner to write down (invariant
+        # 3) — the request we sent and what came back. Until these were kept a failure left no row
+        # at all, and the evidence of why a game stopped existed only as a truncated error string.
+        failed: list[FailedAttempt] = []
 
         while True:
             attempt += 1
             # Counted here, before the call rather than after it, because this is the only place
-            # that sees *every* attempt. A failure never reaches `llm_calls` — the row is written
-            # from a completion — so a count derived from the database misses exactly the retries
-            # and 429s that the provider is charging against a request allowance.
+            # that sees *every* attempt, including those that time out before anything is written.
             if self._on_attempt is not None:
                 await self._on_attempt(model)
             started = time.perf_counter()
@@ -862,8 +872,17 @@ class LlmGateway:
                 # waiting the whole timeout again, so one costs ten more minutes of a worker held
                 # against an endpoint that has just failed to answer — the 429 lesson (patience
                 # inside the retry loop is paid for in requests) with a much larger unit.
+                message = f"provider did not answer within {deadline:.0f}s"
+                failed.append(
+                    failed_attempt(
+                        error,
+                        request=redacted_request,
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                        message=message,
+                    )
+                )
                 raise LlmError(
-                    message=f"provider did not answer within {deadline:.0f}s",
+                    message=message,
                     retryable=False,
                     attempts=attempt,
                     request=redacted_request,
@@ -873,9 +892,17 @@ class LlmGateway:
                         ),
                         timed_out=True,
                     ),
+                    failed=tuple(failed),
                 ) from error
             except Exception as error:
                 last_error = error
+                failed.append(
+                    failed_attempt(
+                        error,
+                        request=redacted_request,
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                    )
+                )
                 allowed = self.retry.attempts_for(error)
                 if not is_retryable(error) or attempt >= allowed:
                     raise LlmError(
@@ -889,6 +916,7 @@ class LlmGateway:
                         # orchestrator sees a string the structure is gone.
                         rate_limit=rate_limit_from(error) if is_unavailable(error) else None,
                         request_rejected=rejects_the_request(error),
+                        failed=tuple(failed),
                     ) from error
 
                 wait = self.retry.delay_for(attempt, error)
@@ -910,6 +938,8 @@ class LlmGateway:
                 latency_ms=latency_ms,
                 attempts=attempt,
             )
+            if failed:
+                completion = dataclasses.replace(completion, failed_attempts=tuple(failed))
             self._check_reasoning_survived(completion, key=endpoint_key)
 
             # **One answered call is the evidence, not one finished turn.** The cooldown ladder

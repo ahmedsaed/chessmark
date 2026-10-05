@@ -43,7 +43,7 @@ from chessmark.agents.live import block as live_block
 from chessmark.agents.live import turn_started as live_turn
 from chessmark.agents.sessions import session_for_game
 from chessmark.agents.turn import TurnResult
-from chessmark.agents.types import LlmError
+from chessmark.agents.types import FailedAttempt, LlmError
 from chessmark.db.credits import spend
 from chessmark.db.enums import EventType, TurnStatus
 from chessmark.db.house import payer_of
@@ -96,6 +96,9 @@ class DecisionTurnRunner:
         #: Calls this attempt made, and the sequence the next one is recorded under — continued
         #: from a resumed turn's own, which `uq_llm_calls_turn_id_sequence` holds us to.
         self._calls = 0
+        #: Failed attempts recorded this turn, which keep it from being rolled back (ADR-0062).
+        self._failures = 0
+        self._answered_before = 0
         self._sequence = 0
         #: What a resumed turn's row already holds from the attempt before. The row is the whole
         #: turn and `TurnResult` is this attempt, so the money is added rather than replaced.
@@ -125,6 +128,16 @@ class DecisionTurnRunner:
                     sa.select(sa.func.coalesce(sa.func.max(LlmCall.sequence), 0)).where(
                         LlmCall.turn_id == turn.id
                     )
+                )
+                or 0
+            )
+            # Answered calls only: `llm_call_count` counts what was answered, and the failed
+            # attempts kept beside them are numbered in sequence without being counted (ADR-0062).
+            self._answered_before = int(
+                await self.session.scalar(
+                    sa.select(sa.func.count())
+                    .select_from(LlmCall)
+                    .where(LlmCall.turn_id == turn.id, LlmCall.error.is_(None))
                 )
                 or 0
             )
@@ -163,6 +176,14 @@ class DecisionTurnRunner:
             result.error = str(error)
             result.rate_limit = error.rate_limit
             result.request_rejected = error.request_rejected
+            if error.answer_rejected is not None:
+                # Every re-split was refused too. The same position asks the same questions next
+                # time, so retrying the job is the twenty refusals this fallback exists to end.
+                result.error = (
+                    f"{self.model}'s host refused its own answer to {error.answer_rejected!r}, "
+                    f"in every split of the moves tried: {error}"
+                )
+                result.request_rejected = True
         except MalformedDecisionError as error:
             # An answer that is not an answer to the question. The endpoint's fault in the only
             # sense that matters here — nothing the model *chose* — so it is a failed turn, never a
@@ -170,10 +191,12 @@ class DecisionTurnRunner:
             result.status = TurnStatus.FAILED
             result.error = f"{self.model} returned an unusable decision: {error}"
 
-        if result.status is TurnStatus.FAILED and self._calls:
+        if result.status is TurnStatus.FAILED and (self._calls or self._failures):
             # **A call that was answered is kept** (ADR-0053): a heat paid for before the final
             # failed is real spend with a real payload, and rolling it back would pay for it again
-            # on the retry and leave the record short of what OpenRouter billed.
+            # on the retry and leave the record short of what OpenRouter billed. **So is one that
+            # failed** (ADR-0062): rolling the turn back took the failed calls' rows with it, and
+            # they are the only record of what the provider said.
             result.keep_rounds = True
 
         result.latency_ms = int((time.perf_counter() - started) * 1000)
@@ -235,10 +258,17 @@ class DecisionTurnRunner:
         """How `decide` sends a request: each one recorded and paid for as soon as it answers."""
 
         async def ask(questions: dict[str, Any]) -> Decision:
-            decision = await self.gateway.decide(
-                request.body(model=self.model, questions=questions),
-                session_id=session_for_game(self.game.id),
-            )
+            try:
+                decision = await self.gateway.decide(
+                    request.body(model=self.model, questions=questions),
+                    session_id=session_for_game(self.game.id),
+                )
+            except LlmError as error:
+                # Written before it is raised, so a refusal the turn recovers from by re-splitting
+                # is on record as well as one that ends it (invariant 3).
+                await self._record_failures(turn, error.failed)
+                raise
+            await self._record_failures(turn, decision.failed_attempts)
             self._build = decision.model
             # Recorded before it is read: a response that turns out to be unusable was still a call
             # we made and paid for, and the verbatim row is how anyone finds out what came back.
@@ -320,6 +350,35 @@ class DecisionTurnRunner:
 
     # ------------------------------------------------------------------ persistence
 
+    async def _record_failures(self, turn: Turn, attempts: tuple[FailedAttempt, ...]) -> None:
+        """One row per failed attempt, verbatim, with `error` set and no cost (ADR-0062).
+
+        No cost because none is known — a failure carries no usage — and billing is reconciled
+        against OpenRouter's own ledger (ADR-0054), which finds any failure it did charge for. No
+        provider either: it did not serve the call, and "served by" reads this column.
+        """
+        for attempt in attempts:
+            self.session.add(
+                LlmCall(
+                    game_id=self.game.id,
+                    turn_id=turn.id,
+                    sequence=self._sequence + 1,
+                    model_slug=self.model,
+                    provider=None,
+                    request=attempt.request,
+                    response=attempt.response,
+                    reasoning_text=None,
+                    cost_usd=Decimal(0),
+                    latency_ms=attempt.latency_ms,
+                    finish_reason=None,
+                    error=attempt.error,
+                )
+            )
+            self._sequence += 1
+            self._failures += 1
+        if attempts:
+            await self.session.flush()
+
     async def _record_call(self, turn: Turn, decision: Decision) -> None:
         self.session.add(
             LlmCall(
@@ -395,6 +454,9 @@ class DecisionTurnRunner:
                 if answer.heats
                 else {}
             ),
+            # The host refused an answer and the turn was asked again in smaller heats. Said, so a
+            # page can show that the question this move answered was not the first one asked.
+            **({"resplits": answer.resplits} if answer.resplits else {}),
         }
         await append_event(
             self.session, game_id=self.game.id, type=EventType.DECIDED, payload=payload
@@ -459,7 +521,7 @@ class DecisionTurnRunner:
             else result.status
         )
         carried_prompt, carried_completion, carried_cost = self._carried
-        turn.llm_call_count = self._sequence
+        turn.llm_call_count = self._answered_before + self._calls
         turn.tool_call_count = 0
         turn.illegal_attempts = 0
         turn.prompt_tokens = carried_prompt + result.prompt_tokens

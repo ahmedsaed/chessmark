@@ -16,7 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import json
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -39,9 +41,41 @@ from chessmark.agents.llm import (
 from chessmark.agents.pricing import PricingTable, compute_cost
 from chessmark.agents.redaction import redact
 from chessmark.agents.routing import ProviderRouting
-from chessmark.agents.types import CostSource, LlmError, RateLimit, TokenUsage
+from chessmark.agents.types import (
+    CostSource,
+    FailedAttempt,
+    LlmError,
+    RateLimit,
+    TokenUsage,
+    failed_attempt,
+)
 
 DECISIONS_URL = "https://openrouter.ai/api/alpha/decisions"
+
+#: How OpenRouter words a host refusing its own model's answer: `Tev1 answered "Kd1" for question
+#: "heat_1"`, as a 502. **The quotes may arrive escaped**: the error's text is the raw JSON body,
+#: so production carries `answered \"Kd1\" for question \"heat_1\"`, and a pattern written for the
+#: plain form never matched a real refusal.
+_REJECTED_ANSWER = re.compile(
+    r'answered \\?"[^"\\]*\\?" for question \\?"(?P<question>[^"\\]+)\\?"'
+)
+
+
+def rejected_question(error: BaseException) -> str | None:
+    """The question whose answer the host refused, when that is what this error is.
+
+    **Deterministic, so never retried.** Tev1's host rejects a valid option for some option sets,
+    and the same set is refused on every attempt — the same request was sent twelve times on
+    2026-10-05 and refused twelve times, with or without a session, under any question name, in any
+    order. Four retries then five job attempts was twenty calls to learn nothing, and an abandoned
+    game. What does work is asking with the options split differently, which `decision_rounds`
+    does when it sees this.
+    """
+    if getattr(error, "status_code", None) != 502:
+        return None
+    match = _REJECTED_ANSWER.search(str(error))
+    return match.group("question") if match else None
+
 
 #: Sends one request body and returns the parsed response, raising `DecisionHttpError` on a non-2xx.
 DecideFn = Callable[..., Awaitable[dict[str, Any]]]
@@ -120,6 +154,8 @@ class Decision:
     response: dict[str, Any]
     """Verbatim, redacted."""
     attempts: int = 1
+    #: The attempts that failed before this one answered, to be recorded beside it.
+    failed_attempts: tuple[FailedAttempt, ...] = ()
 
     def _answer(self, key: str, kind: str) -> dict[str, Any]:
         answer = self.answers.get(key)
@@ -223,6 +259,9 @@ class DecisionGateway:
         model = str(request.get("model") or "")
         pinned = self.routing.only[0] if self.routing and self.routing.only else None
 
+        # Every attempt that fails is kept, to be written down beside the call or instead of it
+        # (invariant 3). The gateway has no session; the turn runner does the writing.
+        failed: list[FailedAttempt] = []
         attempt = 0
         while True:
             attempt += 1
@@ -232,24 +271,44 @@ class DecisionGateway:
             try:
                 raw = await asyncio.wait_for(self._call(request), timeout=self.timeout)
             except TimeoutError as error:
+                message = f"provider did not answer within {self.timeout:.0f}s"
+                failed.append(
+                    failed_attempt(
+                        error,
+                        request=redacted_request,
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                        message=message,
+                    )
+                )
                 # Unavailability, paused rather than retried — the reasoning is `LlmGateway`'s.
                 raise LlmError(
-                    message=f"provider did not answer within {self.timeout:.0f}s",
+                    message=message,
                     attempts=attempt,
                     request=redacted_request,
                     rate_limit=RateLimit(provider=pinned, timed_out=True),
+                    failed=tuple(failed),
                 ) from error
             except Exception as error:
+                failed.append(
+                    failed_attempt(
+                        error,
+                        request=redacted_request,
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                    )
+                )
+                rejected = rejected_question(error)
                 allowed = self.retry.attempts_for(error)
-                if not is_retryable(error) or attempt >= allowed:
+                if rejected is not None or not is_retryable(error) or attempt >= allowed:
                     raise LlmError(
                         message=str(error),
                         status_code=getattr(error, "status_code", None),
-                        retryable=is_retryable(error),
+                        retryable=is_retryable(error) and rejected is None,
                         attempts=attempt,
                         request=redacted_request,
                         rate_limit=rate_limit_from(error) if is_unavailable(error) else None,
                         request_rejected=rejects_the_request(error),
+                        answer_rejected=rejected,
+                        failed=tuple(failed),
                     ) from error
                 await self._sleep(self.retry.delay_for(attempt, error))
                 continue
@@ -261,6 +320,8 @@ class DecisionGateway:
                 latency_ms=int((time.perf_counter() - started) * 1000),
                 attempts=attempt,
             )
+            if failed:
+                decision = dataclasses.replace(decision, failed_attempts=tuple(failed))
             if self.on_success is not None:
                 with contextlib.suppress(Exception):
                     await self.on_success(model, decision.provider or pinned)

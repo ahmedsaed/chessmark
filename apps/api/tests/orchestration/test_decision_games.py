@@ -291,6 +291,43 @@ class TestHeats:
         (decided,) = await _events(db, game.id, EventType.DECIDED)
         assert "heats" not in decided.payload
 
+    async def test_a_heat_the_host_refuses_is_asked_again_in_smaller_heats(
+        self, db: AsyncSession, queue: Any, make_worker: Any
+    ) -> None:
+        """ADR-0062, end to end. Tev1's host refused one heat on every attempt and four games were
+        abandoned for it. Now the turn is asked again with one more heat, the move is played, the
+        refused call is on record with the host's own words, and the decision says it was
+        re-split."""
+        first_heat: frozenset[str] = frozenset()
+
+        def refuses(options: frozenset[str]) -> bool:
+            nonlocal first_heat
+            first_heat = first_heat or options
+            return options == first_heat
+
+        decide = deciding(moves=["Nf3"], max_choices=6, cost=0.00002, refuses=refuses)
+        game = await _start(db, queue, limits={JEV: 6})
+        await run_next(make_worker(plays([]), decide_fn=decide), queue)
+
+        assert [m.payload["san"] for m in await _events(db, game.id, EventType.MOVE_MADE)] == [
+            "Nf3"
+        ]
+        (decided,) = await _events(db, game.id, EventType.DECIDED)
+        assert decided.payload["resplits"] == 1
+
+        db.expunge_all()
+        calls = list(
+            await db.scalars(
+                sa.select(LlmCall).where(LlmCall.game_id == game.id).order_by(LlmCall.sequence)
+            )
+        )
+        refused = [c for c in calls if c.error is not None]
+        assert len(refused) == 1, "the refusal is recorded once — it is not retried"
+        assert refused[0].sequence == 1
+        assert "for question" in refused[0].response["body"]["error"]["message"]
+        assert refused[0].cost_usd == 0
+        assert all(c.error is None for c in calls[1:])
+
     async def test_a_heat_paid_for_is_kept_when_the_final_fails(
         self, db: AsyncSession, queue: Any, make_worker: Any
     ) -> None:
@@ -313,10 +350,13 @@ class TestHeats:
         turn = (await db.scalars(sa.select(Turn).where(Turn.game_id == game.id))).one()
         assert turn.status is TurnStatus.INTERRUPTED
         assert str(turn.cost_usd) == "0.00002000"
+        # The paid heat, then the refused final — kept too, with its error (ADR-0062).
         assert [
-            c.sequence
-            for c in await db.scalars(sa.select(LlmCall).where(LlmCall.game_id == game.id))
-        ] == [1]
+            (c.sequence, c.error is None)
+            for c in await db.scalars(
+                sa.select(LlmCall).where(LlmCall.game_id == game.id).order_by(LlmCall.sequence)
+            )
+        ] == [(1, True), (2, False)]
         assert str((await _game(db, game.id)).total_cost_usd) == "0.00002000"
 
         # The retry asks the turn again from the start, on the same row, and adds to it.
@@ -336,7 +376,7 @@ class TestHeats:
         assert sorted(
             c.sequence
             for c in await db.scalars(sa.select(LlmCall).where(LlmCall.game_id == game.id))
-        ) == [1, 2, 3]
+        ) == [1, 2, 3, 4]
         assert str((await _game(db, game.id)).total_cost_usd) == "0.00006000"
 
 

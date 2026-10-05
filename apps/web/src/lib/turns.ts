@@ -137,6 +137,7 @@ export function decisionBlock(payload: Record<string, unknown>, seq: number): De
     answers,
     durationMs: typeof payload.duration_ms === "number" ? payload.duration_ms : null,
     forced: payload.forced === true,
+    resplits: typeof payload.resplits === "number" ? payload.resplits : 0,
     heats: decisionHeats(payload.heats, ranked !== null),
   };
 }
