@@ -17,9 +17,10 @@ file is only the record of *what shipped when*.
 
 ### Added
 
-- **The standings show how many of each entrant's pairings were abandoned**, in a column headed
-  **A** with the full name on hover. A model with a 3/0/0 record and three abandoned games is a
-  different finding from one with 3/0/0 and nothing lost, and the table could not tell them apart.
+- **The standings show how many of each entrant's pairings were abandoned**, as the last slot of the
+  record, **W/D/L/A**, with the full name on hover. A model with a 3/0/0 record and three abandoned
+  games is a different finding from one with 3/0/0 and nothing lost, and the table could not tell
+  them apart.
 
 - **Decision models that cannot take every legal move in one question now play, in heats.** Tev
   accepts at most 20 options per question and Solar 26, and a middlegame has 30 to 40 moves, so

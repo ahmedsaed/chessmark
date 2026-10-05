@@ -315,7 +315,8 @@ eight. Points there partly measure how many games a model was handed.
 Points and W/D/L stay on the page. They are what lets a reader check the rating against something;
 they just stop deciding the order.
 
-So does **A**, the number of that entrant's pairings in the era that were abandoned. It is not part
+So does **A**, the number of that entrant's pairings in the era that were abandoned, shown as
+the last slot of the record column (`W/D/L/A`). It is not part
 of W/D/L and never a loss (ADR-0019), but `3/0/0` reads very differently next to `A 3`: that was
 `laguna-xs-2.1` in `pool-free`, with as many games lost to rate limits as played. It is counted
 from the same derived state the schedule shows, so a pairing that was abandoned, resumed and
