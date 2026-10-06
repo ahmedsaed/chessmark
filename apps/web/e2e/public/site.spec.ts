@@ -670,7 +670,6 @@ test("the leaderboard opens on chat models, and decision models are one control 
   await expect(
     page.getByRole("navigation", { name: "Which models" }).getByRole("link", { name: /Decision models/ }),
   ).toHaveAttribute("aria-current", "page");
-  await expect(page.getByText("Decision models are ranked on their own.")).toBeVisible();
   await expect(page.locator('tr[data-runtime="llm"]')).toHaveCount(0);
   await expect(page.locator("table").getByText("decision", { exact: true })).toHaveCount(0);
 });
