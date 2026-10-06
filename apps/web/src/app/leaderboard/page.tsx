@@ -58,17 +58,6 @@ export default async function LeaderboardPage({ searchParams }: PageProps<"/lead
         counts={{ chat: rowsOf(board.rows, "chat").length, decision: rowsOf(board.rows, "decision").length }}
       />
 
-      {group === "decision" && (
-        /* Said beside the table rather than left for the methodology page: a reader comparing a
-           decision model's 1600 with a chat model's needs to know the two are not one scale. */
-        <p className="mt-4 max-w-[760px] text-sm leading-relaxed text-ink-dim">
-          Decision models are ranked on their own. They are handed the legal moves and facts about
-          each, so they never play an illegal move. In a trial against a bot that moves at random,
-          the top four won material in every game but turned only 7 of 20 into wins. That is a
-          different game from the one chat models play, so it is a different table.
-        </p>
-      )}
-
       {rows.length === 0 ? (
         <p className="mt-10 text-sm leading-relaxed text-ink-dim">
           No ranked games yet. Ratings only move on games played in the ranked configuration —
