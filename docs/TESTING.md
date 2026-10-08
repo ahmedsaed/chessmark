@@ -44,13 +44,22 @@ Playwright, in `apps/web/e2e/`. Two projects, because the flows differ in what t
 
 | | runs | needs |
 | --- | --- | --- |
-| `public` | `make test-e2e` — **and CI** | a running stack, nothing else |
-| `mobile` | `make test-e2e` / `make test-e2e-mobile` — **and CI** | a running stack, nothing else |
+| `public` | `make test-e2e` — **and CI** | a running stack, with cache invalidation configured |
+| `mobile` | `make test-e2e` / `make test-e2e-mobile` — **and CI** | a running stack, with cache invalidation configured |
 | `signed-in` | `make test-e2e-all` | a real Clerk development instance |
 | Lighthouse | `make lighthouse` — **and CI** | a running API; it starts its own web server |
 
 Reading is open to everyone (AUTH-02), so the lobby, the catalogue, a model page and a whole replay
 assert with no identity at all.
+
+**Cache invalidation must be configured, and the suite refuses to start without it.** The suite
+writes games behind the website's back, and the website only hears about them through
+`/api/revalidate` (ADR-0046). With `REVALIDATE_SECRET` blank, the lobby stays as it was for the
+five-minute fallback, and every test that compares a page with the API fails, but only when the
+cache happened to be warm. Two lobby tests flaked that way. `.env.example` now sets a
+local value that is not a secret, `make web` passes it to the web tier, and `global-setup.ts` posts
+to the endpoint first and stops the run with the fix if either half is missing. CI sets the same
+pair in `ci.yml`.
 
 `mobile` is the same public pages at 390px, and it exists because **a layout failure is invisible
 from a desk**. Every assertion in it is a measurement that was failing on production: a pairing's two

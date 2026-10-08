@@ -60,7 +60,9 @@ async function recordSounds(page: Page) {
 const played = (page: Page) =>
   page.evaluate(() => (window as unknown as { __played: string[] }).__played.slice());
 
-const soundToggle = (page: Page) => page.getByRole("button", { name: /^sound (on|off)$/i });
+/* Named for what it controls, with `aria-pressed` carrying the state — the name no longer changes
+   when it is pressed, which is how a toggle is meant to read to a screen reader. */
+const soundToggle = (page: Page) => page.getByRole("button", { name: "Move sounds" });
 
 test.beforeEach(async ({ page }) => {
   await recordSounds(page);
@@ -104,7 +106,7 @@ test("stepping through a replay plays each move, and the mate as the game's end"
 test("turning sound off silences the board and survives a reload", async ({ page }) => {
   await soundToggle(page).click();
   await expect(soundToggle(page)).toHaveAttribute("aria-pressed", "false");
-  await expect(soundToggle(page)).toHaveText(/sound off/i);
+  await expect(soundToggle(page)).toHaveAttribute("title", "Sound off");
 
   await page.getByRole("button", { name: "Start" }).click();
   await page.getByRole("button", { name: "Next ply" }).click();

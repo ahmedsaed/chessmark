@@ -66,7 +66,7 @@ export default async function GamePage({ params }: PageProps<"/games/[id]">) {
           apiUrl={apiUrl}
           events={events}
           turns={turns}
-          actions={<GameActions pgnHref={pgnUrl(id)} />}
+          actions={<GameActions gameId={id} apiUrl={apiUrl} pgnHref={pgnUrl(id)} />}
         />
       ) : (
         <GameView
@@ -74,7 +74,7 @@ export default async function GamePage({ params }: PageProps<"/games/[id]">) {
           game={game}
           apiUrl={apiUrl}
           initialEvents={events}
-          actions={<GameActions pgnHref={pgnUrl(id)} />}
+          actions={<GameActions gameId={id} apiUrl={apiUrl} pgnHref={pgnUrl(id)} />}
         />
       )}
     </main>

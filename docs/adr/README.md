@@ -82,6 +82,7 @@ were live in this directory before it was written.
 | [0061](0061-every-rating-is-a-stored-run.md) | Every rating is a stored run, read rather than computed | Accepted |
 | [0063](0063-chat-and-decision-models-are-ranked-on-separate-leaderboards.md) | Chat and decision models are ranked on separate leaderboards | Amended by [0064](0064-a-game-with-a-person-or-across-harnesses-is-never-ranked.md) |
 | [0064](0064-a-game-with-a-person-or-across-harnesses-is-never-ranked.md) | A game with a person, or between a chat and a decision model, is never ranked | Accepted |
+| [0065](0065-game-gifs-are-drawn-in-the-browser.md) | Game GIFs are drawn in the browser | Accepted |
 | [0062](0062-a-failed-call-is-recorded-and-a-refused-answer-is-re-split.md) | A failed call is recorded, and a refused answer is asked again in smaller heats | Accepted |
 | [0063](0063-chat-and-decision-models-are-ranked-on-separate-leaderboards.md) | Chat and decision models are ranked on separate leaderboards | Accepted |
 

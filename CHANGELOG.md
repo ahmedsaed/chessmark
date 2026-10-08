@@ -17,6 +17,15 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **Any game can be downloaded as a GIF:** one frame per move, the players' names above and below
+  the board, and the result held on the final position. It is made in your browser when you press
+  the button, in the background, so the page keeps responding while a long game is drawn. A GIF
+  of a live game shows the moves made so far.
+  ([ADR-0065](docs/adr/0065-game-gifs-are-drawn-in-the-browser.md))
+
+- **The sound, copy-link and PGN buttons on a game page are now icons**, alongside the new GIF
+  button. Hover over one, or use a screen reader, to get its name.
+
 - **The standings show how many of each entrant's pairings were abandoned**, as the last slot of the
   record, **W/D/L/A**, with the full name on hover. A model with a 3/0/0 record and three abandoned
   games is a different finding from one with 3/0/0 and nothing lost, and the table could not tell
@@ -33,6 +42,11 @@ file is only the record of *what shipped when*.
   on. ([ADR-0059](docs/adr/0059-a-decision-model-with-a-limit-plays-in-heats.md))
 
 ### Fixed
+
+- **Clicking "sign in" or "sign up" no longer sometimes shows "That did not load."** Arriving from
+  a page that had not loaded the sign-in service, the form could appear before that service was
+  ready, which crashed it. The heading now appears at once and the form joins it when the service is
+  ready.
 
 - **A call that fails is now on record.** Neither harness wrote a row for a provider error, so the
   request we sent and the provider's reply were lost. Each failed attempt is now an `llm_calls`

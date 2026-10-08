@@ -45,7 +45,10 @@ api: ## Run the API with reload (port 8010)
 	cd $(API) && uv run uvicorn chessmark.main:app --reload --port 8010
 
 web: ## Run the frontend (port 3010)
-	cd $(WEB) && pnpm dev
+	@# The revalidation secret comes from the root .env the API reads, so the two halves cannot
+	@# drift: Next only loads env files from apps/web, and a secret set on one side alone leaves
+	@# every page stale for the full fallback (ADR-0046).
+	cd $(WEB) && REVALIDATE_SECRET="$${REVALIDATE_SECRET:-$$(sed -n 's/^REVALIDATE_SECRET=//p' ../../.env 2>/dev/null)}" pnpm dev
 
 migrate: ## Apply all migrations
 	cd $(API) && uv run alembic upgrade head

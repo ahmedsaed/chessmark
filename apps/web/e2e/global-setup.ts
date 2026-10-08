@@ -21,6 +21,7 @@ export default async function globalSetup(): Promise<void> {
   const logDir = path.join(__dirname, ".auth");
   mkdirSync(logDir, { recursive: true });
 
+  await assertRevalidation();
   seed();
   startWorker(logDir);
 
@@ -94,4 +95,45 @@ function startWorker(logDir: string): void {
 
   if (!child.pid) throw new Error("could not start the scripted worker");
   writeFileSync(WORKER_PID_FILE, String(child.pid));
+}
+
+/**
+ * Refuses to start unless the website accepts cache invalidations.
+ *
+ * **The suite changes the database behind the website's back.** It seeds a game, and its worker
+ * finishes more. Each one moves the leaderboard, the archive and the lobby, and the website only
+ * hears about it through `/api/revalidate` (ADR-0046). Without that, the lobby stays as it was for
+ * the full five-minute fallback, and every test comparing the page with the API fails. Two lobby
+ * tests did exactly that, on and off, depending on whether the cache happened to be cold when they
+ * ran.
+ *
+ * So both halves are checked here, with the secret the worker will use, and a missing or
+ * mismatched one stops the run with the fix in the message. A suite that runs anyway would fail
+ * somewhere else, as a wrong number on a page.
+ */
+async function assertRevalidation(): Promise<void> {
+  const web = process.env.E2E_WEB_URL ?? "http://localhost:3010";
+  const secret = process.env.REVALIDATE_SECRET ?? "";
+  const fix =
+    "Set REVALIDATE_SECRET in the root .env (see .env.example), then restart `make api` and " +
+    "`make web` so both read it.";
+
+  if (!secret) {
+    throw new Error(`REVALIDATE_SECRET is not set, so the worker cannot refresh the website. ${fix}`);
+  }
+
+  const response = await fetch(`${web}/api/revalidate`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${secret}`, "content-type": "application/json" },
+    body: JSON.stringify({ tags: ["games"] }),
+  });
+  if (response.status === 503) {
+    throw new Error(`the website at ${web} has no REVALIDATE_SECRET of its own. ${fix}`);
+  }
+  if (response.status === 401) {
+    throw new Error(`the website at ${web} has a different REVALIDATE_SECRET from .env. ${fix}`);
+  }
+  if (!response.ok) {
+    throw new Error(`${web}/api/revalidate answered ${response.status}: ${await response.text()}`);
+  }
 }

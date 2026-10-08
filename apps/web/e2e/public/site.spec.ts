@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 
 import { fixtures } from "../fixtures";
+import { rowsOf } from "../../src/lib/groups";
+import type { LeaderboardRow } from "../../src/lib/types";
 
 /**
  * The shell and the public reading surface (Phases 7, 18, 20 — AUTH-02).
@@ -398,8 +400,11 @@ test("the lobby's ranking runs 1 to 10 across the podium and the list beside it"
   const board = await page.request.get(`${api}/leaderboard`);
   expect(board.ok(), "the leaderboard endpoint should answer").toBe(true);
 
-  const ranked = (await board.json()).rows as { rating: number }[];
-  test.skip(ranked.length === 0, "no ranked contestants in this database");
+  /* The chat table only: the lobby ranks chat models and decision models are a separate board
+     (ADR-0063). Compared against every row, this failed as soon as a decision model out-rated the
+     chat leaders — the lobby was right and the test was reading a ranking the page never shows. */
+  const ranked = rowsOf((await board.json()).rows as LeaderboardRow[], "chat");
+  test.skip(ranked.length === 0, "no ranked chat models in this database");
 
   await page.goto("/");
 

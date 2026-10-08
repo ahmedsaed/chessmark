@@ -47,6 +47,15 @@ export default defineConfig({
         // would only restate the file. Whether the pieces *draw* is a picture, and the browser
         // suite fetches every card.
         "src/lib/og/pieces.ts",
+        // Canvas drawing for the GIF export. Node has no canvas, and a mocked one would be
+        // asserting the mock; the rules it draws from are `gif/frames.ts`, which is unit-tested,
+        // and the browser suite exports a real game and reads the GIF back frame by frame.
+        "src/lib/gif/draw.ts",
+        // Its two callers: the worker, and the page-side entry that rasterises the pieces and
+        // starts it. Both need `Worker`, `Image` or `OffscreenCanvas`, none of which Node has; the
+        // browser suite exports through them and asserts the export ran in a worker.
+        "src/lib/gif/export.ts",
+        "src/lib/gif/gif.worker.ts",
       ],
       reporter: ["text", "html", "json-summary"],
       // NFR-10: measured *and* enforced. A floor that is merely reported is a number nobody
