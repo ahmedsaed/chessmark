@@ -4,8 +4,8 @@ import { originFromEnv } from "@/lib/env";
 
 describe("originFromEnv", () => {
   it("uses the value when there is one", () => {
-    expect(originFromEnv("https://api.chessmark.dev", "http://localhost:8010")).toBe(
-      "https://api.chessmark.dev",
+    expect(originFromEnv("https://api.chessmark.merope.dev", "http://localhost:8010")).toBe(
+      "https://api.chessmark.merope.dev",
     );
   });
 
@@ -27,8 +27,8 @@ describe("originFromEnv", () => {
   });
 
   it("strips a trailing slash, so a path is never joined onto one", () => {
-    expect(originFromEnv("https://api.chessmark.dev/", "x")).toBe("https://api.chessmark.dev");
-    expect(originFromEnv("https://api.chessmark.dev///", "x")).toBe("https://api.chessmark.dev");
+    expect(originFromEnv("https://api.chessmark.merope.dev/", "x")).toBe("https://api.chessmark.merope.dev");
+    expect(originFromEnv("https://api.chessmark.merope.dev///", "x")).toBe("https://api.chessmark.merope.dev");
   });
 
   it("strips a trailing slash from the fallback too", () => {
