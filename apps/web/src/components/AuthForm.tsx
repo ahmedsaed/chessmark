@@ -27,6 +27,8 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useState } from "react";
 
+import { useClerkMounted } from "@/components/ClerkGate";
+
 /**
  * The instance's minimum password length.
  *
@@ -39,7 +41,44 @@ const PASSWORD_MIN_LENGTH = 15;
 type Mode = "sign-in" | "sign-up";
 type Step = "identify" | "code";
 
+/**
+ * The form, once Clerk is there to drive it.
+ *
+ * **Its hooks throw without a provider, and on a soft navigation the provider arrives late.** A
+ * reader who lands on `/` signed out has no Clerk; clicking `sign in` is a client-side navigation,
+ * and `ClerkGate` mounts the provider from an effect after importing it. This route's payload and
+ * that import race, and whenever the route won, `useSignIn` threw and the error boundary drew
+ * "That did not load." — which is why `auth-navigation.spec.ts` failed some runs and not others.
+ *
+ * So the heading and intro render at once and the form joins them when the provider has mounted:
+ * the same import the gate was already waiting on, now waited on by the one thing that needs it.
+ */
 export function AuthForm({ mode }: { mode: Mode }) {
+  const mounted = useClerkMounted();
+  if (!mounted) {
+    return (
+      <main className="mx-auto flex w-full max-w-[420px] flex-col px-5 py-16">
+        <Intro mode={mode} />
+      </main>
+    );
+  }
+  return <ClerkAuthForm mode={mode} />;
+}
+
+function Intro({ mode }: { mode: Mode }) {
+  return (
+    <>
+      <h1 className="font-serif text-4xl text-ink">
+        {mode === "sign-in" ? "Sign in" : "Create an account"}
+      </h1>
+      <p className="mt-2 text-sm text-ink-dim">
+        Watching needs no account. Starting a game does, because every turn calls a provider.
+      </p>
+    </>
+  );
+}
+
+function ClerkAuthForm({ mode }: { mode: Mode }) {
   /* **Core 3 hooks.** `useSignIn` returns `{ signIn, errors, fetchStatus }` — no `isLoaded`, no
      `setActive`, and the resource carries step methods that map to the flow rather than the
      `create`/`prepare`/`attempt` triple of Core 2. Written against the installed `.d.ts` rather
@@ -138,14 +177,9 @@ export function AuthForm({ mode }: { mode: Mode }) {
     }
   }, [mode, code, signIn, signUp, router, redirect]);
 
-  const heading = mode === "sign-in" ? "Sign in" : "Create an account";
-
   return (
     <main className="mx-auto flex w-full max-w-[420px] flex-col px-5 py-16">
-      <h1 className="font-serif text-4xl text-ink">{heading}</h1>
-      <p className="mt-2 text-sm text-ink-dim">
-        Watching needs no account. Starting a game does, because every turn calls a provider.
-      </p>
+      <Intro mode={mode} />
 
       <form
         className="mt-8 flex flex-col gap-4"

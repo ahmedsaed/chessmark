@@ -97,7 +97,12 @@ test("Clerk is fetched when a navigation needs it, and not before", async ({ pag
   expect(fetched, "a signed-out reader on /leaderboard must not download Clerk").toEqual([]);
 
   await clickAndProveItWasSoft(page, /^sign in$/i);
-  await expect(page.getByRole("heading", { level: 1, name: /sign in/i })).toBeVisible();
-
-  expect(fetched.length, "clicking through to /sign-in must load Clerk").toBeGreaterThan(0);
+  /* The form, not the heading: the heading renders before Clerk arrives (`AuthForm`), so waiting
+     on it and then checking the requests once raced the very fetch being asserted. The email field
+     only exists once the provider has mounted — and polled, because the request event is
+     delivered to this process asynchronously. */
+  await expect(page.getByLabel(/email/i).first()).toBeVisible();
+  await expect
+    .poll(() => fetched.length, { message: "clicking through to /sign-in must load Clerk" })
+    .toBeGreaterThan(0);
 });
