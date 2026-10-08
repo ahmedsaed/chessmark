@@ -60,13 +60,15 @@ test("the GIF is the game, one frame per ply, ending on the mate", async ({ page
   await page.goto(`/games/${fixtures().replayGame}`);
 
   /* Off the main thread: a long game is hundreds of frames, and drawing them in the page froze it
-     for over a second (ADR-0065). The worker is the claim, so its creation is what is awaited. */
-  const [download, worker] = await Promise.all([
+     for over a second (ADR-0065). The claim is that pressing the button starts a worker on a page
+     that had none — not the worker's URL, which names the GIF in a dev build and is a generic
+     Turbopack bootstrap in a production one, the first version of this line's failure in CI. */
+  expect(page.workers(), "the game page should run no worker before the export").toEqual([]);
+  const [download] = await Promise.all([
     page.waitForEvent("download"),
     page.waitForEvent("worker"),
     page.getByRole("button", { name: "Export GIF" }).click(),
   ]);
-  expect(worker.url()).toMatch(/gif/i);
   expect(download.suggestedFilename()).toMatch(/^chessmark-.+-vs-.+-[0-9a-f]{8}\.gif$/);
 
   const gif = readGif(new Uint8Array(await readFile((await download.path())!)));
