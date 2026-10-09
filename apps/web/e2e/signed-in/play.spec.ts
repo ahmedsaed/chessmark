@@ -339,3 +339,23 @@ test("the host chosen in the form is the endpoint the game is pinned to", async 
   await page.getByRole("button", { name: "resign", exact: true }).click();
   await page.getByRole("button", { name: "confirm resign" }).click();
 });
+
+test("at phone width neither game form pushes the page sideways", async ({ page }) => {
+  /**
+   * The mobile project checks `/play` signed out, where neither form renders — so the talk
+   * toggle's tooltip, 256px wide and anchored to a toggle part-way across a 390px row, scrolled
+   * the page 68px sideways for every signed-in phone and no test could see it. An `invisible`
+   * element still takes up layout, so it did so whether or not the tooltip was showing.
+   */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/play");
+
+  for (const tab of ["You vs a model", "Two models"]) {
+    await page.getByRole("tab", { name: tab }).click();
+    await expect(page.getByRole("checkbox", { name: /talk/i })).toBeVisible();
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    );
+    expect(overflow, `the "${tab}" form should not scroll horizontally`).toBeLessThanOrEqual(0);
+  }
+});

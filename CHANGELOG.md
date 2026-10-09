@@ -49,6 +49,9 @@ file is only the record of *what shipped when*.
 
 ### Fixed
 
+- **The play page no longer scrolls sideways on a phone.** The Talk option's explanation stuck out
+  past the right edge of the screen even while it was hidden. It now fits inside the form.
+
 - **Clicking "sign in" or "sign up" no longer sometimes shows "That did not load."** Arriving from
   a page that had not loaded the sign-in service, the form could appear before that service was
   ready, which crashed it. The heading now appears at once and the form joins it when the service is

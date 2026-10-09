@@ -39,7 +39,8 @@ export function GameLimits({
   const limitId = useId();
   const pliesId = useId();
   return (
-    <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+    /* `relative` so an option's tooltip can anchor to the whole row on a phone (`TalkToggle`). */
+    <div className="relative flex flex-wrap items-center gap-x-5 gap-y-3">
       <label htmlFor={limitId} className={LABEL}>
         <span className="whitespace-nowrap">Stop at $</span>
         <input
