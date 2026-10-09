@@ -17,6 +17,12 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **You can choose which provider serves a model** when you start a game, against a model or
+  between two. Under the precision there is now a *via* menu listing every host for that model,
+  with its uptime, and *auto* (the default) still picks the most reliable one. The host you choose
+  serves every move of the game and is shown on the game page, as before.
+  ([ADR-0066](docs/adr/0066-the-person-starting-a-game-may-choose-its-endpoint.md))
+
 - **Any game can be downloaded as a GIF:** one frame per move, the players' names above and below
   the board, and the result held on the final position. It is made in your browser when you press
   the button, in the background, so the page keeps responding while a long game is drawn. A GIF
@@ -42,6 +48,9 @@ file is only the record of *what shipped when*.
   on. ([ADR-0059](docs/adr/0059-a-decision-model-with-a-limit-plays-in-heats.md))
 
 ### Fixed
+
+- **The play page no longer scrolls sideways on a phone.** The Talk option's explanation stuck out
+  past the right edge of the screen even while it was hidden. It now fits inside the form.
 
 - **Clicking "sign in" or "sign up" no longer sometimes shows "That did not load."** Arriving from
   a page that had not loaded the sign-in service, the form could appear before that service was

@@ -637,6 +637,8 @@ export function createHumanGame(
     model: string;
     colour: "white" | "black";
     model_quantization?: string | null;
+    /** The host to play through; omitted or null is "auto", pinned by uptime (ADR-0066). */
+    model_provider?: string | null;
     trash_talk_enabled?: boolean;
     /** The player's own limit on what the game may cost, or none (ADR-0052). */
     max_usd?: string | null;

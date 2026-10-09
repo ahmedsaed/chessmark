@@ -50,6 +50,32 @@ class Schema(BaseModel):
 # ---------------------------------------------------------------------- models
 
 
+class EndpointOut(Schema):
+    """One host a contestant can be played through (ADR-0066).
+
+    The figures are OpenRouter's, as of the last registry refresh — the same numbers the default
+    choice was made from, so a person overriding it is comparing what the rule compared.
+    """
+
+    provider: str
+    uptime_1d: float | None = None
+    throughput: float | None = None
+    """Tokens per second.
+
+    Latency is stored too and deliberately left out: the form does not show it, and the catalogue
+    is serialised whole into `/play`, where each field is paid for ~850 times (ADR-0066)."""
+
+
+def _healthiest_first(endpoint: ModelEndpoint) -> tuple[float, float, str]:
+    """The order `select_endpoint` pins by, so the first entry is the one a game would get."""
+    uptime = endpoint.uptime_1d if endpoint.uptime_1d is not None else endpoint.uptime_30m
+    return (
+        -(uptime if uptime is not None else -1.0),
+        -(endpoint.throughput or -1.0),
+        endpoint.provider_name,
+    )
+
+
 class ContestantOut(Schema):
     """One precision a model can be played at, and the endpoint that would serve it.
 
@@ -72,6 +98,10 @@ class ContestantOut(Schema):
 
     endpoint_count: int = 1
     """How many endpoints serve this precision. One means an outage takes the contestant with it."""
+
+    endpoints: list[EndpointOut] = Field(default_factory=list)
+    """Every host serving this precision, healthiest first — `provider` is the first of them.
+    Listed so the game form can offer a choice without a second request per pick (ADR-0066)."""
 
 
 class ModelOut(Schema):
@@ -119,20 +149,22 @@ class ModelOut(Schema):
         contestants = []
         for quantization, group in by_precision.items():
             # Same order the match uses, so the card names the endpoint a game would really pin.
-            best = sorted(
-                group,
-                key=lambda e: (
-                    -(e.uptime_1d if e.uptime_1d is not None else (e.uptime_30m or -1.0)),
-                    -(e.throughput or -1.0),
-                    e.provider_name,
-                ),
-            )[0]
+            ranked = sorted(group, key=_healthiest_first)
+            best = ranked[0]
             contestants.append(
                 ContestantOut(
                     quantization=quantization,
                     provider=best.provider_name,
                     uptime_1d=best.uptime_1d,
                     endpoint_count=len(group),
+                    endpoints=[
+                        EndpointOut(
+                            provider=e.provider_name,
+                            uptime_1d=e.uptime_1d,
+                            throughput=e.throughput,
+                        )
+                        for e in ranked
+                    ],
                 )
             )
 
@@ -552,6 +584,15 @@ class CreateGameRequest(BaseModel):
         ),
     )
     black_quantization: str | None = Field(default=None, description="Precision for Black.")
+    white_provider: str | None = Field(
+        default=None,
+        description=(
+            "The endpoint White plays through, by OpenRouter provider name. Omit to take the "
+            "healthiest (ADR-0015); name one to choose the host yourself (ADR-0066). Recorded "
+            "either way, and a name that does not serve the model is a 400."
+        ),
+    )
+    black_provider: str | None = Field(default=None, description="The endpoint for Black.")
     is_ranked: bool = False
     trash_talk_enabled: bool = True
     #: The player's own limit on what this game may cost, or none (ADR-0052). Their money, their
@@ -575,6 +616,10 @@ class CreateHumanGameRequest(BaseModel):
     model_quantization: str | None = Field(
         default=None,
         description="Precision for the model. Omit to take the healthiest endpoint (ADR-0015).",
+    )
+    model_provider: str | None = Field(
+        default=None,
+        description="The endpoint the model plays through. Omit to take the healthiest (ADR-0066).",
     )
     colour: Colour = Field(default=Colour.WHITE, description="The colour *you* play.")
     trash_talk_enabled: bool = True

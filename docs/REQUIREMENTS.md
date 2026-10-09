@@ -124,6 +124,7 @@ Priority: **M** = must have for public launch · **S** = should have · **C** = 
 | UI-10 | Reconnect gracefully — an SSE drop resyncs from a stored cursor without losing plies. | M |
 | UI-11 | Usable at phone width: no page scrolls sideways, a model's name is legible rather than truncated to a prefix, the board's panels are reachable without scrolling past one another, and a control can be hit with a thumb. Asserted by the `mobile` browser project, because none of it is visible from a desk. | M |
 | UI-12 | An archive of every game: filtered by status, result, ending, ranked, who played and which event, searched by a model's or a player's name, paged without repeating a game, and every filtered view a shareable link. Aborted games are hidden by default and one filter away. | M |
+| UI-13 | Starting a game offers every host that can play the chosen contestant, with its uptime, and defaults to the one the uptime rule would pin. The host chosen is the one pinned. A host that cannot serve the seat is refused with its name, not seated and left to fail (ADR-0066). | S |
 
 ## 8. Auth, quotas & abuse (AUTH)
 

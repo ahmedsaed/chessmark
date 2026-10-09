@@ -44,6 +44,7 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
     playable.some((m) => m.openrouter_id === DEFAULT_OPPONENT) ? DEFAULT_OPPONENT : "",
   );
   const [quantization, setQuantization] = useState("");
+  const [provider, setProvider] = useState("");
   const [colour, setColour] = useState<Colour>("white");
   const [chat, setChat] = useState(false);
   const [limit, setLimit] = useState("");
@@ -61,6 +62,8 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
         colour,
         // Omitted means "the healthiest endpoint at whatever precision", which is then recorded.
         model_quantization: quantization || null,
+        // Likewise: empty is "auto", and the server pins by uptime (ADR-0066).
+        model_provider: provider || null,
         trash_talk_enabled: chat,
         max_usd: limitFrom(limit),
         max_plies: pliesFrom(plies),
@@ -92,10 +95,13 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
           onChange={(next) => {
             setOpponent(next);
             setQuantization("");
+            setProvider("");
           }}
           models={playable}
           quantization={quantization}
           onQuantizationChange={setQuantization}
+          provider={provider}
+          onProviderChange={setProvider}
         />
 
         {/* Deliberately not a `fieldset`/`legend`. A legend is positioned into the fieldset's

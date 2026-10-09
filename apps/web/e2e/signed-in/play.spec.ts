@@ -297,3 +297,65 @@ test("a game between two models you started says so, and is yours to pause and r
     timeout: 45_000,
   });
 });
+
+test("the host chosen in the form is the endpoint the game is pinned to", async ({ page }) => {
+  /**
+   * ADR-0066. "auto" sends nothing and the server pins by uptime, so a form that dropped the choice
+   * on the floor would still start a game — on the healthiest host, which is exactly the one the
+   * person was trying to avoid. Choosing the *second* host is what tells the two apart.
+   */
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const models = (await (await page.request.get(`${api}/models`)).json()) as {
+    openrouter_id: string;
+    contestants: { quantization: string; endpoints: { provider: string }[] }[];
+  }[];
+  const model = models.find((m) => (m.contestants[0]?.endpoints.length ?? 0) > 1);
+  expect(model, "the catalogue should hold a model served by two hosts").toBeDefined();
+  const [healthiest, other] = model!.contestants[0].endpoints;
+
+  await page.goto("/play");
+  const form = page.locator("section").filter({ hasText: /play a model/i });
+  await form.locator('button[aria-haspopup="listbox"]').click();
+  await form.getByPlaceholder("Search models or providers…").fill(model!.openrouter_id);
+  // Sorted by slug, so the exact slug is the first of any that merely contain it.
+  await form.getByRole("option").first().click();
+
+  const via = form.getByLabel("via");
+  await expect(via).toHaveValue("");
+  await expect(via.locator("option").first()).toContainText(`auto · ${healthiest.provider}`);
+  await via.selectOption(other.provider);
+
+  await form.getByRole("button", { name: "white", exact: true }).click();
+  await form.getByRole("button", { name: "sit down" }).click();
+  await page.waitForURL(/\/games\/[0-9a-f-]{36}/);
+
+  const id = page.url().match(/[0-9a-f-]{36}/)![0];
+  const game = (await (await page.request.get(`${api}/games/${id}`)).json()) as {
+    players: { kind: string; pinned_provider: string | null }[];
+  };
+  expect(game.players.find((p) => p.kind === "model")?.pinned_provider).toBe(other.provider);
+
+  // Not left running: the account's live games are capped, and later tests sit down too.
+  await page.getByRole("button", { name: "resign", exact: true }).click();
+  await page.getByRole("button", { name: "confirm resign" }).click();
+});
+
+test("at phone width neither game form pushes the page sideways", async ({ page }) => {
+  /**
+   * The mobile project checks `/play` signed out, where neither form renders — so the talk
+   * toggle's tooltip, 256px wide and anchored to a toggle part-way across a 390px row, scrolled
+   * the page 68px sideways for every signed-in phone and no test could see it. An `invisible`
+   * element still takes up layout, so it did so whether or not the tooltip was showing.
+   */
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/play");
+
+  for (const tab of ["You vs a model", "Two models"]) {
+    await page.getByRole("tab", { name: tab }).click();
+    await expect(page.getByRole("checkbox", { name: /talk/i })).toBeVisible();
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    );
+    expect(overflow, `the "${tab}" form should not scroll horizontally`).toBeLessThanOrEqual(0);
+  }
+});
