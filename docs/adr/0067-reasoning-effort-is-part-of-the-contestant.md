@@ -1,6 +1,6 @@
 # 0067. Reasoning effort is part of the contestant
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-10-09
 **Amends:** [0015](0015-quantization-as-identity-and-pinned-endpoints.md). A contestant becomes
 `(model, quantization, effort)`, where it was `(model, quantization)`.
@@ -32,29 +32,52 @@ different entrants, both playable and ranked apart, as `@fp8` and `@fp4` already
 identity rather than configuration: what a model is asked to do is the same, but how much it may
 think before answering changes the result, and a row that mixed efforts would be measuring the mix.
 
+**The levels are OpenRouter's efforts, plus two of ours.** `none` is reasoning off. `auto` is
+reasoning on with the effort left to the model, which is the only "on" for a model that reasons but
+lists no efforts. The catalogue sync derives each model's levels and default from its `reasoning`
+block (`agents/effort.levels_from_catalogue`) and stores them on `model_registry`, beside the block
+itself. **`default_effort` does not mean reasoning is on.** It is the effort used when reasoning is
+switched on without naming one, and 19 models are off by default while still naming it. So "on by
+default" is read from `mandatory` and `default_enabled` alone, and an unstated `default_enabled` is
+read as off.
+
 **The effort is settled when the game is created, sent on every call, and recorded on the seat.**
 The seat stores it in `players.sampling` (`{"model": ..., "effort": ...}`). That field exists to
 record how the model was asked, and using it needs no migration. A seat that names no effort gets
-the model's `default_effort` at that moment. It is still sent explicitly, so the record says what
-was asked for even when nobody chose it.
+the model's default at that moment, and it is still sent explicitly, so the record says what was
+asked for even when nobody chose it. Each call reads the level from the seat, never from the
+catalogue, so a default that moves mid-game does not change the game.
 
 **`none` is a level.** For a model whose reasoning can be switched off, `none` sends
 `reasoning: {enabled: false}` and is a contestant like any other. For a model that cannot reason at
-all, `none` is the only level and nothing is sent.
+all, `none` is the only level and nothing is sent, so its requests are unchanged.
+
+**A model the catalogue has not described yet sends nothing.** That is a registry row from before
+the migration, in the minutes before the refresh at deploy fills it in. Such a seat plays exactly
+as every seat did before and records no level, and the same refresh labels it afterwards.
 
 **Only levels the model lists are offered, and a level it does not list is refused.** Asking for
 `high` from a model whose `supported_efforts` lacks it is a `400`, never the nearest level. Seating
 a different effort would measure a different contestant, as ADR-0015 already says for precision.
 
 **An endpoint must accept the parameter.** An endpoint whose `supported_parameters` lacks
-`reasoning` would silently ignore an explicit effort, so it is not pinned for a seat that sends one.
-It joins `endpoint_is_playable` for the seats that need it.
+`reasoning` would silently ignore the level. Every seat on a model that can reason sends one (its
+default at least, and `none` is `enabled: false`), so such an endpoint can never serve that model.
+The rule lives in `endpoint_is_playable`, so the catalogue, the form, a tournament's field and the
+pin all agree. Unknown support (`NULL`, from rows before the column) is admitted.
 
-**Old games are labelled with an inferred default.** A seat with no recorded effort is read as its
-model's current `default_effort` (or `none` where reasoning was optional and off by default), and
-is marked `effort_inferred`. That keeps ratings and pools continuous: new default-effort games land
-in the same row as the old ones, so nothing resets. The methodology page says the label is
-inferred, and the reasoning tokens recorded on every call remain the evidence of what actually ran.
+**Old games are labelled from what they did.** A seat with no recorded level is labelled from its
+recorded reasoning tokens, read through today's catalogue:
+
+- A seat that reasoned gets its model's default if that is on. Otherwise it gets the effort the
+  model uses when switched on.
+- A seat that never reasoned gets `none` where the model offers it.
+
+The label is marked `effort_inferred`, and the game page shows that. Ratings and pools stay
+continuous: new default-level games land in the same row as the old ones, so nothing resets. The
+labelling runs inside the catalogue refresh, straight after the sync that gives models their levels,
+so it needs no operator step at deploy. It touches only seats with no level, and it deletes the
+stored rating runs it has just made stale.
 
 **Tournaments and pools get an effort setting.** The field filter gains `effort`, with the value
 `default` or a level:
@@ -65,10 +88,11 @@ inferred, and the reasoning tokens recorded on every call remain the evidence of
   that list it**. A pool at `high` therefore has no model that cannot reason at high. Substituting
   the nearest level would give the event a field playing different tasks.
 
-An entrant's effort is fixed for its event. `tournament_entrants` gains an `effort` column, which
-is additive and nullable, with `NULL` meaning `default`. A running pool's setting is not
-changeable: an entrant whose effort changed would be a different contestant, so changing it means
-creating a new event.
+The setting is stored in the event's field filter, which a pool re-resolves every tick, so
+entrants need no column of their own: every entrant in one event shares the level. It is fixed for
+the event's life, and `set` cannot change it: an entrant whose level changed would be a different
+contestant, so changing it means creating a new event. The matchmaker pairs each entrant on its
+rating at the level it will play, never on another level's.
 
 **Decision models are untouched.** They have no reasoning parameter (ADR-0049), so their key keeps
 no effort.
@@ -90,37 +114,32 @@ no effort.
 
 ## Consequences
 
-- **The catalogue stores reasoning metadata** per model (`mandatory`, `default_enabled`,
-  `supported_efforts`, `default_effort`), and whether each endpoint accepts `reasoning`. These are
-  additive columns.
-- **The leaderboard gains another dimension.** Rows are keyed `slug@quantization@effort`. Rows will
-  grow only where somebody chooses a non-default effort, because pools play at the default unless
-  told otherwise.
+- **The catalogue stores reasoning metadata.** For each model that means its `reasoning` block
+  verbatim plus the derived `reasoning_levels` and `default_reasoning`; for each endpoint, whether
+  it accepts `reasoning`. All columns are additive and nullable.
+- **The leaderboard gains another dimension.** Rows are keyed `slug@quantization@effort`
+  (`bench.service.contestant_label`; the web spells it the same in `lib/models.ts`). A decision
+  model, and a seat never described, keep `slug@quantization`. Rows grow only where somebody
+  chooses a non-default level, because events play at the default unless told otherwise.
+  `RATING_METHOD` changed, so every stored run is rebuilt once.
 - **Higher effort costs more, takes longer, and grows the transcript faster**, because prior
   reasoning is echoed back on every call (`agents/transcript.py`). Compaction (ADR-0018) arrives
-  sooner. A `max` turn can run into the 600-second call timeout, which under ADR-0019 fails the turn
-  rather than forfeiting the model. The timeout should scale with effort rather than abandon those
-  games.
-- **Effort on a budget-based model drifts with `max_tokens`.** For Claude models before 5.x,
-  OpenRouter turns `effort` into `budget_tokens = max_tokens × ratio`. Our `max_tokens` is
-  recomputed every call as the window fills (ADR-0039), so the effective budget would shrink during
-  a game. Those models either get a pinned `max_tokens` or are sent `reasoning.max_tokens` instead.
-  Opus 5.x runs adaptive thinking and is not affected.
+  sooner. The call timeout is doubled for `xhigh` and `max`, which is where a hard position ran into
+  600 seconds; a timeout still fails the turn rather than the model (ADR-0019).
+- **Pre-5.x Claude gets a budget, not an effort.** For those models OpenRouter turns `effort` into
+  `budget_tokens = max_tokens * ratio`. Our `max_tokens` is held back on a game's first, unmeasured
+  call and shrinks as the window fills (ADR-0039), so the same effort would buy a different budget on
+  different turns. For those models we send `reasoning.max_tokens` from the seat's stable completion
+  ceiling, using OpenRouter's own ratios, and clamp it only when a call cannot hold it. Claude 5.x
+  thinks adaptively, ignores a budget and maps `effort` directly, so it is sent the effort.
 - **What "high" means is the provider's.** We record the level we asked for. Neither we nor the
-  response can confirm what the provider ran, so the per-call reasoning tokens stay the evidence.
+  response can confirm what ran, so the per-call reasoning tokens stay the evidence.
 - **An inferred label can be wrong** for a model whose default changed after its games were played.
-  This is disclosed rather than corrected. Every game from this ADR on records its effort, so the
+  This is disclosed rather than corrected. Every game from this ADR on records its level, so the
   inference stops growing.
 
 ## Rollout
 
-Each step ships on its own, and the ADR becomes Accepted with the first.
-
-1. Catalogue: reasoning metadata per model; `reasoning` support per endpoint.
-2. Seats: settle the effort, send it, and record it in `sampling`. From here every new game is
-   reproducible.
-3. Ratings: key on effort, and infer it for old seats.
-4. API and forms: `white_effort` / `black_effort` / `model_effort`, and an effort row under the
-   precision chips that defaults to the model's own default.
-5. Tournaments: `effort` on the field filter and on entrants, plus `--effort` at `create`.
-6. Effort-scaled call timeout, and the `max_tokens` fix for budget-based models.
+Shipped together (catalogue, seats, ratings, the API and forms, tournaments, timeouts and budgets)
+rather than in the six steps this was proposed in, because each step on its own left a part of the
+site saying something the rest did not.

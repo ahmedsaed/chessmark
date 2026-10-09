@@ -23,12 +23,16 @@
  * host is not always the one that plays well — one served tool calls as prose. Left on "auto" the
  * server pins by uptime as before; anything else is sent as the seat's provider. A native `<select>`
  * is right here where it was wrong for models: a contestant has a handful of hosts, not 330.
+ *
+ * **And how hard it thinks** (ADR-0067), as chips like the precision: a contestant is
+ * `(model, precision, reasoning level)`. Left alone, the model plays at its own default, which the
+ * server records like any other level.
  */
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { RuntimeBadge } from "@/components/RuntimeBadge";
-import { browseModels, countModels } from "@/lib/models";
+import { browseModels, countModels, effortName } from "@/lib/models";
 import type { Endpoint, ModelInfo } from "@/lib/types";
 
 function usdPerMillion(perToken: string): string {
@@ -53,6 +57,8 @@ export function ModelPicker({
   onQuantizationChange,
   provider,
   onProviderChange,
+  effort,
+  onEffortChange,
 }: {
   label: string;
   value: string;
@@ -63,12 +69,17 @@ export function ModelPicker({
   /** Empty is "auto": the server pins the healthiest, as it always has. */
   provider: string;
   onProviderChange: (value: string) => void;
+  /** Empty is the model's own default, which the server settles and records (ADR-0067). */
+  effort: string;
+  onEffortChange: (value: string) => void;
 }) {
   const chosen = models.find((model) => model.openrouter_id === value);
   const entrants = chosen?.contestants ?? [];
   // Empty means "let the server pick the healthiest", which is the sane default and is recorded.
   const entrant = entrants.find((c) => c.quantization === quantization) ?? entrants[0];
   const hosts = entrant?.endpoints ?? [];
+  const levels = chosen?.reasoning_levels ?? [];
+  const defaultLevel = chosen?.default_reasoning ?? null;
 
   const labelId = useId();
   const endpointId = useId();
@@ -113,6 +124,42 @@ export function ModelPicker({
               </button>
             );
           })}
+        </span>
+      )}
+
+      {/* **How hard it thinks is part of what plays** (ADR-0067): `high` and `low` are separate
+          entrants, ranked apart, like the precisions above. Offered only when there is a choice —
+          a model that cannot reason, or always reasons with nothing to tune, has one level. The
+          default is marked, because "nothing chosen" is still a level and it is recorded. */}
+      {levels.length > 1 && (
+        <span role="group" aria-label="Reasoning" className="flex flex-wrap items-center gap-1">
+          <span aria-hidden className="mr-1 font-mono text-label uppercase tracking-[0.12em] text-ink-faint">
+            think
+          </span>
+          {levels.map((level) => {
+            const active = level === (effort || defaultLevel);
+            return (
+              <button
+                key={level}
+                type="button"
+                onClick={() => onEffortChange(level === defaultLevel ? "" : level)}
+                aria-pressed={active}
+                title={`${effortName(level)}${level === defaultLevel ? " — this model's default" : ""} — a separate entrant`}
+                className={`border px-1.5 py-px font-mono text-label uppercase tracking-wider transition-colors ${
+                  active
+                    ? "border-accent bg-accent text-on-accent"
+                    : "border-line text-ink-faint hover:text-ink-dim"
+                }`}
+              >
+                {level}
+              </button>
+            );
+          })}
+          {/* Said only once something else is chosen: until then the active chip *is* the
+              default, and a label for it would repeat what the highlight already says. */}
+          {effort && defaultLevel && effort !== defaultLevel && (
+            <span className="ml-1 font-mono text-label text-ink-faint">default: {defaultLevel}</span>
+          )}
         </span>
       )}
 

@@ -19,6 +19,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from chessmark.agents.registry import is_floating_alias
+from chessmark.bench.service import contestant_label
 from chessmark.db.enums import (
     CreditReason,
     EventType,
@@ -126,6 +127,12 @@ class ModelOut(Schema):
     contestants: list[ContestantOut] = Field(default_factory=list)
     endpoint_count: int = 0
 
+    #: The reasoning levels a seat may ask this model for, and the one it plays at when nobody
+    #: chooses (ADR-0067). Empty, and `None`, for a decision model and for one the catalogue has not
+    #: described yet.
+    reasoning_levels: list[str] = Field(default_factory=list)
+    default_reasoning: str | None = None
+
     #: Floating aliases point at different weights over time, so a rating across one rates nothing.
     is_floating_alias: bool = False
 
@@ -140,7 +147,16 @@ class ModelOut(Schema):
         endpoints = endpoints or []
         # A decision model's endpoints declare no tools, and need none (ADR-0049).
         decision = row.runtime == ModelRuntime.DECISION
-        playable = [e for e in endpoints if e.is_active and (decision or e.supports_tools)]
+        # The detail route hands every endpoint in, so the rules `endpoint_is_playable` applies in
+        # SQL are restated here: tools for a chat model, and `reasoning` for one that can reason —
+        # every seat on such a model sends a level (ADR-0067).
+        reasons = bool(row.reasoning_levels) and list(row.reasoning_levels or []) != ["none"]
+        playable = [
+            e
+            for e in endpoints
+            if e.is_active
+            and (decision or (e.supports_tools and not (reasons and e.supports_reasoning is False)))
+        ]
 
         by_precision: dict[str, list[ModelEndpoint]] = {}
         for endpoint in playable:
@@ -184,6 +200,8 @@ class ModelOut(Schema):
             quantizations=sorted(by_precision),
             contestants=contestants,
             endpoint_count=len(endpoints),
+            reasoning_levels=list(row.reasoning_levels or []),
+            default_reasoning=row.default_reasoning,
             is_floating_alias=is_floating_alias(row.openrouter_id),
             price_tier=row.price_tier,
         )
@@ -289,6 +307,11 @@ class PlayerOut(Schema):
     pinned_provider: str | None = None
     providers_used: list[str] = Field(default_factory=list)
     quantization: str | None = None
+    #: The reasoning level this seat played at (ADR-0067), and whether it was inferred afterwards
+    #: rather than sent — every seat from before the level was recorded is labelled from what it
+    #: did (`db/effort_labels.py`), and a reader should be able to tell the two apart.
+    effort: str | None = None
+    effort_inferred: bool = False
 
     @property
     def endpoint_held(self) -> bool:
@@ -317,13 +340,17 @@ class PlayerOut(Schema):
         providers_used: list[str] | None = None,
         quantization: str | None = None,
     ) -> PlayerOut:
-        model = (row.sampling or {}).get("model")
+        sampling = row.sampling or {}
+        model = sampling.get("model")
+        effort = sampling.get("effort")
         only = (row.provider_routing or {}).get("only") or []
         return cls(
             provider_routing=row.provider_routing or {},
             pinned_provider=str(only[0]) if only else None,
             providers_used=providers_used or [],
             quantization=quantization,
+            effort=str(effort) if effort else None,
+            effort_inferred=bool(sampling.get("effort_inferred")),
             id=row.id,
             colour=row.colour,
             kind=row.kind,
@@ -584,6 +611,15 @@ class CreateGameRequest(BaseModel):
         ),
     )
     black_quantization: str | None = Field(default=None, description="Precision for Black.")
+    white_effort: str | None = Field(
+        default=None,
+        description=(
+            "Reasoning level for White, from the model's `reasoning_levels`. Part of the "
+            "contestant's identity, like precision (ADR-0067). Omit for the model's own default, "
+            "which is then recorded; a level the model does not list is a 400."
+        ),
+    )
+    black_effort: str | None = Field(default=None, description="Reasoning level for Black.")
     white_provider: str | None = Field(
         default=None,
         description=(
@@ -616,6 +652,10 @@ class CreateHumanGameRequest(BaseModel):
     model_quantization: str | None = Field(
         default=None,
         description="Precision for the model. Omit to take the healthiest endpoint (ADR-0015).",
+    )
+    model_effort: str | None = Field(
+        default=None,
+        description="The model's reasoning level. Omit for its own default (ADR-0067).",
     )
     model_provider: str | None = Field(
         default=None,
@@ -999,6 +1039,9 @@ class LeaderboardRow(Schema):
     model_id: uuid.UUID
     model_slug: str
     quantization: str
+    #: The reasoning level this row was played at (ADR-0067). `None` for a decision model, which
+    #: has no reasoning parameter, and for seats the catalogue had not described when they played.
+    effort: str | None = None
     display_name: str
     #: Chat model or decision model (ADR-0049). Both are ranked on one board — every game between
     #: any two of them is rated — and the board says which is which, because they play with
@@ -1028,7 +1071,7 @@ class LeaderboardRow(Schema):
 
     @property
     def label(self) -> str:
-        return f"{self.model_slug}@{self.quantization}"
+        return contestant_label(self.model_slug, self.quantization, self.effort)
 
     @classmethod
     def from_rating(
@@ -1050,6 +1093,7 @@ class LeaderboardRow(Schema):
             model_id=contestant.model_id,
             model_slug=contestant.model_slug,
             quantization=contestant.quantization,
+            effort=contestant.effort,
             display_name=display_name or contestant.model_slug,
             rating=rating.rating,
             rating_deviation=rating.rd,

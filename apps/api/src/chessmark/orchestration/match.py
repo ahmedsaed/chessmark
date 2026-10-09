@@ -10,6 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.decision_request import DECISION_VERSION
+from chessmark.agents.effort import NONE
 from chessmark.agents.prompts import PROMPT_VERSION
 from chessmark.agents.registry import NoEndpointError, select_endpoint
 from chessmark.agents.routing import ProviderRouting
@@ -43,6 +44,10 @@ class Seat:
     contestants. `None` takes the healthiest endpoint at whatever precision, and records it.
     """
 
+    effort: str | None = None
+    """The reasoning level this contestant plays at (ADR-0067). Part of its identity, like
+    `quantization`. `None` takes the model's own default at this moment, and records it."""
+
     provider: str | None = None
     """Name the endpoint instead of letting uptime choose it (ADR-0066). Must be a playable
     endpoint of this model, at `quantization` when that is set too — a name nothing serves is a
@@ -64,6 +69,57 @@ class Match:
 
 class UnrankableMatchError(ValueError):
     """A ranked game asked for between seats that can never make one (ADR-0064)."""
+
+
+class UnavailableEffortError(LookupError):
+    """A reasoning level the model does not offer (ADR-0067).
+
+    Refused rather than rounded to the nearest level the model does offer: seating a different
+    level would measure a different contestant, with no way for the caller to know — the rule
+    ADR-0015 already applies to precision.
+    """
+
+    def __init__(self, model_slug: str, effort: str, offered: list[str] | None) -> None:
+        listed = ", ".join(offered) if offered else "none known yet"
+        super().__init__(
+            f"{model_slug} does not offer reasoning effort {effort!r} (offers: {listed})"
+        )
+        self.model_slug = model_slug
+        self.effort = effort
+
+
+async def resolve_effort(
+    session: AsyncSession, model_slug: str, requested: str | None
+) -> tuple[str | None, bool]:
+    """The reasoning level a chat seat plays at, settled once when the game is created, and whether
+    a `reasoning` field will be sent for it.
+
+    Sent for every level except `none` on a model that cannot reason — `none` on one that *can* is
+    `enabled: false`, and an endpoint ignoring it would think anyway.
+
+    `None` only for a model the catalogue has not described yet — a registry row from before
+    ADR-0067, in the minutes between the migration and the refresh that fills it. Such a seat sends
+    no level, exactly as every seat did before, and the same refresh labels it afterwards. Asking
+    for a level on such a model is refused: nothing says it is offered.
+    """
+    row = (
+        await session.execute(
+            sa.select(ModelRegistry.reasoning_levels, ModelRegistry.default_reasoning).where(
+                ModelRegistry.openrouter_id == model_slug
+            )
+        )
+    ).first()
+    offered = list(row.reasoning_levels) if row and row.reasoning_levels else None
+
+    if requested is None:
+        if not offered or row is None:
+            return None, False
+        level = str(row.default_reasoning)
+    elif not offered or requested not in offered:
+        raise UnavailableEffortError(model_slug, requested, offered)
+    else:
+        level = requested
+    return level, offered != [NONE]
 
 
 async def create_match(
@@ -140,6 +196,20 @@ async def create_match(
     )
     players: dict[Colour, Player] = {}
     for colour, seat in ((Colour.WHITE, white), (Colour.BLACK, black)):
+        # **Settled before the endpoint**, because a level that is sent narrows which endpoints
+        # may serve it: one that ignores `reasoning` would play at an effort nobody chose. Only a
+        # chat seat has one — a decision model has no reasoning parameter (ADR-0049).
+        level, sends_reasoning = (
+            await resolve_effort(session, seat.model, seat.effort)
+            if seat.model
+            and seat.kind is PlayerKind.MODEL
+            and runtimes[colour] is not ModelRuntime.DECISION
+            else (None, False)
+        )
+        sampling: dict[str, object] = {"model": seat.model} if seat.model else {}
+        if level is not None:
+            sampling["effort"] = level
+
         players[colour] = await add_player(
             session,
             game_id=game.id,
@@ -153,7 +223,7 @@ async def create_match(
             system_prompt_version=(
                 None if runtimes[colour] is ModelRuntime.DECISION else PROMPT_VERSION
             ),
-            sampling={"model": seat.model} if seat.model else {},
+            sampling=sampling,
             runtime=runtimes[colour],
         )
         # One endpoint, pinned for the whole game (ADR-0015). Previously the router chose per
@@ -166,6 +236,7 @@ async def create_match(
                 seat.model,
                 quantization=seat.quantization,
                 provider=seat.provider,
+                needs_reasoning=sends_reasoning,
             )
         ).to_record()
 
@@ -257,6 +328,7 @@ async def resolve_routing(
     *,
     quantization: str | None = None,
     provider: str | None = None,
+    needs_reasoning: bool = False,
 ) -> ProviderRouting:
     """Pin one endpoint for this seat, for the whole game (ADR-0015).
 
@@ -278,7 +350,11 @@ async def resolve_routing(
 
     try:
         endpoint = await select_endpoint(
-            session, model_slug=model_slug, quantization=quantization, provider=provider
+            session,
+            model_slug=model_slug,
+            quantization=quantization,
+            provider=provider,
+            needs_reasoning=needs_reasoning,
         )
     except NoEndpointError:
         # Asking for a precision or a host nothing serves is the caller's mistake and should

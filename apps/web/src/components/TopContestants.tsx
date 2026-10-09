@@ -18,6 +18,7 @@
 
 import Link from "next/link";
 
+import { contestantHref, contestantLabel, effortName } from "@/lib/models";
 import type { LeaderboardRow } from "@/lib/types";
 
 /** Three on the podium, seven beside it — the top ten, which is what `/leaderboard` is for. */
@@ -60,7 +61,7 @@ function split(slug: string): { vendor: string; name: string } {
 }
 
 function href(row: LeaderboardRow): string {
-  return `/models/${row.model_slug}#c-${encodeURIComponent(row.quantization)}`;
+  return contestantHref(row);
 }
 
 export function TopContestants({ rows, counted }: { rows: LeaderboardRow[]; counted: number }) {
@@ -130,7 +131,7 @@ function Podium({ rows }: { rows: LeaderboardRow[] }) {
         const order = staged ? ["order-2", "order-1", "order-3"][index] : "";
 
         return (
-          <li key={`${row.model_slug}@${row.quantization}`} className={`flex flex-col ${order}`}>
+          <li key={contestantLabel(row.model_slug, row.quantization, row.effort)} className={`flex flex-col ${order}`}>
             <Link
               href={href(row)}
               /* **`prefetch={false}` is not a preference; it stops a request storm.** A visible
@@ -157,6 +158,18 @@ function Podium({ rows }: { rows: LeaderboardRow[] }) {
                 <span className="flex-none border border-good/40 px-1 py-px font-mono text-label uppercase tracking-wider text-good">
                   {row.quantization}
                 </span>
+                {/* **Here from `sm` up, on the record line below it.** A second badge in this row
+                    wraps in a 113px column, and with the longest production name below it pushed
+                    the rating and the record out of the card's fixed height — measured, at 360px
+                    and 390px. The record line shows only W/D/L on a phone and has the room. */}
+                {row.effort && (
+                  <span
+                    className="hidden flex-none border border-line px-1 py-px font-mono text-label uppercase tracking-wider text-ink-dim sm:inline-block"
+                    title={effortName(row.effort)}
+                  >
+                    {row.effort}
+                  </span>
+                )}
               </div>
 
               {/* Three lines is what a 113px column holds, and every production name fits it —
@@ -179,10 +192,20 @@ function Podium({ rows }: { rows: LeaderboardRow[] }) {
                 </span>
               </p>
 
-              <p className="tabular flex flex-wrap items-baseline gap-x-2 font-mono text-meta text-ink-faint">
+              <p className="tabular flex flex-nowrap items-baseline gap-x-2 font-mono text-meta text-ink-faint sm:flex-wrap">
                 <span className="text-ink-dim" title="wins / draws / losses">
                   {row.wins}/{row.draws}/{row.losses}
                 </span>
+                {row.effort && (
+                  /* One line, truncating, rather than wrapping: a wrapped level was the line that
+                     fell out of the card at 360px with a three-line name above it. */
+                  <span
+                    className="min-w-0 truncate uppercase tracking-wider sm:hidden"
+                    title={effortName(row.effort)}
+                  >
+                    {row.effort}
+                  </span>
+                )}
                 <span className="hidden sm:inline">
                   {row.games} game{row.games === 1 ? "" : "s"}
                 </span>
@@ -218,7 +241,7 @@ function Chasing({ rows }: { rows: LeaderboardRow[] }) {
       className="flex flex-col gap-px self-start border border-line-soft bg-line-soft"
     >
       {rows.map((row, index) => (
-        <li key={`${row.model_slug}@${row.quantization}`}>
+        <li key={contestantLabel(row.model_slug, row.quantization, row.effort)}>
           <Link
             href={href(row)}
             /* The same request storm as the podium above. */
@@ -230,7 +253,10 @@ function Chasing({ rows }: { rows: LeaderboardRow[] }) {
             </span>
             <span className="min-w-0 flex-1 truncate font-mono text-xs text-ink">
               {row.model_slug}
-              <span className="text-ink-faint">@{row.quantization}</span>
+              <span className="text-ink-faint">
+                @{row.quantization}
+                {row.effort && ` · ${effortName(row.effort)}`}
+              </span>
             </span>
             <span data-testid="rating" className="tabular flex-none font-mono text-xs text-accent">
               {Math.round(row.rating)}

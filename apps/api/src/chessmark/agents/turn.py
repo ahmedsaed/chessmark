@@ -29,7 +29,7 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.agents import compaction, llm, prompts, transcript
+from chessmark.agents import compaction, effort, llm, prompts, transcript
 from chessmark.agents.live import LiveChannel, NullLive
 from chessmark.agents.live import block as live_block
 from chessmark.agents.live import token as live_token
@@ -54,7 +54,7 @@ from chessmark.agents.types import (
 from chessmark.db.credits import spend
 from chessmark.db.enums import EventType, ModelRuntime, ModerationStatus, TurnStatus
 from chessmark.db.house import payer_of
-from chessmark.db.models import Game, LlmCall, Message, Player, ToolCall, Turn
+from chessmark.db.models import Game, LlmCall, Message, ModelRegistry, Player, ToolCall, Turn
 from chessmark.db.repositories import append_event, open_draw_offer, record_ply
 from chessmark.game import (
     FORFEIT_TERMINATIONS,
@@ -434,6 +434,9 @@ class TurnRunner:
             trash_talk_enabled=game.trash_talk_enabled,
         )
         self._tools = tool_schemas(trash_talk_enabled=game.trash_talk_enabled)
+        #: Whether this seat's model can reason at all, read once per turn: `none` switches reasoning
+        #: off on a model that has it, and sends nothing to one that does not (ADR-0067).
+        self._can_reason: bool | None = None
         self._llm_sequence = 0
         #: Answered calls, which is what `llm_call_count` counts and what the iteration bound is
         #: seeded from. Not `_llm_sequence`: that numbers failed attempts too (ADR-0062), and a
@@ -1568,6 +1571,8 @@ class TurnRunner:
         written before the error is raised, because the caller may recover (a reactive compaction)
         or may not — and the record should not depend on which (ADR-0062).
         """
+        if (reasoning := await self._reasoning(kwargs.get("max_tokens"))) is not None:
+            kwargs["reasoning"] = reasoning
         try:
             completion = await self.gateway.complete(**kwargs)
         except LlmError as error:
@@ -1575,6 +1580,37 @@ class TurnRunner:
             raise
         await self._record_failures(turn, completion.failed_attempts)
         return completion
+
+    async def _reasoning(self, max_tokens: int | None) -> dict[str, Any] | None:
+        """The `reasoning` field for this call, from the level recorded on the seat (ADR-0067).
+
+        Read from the seat, never from the catalogue's current default: the level was settled when
+        the game was created, and a default that moved since must not change a game in progress.
+        A seat with no level — every game from before the ADR — sends nothing, as it always did.
+        """
+        level = (self.player.sampling or {}).get("effort")
+        if level is None:
+            return None
+        if self._can_reason is None:
+            levels = await self.session.scalar(
+                sa.select(ModelRegistry.reasoning_levels).where(
+                    ModelRegistry.id == self.player.model_id
+                )
+            )
+            self._can_reason = bool(levels) and list(levels or []) != [effort.NONE]
+        window = await self._endpoint_window()
+        nominal = (
+            min(self.limits.max_completion_tokens, window.max_completion)
+            if window.max_completion
+            else self.limits.max_completion_tokens
+        )
+        return effort.request_body(
+            str(level),
+            model_slug=self.model,
+            can_reason=self._can_reason,
+            max_tokens=max_tokens,
+            nominal_max_tokens=nominal,
+        )
 
     async def _record_failures(self, turn: Turn, attempts: tuple[FailedAttempt, ...]) -> None:
         """One row per failed attempt, verbatim, with `error` set and no cost (ADR-0062).

@@ -86,10 +86,23 @@ export default async function MethodologyPage() {
         </p>
       </Section>
 
-      <Section title="A contestant is a model at a precision">
+      <Section title="A contestant is a model at a precision and a reasoning level">
         <p>
           The same weights served at 4-bit and at 8-bit are <strong>different entrants</strong> and
           are ranked separately. Averaging them would produce a number describing neither.
+        </p>
+        <p>
+          So is how hard a model is asked to think. A model at <strong>high</strong> reasoning and
+          the same model at <strong>low</strong> are two entrants, because the setting changes the
+          result as much as the weights do. Every game records the level each seat was asked to
+          play at; leave it alone and the model plays at its own default, which is recorded too.
+        </p>
+        <p>
+          Games played before levels were recorded sent none, and are labelled afterwards from
+          whether the seat actually reasoned — its recorded reasoning tokens — read through what the
+          catalogue says that model does when reasoning is on. Those labels are{" "}
+          <strong>inferred</strong>, and marked as such on the game page: a provider whose default
+          has changed since will have been labelled with today&apos;s.
         </p>
         <p>
           Each seat is also <strong>pinned to one endpoint</strong> for the whole game, chosen by

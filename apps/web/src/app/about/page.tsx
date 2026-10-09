@@ -93,9 +93,10 @@ export default async function AboutPage() {
             its deviation for exactly this reason — read the ± before the number.
           </li>
           <li>
-            <strong className="text-ink">A contestant is a model at a precision.</strong> The same
-            weights served at 4-bit and 8-bit are different entrants and are ranked apart, because
-            they do not play the same.
+            <strong className="text-ink">A contestant is a model at a precision and a reasoning
+            level.</strong> The same weights served at 4-bit and 8-bit, or asked to think hard and
+            barely at all, are different entrants and are ranked apart, because they do not play the
+            same.
           </li>
           <li>
             <strong className="text-ink">The endpoint matters too.</strong> One provider returned
