@@ -98,8 +98,11 @@ export function ModelPicker({
         chosen={chosen}
       />
 
-      {entrants.length > 1 && (
-        <span className="flex flex-wrap items-center gap-1">
+      {/* Shown even with one precision, `unknown` included: the precision is part of what plays
+          (ADR-0015), and a row that vanishes reads as "this model has none" rather than "this is
+          the only one served". A single chip is the answer, not a choice. */}
+      {entrants.length > 0 && (
+        <span role="group" aria-label="Precision" className="flex flex-wrap items-center gap-1">
           {entrants.map((option) => {
             const active = option.quantization === (quantization || entrants[0].quantization);
             return (
