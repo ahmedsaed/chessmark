@@ -33,7 +33,7 @@ were live in this directory before it was written.
 | [0012](0012-nonstandard-local-ports.md) | Non-standard local ports | Accepted |
 | [0013](0013-design-system.md) | Design system: Board & Amber, dark only, conversation-led | Accepted |
 | [0014](0014-provider-routing-and-quantization.md) | Pin provider routing and exclude sub-8-bit quantization | Superseded in part by [0015](0015-quantization-as-identity-and-pinned-endpoints.md) |
-| [0015](0015-quantization-as-identity-and-pinned-endpoints.md) | Quantization identifies the contestant; endpoints are pinned per match | Amended by [0019](0019-harness-bounds-are-not-findings.md), [0027](0027-a-pool-is-ranked-by-its-own-rating.md), [0066](0066-the-person-starting-a-game-may-choose-its-endpoint.md) |
+| [0015](0015-quantization-as-identity-and-pinned-endpoints.md) | Quantization identifies the contestant; endpoints are pinned per match | Amended by [0019](0019-harness-bounds-are-not-findings.md), [0027](0027-a-pool-is-ranked-by-its-own-rating.md), [0066](0066-the-person-starting-a-game-may-choose-its-endpoint.md), [0067](0067-reasoning-effort-is-part-of-the-contestant.md) (proposed) |
 | [0016](0016-credits-as-a-granted-balance.md) | Credits are a granted balance, priced per model | Superseded by [0052](0052-credit-is-dollars-spent-at-actual-cost.md) |
 | [0017](0017-rate-limits-pause-games.md) | A rate limit pauses the game; endpoints cool down between games | Amended by [0025](0025-finishing-a-game-beats-starting-one.md) |
 | [0018](0018-context-compaction.md) | The model summarises its own history when the window fills | Amended by [0021](0021-measured-windows-and-the-compaction-ladder.md) |
@@ -80,12 +80,12 @@ were live in this directory before it was written.
 | [0059](0059-a-decision-model-with-a-limit-plays-in-heats.md) | A decision model that cannot take every move at once plays in heats | Amended by [0062](0062-a-failed-call-is-recorded-and-a-refused-answer-is-re-split.md) |
 | [0060](0060-models-are-rated-by-bradley-terry-and-ranked-by-proven-strength.md) | Models are rated by Bradley-Terry, and ranked by the strength they have proven | Accepted |
 | [0061](0061-every-rating-is-a-stored-run.md) | Every rating is a stored run, read rather than computed | Accepted |
+| [0062](0062-a-failed-call-is-recorded-and-a-refused-answer-is-re-split.md) | A failed call is recorded, and a refused answer is asked again in smaller heats | Accepted |
 | [0063](0063-chat-and-decision-models-are-ranked-on-separate-leaderboards.md) | Chat and decision models are ranked on separate leaderboards | Amended by [0064](0064-a-game-with-a-person-or-across-harnesses-is-never-ranked.md) |
 | [0064](0064-a-game-with-a-person-or-across-harnesses-is-never-ranked.md) | A game with a person, or between a chat and a decision model, is never ranked | Accepted |
 | [0065](0065-game-gifs-are-drawn-in-the-browser.md) | Game GIFs are drawn in the browser | Accepted |
 | [0066](0066-the-person-starting-a-game-may-choose-its-endpoint.md) | The person starting a game may choose its endpoint | Accepted |
-| [0062](0062-a-failed-call-is-recorded-and-a-refused-answer-is-re-split.md) | A failed call is recorded, and a refused answer is asked again in smaller heats | Accepted |
-| [0063](0063-chat-and-decision-models-are-ranked-on-separate-leaderboards.md) | Chat and decision models are ranked on separate leaderboards | Accepted |
+| [0067](0067-reasoning-effort-is-part-of-the-contestant.md) | Reasoning effort is part of the contestant | Proposed |
 
 ## Template
 
