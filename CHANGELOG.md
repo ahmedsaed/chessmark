@@ -15,6 +15,25 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-09
+
+**Ratings rebuilt on Bradley-Terry, chat and decision models ranked apart, and you choose who serves
+a model.** 27 commits since `v0.7.0`. Ratings now come from one fit over every game, ordered by what
+a model has proven rather than by a streak, and every rating on the site, pools and matchmaker
+included, is one stored run. Chat models and decision models get separate leaderboards, and a game
+with a person or across the two is never ranked. Starting a game now offers every host for the
+model as well as its precision. Any game can be downloaded as a GIF, and decision models with a
+limit on options play in heats.
+
+**Every rating changes once**, on the first read after the deploy, because the method changed. It
+is not a regression.
+
+Two migrations, both additive: `8eac4a8e7efa` adds a nullable `model_registry.decisions_max_choices`,
+and `9a854789833f` adds `leaderboard_snapshots.scope` (default `''`, so the stored leaderboard keeps
+serving) and widens its unique key to `(prompt_version, scope)`. The decision harness moved to
+`d2.1`, so the catalogue refresh that runs at deploy re-checks every decision model once. Until
+that finishes, no decision model can be paired.
+
 ### Added
 
 - **You can choose which provider serves a model** when you start a game, against a model or
@@ -1601,6 +1620,7 @@ flags the old code wrote.
 [ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
 [ADR-0044]: docs/adr/0044-the-ladder-resets-on-an-answered-call.md
 [ADR-0045]: docs/adr/0045-a-turn-keeps-the-rounds-it-completed.md
+[0.8.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.8.0
 [0.7.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.7.0
 [0.6.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.6.0
 [0.5.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.5.0
