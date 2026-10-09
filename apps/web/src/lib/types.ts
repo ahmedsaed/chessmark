@@ -173,6 +173,16 @@ export interface Contestant {
   uptime_1d: number | null;
   /** How many endpoints serve this precision. One means an outage takes the contestant with it. */
   endpoint_count: number;
+  /** Every host serving this precision, healthiest first — `provider` is the first (ADR-0066). */
+  endpoints: Endpoint[];
+}
+
+/** One host a contestant can be played through, with OpenRouter's figures for it (ADR-0066). */
+export interface Endpoint {
+  provider: string;
+  uptime_1d: number | null;
+  /** Tokens per second. */
+  throughput: number | null;
 }
 
 /** What a model has actually done, over every game — not only the ratable ones (Phase 20). */

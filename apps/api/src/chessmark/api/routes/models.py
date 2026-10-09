@@ -63,9 +63,12 @@ async def list_models(
 
     endpoints = list(
         await session.scalars(
+            # The pinning predicate, not just `is_active`: each contestant now lists its endpoints
+            # for the game form to offer (ADR-0066), and one under the context floor would be
+            # offered here and refused by `POST /games`.
             sa.select(ModelEndpoint).where(
                 ModelEndpoint.model_id.in_([row.id for row in rows]),
-                ModelEndpoint.is_active.is_(True),
+                *endpoint_is_playable(),
             )
         )
     )

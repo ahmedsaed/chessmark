@@ -96,6 +96,11 @@ rather than one being banned. Every seat **pins one endpoint** for the whole gam
 the router used to switch mid-game, and did.
 [ADR-0015](adr/0015-quantization-as-identity-and-pinned-endpoints.md).
 
+Uptime only picks the default. The person starting a game can name the host instead (`*_provider`
+on `POST /games`, *via* in the form). The name has to pass the same playability check, or the
+request is a `400`.
+[ADR-0066](adr/0066-the-person-starting-a-game-may-choose-its-endpoint.md).
+
 A provider's mangled output **abandons** the game rather than forfeiting the model.
 
 **An endpoint can break a result without touching precision.** `deepseek-v4-pro` leaked raw DSML

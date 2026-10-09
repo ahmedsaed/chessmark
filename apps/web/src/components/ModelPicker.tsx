@@ -18,17 +18,30 @@
  * So: a disclosure with a search box and providers collapsed. Collapsed is the default because 36
  * rows fit on a screen and 330 do not; a provider carries its model count and its cheapest price,
  * which is enough to decide whether to open it.
+ *
+ * **The endpoint can be chosen too** (ADR-0066). Uptime picks a sensible default, but the healthiest
+ * host is not always the one that plays well — one served tool calls as prose. Left on "auto" the
+ * server pins by uptime as before; anything else is sent as the seat's provider. A native `<select>`
+ * is right here where it was wrong for models: a contestant has a handful of hosts, not 330.
  */
 
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { browseModels, countModels } from "@/lib/models";
-import type { ModelInfo } from "@/lib/types";
+import type { Endpoint, ModelInfo } from "@/lib/types";
 
 function usdPerMillion(perToken: string): string {
   const value = Number(perToken) * 1_000_000;
   return Number.isFinite(value) ? `$${value.toFixed(2)}/M` : "—";
+}
+
+/** What there is to compare hosts on, in the order the default rule weighs it. */
+function endpointFigures(endpoint: Endpoint): string {
+  const figures = [endpoint.provider];
+  if (endpoint.uptime_1d !== null) figures.push(`${endpoint.uptime_1d.toFixed(1)}%`);
+  if (endpoint.throughput !== null) figures.push(`${Math.round(endpoint.throughput)} tok/s`);
+  return figures.join(" · ");
 }
 
 export function ModelPicker({
@@ -38,6 +51,8 @@ export function ModelPicker({
   models,
   quantization,
   onQuantizationChange,
+  provider,
+  onProviderChange,
 }: {
   label: string;
   value: string;
@@ -45,13 +60,18 @@ export function ModelPicker({
   models: ModelInfo[];
   quantization: string;
   onQuantizationChange: (value: string) => void;
+  /** Empty is "auto": the server pins the healthiest, as it always has. */
+  provider: string;
+  onProviderChange: (value: string) => void;
 }) {
   const chosen = models.find((model) => model.openrouter_id === value);
   const entrants = chosen?.contestants ?? [];
   // Empty means "let the server pick the healthiest", which is the sane default and is recorded.
   const entrant = entrants.find((c) => c.quantization === quantization) ?? entrants[0];
+  const hosts = entrant?.endpoints ?? [];
 
   const labelId = useId();
+  const endpointId = useId();
 
   return (
     <div className="flex min-w-0 flex-col gap-1">
@@ -75,7 +95,12 @@ export function ModelPicker({
               <button
                 key={option.quantization}
                 type="button"
-                onClick={() => onQuantizationChange(option.quantization)}
+                onClick={() => {
+                  // A host belongs to a precision. Keeping it across a switch would send a pair
+                  // nothing serves, and the server would rightly refuse the game.
+                  onQuantizationChange(option.quantization);
+                  onProviderChange("");
+                }}
                 aria-pressed={active}
                 title={`${option.provider}, uptime ${option.uptime_1d?.toFixed(1) ?? "?"}% — a separate entrant`}
                 className={`border px-1.5 py-px font-mono text-label uppercase tracking-wider transition-colors ${
@@ -94,9 +119,50 @@ export function ModelPicker({
       {chosen && entrant && (
         <span className="tabular font-mono text-label text-ink-faint">
           in {usdPerMillion(chosen.prompt_usd_per_token)} · out{" "}
-          {usdPerMillion(chosen.completion_usd_per_token)} ·{" "}
-          <span className="text-good">{entrant.provider}</span>
-          {entrant.uptime_1d !== null && ` ${entrant.uptime_1d.toFixed(1)}%`}
+          {usdPerMillion(chosen.completion_usd_per_token)}
+          {/* One host leaves nothing to choose; naming it is still worth a line. */}
+          {hosts.length < 2 && (
+            <>
+              {" · "}
+              <span className="text-good">{entrant.provider}</span>
+              {entrant.uptime_1d !== null && ` ${entrant.uptime_1d.toFixed(1)}%`}
+            </>
+          )}
+        </span>
+      )}
+
+      {hosts.length > 1 && (
+        <span className="flex min-w-0 items-center gap-2">
+          <label
+            htmlFor={endpointId}
+            className="shrink-0 font-mono text-label uppercase tracking-[0.12em] text-ink-faint"
+          >
+            via
+          </label>
+          <span className="relative block min-w-0 flex-1">
+            <select
+              id={endpointId}
+              value={provider}
+              onChange={(event) => onProviderChange(event.target.value)}
+              className="tabular w-full min-w-0 appearance-none truncate border border-line bg-ground py-1 pr-7 pl-2 font-mono text-label text-ink focus:border-accent-dim focus:outline-none"
+            >
+              {/* "auto" is sent as nothing, so the server's rule still decides — and the label
+                  says what that rule would pick today rather than leaving it a mystery. */}
+              <option value="">auto · {endpointFigures(hosts[0])}</option>
+              {hosts.map((host) => (
+                <option key={host.provider} value={host.provider}>
+                  {endpointFigures(host)}
+                </option>
+              ))}
+            </select>
+            <svg
+              aria-hidden
+              viewBox="0 0 10 6"
+              className="pointer-events-none absolute top-1/2 right-2 h-1.5 w-2.5 -translate-y-1/2 text-ink-faint"
+            >
+              <path d="M1 1l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          </span>
         </span>
       )}
     </div>

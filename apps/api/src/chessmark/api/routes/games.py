@@ -788,11 +788,13 @@ async def create_game_endpoint(
                 display_name=known[request.white].display_name,
                 model=request.white,
                 quantization=request.white_quantization,
+                provider=request.white_provider,
             ),
             black=Seat(
                 display_name=known[request.black].display_name,
                 model=request.black,
                 quantization=request.black_quantization,
+                provider=request.black_provider,
             ),
             is_ranked=request.is_ranked,
             trash_talk_enabled=request.trash_talk_enabled,
@@ -802,8 +804,8 @@ async def create_game_endpoint(
             **kwargs,
         )
     except NoEndpointError as error:
-        # The caller named a precision nobody serves. That is a bad request, not a server fault —
-        # and seating them at a different precision would quietly measure another contestant.
+        # The caller named a precision or a host nobody serves. That is a bad request, not a server
+        # fault — and seating them elsewhere would quietly measure another contestant.
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     except UnrankableMatchError as error:
         # A ranked game asked for between seats that can never make one (ADR-0064). The reason is
@@ -954,6 +956,7 @@ async def create_human_game(
         display_name=model.display_name,
         model=request.model,
         quantization=request.model_quantization,
+        provider=request.model_provider,
     )
     white, black = (you, machine) if request.colour is Colour.WHITE else (machine, you)
 

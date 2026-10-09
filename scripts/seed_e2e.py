@@ -145,16 +145,21 @@ async def ensure_catalogue(session: Any) -> int:
         model_id = await session.scalar(
             sa.select(ModelRegistry.id).where(ModelRegistry.openrouter_id == entry["openrouter_id"])
         )
-        session.add(
-            ModelEndpoint(
-                model_id=model_id,
-                provider_name="e2e",
-                quantization="fp8",
-                context_length=entry["context_length"],
-                supports_tools=True,
-                is_active=True,
+        # Every model gets two hosts, the second less healthy, so the form has a choice to offer
+        # and choosing it is distinguishable from "auto" (ADR-0066). The worker is scripted, so
+        # neither name has to exist on OpenRouter.
+        for provider, uptime in (("e2e", 99.9), ("e2e-alt", 95.0)):
+            session.add(
+                ModelEndpoint(
+                    model_id=model_id,
+                    provider_name=provider,
+                    quantization="fp8",
+                    context_length=entry["context_length"],
+                    supports_tools=True,
+                    is_active=True,
+                    uptime_1d=uptime,
+                )
             )
-        )
     await session.commit()
     return len(FALLBACK_CATALOGUE)
 

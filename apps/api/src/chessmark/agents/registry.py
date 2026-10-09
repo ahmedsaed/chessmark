@@ -565,11 +565,15 @@ class NoEndpointError(LookupError):
     is on offer.
     """
 
-    def __init__(self, model_slug: str, quantization: str | None) -> None:
+    def __init__(
+        self, model_slug: str, quantization: str | None, provider: str | None = None
+    ) -> None:
         wanted = quantization or "any precision"
-        super().__init__(f"no active endpoint serves {model_slug} at {wanted}")
+        host = f" through {provider}" if provider else ""
+        super().__init__(f"no playable endpoint serves {model_slug} at {wanted}{host}")
         self.model_slug = model_slug
         self.quantization = quantization
+        self.provider = provider
 
 
 def ineligible_reasons(
@@ -657,6 +661,7 @@ async def select_endpoint(
     *,
     model_slug: str,
     quantization: str | None = None,
+    provider: str | None = None,
 ) -> ModelEndpoint:
     """The one endpoint a match will use for this seat, for the whole game (ADR-0015).
 
@@ -678,6 +683,10 @@ async def select_endpoint(
     cannot play (AGENT-01), and picking one would produce a forfeit that says nothing about the
     model. Nor are endpoints whose own context window is under the floor — see
     `endpoint_is_playable`, which is also where a decision model is exempt from both.
+
+    `provider` names the endpoint instead of ranking for one (ADR-0066). It is held to the same
+    playability rules, so naming a host cannot seat a seat on an endpoint that cannot call tools —
+    the forfeit that would follow would read as the model's fault.
     """
     query = (
         sa.select(ModelEndpoint)
@@ -705,10 +714,12 @@ async def select_endpoint(
     )
     if quantization is not None:
         query = query.where(ModelEndpoint.quantization == quantization)
+    if provider is not None:
+        query = query.where(ModelEndpoint.provider_name == provider)
 
     endpoint = await session.scalar(query.limit(1))
     if endpoint is None:
-        raise NoEndpointError(model_slug, quantization)
+        raise NoEndpointError(model_slug, quantization, provider)
     return endpoint
 
 

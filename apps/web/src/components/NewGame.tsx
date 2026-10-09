@@ -11,7 +11,7 @@
  * You pick a **contestant**, not a model: `model@fp4` and `model@fp8` are different entrants and
  * are ranked apart (ADR-0015). The precision picker exists because that distinction is the point,
  * and the endpoint is shown because it is pinned for the whole game and turned out to change
- * results as much as precision does.
+ * results as much as precision does — which is also why it can be chosen (ADR-0066).
  */
 
 import { useAuth } from "@clerk/nextjs";
@@ -49,6 +49,8 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
   );
   const [whiteQuant, setWhiteQuant] = useState<string>("");
   const [blackQuant, setBlackQuant] = useState<string>("");
+  const [whiteHost, setWhiteHost] = useState<string>("");
+  const [blackHost, setBlackHost] = useState<string>("");
   const [limit, setLimit] = useState("");
   const [plies, setPlies] = useState(String(DEFAULT_PLIES));
   /* On by default, as the API always had it: two models trading barbs is half the show. */
@@ -74,6 +76,9 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           // Omitted means "the healthiest endpoint at whatever precision", which is then recorded.
           white_quantization: whiteQuant || null,
           black_quantization: blackQuant || null,
+          // Likewise: empty is "auto", and the server pins by uptime (ADR-0066).
+          white_provider: whiteHost || null,
+          black_provider: blackHost || null,
           max_plies: pliesFrom(plies),
           trash_talk_enabled: talk,
           // Theirs to set, or none: the game spends their credit (ADR-0052).
@@ -113,10 +118,13 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           onChange={(next) => {
             setWhite(next);
             setWhiteQuant("");
+            setWhiteHost("");
           }}
           models={playable}
           quantization={whiteQuant}
           onQuantizationChange={setWhiteQuant}
+          provider={whiteHost}
+          onProviderChange={setWhiteHost}
         />
         <span className="self-center text-center font-mono text-data text-ink-faint">vs</span>
         <ModelPicker
@@ -125,10 +133,13 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           onChange={(next) => {
             setBlack(next);
             setBlackQuant("");
+            setBlackHost("");
           }}
           models={playable}
           quantization={blackQuant}
           onQuantizationChange={setBlackQuant}
+          provider={blackHost}
+          onProviderChange={setBlackHost}
         />
 
       </div>

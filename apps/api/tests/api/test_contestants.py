@@ -35,6 +35,8 @@ async def _model(db: AsyncSession, slug: str, endpoints: list[dict]) -> None:
                 uptime_1d=endpoint.get("uptime"),
                 supports_implicit_caching=endpoint.get("caching"),
                 supports_tools=endpoint.get("supports_tools", True),
+                context_length=endpoint.get("context"),
+                throughput=endpoint.get("throughput"),
             )
         )
     await db.commit()
@@ -85,6 +87,56 @@ async def test_a_contestant_names_the_endpoint_that_would_serve_it(
 
     assert contestant(body, "fp8")["provider"] == "Healthy"
     assert contestant(body, "fp8")["endpoint_count"] == 2
+
+
+async def test_a_contestant_lists_every_endpoint_healthiest_first(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The game form offers these as the choice of host (ADR-0066), and its default has to be
+    the one the rule would pin — so the order is the pinning order, not the database's."""
+    await _model(
+        db,
+        "test/hosts",
+        [
+            {"provider": "Middling", "quantization": "fp8", "uptime": 95.0, "throughput": 40.0},
+            {"provider": "Healthy", "quantization": "fp8", "uptime": 99.9, "throughput": 10.0},
+            {"provider": "Flaky", "quantization": "fp8", "uptime": 80.0, "throughput": 90.0},
+            {"provider": "Quarter", "quantization": "fp4", "uptime": 99.0},
+        ],
+    )
+
+    body = next(
+        m for m in (await client.get("/models")).json() if m["openrouter_id"] == "test/hosts"
+    )
+
+    fp8 = contestant(body, "fp8")
+    assert [e["provider"] for e in fp8["endpoints"]] == ["Healthy", "Middling", "Flaky"]
+    assert fp8["endpoints"][0]["provider"] == fp8["provider"]
+    assert fp8["endpoints"][1]["throughput"] == 40.0
+    # Each precision lists only its own hosts: choosing Quarter would seat a different entrant.
+    assert [e["provider"] for e in contestant(body, "fp4")["endpoints"]] == ["Quarter"]
+
+
+async def test_an_endpoint_too_small_for_a_game_is_not_offered(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Listed by `is_active` alone, an endpoint under the context floor would be offered by the
+    form and refused by `POST /games` — the catalogue and the pin have to share one predicate."""
+    await _model(
+        db,
+        "test/cramped",
+        [
+            {"provider": "Roomy", "quantization": "fp8", "uptime": 90.0},
+            {"provider": "Cramped", "quantization": "fp8", "uptime": 99.9, "context": 1024},
+        ],
+    )
+
+    body = next(
+        m for m in (await client.get("/models")).json() if m["openrouter_id"] == "test/cramped"
+    )
+
+    assert [e["provider"] for e in contestant(body, "fp8")["endpoints"]] == ["Roomy"]
+    assert contestant(body, "fp8")["provider"] == "Roomy"
 
 
 async def test_caching_support_is_not_published() -> None:
@@ -204,3 +256,110 @@ async def test_asking_for_a_precision_nobody_serves_is_a_400(
 
     assert response.status_code == 400
     assert "fp4" in response.text
+
+
+async def test_an_endpoint_can_be_chosen_when_starting_a_game(
+    client: AsyncClient, db: AsyncSession, redis: object
+) -> None:
+    """The point of ADR-0066: the healthiest host by uptime is not always the one that plays
+    well, and the person paying for the game can say which they want."""
+    await _model(
+        db,
+        "test/choosy",
+        [
+            {"provider": "Healthy", "quantization": "fp8", "uptime": 99.9},
+            {"provider": "Preferred", "quantization": "fp8", "uptime": 90.0},
+        ],
+    )
+    await fund(db, "user_choosy")
+
+    response = await client.post(
+        "/games",
+        json={
+            "white": "test/choosy",
+            "black": "test/choosy",
+            "white_provider": "Preferred",
+            "max_plies": 4,
+        },
+        headers=as_user("user_choosy"),
+    )
+
+    assert response.status_code == 201, response.text
+    detail = (await client.get(f"/games/{response.json()['id']}")).json()
+    seats = {p["colour"]: p for p in detail["players"]}
+    assert seats["white"]["pinned_provider"] == "Preferred"
+    assert seats["black"]["pinned_provider"] == "Healthy"
+
+
+async def test_an_endpoint_can_be_chosen_against_a_person(
+    client: AsyncClient, db: AsyncSession, redis: object
+) -> None:
+    await _model(
+        db,
+        "test/choosy-human",
+        [
+            {"provider": "Healthy", "quantization": "fp8", "uptime": 99.9},
+            {"provider": "Preferred", "quantization": "fp8", "uptime": 90.0},
+        ],
+    )
+    await fund(db, "user_choosy_human")
+
+    response = await client.post(
+        "/games/human",
+        json={"model": "test/choosy-human", "model_provider": "Preferred", "max_plies": 4},
+        headers=as_user("user_choosy_human"),
+    )
+
+    assert response.status_code == 201, response.text
+    detail = (await client.get(f"/games/{response.json()['id']}")).json()
+    machine = next(p for p in detail["players"] if p["kind"] == "model")
+    assert machine["pinned_provider"] == "Preferred"
+
+
+@pytest.mark.parametrize(
+    ("provider", "quantization"),
+    [
+        ("Nobody", None),  # not a host of this model at all
+        ("Toolless", None),  # a host, but one that cannot play
+        ("Four", "fp8"),  # a host, at a different precision than asked for
+    ],
+)
+async def test_asking_for_an_endpoint_that_cannot_serve_the_seat_is_a_400(
+    client: AsyncClient,
+    db: AsyncSession,
+    redis: object,
+    provider: str,
+    quantization: str | None,
+) -> None:
+    """Before ADR-0066 a named provider went into `only` unchecked. From a form, a stale or wrong
+    name would start a game that died at ply 0 on OpenRouter's 404 — a sentence now, not a corpse."""
+    await _model(
+        db,
+        "test/strict",
+        [
+            {"provider": "Eight", "quantization": "fp8", "uptime": 99.0},
+            {"provider": "Four", "quantization": "fp4", "uptime": 99.0},
+            {
+                "provider": "Toolless",
+                "quantization": "fp8",
+                "uptime": 99.9,
+                "supports_tools": False,
+            },
+        ],
+    )
+    await fund(db, "user_strict")
+
+    response = await client.post(
+        "/games",
+        json={
+            "white": "test/strict",
+            "black": "test/strict",
+            "white_provider": provider,
+            "white_quantization": quantization,
+            "max_plies": 4,
+        },
+        headers=as_user("user_strict"),
+    )
+
+    assert response.status_code == 400, response.text
+    assert provider in response.text

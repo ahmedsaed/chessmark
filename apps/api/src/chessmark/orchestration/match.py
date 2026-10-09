@@ -44,8 +44,9 @@ class Seat:
     """
 
     provider: str | None = None
-    """Force a specific endpoint. Normally left unset and chosen by uptime — this exists for
-    telling a model's fault apart from its host's."""
+    """Name the endpoint instead of letting uptime choose it (ADR-0066). Must be a playable
+    endpoint of this model, at `quantization` when that is set too — a name nothing serves is a
+    `NoEndpointError`, not a game that dies at its first call."""
 
 
 @dataclass(slots=True)
@@ -275,15 +276,17 @@ async def resolve_routing(
     if not model_slug:
         return routing
 
-    if provider is not None:
-        # Explicitly forced, usually to tell a model's fault apart from its host's.
-        return replace(routing, only=(provider,), quantizations=())
-
     try:
-        endpoint = await select_endpoint(session, model_slug=model_slug, quantization=quantization)
+        endpoint = await select_endpoint(
+            session, model_slug=model_slug, quantization=quantization, provider=provider
+        )
     except NoEndpointError:
-        # Asking for a precision nothing serves is the caller's mistake and should surface as one.
-        if quantization is not None:
+        # Asking for a precision or a host nothing serves is the caller's mistake and should
+        # surface as one. A named provider used to be passed straight through unchecked, which
+        # was harmless while only scripts named one; from the play page, a typo or an endpoint
+        # that went inactive since the catalogue loaded would start a game that dies at ply 0
+        # with OpenRouter's 404 rather than a sentence saying why (ADR-0066).
+        if quantization is not None or provider is not None:
             raise
         return routing
 
