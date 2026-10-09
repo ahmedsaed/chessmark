@@ -102,3 +102,37 @@ function decodeSegment(segment: string): string {
     return segment;
   }
 }
+
+/**
+ * The key a contestant is rated and stored under: `slug@precision`, and `slug@precision@effort`
+ * once it has a reasoning level (ADR-0067). The API's `contestant_label` spells it the same way,
+ * and the two must agree or a model page cannot find the games behind its own ratings.
+ */
+export function contestantLabel(
+  slug: string,
+  quantization: string,
+  effort?: string | null,
+): string {
+  return effort ? `${slug}@${quantization}@${effort}` : `${slug}@${quantization}`;
+}
+
+/** A reasoning level as a reader sees it. `none` and `auto` are ours, so they say what they mean. */
+export function effortName(effort: string): string {
+  if (effort === "none") return "no reasoning";
+  if (effort === "auto") return "reasoning";
+  return `${effort} reasoning`;
+}
+
+/**
+ * Where a rating row links: its model's page, at the block for that precision and level. The level
+ * is in the anchor because one precision can now hold a rating per level (ADR-0067); a row with no
+ * level lands on the precision, as every link published before the ADR does.
+ */
+export function contestantHref(row: {
+  model_slug: string;
+  quantization: string;
+  effort?: string | null;
+}): string {
+  const anchor = row.effort ? `${row.quantization}-${row.effort}` : row.quantization;
+  return `/models/${row.model_slug}#c-${encodeURIComponent(anchor)}`;
+}

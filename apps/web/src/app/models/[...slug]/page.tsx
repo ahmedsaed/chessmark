@@ -6,7 +6,7 @@ import { PriceBadge } from "@/components/ModelPicker";
 import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { getModel, listGamesByModel } from "@/lib/api";
 import { parseArchive, withFilter } from "@/lib/archive";
-import { modelSlugFromSegments } from "@/lib/models";
+import { contestantLabel, effortName, modelSlugFromSegments } from "@/lib/models";
 import { siteUrl } from "@/lib/site";
 import type {
   Contestant,
@@ -281,25 +281,49 @@ function Contestants({
       ) : (
         <>
           <p className="mb-4 text-sm leading-relaxed text-ink-dim">
-            A contestant is <b className="font-normal text-ink">(model, precision)</b>. The same
-            weights served at fp8 and fp4 are different entrants and are ranked apart, because the
-            precision changes the result as much as the model does.
+            A contestant is{" "}
+            <b className="font-normal text-ink">(model, precision, reasoning level)</b>. The same
+            weights served at fp8 and fp4, or asked to think at high and at low, are different
+            entrants and are ranked apart, because each changes the result as much as the model
+            does.
           </p>
           <div className="flex flex-col gap-6">
-            {model.contestants.map((contestant) => (
-              <ContestantBlock
-                key={contestant.quantization}
-                contestant={contestant}
-                rating={model.ratings.find(
-                  (row) => row.quantization === contestant.quantization,
-                )}
-                games={(
-                  ratedGames[`${model.openrouter_id}@${contestant.quantization}`] ?? []
-                )
-                  .map((gameId) => gamesById.get(gameId))
-                  .filter((game): game is GameSummary => game !== undefined)}
-              />
-            ))}
+            {model.contestants.map((contestant) => {
+              /* A precision holds one rating per reasoning level it has been played at (ADR-0067),
+                 or none yet. The group keeps the `#c-fp8` anchor every older link points at. */
+              const ratings = model.ratings.filter(
+                (row) => row.quantization === contestant.quantization,
+              );
+              const blocks: (LeaderboardRow | undefined)[] =
+                ratings.length > 0 ? ratings : [undefined];
+              return (
+                <div
+                  key={contestant.quantization}
+                  id={`c-${contestant.quantization}`}
+                  className="flex scroll-mt-6 flex-col gap-3"
+                >
+                  {blocks.map((rating) => (
+                    <ContestantBlock
+                      key={rating?.effort ?? "unrated"}
+                      contestant={contestant}
+                      rating={rating}
+                      defaultEffort={model.default_reasoning ?? null}
+                      games={(
+                        ratedGames[
+                          contestantLabel(
+                            model.openrouter_id,
+                            contestant.quantization,
+                            rating?.effort,
+                          )
+                        ] ?? []
+                      )
+                        .map((gameId) => gamesById.get(gameId))
+                        .filter((game): game is GameSummary => game !== undefined)}
+                    />
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </>
       )}
@@ -323,18 +347,33 @@ function Contestants({
 function ContestantBlock({
   contestant,
   rating,
+  defaultEffort,
   games,
 }: {
   contestant: Contestant;
   rating?: LeaderboardRow;
+  /** What an unrated block would be played at if nobody chose — said, so it is not a mystery. */
+  defaultEffort: string | null;
   games: GameSummary[];
 }) {
+  const effort = rating ? rating.effort : defaultEffort;
   return (
-    <div id={`c-${contestant.quantization}`} className="scroll-mt-6 border border-line-soft">
+    <div
+      id={rating?.effort ? `c-${contestant.quantization}-${rating.effort}` : undefined}
+      className="scroll-mt-6 border border-line-soft"
+    >
       <div className="flex flex-wrap items-center gap-3 border-b border-line-soft bg-surface-2 px-3 py-2.5 font-mono text-xs">
         <span className="border border-good/40 px-1.5 py-px text-label uppercase tracking-wider text-good">
           {contestant.quantization}
         </span>
+        {effort && (
+          <span
+            className="border border-line px-1.5 py-px text-label uppercase tracking-wider text-ink-dim"
+            title={rating ? undefined : "the level a game plays at when nobody chooses"}
+          >
+            {effortName(effort)}
+          </span>
+        )}
         <span className="text-ink">{contestant.provider}</span>
         {contestant.uptime_1d !== null && (
           <span className="tabular text-meta text-ink-faint">
@@ -350,7 +389,7 @@ function ContestantBlock({
 
       {rating === undefined ? (
         <p className="px-3 py-4 text-sm text-ink-dim">
-          Not rated at this precision. Nothing it has played here is ratable yet — anything it did
+          Not rated at this precision yet. Nothing it has played here is ratable — anything it did
           play is listed below with the reason it did not count.
         </p>
       ) : (

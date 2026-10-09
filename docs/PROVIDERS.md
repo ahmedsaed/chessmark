@@ -101,6 +101,15 @@ on `POST /games`, *via* in the form). The name has to pass the same playability 
 request is a `400`.
 [ADR-0066](adr/0066-the-person-starting-a-game-may-choose-its-endpoint.md).
 
+So is the **reasoning level**: a contestant is `(model, quantization, effort)`. The levels come from
+each model's `reasoning` block in the catalogue, and **`default_effort` is not the default**. It is
+the effort used when reasoning is switched on without naming one, and 19 models are off by default
+while naming it. Every request from a seat with a level carries `reasoning` in `extra_body`, and an
+endpoint that does not list the parameter is not pinned for a model that can reason. Pre-5.x Claude
+is sent a token budget rather than an effort, because OpenRouter would otherwise take the budget
+from `max_tokens`, which we vary per call.
+[ADR-0067](adr/0067-reasoning-effort-is-part-of-the-contestant.md).
+
 A provider's mangled output **abandons** the game rather than forfeiting the model.
 
 **An endpoint can break a result without touching precision.** `deepseek-v4-pro` leaked raw DSML

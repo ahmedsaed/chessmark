@@ -53,6 +53,7 @@ from chessmark.game import Termination  # noqa: E402
 from chessmark.orchestration import TurnQueue  # noqa: E402
 from chessmark.orchestration.tournament import Step, advance  # noqa: E402
 from chessmark.tournament import FieldFilter, Format, TournamentConfig, standings  # noqa: E402
+from chessmark.tournament.types import EFFORT_LEVELS  # noqa: E402
 
 DIM, BOLD, OFF = "\033[2m", "\033[1m", "\033[0m"
 AMBER, GREEN, RED = "\033[38;5;179m", "\033[38;5;108m", "\033[38;5;167m"
@@ -98,6 +99,8 @@ def field_from(args: argparse.Namespace) -> FieldFilter:
         limit=args.limit,
         # A field is one kind of model (ADR-0049); decision models get events of their own.
         runtime="decision" if args.decision else "llm",
+        # `default` is each model's own default, which is what every event before ADR-0067 played.
+        effort=None if args.effort in (None, "default") else args.effort,
     )
 
 
@@ -622,6 +625,15 @@ def add_field_options(parser: argparse.ArgumentParser) -> None:
         "--decision",
         action="store_true",
         help="decision models instead of chat models — an event seats one kind or the other",
+    )
+    group.add_argument(
+        "--effort",
+        choices=("default", *EFFORT_LEVELS),
+        default="default",
+        help=(
+            "reasoning level every entrant plays at; `default` is each model's own (ADR-0067). "
+            "A level admits only models that list it, and is fixed for the event"
+        ),
     )
     group.add_argument("--limit", type=int, help="cap the field size")
 

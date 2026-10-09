@@ -45,6 +45,7 @@ from chessmark.bench.service import (
     Contestant,
     compute_aggregates,
     compute_ratings,
+    contestant_label,
     ratings_by_key,
     scan,
 )
@@ -54,8 +55,10 @@ log = logging.getLogger(__name__)
 
 #: Which engine produced a stored run. Part of the fingerprint, so changing the engine invalidates
 #: every stored run on its first read instead of serving the old method's numbers as current.
-#: Bump it whenever a change to `bench/bradley_terry.py` would move a published number.
-RATING_METHOD = "bt-2draws"
+#: Bump it whenever a change to `bench/bradley_terry.py` would move a published number — or, as for
+#: `+effort` (ADR-0067), whenever the contestant key changes, since a stored run keyed the old way
+#: would be read under the new.
+RATING_METHOD = "bt-2draws+effort"
 
 #: The leaderboard's scope: every counted game.
 LEADERBOARD = ""
@@ -149,7 +152,10 @@ async def build(
             slug = str((player.sampling or {}).get("model") or "")
             if not slug:
                 continue
-            key = f"{slug}@{quantizations.get(player.id, 'unknown')}"
+            effort = (player.sampling or {}).get("effort")
+            key = contestant_label(
+                slug, quantizations.get(player.id, "unknown"), str(effort) if effort else None
+            )
             ids = counted.setdefault(key, [])
             # A model on both sides of a mirror match is one contestant holding two seats, and
             # listing the game twice would make the page disagree with the row the other way.
@@ -177,6 +183,7 @@ def _row(contestant: Contestant, rating: Rating, aggregate: Aggregate | None) ->
         "model_id": contestant.model_id,
         "model_slug": contestant.model_slug,
         "quantization": contestant.quantization,
+        "effort": contestant.effort,
         "rating": rating.rating,
         "rating_deviation": rating.rd,
         "provisional": rating.provisional,

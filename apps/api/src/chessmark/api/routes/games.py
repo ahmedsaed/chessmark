@@ -79,6 +79,7 @@ from chessmark.orchestration import human as human_play
 from chessmark.orchestration import owner
 from chessmark.orchestration.match import (
     Seat,
+    UnavailableEffortError,
     UnrankableMatchError,
     create_match,
     start_match,
@@ -788,12 +789,14 @@ async def create_game_endpoint(
                 display_name=known[request.white].display_name,
                 model=request.white,
                 quantization=request.white_quantization,
+                effort=request.white_effort,
                 provider=request.white_provider,
             ),
             black=Seat(
                 display_name=known[request.black].display_name,
                 model=request.black,
                 quantization=request.black_quantization,
+                effort=request.black_effort,
                 provider=request.black_provider,
             ),
             is_ranked=request.is_ranked,
@@ -803,6 +806,10 @@ async def create_game_endpoint(
             created_by_user_id=user.id,
             **kwargs,
         )
+    except UnavailableEffortError as error:
+        # A level the model does not list. Refused, never rounded to one it does: that would seat
+        # a different contestant with no way for the caller to know (ADR-0067).
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
     except NoEndpointError as error:
         # The caller named a precision or a host nobody serves. That is a bad request, not a server
         # fault — and seating them elsewhere would quietly measure another contestant.
@@ -956,6 +963,7 @@ async def create_human_game(
         display_name=model.display_name,
         model=request.model,
         quantization=request.model_quantization,
+        effort=request.model_effort,
         provider=request.model_provider,
     )
     white, black = (you, machine) if request.colour is Colour.WHITE else (machine, you)
@@ -973,7 +981,7 @@ async def create_human_game(
             max_plies=request.max_plies,
             created_by_user_id=user.id,
         )
-    except NoEndpointError as error:
+    except (NoEndpointError, UnavailableEffortError) as error:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error)) from error
 
     job = await start_match(session, queue, game_id=match.game.id)

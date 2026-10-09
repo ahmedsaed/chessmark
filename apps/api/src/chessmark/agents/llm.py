@@ -720,6 +720,7 @@ class LlmGateway:
         max_tokens: int | None = None,
         session_id: str | None = None,
         extra: dict[str, Any] | None = None,
+        reasoning: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         # Every OpenRouter id already contains a slash (`nvidia/nemotron-nano-9b-v2:free`), so the
         # prefix must be tested for explicitly. Without it LiteLLM reads the vendor half as its
@@ -764,6 +765,12 @@ class LlmGateway:
         if session_id:
             extra_body["session_id"] = session_id
 
+        # The seat's reasoning level, as `agents/effort.request_body` built it (ADR-0067). A top-level
+        # OpenRouter field like the three above, so it rides with them. Absent for a seat with no
+        # level, which keeps a request from before the ADR byte-identical.
+        if reasoning is not None:
+            extra_body["reasoning"] = reasoning
+
         request["extra_body"] = extra_body
 
         if extra:
@@ -783,6 +790,7 @@ class LlmGateway:
         extra: dict[str, Any] | None = None,
         deadline_seconds: float | None = None,
         on_token: TokenFn | None = None,
+        reasoning: dict[str, Any] | None = None,
     ) -> Completion:
         """Make one logical call, retrying transient failures.
 
@@ -799,6 +807,7 @@ class LlmGateway:
             max_tokens=max_tokens,
             session_id=session_id,
             extra=extra,
+            reasoning=reasoning,
         )
         redacted_request = redact(request)
 

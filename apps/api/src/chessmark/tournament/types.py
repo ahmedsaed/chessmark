@@ -105,6 +105,10 @@ class Result:
 #: The runtimes a field can name, as `db.enums.ModelRuntime` spells them.
 RUNTIMES = frozenset({"llm", "decision"})
 
+#: The reasoning levels an event may be set to (ADR-0067). Duplicated from `agents/effort.LEVELS`
+#: on purpose: this package imports nothing, and a test keeps the two equal.
+EFFORT_LEVELS = ("none", "auto", "minimal", "low", "medium", "high", "xhigh", "max")
+
 
 @dataclass(frozen=True, slots=True)
 class FieldFilter:
@@ -139,10 +143,21 @@ class FieldFilter:
     #: like-for-like field. A string rather than the database's enum because this package imports
     #: nothing, and two values need no import to be checked.
     runtime: str = "llm"
+    #: The reasoning level every entrant plays at, or `None` for each model's own default
+    #: (ADR-0067). **A level admits only models that list it**: substituting the nearest level a
+    #: model does offer would give the event a field playing different tasks. Fixed for the event's
+    #: life — an entrant at another level is another contestant, so changing it is a new event.
+    effort: str | None = None
 
     def __post_init__(self) -> None:
         if self.runtime not in RUNTIMES:
             raise ValueError(f"runtime must be one of {sorted(RUNTIMES)}, not {self.runtime!r}")
+        if self.effort is not None and self.effort not in EFFORT_LEVELS:
+            raise ValueError(f"effort must be one of {EFFORT_LEVELS}, not {self.effort!r}")
+        if self.effort is not None and self.runtime == "decision":
+            # A decision model has no reasoning parameter (ADR-0049), so a level would admit nobody
+            # and say something untrue about the field.
+            raise ValueError("a decision-model event has no reasoning level")
 
     def describe(self) -> str:
         """A one-line summary, for a standings page that should say what it selected."""
@@ -167,6 +182,8 @@ class FieldFilter:
             parts.append("decision models")
         if self.requires_reasoning:
             parts.append("reasoning models")
+        if self.effort is not None:
+            parts.append(f"at {self.effort} reasoning")
         if self.limit is not None:
             parts.append(f"first {self.limit}")
         return ", ".join(parts) if parts else "every playable model"

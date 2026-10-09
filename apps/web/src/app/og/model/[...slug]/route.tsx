@@ -25,7 +25,7 @@
 import { ImageResponse } from "next/og";
 
 import { getGame, getModel } from "@/lib/api";
-import { modelSlugFromSegments } from "@/lib/models";
+import { contestantLabel, modelSlugFromSegments } from "@/lib/models";
 import { Board } from "@/lib/og/board";
 import { Card, CentredCard, Missing, Stats, Subtitle, Title, Wordmark } from "@/lib/og/shell";
 import { CARD, COLOUR , REVALIDATE_SECONDS } from "@/lib/og/theme";
@@ -80,7 +80,9 @@ export async function GET(_request: Request, context: { params: Promise<{ slug: 
      describe the same entrant and the position is the newest thing this model has done. First was
      stable and arbitrary; last is stable and current, and a card that goes stale as a model keeps
      playing is the wrong kind of stable. */
-  const played = best ? model.rated_games?.[`${best.model_slug}@${best.quantization}`] : undefined;
+  const played = best
+    ? model.rated_games?.[contestantLabel(best.model_slug, best.quantization, best.effort)]
+    : undefined;
   const gameId = played?.at(-1);
   const game = gameId ? await getGame(gameId, { cache: REVALIDATE_SECONDS, settled: true }) : null;
 

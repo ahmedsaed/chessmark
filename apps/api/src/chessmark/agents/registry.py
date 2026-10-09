@@ -27,6 +27,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from chessmark.agents.decision_request import DECISION_VERSION
+from chessmark.agents.effort import NONE, levels_from_catalogue
 from chessmark.agents.pricing import ModelPricing, PricingTable
 from chessmark.core.config import get_settings
 from chessmark.db.enums import ModelRuntime
@@ -93,6 +94,8 @@ def to_registry_entry(model: dict[str, Any]) -> dict[str, Any]:
         "completion_usd_per_token": completion,
         "price_tier": price_tier_for(prompt, completion),
         "supports_reasoning": "reasoning" in supported,
+        # Verbatim; the levels are derived from it at sync (ADR-0067).
+        "reasoning": model.get("reasoning") if isinstance(model.get("reasoning"), dict) else None,
         "supports_tools": "tools" in supported,
         "runtime": ModelRuntime.DECISION if is_decision_model(model) else ModelRuntime.LLM,
         "is_free": model_id.endswith(":free"),
@@ -266,6 +269,21 @@ async def fetch_catalogue(
     return entries
 
 
+def _levels_values(entry: dict[str, Any]) -> dict[str, Any]:
+    """`reasoning_levels` and `default_reasoning` for a registry entry (ADR-0067).
+
+    A decision model has neither: it is asked through the Decisions API, which has no reasoning
+    parameter (ADR-0049), so it keeps no effort and its contestant key is unchanged.
+    """
+    if ModelRuntime(entry.get("runtime", ModelRuntime.LLM)) is ModelRuntime.DECISION:
+        return {"reasoning_levels": None, "default_reasoning": None}
+    levels = levels_from_catalogue(
+        supports_reasoning=bool(entry.get("supports_reasoning", False)),
+        reasoning=entry.get("reasoning"),
+    )
+    return {"reasoning_levels": list(levels.offered), "default_reasoning": levels.default}
+
+
 async def sync_model_registry(
     session: AsyncSession,
     entries: list[dict[str, Any]],
@@ -294,6 +312,11 @@ async def sync_model_registry(
             "prompt_usd_per_token": Decimal(str(entry.get("prompt_usd_per_token", 0))),
             "completion_usd_per_token": Decimal(str(entry.get("completion_usd_per_token", 0))),
             "supports_reasoning": bool(entry.get("supports_reasoning", False)),
+            "reasoning": entry.get("reasoning"),
+            # Derived on every sync, like the price band: a model whose provider starts listing
+            # efforts gains them at the next refresh, and one whose default moves takes the new
+            # default for games from then on — recorded on each seat, so old games keep theirs.
+            **_levels_values(entry),
             "supports_tools": bool(entry.get("supports_tools", True)),
             "runtime": ModelRuntime(entry.get("runtime", ModelRuntime.LLM)),
             "is_free": bool(entry.get("is_free", slug.endswith(":free"))),
@@ -507,6 +530,7 @@ async def sync_endpoints(
             "quantization": endpoint.get("quantization"),
             "context_length": endpoint.get("context_length"),
             "supports_tools": "tools" in (endpoint.get("supported_parameters") or []),
+            "supports_reasoning": "reasoning" in (endpoint.get("supported_parameters") or []),
             "max_completion_tokens": endpoint.get("max_completion_tokens"),
             "is_active": True,
             # Health, as OpenRouter measured it. Selection is by uptime (ADR-0015).
@@ -566,11 +590,17 @@ class NoEndpointError(LookupError):
     """
 
     def __init__(
-        self, model_slug: str, quantization: str | None, provider: str | None = None
+        self,
+        model_slug: str,
+        quantization: str | None,
+        provider: str | None = None,
+        *,
+        needs_reasoning: bool = False,
     ) -> None:
         wanted = quantization or "any precision"
         host = f" through {provider}" if provider else ""
-        super().__init__(f"no playable endpoint serves {model_slug} at {wanted}{host}")
+        level = " that accepts a reasoning level" if needs_reasoning else ""
+        super().__init__(f"no playable endpoint{level} serves {model_slug} at {wanted}{host}")
         self.model_slug = model_slug
         self.quantization = quantization
         self.provider = provider
@@ -646,6 +676,17 @@ def endpoint_is_playable(min_context: int | None = None) -> tuple[Any, ...]:
                 ModelEndpoint.context_length >= floor,
             )
         )
+    # **An endpoint that ignores `reasoning` cannot serve a model that can reason** (ADR-0067). Every
+    # seat on such a model sends a level — its default, at least, and `none` is `enabled: false` —
+    # so that endpoint would play at an effort nobody chose. Unknown support (`NULL`) is admitted,
+    # and a model that cannot reason sends nothing, so any endpoint serves it.
+    reasons = ModelEndpoint.model_id.in_(
+        sa.select(ModelRegistry.id).where(
+            ModelRegistry.reasoning_levels.is_not(None),
+            ModelRegistry.reasoning_levels != sa.cast([NONE], sa.ARRAY(sa.Text)),
+        )
+    )
+    chat.append(sa.or_(ModelEndpoint.supports_reasoning.is_not(False), sa.not_(reasons)))
     # **A decision model's endpoint declares no parameters at all** — `supported_parameters` is
     # empty, because there are no tools or sampling knobs to declare — and its window holds one
     # move's question rather than a game's transcript. Both chat rules would refuse every one of
@@ -662,6 +703,7 @@ async def select_endpoint(
     model_slug: str,
     quantization: str | None = None,
     provider: str | None = None,
+    needs_reasoning: bool = False,
 ) -> ModelEndpoint:
     """The one endpoint a match will use for this seat, for the whole game (ADR-0015).
 
@@ -687,6 +729,10 @@ async def select_endpoint(
     `provider` names the endpoint instead of ranking for one (ADR-0066). It is held to the same
     playability rules, so naming a host cannot seat a seat on an endpoint that cannot call tools —
     the forfeit that would follow would read as the model's fault.
+
+    `needs_reasoning` is set when the seat will send a reasoning level (ADR-0067). An endpoint that
+    does not list the parameter would ignore it and play at an effort nobody chose, so it is passed
+    over — but an endpoint whose support is unknown (`NULL`, from before the column) is not.
     """
     query = (
         sa.select(ModelEndpoint)
@@ -716,10 +762,12 @@ async def select_endpoint(
         query = query.where(ModelEndpoint.quantization == quantization)
     if provider is not None:
         query = query.where(ModelEndpoint.provider_name == provider)
+    if needs_reasoning:
+        query = query.where(ModelEndpoint.supports_reasoning.is_not(False))
 
     endpoint = await session.scalar(query.limit(1))
     if endpoint is None:
-        raise NoEndpointError(model_slug, quantization, provider)
+        raise NoEndpointError(model_slug, quantization, provider, needs_reasoning=needs_reasoning)
     return endpoint
 
 

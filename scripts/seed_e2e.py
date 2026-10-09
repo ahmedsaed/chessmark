@@ -42,8 +42,8 @@ from chessmark.agents.scripted_decisions import deciding  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
 from chessmark.db import tournaments as repo  # noqa: E402
 from chessmark.db.credits import balance_of, grant  # noqa: E402
-from chessmark.db.house import house_id  # noqa: E402
 from chessmark.db.enums import GameStatus, ModelRuntime  # noqa: E402
+from chessmark.db.house import house_id  # noqa: E402
 from chessmark.db.models import (  # noqa: E402
     Game,
     ModelEndpoint,
@@ -123,6 +123,15 @@ FALLBACK_CATALOGUE = [
         "supports_tools": True,
         "prompt_usd_per_token": "0.0000006",
         "completion_usd_per_token": "0.0000025",
+        # Reasoning levels, so the form has a level to choose and choosing one is distinguishable
+        # from the default (ADR-0067). The block is OpenRouter's shape.
+        "supports_reasoning": True,
+        "reasoning": {
+            "mandatory": False,
+            "default_enabled": True,
+            "supported_efforts": ["high", "medium", "low"],
+            "default_effort": "medium",
+        },
     },
 ]
 

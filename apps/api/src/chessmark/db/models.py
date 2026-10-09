@@ -96,6 +96,17 @@ class ModelRegistry(Base):
     prompt_usd_per_token: Mapped[Decimal] = mapped_column(USD_PER_TOKEN, default=Decimal(0))
     completion_usd_per_token: Mapped[Decimal] = mapped_column(USD_PER_TOKEN, default=Decimal(0))
     supports_reasoning: Mapped[bool] = mapped_column(default=False, server_default=sa.false())
+
+    #: OpenRouter's `reasoning` block for this model, as it said it at the last sync: `mandatory`,
+    #: `default_enabled`, `supported_efforts`, `default_effort`. Kept verbatim so a level can always
+    #: be traced to what the catalogue claimed (ADR-0067).
+    reasoning: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    #: The reasoning levels a seat may ask this model for, and the one it plays at when nobody
+    #: chooses — derived from `reasoning` by `agents/effort.levels_from_catalogue`. `None` until the
+    #: first sync after ADR-0067: such a model sends no level and records none, and the catalogue
+    #: refresh labels its seats afterwards, as it does every seat from before the ADR.
+    reasoning_levels: Mapped[list[str] | None] = mapped_column(sa.ARRAY(sa.Text))
+    default_reasoning: Mapped[str | None] = mapped_column(sa.Text)
     supports_tools: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
 
     #: How this model is asked for a move (ADR-0049). Read from the catalogue at sync: a model
@@ -698,6 +709,10 @@ class ModelEndpoint(Base):
     quantization: Mapped[str | None] = mapped_column(sa.Text)
     context_length: Mapped[int | None] = mapped_column(sa.Integer)
     supports_tools: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
+    #: Whether the endpoint lists the `reasoning` parameter. One that does not would silently ignore
+    #: a level, so it is not pinned for a seat that sends one (ADR-0067). `None` is unknown — rows
+    #: from before the column — and is admitted, as an unknown window is: unknown is not "no".
+    supports_reasoning: Mapped[bool | None] = mapped_column(sa.Boolean)
     max_completion_tokens: Mapped[int | None] = mapped_column(sa.Integer)
     is_active: Mapped[bool] = mapped_column(default=True, server_default=sa.true())
 

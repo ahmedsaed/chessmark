@@ -57,11 +57,12 @@ async def _played(
     result: GameResult,
     termination: Termination = Termination.CHECKMATE,
     is_ranked: bool = True,
+    white_effort: str | None = None,
 ) -> Any:
     """A finished game, seated through the real match path so routing is pinned as in production."""
     match = await create_match(
         db,
-        white=Seat(display_name=white, model=white),
+        white=Seat(display_name=white, model=white, effort=white_effort),
         black=Seat(display_name=black, model=black),
         is_ranked=is_ranked,
     )
@@ -179,6 +180,30 @@ async def test_the_same_model_at_two_precisions_is_two_contestants(db: AsyncSess
     labels = {c.label for c in run.ratings}
 
     assert "test/both@fp8" in labels, f"expected the pinned precision in the identity, got {labels}"
+
+
+async def test_the_same_model_at_two_reasoning_levels_is_two_contestants(
+    db: AsyncSession,
+) -> None:
+    """ADR-0067 reaching the leaderboard. Opus at high against GPT at medium measured the settings
+    as much as the models; averaging a model's levels would rate a mix nobody played."""
+    model = await _model(db, "test/thinker")
+    model.reasoning_levels = ["low", "medium", "high"]
+    model.default_reasoning = "medium"
+    await _model(db, "test/rival")
+    await db.flush()
+
+    await _played(db, "test/thinker", "test/rival", result=GameResult.WHITE_WINS)
+    await _played(
+        db, "test/thinker", "test/rival", result=GameResult.BLACK_WINS, white_effort="high"
+    )
+
+    run = await compute_ratings(db, prompt_version=None)
+    labels = {c.label for c in run.ratings}
+
+    assert {"test/thinker@fp8@medium", "test/thinker@fp8@high"} <= labels, labels
+    # A model with no levels — a decision model, or one never described — keeps the old key.
+    assert "test/rival@fp8" in labels
 
 
 # ====================================================================== determinism

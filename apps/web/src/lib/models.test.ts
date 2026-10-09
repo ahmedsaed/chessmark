@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { browseModels, countModels, modelSlugFromSegments } from "@/lib/models";
+import {
+  browseModels,
+  contestantLabel,
+  countModels,
+  effortName,
+  modelSlugFromSegments,
+} from "@/lib/models";
 import type { ModelInfo } from "@/lib/types";
 
 function model(openrouter_id: string, overrides: Partial<ModelInfo> = {}): ModelInfo {
@@ -163,5 +169,25 @@ describe("modelSlugFromSegments", () => {
   it("hands back a malformed escape rather than throwing", () => {
     /** `decodeURIComponent` throws on a lone `%`. A page that renders a 404 beats one that 500s. */
     expect(modelSlugFromSegments(["vendor", "100%"])).toBe("vendor/100%");
+  });
+});
+
+describe("contestantLabel", () => {
+  /** The API keys `games_by_contestant` this way; a different spelling and a model page finds no
+   *  games behind any of its ratings (ADR-0067). */
+  it("adds the effort only when there is one", () => {
+    expect(contestantLabel("openai/gpt-6.1-sol", "unknown", "high")).toBe(
+      "openai/gpt-6.1-sol@unknown@high",
+    );
+    expect(contestantLabel("typesafe/jev-1.13", "unknown", null)).toBe("typesafe/jev-1.13@unknown");
+    expect(contestantLabel("vendor/m", "fp8")).toBe("vendor/m@fp8");
+  });
+});
+
+describe("effortName", () => {
+  it("says what our two levels mean", () => {
+    expect(effortName("none")).toBe("no reasoning");
+    expect(effortName("auto")).toBe("reasoning");
+    expect(effortName("xhigh")).toBe("xhigh reasoning");
   });
 });
