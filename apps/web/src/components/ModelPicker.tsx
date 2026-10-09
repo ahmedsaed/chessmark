@@ -102,7 +102,12 @@ export function ModelPicker({
           (ADR-0015), and a row that vanishes reads as "this model has none" rather than "this is
           the only one served". A single chip is the answer, not a choice. */}
       {entrants.length > 0 && (
-        <span role="group" aria-label="Precision" className="flex flex-wrap items-center gap-1">
+        <span role="group" aria-label="Quantization" className="flex flex-wrap items-center gap-1">
+          {/* Named, because a lone `unknown` or `fp8` chip says nothing to someone who has not met
+              the word — and "precision" is ours, while every host's page says "quantization". */}
+          <span aria-hidden className="mr-1 font-mono text-label uppercase tracking-[0.12em] text-ink-faint">
+            quantization
+          </span>
           {entrants.map((option) => {
             const active = option.quantization === (quantization || entrants[0].quantization);
             return (

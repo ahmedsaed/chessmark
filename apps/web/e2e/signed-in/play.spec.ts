@@ -379,7 +379,8 @@ test("a model served at one precision still shows it", async ({ page }) => {
   await form.getByPlaceholder("Search models or providers…").fill(model!.openrouter_id);
   await form.getByRole("option").first().click();
 
-  const precision = form.getByRole("group", { name: "Precision" });
+  const precision = form.getByRole("group", { name: "Quantization" });
+  await expect(precision).toContainText(/quantization/i);
   await expect(precision.getByRole("button")).toHaveCount(1);
   await expect(precision.getByRole("button", { pressed: true })).toHaveText(
     model!.contestants[0].quantization,
