@@ -15,24 +15,30 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
-## [0.8.0] — 2026-10-09
+## [0.8.0] — 2026-10-12
 
-**Ratings rebuilt on Bradley-Terry, chat and decision models ranked apart, and you choose who serves
-a model.** 27 commits since `v0.7.0`. Ratings now come from one fit over every game, ordered by what
-a model has proven rather than by a streak, and every rating on the site, pools and matchmaker
-included, is one stored run. Chat models and decision models get separate leaderboards, and a game
-with a person or across the two is never ranked. Starting a game now offers every host for the
-model as well as its precision. Any game can be downloaded as a GIF, and decision models with a
-limit on options play in heats.
+**Ratings rebuilt on Bradley-Terry, chat and decision models ranked apart, reasoning level part of
+what plays, and you choose who serves a model.** 32 commits since `v0.7.0`. Ratings now come from
+one fit over every game, ordered by what a model has proven rather than by a streak, and every
+rating on the site, pools and matchmaker included, is one stored run. Chat models and decision
+models get separate leaderboards, and a game with a person or across the two is never ranked. How
+hard a model thinks is now recorded and rated: a model at high reasoning and the same model at low
+are separate entrants. Starting a game now offers every host for the model, its precision and its
+reasoning level. Any game can be downloaded as a GIF, and decision models with a limit on options
+play in heats.
 
 **Every rating changes once**, on the first read after the deploy, because the method changed. It
-is not a regression.
+is not a regression. **Then the leaderboard reshapes once more** when the catalogue refresh that
+runs at deploy labels every game already played with the reasoning level it most likely played at:
+rows gain a level, and that refresh clears the stored ranking so the next read rebuilds it.
 
-Two migrations, both additive: `8eac4a8e7efa` adds a nullable `model_registry.decisions_max_choices`,
-and `9a854789833f` adds `leaderboard_snapshots.scope` (default `''`, so the stored leaderboard keeps
-serving) and widens its unique key to `(prompt_version, scope)`. The decision harness moved to
-`d2.1`, so the catalogue refresh that runs at deploy re-checks every decision model once. Until
-that finishes, no decision model can be paired.
+Three migrations, all additive: `8eac4a8e7efa` adds a nullable
+`model_registry.decisions_max_choices`; `9a854789833f` adds `leaderboard_snapshots.scope` (default
+`''`, so the stored leaderboard keeps serving) and widens its unique key to `(prompt_version,
+scope)`; and `8ddbdc635007` adds the nullable reasoning columns, `model_registry.reasoning`,
+`reasoning_levels` and `default_reasoning`, and `model_endpoints.supports_reasoning`. The decision
+harness moved to `d2.1`, so the catalogue refresh that runs at deploy re-checks every decision model
+once. Until that finishes, no decision model can be paired.
 
 ### Added
 
@@ -84,6 +90,10 @@ that finishes, no decision model can be paired.
 
 - **The play page no longer scrolls sideways on a phone.** The Talk option's explanation stuck out
   past the right edge of the screen even while it was hidden. It now fits inside the form.
+
+- **A model served at one quantization now says which.** The precision row appeared only when there
+  was a choice, so most models, often served only at `unknown`, showed none. The row is now always
+  there, labelled *quantization*.
 
 - **Clicking "sign in" or "sign up" no longer sometimes shows "That did not load."** Arriving from
   a page that had not loaded the sign-in service, the form could appear before that service was
