@@ -239,8 +239,16 @@ async def test_a_model_the_catalogue_has_not_described_sends_nothing(db: AsyncSe
 # ====================================================================== labelling the past
 
 
-async def _old_seat(db: AsyncSession, slug: str, *, reasoning_tokens: int) -> Player:
-    """A seat as every game before ADR-0067 left it: no level, and one call."""
+async def _old_seat(
+    db: AsyncSession,
+    slug: str,
+    *,
+    reasoning_tokens: int,
+    calls: bool = True,
+    reasoning_text: str | None = None,
+) -> Player:
+    """A seat as every game before ADR-0067 left it: no level, its totals, and one call — or, with
+    `calls=False`, no calls at all, as in a copy pulled without `--full`."""
     match = await create_match(
         db,
         white=Seat(display_name="w", model=slug),
@@ -248,23 +256,26 @@ async def _old_seat(db: AsyncSession, slug: str, *, reasoning_tokens: int) -> Pl
     )
     player = match.white
     player.sampling = {"model": slug}
-    turn = Turn(game_id=match.game.id, player_id=player.id)
+    player.reasoning_tokens = reasoning_tokens
+    turn = Turn(game_id=match.game.id, player_id=player.id, reasoning_tokens=reasoning_tokens)
     db.add(turn)
     await db.flush()
-    db.add(
-        LlmCall(
-            game_id=match.game.id,
-            turn_id=turn.id,
-            sequence=1,
-            model_slug=slug,
-            request={},
-            response={},
-            prompt_tokens=10,
-            completion_tokens=10 + reasoning_tokens,
-            reasoning_tokens=reasoning_tokens,
-            cost_usd=Decimal(0),
+    if calls:
+        db.add(
+            LlmCall(
+                game_id=match.game.id,
+                turn_id=turn.id,
+                sequence=1,
+                model_slug=slug,
+                request={},
+                response={},
+                prompt_tokens=10,
+                completion_tokens=10 + reasoning_tokens,
+                reasoning_tokens=reasoning_tokens,
+                reasoning_text=reasoning_text,
+                cost_usd=Decimal(0),
+            )
         )
-    )
     await db.flush()
     return player
 
@@ -292,6 +303,32 @@ async def test_an_old_seat_is_labelled_from_whether_it_reasoned(db: AsyncSession
         "a stored run keyed by the old contestants would go on being served: its fingerprint is "
         "over the games, and they did not change"
     )
+
+
+async def test_a_seat_whose_calls_were_not_kept_is_labelled_from_its_own_total(
+    db: AsyncSession,
+) -> None:
+    """A copy pulled without `--full` has the seats and their totals but no calls. Reading "no
+    calls" as "never reasoned" labelled nemotron — reasoning on every one of 1,283 turns — `none`."""
+    await _model(db, "test/calls-not-kept", OPTIONAL)
+    player = await _old_seat(db, "test/calls-not-kept", reasoning_tokens=900, calls=False)
+
+    await label_unlabelled_seats(db)
+
+    assert player.sampling["effort"] == "medium"
+
+
+async def test_reasoning_text_without_a_token_count_is_reasoning(db: AsyncSession) -> None:
+    """Some providers return the reasoning and report zero reasoning tokens. The text is the
+    stronger witness of the two."""
+    await _model(db, "test/uncounted", OPTIONAL)
+    player = await _old_seat(
+        db, "test/uncounted", reasoning_tokens=0, reasoning_text="If Nf3, then..."
+    )
+
+    await label_unlabelled_seats(db)
+
+    assert player.sampling["effort"] == "medium"
 
 
 async def test_labelling_touches_only_seats_with_no_level(db: AsyncSession) -> None:

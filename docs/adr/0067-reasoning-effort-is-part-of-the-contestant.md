@@ -66,8 +66,11 @@ default at least, and `none` is `enabled: false`), so such an endpoint can never
 The rule lives in `endpoint_is_playable`, so the catalogue, the form, a tournament's field and the
 pin all agree. Unknown support (`NULL`, from rows before the column) is admitted.
 
-**Old games are labelled from what they did.** A seat with no recorded level is labelled from its
-recorded reasoning tokens, read through today's catalogue:
+**Old games are labelled from what they did.** A seat with no recorded level is labelled from
+whether it reasoned, read through today's catalogue. The evidence is the seat's own reasoning-token
+total, or any call that returned reasoning text, since some providers send the text and report zero
+tokens. It is not the per-call rows alone: a copy pulled without `--full` has none, and reading their
+absence as "never reasoned" labelled seats that reasoned on every turn `none`.
 
 - A seat that reasoned gets its model's default if that is on. Otherwise it gets the effort the
   model uses when switched on.

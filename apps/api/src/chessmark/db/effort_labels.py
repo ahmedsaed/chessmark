@@ -4,10 +4,13 @@ No game before ADR-0067 sent a reasoning level, and none recorded one. Those sea
 provider's default, and a contestant is now `(model, quantization, effort)`, so each needs a level
 for its games to be rated beside the ones that follow.
 
-**From what the seat did, read through what the catalogue says.** A seat whose calls produced
-reasoning tokens was reasoning, so it gets the effort its model uses when reasoning is on. A seat
-whose calls produced none was not, so it gets `none` where the model offers it. The tokens are
-evidence that was recorded at the time. The level names come from the catalogue as it is today,
+**From what the seat did, read through what the catalogue says.** A seat that produced reasoning
+was reasoning, so it gets the effort its model uses when reasoning is on. A seat that produced none
+was not, so it gets `none` where the model offers it. That is evidence recorded at the time, and it
+is read from the seat's own total (`players.reasoning_tokens`) rather than only from `llm_calls`: a
+copy pulled without `--full` has no calls at all, and reading their absence as "never reasoned"
+labelled 238 seats that reasoned on nearly every turn as `none`. A call that returned reasoning text
+while reporting no reasoning tokens counts too — a provider's count is not the only witness. The level names come from the catalogue as it is today,
 and that is the part that can be wrong: a provider whose default moved since will have mislabelled
 seats. Each label is marked `effort_inferred` so the methodology page can say so.
 
@@ -73,12 +76,16 @@ async def label_unlabelled_seats(session: AsyncSession) -> LabelReport:
     Only seats whose model the catalogue now describes; the rest wait for a later pass. One read
     for every candidate, with whether it ever reasoned folded in, rather than a query per seat.
     """
-    reasoned = (
+    reasoned = sa.or_(
+        Player.reasoning_tokens > 0,
         sa.select(sa.literal(1))
         .select_from(LlmCall)
         .join(Turn, Turn.id == LlmCall.turn_id)
-        .where(Turn.player_id == Player.id, LlmCall.reasoning_tokens > 0)
-        .exists()
+        .where(
+            Turn.player_id == Player.id,
+            sa.or_(LlmCall.reasoning_tokens > 0, sa.func.length(LlmCall.reasoning_text) > 0),
+        )
+        .exists(),
     )
     rows = (
         await session.execute(
