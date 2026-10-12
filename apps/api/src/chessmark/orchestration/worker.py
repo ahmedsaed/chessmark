@@ -31,7 +31,7 @@ import sqlalchemy as sa
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from chessmark.agents import compaction, llm
+from chessmark.agents import compaction, effort, llm
 from chessmark.agents.decision_turn import DecisionTurnRunner
 from chessmark.agents.decisions import DecisionGateway
 from chessmark.agents.live import LiveChannel, NullLive, RedisLive
@@ -358,6 +358,9 @@ class TurnWorker:
         self.sessionmaker = sessionmaker
         self.queue = queue
         self.gateway = gateway
+        #: The gateway's own timeout, kept so a turn at `xhigh` or `max` can be given longer and the
+        #: next turn put back (ADR-0067). The gateway is shared, so it is set per turn, as routing is.
+        self.base_timeout = gateway.timeout
         #: The Decisions API, for seats whose model is a decision model (ADR-0049). Built from the
         #: chat gateway's key, prices and retry policy when not handed one, so a worker serves
         #: both kinds of model on one configuration. A scripted worker passes a scripted one: the
@@ -664,6 +667,9 @@ class TurnWorker:
                 )
             else:
                 self.gateway.routing = routing
+                self.gateway.timeout = effort.call_timeout(
+                    (player.sampling or {}).get("effort"), self.base_timeout
+                )
                 runner = TurnRunner(
                     session,
                     gateway=self.gateway,

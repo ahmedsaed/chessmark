@@ -83,6 +83,20 @@ A model that leaves the catalogue is **not** auto-withdrawn from a pool. Its gam
 and its rating is real; dropping it because an endpoint went quiet for an afternoon would rewrite
 history.
 
+## A field plays at one reasoning level
+
+`--effort` sets the level every entrant plays at (ADR-0067). The default, `default`, seats each model
+at its own default, resolved per game and recorded on the seat; every event created before the
+setting existed reads as that, so none changed behaviour or era. A level admits **only models that
+list it**, never the nearest level a model does offer, because that would give the field several
+tasks. The level is fixed for the event, and changing it means creating a new one. The matchmaker
+pairs each entrant on its rating at the level it will play.
+
+```
+make tournament ARGS="field --effort high"
+make tournament ARGS="create --name 'Thinking hard' --slug think-high --format pool --effort high --max-usd 5"
+```
+
 ## A field is one kind of model
 
 `--decision` seats decision models and nothing else; without it an event seats chat models only.

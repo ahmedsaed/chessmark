@@ -17,6 +17,20 @@ file is only the record of *what shipped when*.
 
 ### Added
 
+- **How hard a model thinks is now part of what plays.** A contestant is a model at a precision
+  *and a reasoning level*: GPT at high reasoning and the same GPT at low are separate entrants,
+  rated separately. Starting a game offers the levels a model supports under *think*, with its own
+  default selected. Every game now records the level each seat played at, which it never did:
+  until now every model reasoned at whatever its provider defaulted to. The level is shown on the
+  game page, the leaderboard and the model page. Tournaments and pools can be set to a level, and
+  existing ones carry on at each model's default.
+  ([ADR-0067](docs/adr/0067-reasoning-effort-is-part-of-the-contestant.md))
+
+  **Games already played are labelled** from whether each seat actually reasoned, and marked
+  *inferred* on the game page. This happens automatically in the catalogue refresh that runs at
+  deploy. Every rating is rebuilt once. Until that refresh finishes, new games play as before,
+  with no level, and are labelled with the rest. One migration, additive.
+
 - **You can choose which provider serves a model** when you start a game, against a model or
   between two. Under the precision there is now a *via* menu listing every host for that model,
   with its uptime, and *auto* (the default) still picks the most reliable one. The host you choose

@@ -359,3 +359,74 @@ test("at phone width neither game form pushes the page sideways", async ({ page 
     expect(overflow, `the "${tab}" form should not scroll horizontally`).toBeLessThanOrEqual(0);
   }
 });
+
+test("a model served at one precision still shows it", async ({ page }) => {
+  /**
+   * The row was drawn only when there was a choice, so a model with one precision — often
+   * `unknown` — showed none at all, which reads as "has no precision" rather than "this is the one".
+   */
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const models = (await (await page.request.get(`${api}/models`)).json()) as {
+    openrouter_id: string;
+    contestants: { quantization: string }[];
+  }[];
+  const model = models.find((m) => m.contestants.length === 1);
+  expect(model, "the catalogue should hold a model served at one precision").toBeDefined();
+
+  await page.goto("/play");
+  const form = page.locator("section").filter({ hasText: /play a model/i });
+  await form.locator('button[aria-haspopup="listbox"]').click();
+  await form.getByPlaceholder("Search models or providers…").fill(model!.openrouter_id);
+  await form.getByRole("option").first().click();
+
+  const precision = form.getByRole("group", { name: "Quantization" });
+  await expect(precision).toContainText(/quantization/i);
+  await expect(precision.getByRole("button")).toHaveCount(1);
+  await expect(precision.getByRole("button", { pressed: true })).toHaveText(
+    model!.contestants[0].quantization,
+  );
+});
+
+test("the reasoning level chosen in the form is the one the seat plays at", async ({ page }) => {
+  /**
+   * ADR-0067. Leaving the level alone still records one — the model's default — so a form that
+   * dropped the choice would start a game that looks right and measures a different contestant.
+   * Choosing a level that is *not* the default is what tells the two apart.
+   */
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const models = (await (await page.request.get(`${api}/models`)).json()) as {
+    openrouter_id: string;
+    reasoning_levels?: string[];
+    default_reasoning?: string | null;
+  }[];
+  const model = models.find((m) => (m.reasoning_levels?.length ?? 0) > 1);
+  expect(model, "the catalogue should hold a model with more than one reasoning level").toBeDefined();
+  const chosen = model!.reasoning_levels!.find((level) => level !== model!.default_reasoning)!;
+
+  await page.goto("/play");
+  const form = page.locator("section").filter({ hasText: /play a model/i });
+  await form.locator('button[aria-haspopup="listbox"]').click();
+  await form.getByPlaceholder("Search models or providers…").fill(model!.openrouter_id);
+  await form.getByRole("option").first().click();
+
+  const think = form.getByRole("group", { name: "Reasoning" });
+  await expect(think.getByRole("button", { pressed: true })).toHaveText(
+    new RegExp(`^${model!.default_reasoning}`),
+  );
+  await think.getByRole("button", { name: new RegExp(`^${chosen}`) }).click();
+
+  await form.getByRole("button", { name: "white", exact: true }).click();
+  await form.getByRole("button", { name: "sit down" }).click();
+  await page.waitForURL(/\/games\/[0-9a-f-]{36}/);
+
+  const id = page.url().match(/[0-9a-f-]{36}/)![0];
+  const game = (await (await page.request.get(`${api}/games/${id}`)).json()) as {
+    players: { kind: string; effort: string | null; effort_inferred: boolean }[];
+  };
+  const machine = game.players.find((p) => p.kind === "model");
+  expect(machine?.effort).toBe(chosen);
+  expect(machine?.effort_inferred).toBe(false);
+
+  await page.getByRole("button", { name: "resign", exact: true }).click();
+  await page.getByRole("button", { name: "confirm resign" }).click();
+});

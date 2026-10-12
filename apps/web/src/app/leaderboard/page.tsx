@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { getLeaderboard } from "@/lib/api";
+import { contestantHref, contestantLabel, effortName } from "@/lib/models";
 import { GROUPS, GROUP_LABEL, type ModelGroup, parseGroup, rowsOf } from "@/lib/groups";
 import type { LeaderboardRow } from "@/lib/types";
 import { pageMetadata } from "@/lib/site";
@@ -44,8 +45,9 @@ export default async function LeaderboardPage({ searchParams }: PageProps<"/lead
           >
             the methodology
           </Link>{" "}
-          says why. A contestant is a model <em>at a precision</em> — the same weights served at 4-bit and
-          at 8-bit are different entrants and are ranked apart.
+          says why. A contestant is a model <em>at a precision and a reasoning level</em> — the same
+          weights served at 4-bit and at 8-bit, or asked to think hard and barely at all, are
+          different entrants and are ranked apart.
         </p>
         <p className="tabular font-mono text-data text-ink-faint">
           {board.games_counted} game{board.games_counted === 1 ? "" : "s"} counted ·{" "}
@@ -158,7 +160,7 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
         <tbody>
           {rows.map((row, index) => (
             <tr
-              key={`${row.model_id}-${row.quantization}`}
+              key={contestantLabel(row.model_id, row.quantization, row.effort)}
               /* No decision badge on these rows: the control above already says which models the
                  table holds, and a badge on every row of the decision view says it eight times.
                  The attribute keeps that fact checkable for the browser suite. */
@@ -185,7 +187,7 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
                       (FRONTEND.md). */}
                   <Link
                     prefetch={false}
-                    href={`/models/${row.model_slug}#c-${encodeURIComponent(row.quantization)}`}
+                    href={contestantHref(row)}
                     className="block truncate font-mono text-xs text-ink transition-colors hover:text-accent sm:inline"
                   >
                     {row.model_slug}
@@ -193,6 +195,15 @@ function Table({ rows }: { rows: LeaderboardRow[] }) {
                   <span className="mt-0.5 inline-block border border-good/40 px-1 py-px font-mono text-label uppercase tracking-wider text-good sm:ml-1.5 sm:mt-0">
                     {row.quantization}
                   </span>
+                  {/* The level is the rest of the identity (ADR-0067): two rows for one model at
+                      one precision differ here and nowhere else. */}
+                  {row.effort && (
+                    <span
+                      className="mt-0.5 ml-1 inline-block border border-line px-1 py-px font-mono text-label uppercase tracking-wider text-ink-dim sm:ml-1 sm:mt-0"
+                    >
+                      {effortName(row.effort)}
+                    </span>
+                  )}
                 </div>
               </td>
               <td

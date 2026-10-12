@@ -23,6 +23,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from chessmark.bench import snapshot
+from chessmark.bench.service import contestant_label
 from chessmark.core.cooldown import ProviderCooldown
 from chessmark.core.halt import SCOPE_ALL, Halt
 from chessmark.db import tournaments as repo
@@ -721,25 +722,56 @@ async def _form(session: AsyncSession, tournament: Tournament) -> dict[str, Form
     # A contestant is `(model, quantization)`, but a pool's entrants are usually keyed by slug
     # alone — the precision is decided per game by the router. Both are looked up, so a pool that
     # does pin one still finds its rating.
+    #
+    # **And at the level the entrant will play** (ADR-0067). `model@fp8@high` and `model@fp8@low`
+    # are different contestants, so a pool at `low` must not pair on the `high` row. The level is
+    # the event's, or for an event at each model's default, the model's default today — the one
+    # its next game will be settled at.
     by_key: dict[str, Form] = {}
+    by_level: dict[tuple[str, str | None], Form] = {}
     by_slug: dict[str, Form] = {}
     for row in stored["rows"]:
         slug, quantization = str(row["model_slug"]), str(row["quantization"])
+        level = row.get("effort")
         known = Form(
             key=slug,
             rating=float(row["rating"]),
             deviation=float(row["rating_deviation"]),
         )
-        by_key[f"{slug}@{quantization}"] = known
+        by_key[contestant_label(slug, quantization, level)] = known
         # If a model is served at several precisions, the least certain of them stands in: it is
         # the one a game would tell us most about.
+        current = by_level.get((slug, level))
+        if current is None or known.deviation > current.deviation:
+            by_level[(slug, level)] = known
         current = by_slug.get(slug)
         if current is None or known.deviation > current.deviation:
             by_slug[slug] = known
 
+    entrants = await repo.entrants_of(session, tournament.id)
+    event_level = repo.filter_from_json(tournament.field_filter or {}).effort
+    defaults: dict[str, str | None] = {}
+    if event_level is None:
+        slugs = [entrant.key.split("@", 1)[0] for entrant in entrants]
+        rows = await session.execute(
+            sa.select(ModelRegistry.openrouter_id, ModelRegistry.default_reasoning).where(
+                ModelRegistry.openrouter_id.in_(slugs)
+            )
+        )
+        defaults = {str(slug): default for slug, default in rows.tuples()}
+
     form: dict[str, Form] = {}
-    for entrant in await repo.entrants_of(session, tournament.id):
-        known_form = by_key.get(entrant.key) or by_slug.get(entrant.key.split("@", 1)[0])
+    for entrant in entrants:
+        slug = entrant.key.split("@", 1)[0]
+        level = event_level if event_level is not None else defaults.get(slug)
+        known_form = (
+            by_key.get(entrant.key)
+            or by_level.get((slug, level))
+            # Only for a model with no level at all — a decision model, or one the catalogue has
+            # not described yet. A model *with* a level and no row at it is unknown at that level,
+            # and borrowing another level's rating would pair it as something it is not.
+            or (by_slug.get(slug) if level is None else None)
+        )
         if known_form is not None:
             form[entrant.key] = Form(
                 key=entrant.key, rating=known_form.rating, deviation=known_form.deviation
@@ -814,6 +846,7 @@ async def _start_games(
         return 0, []
 
     entrants = {e.key: e for e in await repo.entrants_of(session, tournament.id)}
+    effort = repo.filter_from_json(tournament.field_filter or {}).effort
     jobs: list[AdvanceTurn] = []
     started = 0
 
@@ -827,8 +860,8 @@ async def _start_games(
 
         match = await create_match(
             session,
-            white=await _seat(session, row.white_key, white.label),
-            black=await _seat(session, row.black_key, black.label),
+            white=await _seat(session, row.white_key, white.label, effort),
+            black=await _seat(session, row.black_key, black.label, effort),
             is_ranked=tournament.is_ranked,
             max_plies=tournament.max_plies_per_game,
             max_usd=tournament.max_usd_per_game,
@@ -843,8 +876,9 @@ async def _start_games(
     return started, jobs
 
 
-async def _seat(session: AsyncSession, key: str, label: str) -> Seat:
-    """One side of a pairing, resolved back to a registry row."""
+async def _seat(session: AsyncSession, key: str, label: str, effort: str | None = None) -> Seat:
+    """One side of a pairing, resolved back to a registry row, at the event's reasoning level —
+    or, for an event at each model's default, `None`, which `create_match` settles and records."""
     model_slug, _, quantization = key.partition("@")
     model_id = await session.scalar(
         sa.select(ModelRegistry.id).where(ModelRegistry.openrouter_id == model_slug)
@@ -854,4 +888,5 @@ async def _seat(session: AsyncSession, key: str, label: str) -> Seat:
         model=model_slug,
         model_id=model_id,
         quantization=quantization or None,
+        effort=effort,
     )
