@@ -51,6 +51,8 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
   const [blackQuant, setBlackQuant] = useState<string>("");
   const [whiteHost, setWhiteHost] = useState<string>("");
   const [blackHost, setBlackHost] = useState<string>("");
+  const [whiteEffort, setWhiteEffort] = useState<string>("");
+  const [blackEffort, setBlackEffort] = useState<string>("");
   const [limit, setLimit] = useState("");
   const [plies, setPlies] = useState(String(DEFAULT_PLIES));
   /* On by default, as the API always had it: two models trading barbs is half the show. */
@@ -79,6 +81,9 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
           // Likewise: empty is "auto", and the server pins by uptime (ADR-0066).
           white_provider: whiteHost || null,
           black_provider: blackHost || null,
+          // Empty is each model's own default, settled and recorded by the server (ADR-0067).
+          white_effort: whiteEffort || null,
+          black_effort: blackEffort || null,
           max_plies: pliesFrom(plies),
           trash_talk_enabled: talk,
           // Theirs to set, or none: the game spends their credit (ADR-0052).
@@ -119,12 +124,15 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
             setWhite(next);
             setWhiteQuant("");
             setWhiteHost("");
+            setWhiteEffort("");
           }}
           models={playable}
           quantization={whiteQuant}
           onQuantizationChange={setWhiteQuant}
           provider={whiteHost}
           onProviderChange={setWhiteHost}
+          effort={whiteEffort}
+          onEffortChange={setWhiteEffort}
         />
         <span className="self-center text-center font-mono text-data text-ink-faint">vs</span>
         <ModelPicker
@@ -134,12 +142,15 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
             setBlack(next);
             setBlackQuant("");
             setBlackHost("");
+            setBlackEffort("");
           }}
           models={playable}
           quantization={blackQuant}
           onQuantizationChange={setBlackQuant}
           provider={blackHost}
           onProviderChange={setBlackHost}
+          effort={blackEffort}
+          onEffortChange={setBlackEffort}
         />
 
       </div>

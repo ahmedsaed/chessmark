@@ -115,6 +115,9 @@ async def resolve_field(
         query = query.where(ModelRegistry.hugging_face_id.is_(None))
     if field.requires_reasoning is not None:
         query = query.where(ModelRegistry.supports_reasoning.is_(field.requires_reasoning))
+    if field.effort is not None:
+        # Only models that list the level: the same rule that refuses it to a person (ADR-0067).
+        query = query.where(sa.literal(field.effort) == sa.any_(ModelRegistry.reasoning_levels))
     if field.min_context_tokens is not None:
         query = query.where(ModelRegistry.context_length >= field.min_context_tokens)
 
@@ -210,6 +213,10 @@ def _filter_as_json(field: FieldFilter) -> dict[str, Any]:
         # **Stored, because a pool re-resolves its field from this every tick.** Left out, a
         # decision pool would read back as a chat field and seat the wrong kind of model.
         "runtime": field.runtime,
+        # Stored like `runtime`, for the same reason: a pool re-resolves its field every tick, and a
+        # pool at `high` that read back as "each model's default" would admit and seat the wrong
+        # contestants. Absent on every event from before ADR-0067, which reads as the default.
+        "effort": field.effort,
         "describes": field.describe(),
     }
 
@@ -288,6 +295,7 @@ def filter_from_json(stored: dict[str, Any]) -> FieldFilter:
         limit=stored.get("limit"),
         # Every event created before the key existed was a chat event.
         runtime=stored.get("runtime") or "llm",
+        effort=stored.get("effort"),
     )
 
 

@@ -18,6 +18,7 @@ import Link from "next/link";
 
 import { RuntimeBadge } from "@/components/RuntimeBadge";
 
+import { effortName } from "@/lib/models";
 import type { GameDetail, Player } from "@/lib/types";
 import { CostRow } from "@/components/CostRow";
 import { usd } from "@/lib/credit";
@@ -245,7 +246,7 @@ function Endpoint({ player }: { player: Player }) {
   const pinned = player.pinned_provider;
   const drifted = used.length > 1 || (pinned !== null && used.length === 1 && used[0] !== pinned);
 
-  if (!pinned && used.length === 0 && !player.quantization) return null;
+  if (!pinned && used.length === 0 && !player.quantization && !player.effort) return null;
 
   return (
     <p className="flex flex-wrap items-center gap-1">
@@ -255,6 +256,23 @@ function Endpoint({ player }: { player: Player }) {
           className="border border-good/40 px-1 py-px font-mono text-label uppercase tracking-wider text-good"
         >
           {player.quantization}
+        </span>
+      )}
+
+      {/* The rest of the seat's identity (ADR-0067). An inferred level is marked as one: it was
+          worked out afterwards from whether the seat reasoned, not sent, and a reader comparing
+          two seats deserves to know which of the two kinds of fact they are looking at. */}
+      {player.effort && (
+        <span
+          title={
+            player.effort_inferred
+              ? `${effortName(player.effort)}, inferred: this game was played before the level was recorded, and it is labelled from whether the seat reasoned`
+              : `${effortName(player.effort)} — the level this seat was asked to play at`
+          }
+          className="border border-line px-1 py-px font-mono text-label uppercase tracking-wider text-ink-dim"
+        >
+          {effortName(player.effort)}
+          {player.effort_inferred && " · inferred"}
         </span>
       )}
 

@@ -50,6 +50,7 @@ from chessmark.agents.registry import (  # noqa: E402
     sync_model_registry,
 )
 from chessmark.core.config import get_settings  # noqa: E402
+from chessmark.db.effort_labels import label_unlabelled_seats  # noqa: E402
 from chessmark.db.session import dispose_engine, session_scope  # noqa: E402
 
 
@@ -79,6 +80,11 @@ async def refresh(*, skip_endpoints: bool = False) -> int:
             async with session_scope() as session:
                 report = await sync_model_registry(session, entries, disable_missing=True)
                 print(f"registry  : {report}")
+
+            # Straight after the sync that gives models their levels, so the first refresh after
+            # ADR-0067 deploys labels every older seat with no operator step (`db/effort_labels`).
+            async with session_scope() as session:
+                print(f"efforts   : {await label_unlabelled_seats(session)}")
 
             # Before the endpoints, and whether or not they are swept: a new decision model is
             # offered only once it has answered our request shape (ADR-0051), and that is one call

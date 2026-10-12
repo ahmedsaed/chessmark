@@ -36,17 +36,29 @@ from chessmark.db.models import (
 from chessmark.game import Colour, GameResult, Termination
 
 
+def contestant_label(model_slug: str, quantization: str, effort: str | None = None) -> str:
+    """The key a contestant is rated, stored and looked up under. One spelling, used everywhere.
+
+    `slug@quantization` (ADR-0015), and `slug@quantization@effort` once a seat has a reasoning
+    level (ADR-0067). A decision seat never has one — it has no reasoning parameter — so its key is
+    unchanged, and so is the key of a chat seat the catalogue had not described yet.
+    """
+    base = f"{model_slug}@{quantization}"
+    return f"{base}@{effort}" if effort else base
+
+
 @dataclass(frozen=True, slots=True)
 class Contestant:
-    """`(model, quantization)` — the thing that is rated (ADR-0015)."""
+    """`(model, quantization, effort)` — the thing that is rated (ADR-0015, ADR-0067)."""
 
     model_id: uuid.UUID
     model_slug: str
     quantization: str
+    effort: str | None = None
 
     @property
     def label(self) -> str:
-        return f"{self.model_slug}@{self.quantization}"
+        return contestant_label(self.model_slug, self.quantization, self.effort)
 
 
 @dataclass(slots=True)
@@ -324,10 +336,12 @@ def _contestant(player: Player, quantizations: dict[uuid.UUID, str]) -> Contesta
     slug = str((player.sampling or {}).get("model") or "")
     if not slug:
         return None
+    effort = (player.sampling or {}).get("effort")
     return Contestant(
         model_id=player.model_id,
         model_slug=slug,
         quantization=quantizations.get(player.id, "unknown"),
+        effort=str(effort) if effort else None,
     )
 
 

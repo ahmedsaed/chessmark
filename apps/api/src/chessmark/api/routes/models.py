@@ -126,7 +126,7 @@ async def get_model(session: SessionDep, slug: str) -> ModelDetail:
     # The games behind each rating, keyed the way the run stored them. Carried as ids rather than
     # summaries because the page already holds this model's games: it partitions the list it has
     # instead of fetching the same rows a second time under another name.
-    labels = {f"{rating.model_slug}@{rating.quantization}" for rating in ratings}
+    labels = {rating.label for rating in ratings}
     rated_games = {
         label: [uuid.UUID(game_id) for game_id in game_ids]
         for label, game_ids in stored["games_by_contestant"].items()

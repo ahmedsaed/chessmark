@@ -45,6 +45,7 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
   );
   const [quantization, setQuantization] = useState("");
   const [provider, setProvider] = useState("");
+  const [effort, setEffort] = useState("");
   const [colour, setColour] = useState<Colour>("white");
   const [chat, setChat] = useState(false);
   const [limit, setLimit] = useState("");
@@ -64,6 +65,8 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
         model_quantization: quantization || null,
         // Likewise: empty is "auto", and the server pins by uptime (ADR-0066).
         model_provider: provider || null,
+        // Empty is the model's own default, which the server settles and records (ADR-0067).
+        model_effort: effort || null,
         trash_talk_enabled: chat,
         max_usd: limitFrom(limit),
         max_plies: pliesFrom(plies),
@@ -96,12 +99,15 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
             setOpponent(next);
             setQuantization("");
             setProvider("");
+            setEffort("");
           }}
           models={playable}
           quantization={quantization}
           onQuantizationChange={setQuantization}
           provider={provider}
           onProviderChange={setProvider}
+          effort={effort}
+          onEffortChange={setEffort}
         />
 
         {/* Deliberately not a `fieldset`/`legend`. A legend is positioned into the fieldset's

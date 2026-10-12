@@ -47,6 +47,10 @@ export interface Player {
    *  pin did not hold and the result measures a blend of endpoints. */
   providers_used: string[];
   quantization: string | null;
+  /** The reasoning level this seat played at (ADR-0067), and whether it was inferred afterwards
+   *  from what the seat did rather than sent — every seat from before the level was recorded. */
+  effort?: string | null;
+  effort_inferred?: boolean;
 
   illegal_attempts: number;
   /** How many times this seat summarised its own history to stay inside its window. */
@@ -154,6 +158,10 @@ export interface ModelInfo {
   /** One entry per precision that can be played, healthiest endpoint first (ADR-0015). */
   contestants: Contestant[];
   endpoint_count: number;
+  /** The reasoning levels a seat may ask for, and the one it plays at when nobody chooses
+   *  (ADR-0067). Empty for a decision model and for one the catalogue has not described yet. */
+  reasoning_levels?: string[];
+  default_reasoning?: string | null;
   /** Points at different weights over time, so it can never be ranked. */
   is_floating_alias: boolean;
   /** Price band, 1 to 4, from the model's own prices. Not a charge — a game is charged what its
@@ -580,8 +588,11 @@ export interface Me {
 export interface LeaderboardRow {
   model_id: string;
   model_slug: string;
-  /** Half the contestant's identity — `model@fp4` and `model@fp8` are different entrants. */
+  /** Part of the contestant's identity — `model@fp4` and `model@fp8` are different entrants. */
   quantization: string;
+  /** The rest of it: the reasoning level (ADR-0067). `null` for a decision model, and for seats
+   *  played before the catalogue described the model. */
+  effort?: string | null;
   display_name: string;
   /** Chat model or decision model — ranked together, marked apart (ADR-0049). */
   runtime: Runtime;

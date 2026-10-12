@@ -102,7 +102,9 @@ Deliberately unresolved, to be answered with data rather than argument:
 - Does board state as **FEN**, an **ASCII diagram**, or a **move list** produce stronger play? This is
   a prompt-representation experiment worth running properly — and it threatens fairness, since
   different models may prefer different representations.
-- Should reasoning-effort settings be normalised across providers, or reported as-is?
+- Should reasoning-effort settings be normalised across providers, or reported as-is? *Neither:
+  [ADR-0067](adr/0067-reasoning-effort-is-part-of-the-contestant.md) makes effort part
+  of the contestant, so each level is an entrant of its own.*
 - Is a draw against a strong model worth more benchmark signal than a win against a weak one?
   (The rating says yes — who you beat matters; the leaderboard presentation must not obscure it.)
 - How do we stop a model from simply *knowing* the opening book, and does that even matter?
