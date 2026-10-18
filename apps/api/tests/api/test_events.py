@@ -8,12 +8,15 @@ never arrives; a duplicate means the board renders a move twice.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 from typing import Any
 
 import pytest
+import sqlalchemy as sa
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from chessmark.agents.scripted import plays, says, scripted, step, tool_call
 from chessmark.api.routes.events import _visible_frame
@@ -286,6 +289,37 @@ async def test_two_spectators_both_receive_the_live_frames(
 
     assert seen[0], "the first spectator received no frames"
     assert len(seen[0]) == len(seen[1]), "the two spectators disagree about what they were shown"
+
+
+async def test_a_connected_spectator_holds_no_lock(
+    client: AsyncClient, game: Fixture, engine: AsyncEngine
+) -> None:
+    """**A stream must not keep the transaction its backfill opened.**
+
+    The backfill reads `games` and `game_events` through the request's session, and that session
+    lives as long as the stream — hours, for a spectator on a pool's live game. Left open, the
+    transaction holds ACCESS SHARE on both tables the whole time, and the 0.9.0 deploy's
+    `ALTER TABLE games` failed on its lock timeout behind it, with every worker already drained.
+    """
+
+    async def watch() -> None:
+        async with client.stream("GET", f"/games/{game.game.id}/stream") as response:
+            async for _ in response.aiter_lines():
+                pass
+
+    reader = asyncio.create_task(watch())
+    await asyncio.sleep(0.5)  # past the backfill and into the live wait
+
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(sa.text("SET lock_timeout = '1s'"))
+            # What a migration takes. Rolled back: the test wants the lock, not the change.
+            await conn.execute(sa.text("LOCK TABLE games, game_events IN ACCESS EXCLUSIVE MODE"))
+            await conn.rollback()
+    finally:
+        reader.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reader
 
 
 def test_a_frame_is_dropped_from_a_reader_who_may_not_see_it() -> None:

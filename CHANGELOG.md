@@ -15,6 +15,25 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-10-18
+
+**A spectator no longer holds a lock on `games`.** The 0.9.0 migration failed on its lock timeout
+with every worker drained, behind the live view of a game.
+
+### Fixed
+
+- **The live game stream lets go of the database once it has caught a reader up.** It read the
+  missed events and then kept that transaction open, idle, for as long as the tab stayed open:
+  ACCESS SHARE on `games` and `game_events`, and one of the API's 30 pooled connections, per
+  viewer. Nothing after that read touches the database — the live half is Redis alone — so the
+  session is now closed there. The lock blocked any `ALTER TABLE` on either table, which is how
+  the 0.9.0 deploy failed; the connections would have run the pool dry at about 30 viewers per API
+  process.
+
+  **Deploying from before 0.9.1 needs the API stopped first**, because `deploy` migrates while the
+  old API is still serving: `docker compose -f docker-compose.yml -f docker-compose.prod.yml stop
+  api`, then `./chessmark deploy`, which starts it again. From 0.9.1 on, `deploy` alone.
+
 ## [0.9.0] — 2026-10-18
 
 **Game and model pages say what happened, and only pages with something to say ask to be indexed.**
@@ -1683,6 +1702,7 @@ flags the old code wrote.
 [ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
 [ADR-0044]: docs/adr/0044-the-ladder-resets-on-an-answered-call.md
 [ADR-0045]: docs/adr/0045-a-turn-keeps-the-rounds-it-completed.md
+[0.9.1]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.9.1
 [0.9.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.9.0
 [0.8.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.8.0
 [0.7.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.7.0
