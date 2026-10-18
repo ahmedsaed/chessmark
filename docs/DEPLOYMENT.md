@@ -66,8 +66,10 @@ Four details that are deliberate rather than incidental:
 
   **Migrations wait at most `ALEMBIC_LOCK_TIMEOUT_SECONDS` (default 10) for a lock**, then fail
   loudly. `lock_timeout` bounds only the wait, never the work, so a slow backfill is unaffected —
-  raise it for one that legitimately needs to wait behind a reader. If a migration does fail this
-  way, find the holder:
+  raise it for one that legitimately needs to wait behind a reader. The API is **not** drained, so
+  anything in it that keeps a transaction open blocks a migration too: before 0.9.1 every viewer of
+  a live game did, from the game stream's catch-up read, and the 0.9.0 deploy failed behind one. If
+  a migration does fail this way, find the holder:
 
   ```
   ./chessmark sql <<'SQL'

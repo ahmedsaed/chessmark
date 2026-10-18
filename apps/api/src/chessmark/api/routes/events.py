@@ -121,6 +121,14 @@ async def stream_events(
             if _already_over(game, backfill):
                 return
 
+            # **Done with the database for the life of the stream**, so let go of it. Everything
+            # below reads Redis alone, but the session would otherwise keep the transaction the
+            # backfill opened — idle, holding ACCESS SHARE on `games` and `game_events` and a
+            # pooled connection — for as long as the spectator watches. One viewer on a pool's
+            # live game made the 0.9.0 migration's `ALTER TABLE games` time out with every worker
+            # drained.
+            await session.close()
+
             # **The turn already in flight**, for a reader who arrived in the middle of it
             # (ADR-0035). Pub/sub is fire-and-forget, so without this a spectator opening a game
             # nine minutes into a round gets the committed backfill — everything up to the *last*
