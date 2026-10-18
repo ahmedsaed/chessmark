@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Query, status
@@ -16,11 +16,13 @@ from chessmark.api.schemas import (
     LeaderboardRow,
     ModelDetail,
     ModelOut,
+    ModelProfileOut,
     ModelStatsOut,
 )
 from chessmark.bench import snapshot
-from chessmark.db.models import ModelEndpoint, ModelRegistry, Player
-from chessmark.db.stats import model_stats
+from chessmark.db.enums import GameStatus
+from chessmark.db.models import Game, ModelEndpoint, ModelRegistry, Player
+from chessmark.db.stats import last_played, model_profile, model_stats
 
 router = APIRouter(prefix="/models", tags=["models"])
 
@@ -32,6 +34,10 @@ async def list_models(
     playable: Annotated[
         bool, Query(description="Only models with an active tool-capable endpoint")
     ] = True,
+    played: Annotated[
+        bool,
+        Query(description="Also every model that has finished a game here, playable or not"),
+    ] = False,
 ) -> list[ModelOut]:
     """Models a game may actually use.
 
@@ -42,20 +48,35 @@ async def list_models(
 
     Pass `playable=false` for the registry as stored, which is what an operator auditing what
     disappeared upstream wants.
+
+    **`played=true` adds every model that has finished a game here**, whatever its state now. That
+    is the catalogue page, the sitemap and the archive's filter: a model OpenRouter retired still
+    has a page full of games, and listing only what can be started left twelve such pages with no
+    link to them from anywhere on the site, the sitemap included. Each row says `retired`, so the
+    page can mark it. The game form never asks for this, so it never offers a model it would refuse.
     """
     # No context floor here — the endpoint predicate below applies the one that matters, and a
     # model's advertised window is not what a game is served at.
-    query = sa.select(ModelRegistry).where(
-        ModelRegistry.enabled.is_(True), model_is_playable(min_context=0)
-    )
-    if free_only:
-        query = query.where(ModelRegistry.is_free.is_(True))
+    offered: list[Any] = [ModelRegistry.enabled.is_(True), model_is_playable(min_context=0)]
     if playable:
         # The same predicate `select_endpoint` pins by, so the catalogue cannot advertise a model
         # the picker would refuse — including one whose only endpoint's window is under the floor.
-        query = query.where(
+        offered.append(
             ModelRegistry.id.in_(sa.select(ModelEndpoint.model_id).where(*endpoint_is_playable()))
         )
+    condition = sa.and_(*offered)
+    if played:
+        condition = sa.or_(
+            condition,
+            ModelRegistry.id.in_(
+                sa.select(Player.model_id)
+                .join(Game, Game.id == Player.game_id)
+                .where(Game.status == GameStatus.FINISHED)
+            ),
+        )
+    query = sa.select(ModelRegistry).where(condition)
+    if free_only:
+        query = query.where(ModelRegistry.is_free.is_(True))
 
     rows = list(await session.scalars(query.order_by(ModelRegistry.openrouter_id)))
     if not rows:
@@ -76,7 +97,13 @@ async def list_models(
     for endpoint in endpoints:
         by_model.setdefault(endpoint.model_id, []).append(endpoint)
 
-    return [ModelOut.from_model(row, endpoints=by_model.get(row.id, [])) for row in rows]
+    finished = await last_played(session, [row.id for row in rows])
+    return [
+        ModelOut.from_model(row, endpoints=by_model.get(row.id, [])).model_copy(
+            update={"last_played_at": finished.get(row.id)}
+        )
+        for row in rows
+    ]
 
 
 @router.get("/{slug:path}", response_model=ModelDetail)
@@ -142,8 +169,18 @@ async def get_model(session: SessionDep, slug: str) -> ModelDetail:
         if uuid.UUID(entry["game_id"]) in seated
     ]
 
+    # Stated here too, because `ModelDetail` inherits the field: left out, the detail would report
+    # every model as never having played while the list beside it said otherwise.
+    played = await last_played(session, [row.id])
+
     return ModelDetail(
-        **base.model_dump(),
+        **base.model_dump(exclude={"last_played_at"}),
+        last_played_at=played.get(row.id),
+        profile=(
+            ModelProfileOut.from_profile(await model_profile(session, row))
+            if row.id in played
+            else None
+        ),
         stats=ModelStatsOut.from_stats(stats),
         ratings=ratings,
         rated_games=rated_games,

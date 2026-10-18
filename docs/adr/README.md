@@ -86,6 +86,8 @@ were live in this directory before it was written.
 | [0065](0065-game-gifs-are-drawn-in-the-browser.md) | Game GIFs are drawn in the browser | Accepted |
 | [0066](0066-the-person-starting-a-game-may-choose-its-endpoint.md) | The person starting a game may choose its endpoint | Accepted |
 | [0067](0067-reasoning-effort-is-part-of-the-contestant.md) | Reasoning effort is part of the contestant | Accepted |
+| [0068](0068-a-page-asks-to-be-indexed-only-when-it-says-something.md) | A page asks to be indexed only when it says something | Accepted |
+| [0069](0069-a-page-says-what-its-game-or-model-did-in-words.md) | A page says what its game or model did, in words | Accepted |
 
 ## Template
 

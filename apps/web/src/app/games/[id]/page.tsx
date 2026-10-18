@@ -4,9 +4,11 @@ import { hasSessionCookie } from "@/lib/auth-scope";
 import { notFound } from "next/navigation";
 
 import { GameActions } from "@/components/GameActions";
+import { GameStory } from "@/components/GameStory";
 import { GameView } from "@/components/GameView";
 import { Replay } from "@/components/Replay";
 import { apiUrl, getGame, listEvents, listTurns, pgnUrl } from "@/lib/api";
+import { gameIsIndexable, HELD_BACK } from "@/lib/indexing";
 
 const TERMINAL = new Set(["finished", "aborted"]);
 
@@ -31,6 +33,7 @@ export async function generateMetadata({ params }: PageProps<"/games/[id]">) {
     title,
     description,
     alternates: { canonical: `/games/${game.id}` },
+    robots: gameIsIndexable(game) ? undefined : HELD_BACK,
     openGraph: { title, description, type: "article" },
     twitter: { card: "summary_large_image", title, description },
   };
@@ -77,6 +80,9 @@ export default async function GamePage({ params }: PageProps<"/games/[id]">) {
           actions={<GameActions gameId={id} apiUrl={apiUrl} pgnHref={pgnUrl(id)} />}
         />
       )}
+      {/* Only once it is over: the digest quotes reasoning, and a live game's is withheld from a
+          person playing it (invariant 8). The API sends none before then either. */}
+      {finished && game.digest && <GameStory game={game} />}
     </main>
   );
 }

@@ -71,6 +71,9 @@ refresh-catalogue: ## Models + endpoints in one pass, for a scheduler (OPS-09)
 backfill-identities: ## Ask Clerk for the email of users provisioned without one (AUTH-14)
 	cd $(API) && uv run python ../../scripts/backfill_identities.py $(ARGS)
 
+backfill-digests: ## Compute the stored digest of every finished game that lacks one (ADR-0069)
+	cd $(API) && uv run python ../../scripts/backfill_digests.py $(ARGS)
+
 record-llm: ## Re-record LLM test fixtures (spends free-tier requests; never run by CI)
 	cd $(API) && uv run python ../../scripts/record_llm_fixtures.py
 

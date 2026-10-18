@@ -17,6 +17,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 
 import { PriceBadge } from "@/components/ModelPicker";
+import { RetiredBadge } from "@/components/RetiredBadge";
 import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { browseModels, countModels } from "@/lib/models";
 import type { ModelInfo } from "@/lib/types";
@@ -81,8 +82,11 @@ export function ModelTable({ models }: { models: ModelInfo[] }) {
                   href={`/models/${model.openrouter_id}`}
                   className="grid grid-cols-[1fr_auto] items-center gap-3 bg-surface px-3 py-2 transition-colors hover:bg-surface-2 sm:grid-cols-[1fr_8.5rem_4rem_4rem_auto]"
                 >
-                  <span className="min-w-0 truncate font-mono text-xs text-ink">
-                    {model.openrouter_id.split("/").slice(1).join("/") || model.openrouter_id}
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 truncate font-mono text-xs text-ink">
+                      {model.openrouter_id.split("/").slice(1).join("/") || model.openrouter_id}
+                    </span>
+                    {model.retired && <RetiredBadge />}
                   </span>
 
                   {/* UI-07: cost, context window, reasoning support — the three facts that decide

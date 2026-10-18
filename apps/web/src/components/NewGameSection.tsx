@@ -19,9 +19,10 @@ import { useState } from "react";
 import { clerkEnabled } from "@/components/AuthProvider";
 import { NewGame } from "@/components/NewGame";
 import { NewHumanGame } from "@/components/NewHumanGame";
+import { playReturn, type PlayChoice, type PlayMode } from "@/lib/play";
 import type { ModelInfo } from "@/lib/types";
 
-type Mode = "human" | "models";
+type Mode = PlayMode;
 
 const MODES: { id: Mode; label: string }[] = [
   { id: "human", label: "You vs a model" },
@@ -32,9 +33,12 @@ export function NewGameSection({
   apiUrl,
   models,
   signedIn,
+  choice,
 }: {
   apiUrl: string;
   models: ModelInfo[];
+  /** What the link that brought you here chose, if anything (`lib/play`). */
+  choice: PlayChoice;
   /**
    * From Clerk's `__client_uat` cookie, read on the server.
    *
@@ -55,7 +59,7 @@ export function NewGameSection({
 
   return (
     <>
-      {signedIn && <Chooser apiUrl={apiUrl} models={models} />}
+      {signedIn && <Chooser apiUrl={apiUrl} models={models} choice={choice} />}
 
       {!signedIn && (
         <div className="border border-line-soft bg-surface px-4 py-5">
@@ -68,7 +72,7 @@ export function NewGameSection({
                 those on any route loads `@clerk/ui` on all of them. `?redirect=` brings you back
                 here afterwards, which the modal did for free and a page has to be told. */}
             <Link
-              href="/sign-in?redirect=/play"
+              href={`/sign-in?redirect=${encodeURIComponent(playReturn(choice))}`}
               className="inline-flex border border-accent-deep bg-accent px-3 py-1.5 font-mono text-data uppercase tracking-[0.14em] text-on-accent transition-colors hover:bg-accent-dim"
             >
               Sign in to play
@@ -80,8 +84,16 @@ export function NewGameSection({
   );
 }
 
-function Chooser({ apiUrl, models }: { apiUrl: string; models: ModelInfo[] }) {
-  const [mode, setMode] = useState<Mode>("human");
+function Chooser({
+  apiUrl,
+  models,
+  choice,
+}: {
+  apiUrl: string;
+  models: ModelInfo[];
+  choice: PlayChoice;
+}) {
+  const [mode, setMode] = useState<Mode>(choice.mode);
 
   return (
     <div className="flex flex-col gap-4">
@@ -105,9 +117,9 @@ function Chooser({ apiUrl, models }: { apiUrl: string; models: ModelInfo[] }) {
       </div>
 
       {mode === "human" ? (
-        <NewHumanGame models={models} />
+        <NewHumanGame models={models} preferred={choice.model} />
       ) : (
-        <NewGame apiUrl={apiUrl} models={models} />
+        <NewGame apiUrl={apiUrl} models={models} preferred={choice.model} />
       )}
     </div>
   );

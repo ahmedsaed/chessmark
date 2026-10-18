@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 
-import { listGames, listModels, listTournaments } from "@/lib/api";
+import { listCatalogue, listGames, listTournaments } from "@/lib/api";
+import { gameIsIndexable, modelIsIndexable } from "@/lib/indexing";
 import { siteUrl, staticRoutes } from "@/lib/site";
 
 /* Built static by default, which would freeze the game list at deploy time. Hourly is the right
@@ -19,7 +20,8 @@ export const revalidate = 3600;
 const SITEMAP_LIFE = 3600;
 
 /**
- * Static pages, every model, every tournament, and the most recent finished games.
+ * Static pages, every model that has played, every tournament, and the most recent finished games
+ * long enough to be worth reading — `lib/indexing` decides which, for the pages and this alike.
  *
  * Running games are left out on purpose: their content changes every few seconds and their URL
  * is only interesting once there is a result to read. Model and tournament pages are the
@@ -32,7 +34,7 @@ const SITEMAP_LIFE = 3600;
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const [games, models, tournaments] = await Promise.all([
     listGames(undefined, 200, { cache: SITEMAP_LIFE }),
-    listModels(false, { cache: SITEMAP_LIFE }),
+    listCatalogue({ cache: SITEMAP_LIFE }),
     listTournaments(100, { cache: SITEMAP_LIFE }),
   ]);
 
@@ -42,20 +44,26 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: route.priority,
   }));
 
-  const catalogue: MetadataRoute.Sitemap = models.map((model) => ({
+  const catalogue: MetadataRoute.Sitemap = models.filter(modelIsIndexable).map((model) => ({
     url: `${siteUrl}/models/${model.openrouter_id}`,
+    lastModified: model.last_played_at ? new Date(model.last_played_at) : undefined,
     changeFrequency: "weekly" as const,
     priority: 0.4,
   }));
 
   const events: MetadataRoute.Sitemap = tournaments.map((tournament) => ({
     url: `${siteUrl}/tournaments/${tournament.slug}`,
+    /* The latest game, not the tournament row: a pool never ends, and its row stands still while
+       the table under it changes every day. */
+    lastModified: tournament.stats.last_game_at
+      ? new Date(tournament.stats.last_game_at)
+      : undefined,
     changeFrequency: "daily" as const,
     priority: 0.6,
   }));
 
   const finished = games
-    .filter((game) => game.status === "finished")
+    .filter((game) => game.status === "finished" && gameIsIndexable(game))
     .map((game) => ({
       url: `${siteUrl}/games/${game.id}`,
       lastModified: game.ended_at ? new Date(game.ended_at) : undefined,

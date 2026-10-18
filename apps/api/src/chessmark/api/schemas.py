@@ -40,7 +40,7 @@ from chessmark.db.models import (
     ToolCall,
     Turn,
 )
-from chessmark.db.stats import ModelStats
+from chessmark.db.stats import ModelProfile, ModelStats, Record
 from chessmark.game import Colour, GameResult, Termination
 
 
@@ -140,6 +140,16 @@ class ModelOut(Schema):
     #: what its turns actually cost (ADR-0052).
     price_tier: int = 1
 
+    #: OpenRouter no longer lists it, so the catalogue refresh disabled it and it cannot be played.
+    #: Its page and its games stay; the badge says why it is not on offer.
+    retired: bool = False
+
+    #: When this model last finished a game, or null if it never has. The sitemap's `lastmod`, and
+    #: its test for whether the model's page says anything a registry listing does not: a model
+    #: that has never played is ~200 words of template, and 272 of them in the sitemap is what
+    #: taught a search engine to stop crawling the rest of the site.
+    last_played_at: dt.datetime | None = None
+
     @classmethod
     def from_model(
         cls, row: ModelRegistry, *, endpoints: list[ModelEndpoint] | None = None
@@ -188,6 +198,7 @@ class ModelOut(Schema):
 
         return cls(
             id=row.id,
+            retired=not row.enabled,
             openrouter_id=row.openrouter_id,
             display_name=row.display_name,
             provider=row.provider,
@@ -282,6 +293,70 @@ class ModelDetail(ModelOut):
     #: can check it. "Some games are excluded" invites disbelief; a list of ids and reasons does
     #: not.
     excluded: list[ExcludedGame] = Field(default_factory=list)
+
+    #: What the page says about the model in sentences (ADR-0069). Null before it has finished a
+    #: game, when there is nothing to say.
+    profile: ModelProfileOut | None = None
+
+
+class RecordOut(Schema):
+    wins: int
+    draws: int
+    losses: int
+
+
+class OpponentOut(Schema):
+    #: Null for a person. People are one opponent, and never named.
+    openrouter_id: str | None
+    display_name: str
+    kind: str
+    record: RecordOut
+
+
+class EndingOut(Schema):
+    termination: str
+    record: RecordOut
+
+
+class OpeningCountOut(Schema):
+    eco: str
+    name: str
+    games: int
+
+
+class ModelProfileOut(Schema):
+    by_colour: dict[str, RecordOut]
+    endings: list[EndingOut]
+    opponents: list[OpponentOut]
+    openings: dict[str, list[OpeningCountOut]]
+    field_illegal_per_move: float | None
+
+    @classmethod
+    def from_profile(cls, profile: ModelProfile) -> ModelProfileOut:
+        def record(value: Record) -> RecordOut:
+            return RecordOut(wins=value.wins, draws=value.draws, losses=value.losses)
+
+        return cls(
+            by_colour={colour: record(value) for colour, value in profile.by_colour.items()},
+            endings=[
+                EndingOut(termination=e.termination, record=record(e.record))
+                for e in profile.endings
+            ],
+            opponents=[
+                OpponentOut(
+                    openrouter_id=o.openrouter_id,
+                    display_name=o.display_name,
+                    kind=o.kind,
+                    record=record(o.record),
+                )
+                for o in profile.opponents
+            ],
+            openings={
+                colour: [OpeningCountOut(eco=o.eco, name=o.name, games=o.games) for o in rows]
+                for colour, rows in profile.openings.items()
+            },
+            field_illegal_per_move=profile.field_illegal_per_move,
+        )
 
 
 # ---------------------------------------------------------------------- players
@@ -480,6 +555,48 @@ class StartedGameSummary(GameSummary):
     billed_usd: Decimal | None = None
 
 
+class OpeningOut(Schema):
+    eco: str
+    name: str
+    #: The ply at which the game reached it — how long it stayed in the book.
+    ply: int
+
+
+class MomentOut(Schema):
+    """One turn a finished game's page quotes, and why (`db/digests.py`)."""
+
+    #: `illegal` (the game's first illegal attempt), `capture` (its biggest capture before the
+    #: end) or `final` (the last turn anyone took).
+    kind: str
+    ply: int | None
+    colour: str | None
+    #: The move the turn played. Null for a turn that ended the game without one — a forfeit or a
+    #: resignation.
+    san: str | None
+    #: A contiguous slice of what the model wrote, never a summary of it (invariant 3). Null for a
+    #: seat that writes nothing: a person, a decision model.
+    excerpt: str | None
+    #: `reasoning` or `output`, so the page can say which it is quoting.
+    source: str | None
+    truncated: bool = False
+    #: For `illegal`: what it tried, and the referee's reason.
+    attempted: str | None = None
+    detail: str | None = None
+    #: For `capture`: the piece taken, and its value in points.
+    captured: str | None = None
+    value: int | None = None
+
+
+class GameDigestOut(Schema):
+    """The facts a finished game's page states in prose (ADR-0069). Null while a game is live."""
+
+    version: int
+    opening: OpeningOut | None
+    #: Material on the board at the end, in points, per side.
+    material: dict[str, int]
+    moments: list[MomentOut] = Field(default_factory=list)
+
+
 class TournamentRef(Schema):
     """Which event a game was played for — enough to say so and to link there, and no more.
 
@@ -554,6 +671,9 @@ class GameDetail(GameSummary):
     #: Why a paused game has not resumed. Null unless the game is paused.
     waiting_on: WaitingOn | None = None
 
+    #: What the page says about the game in prose, once it is over (ADR-0069).
+    digest: GameDigestOut | None = None
+
     @classmethod
     def from_model(  # type: ignore[override]
         cls,
@@ -567,6 +687,7 @@ class GameDetail(GameSummary):
         waiting_on: WaitingOn | None = None,
         started_by: str | None = None,
         unrecorded_requests: int | None = None,
+        digest: dict[str, Any] | None = None,
     ) -> GameDetail:
         summary = GameSummary.from_model(game, players, served_by=served_by)
         return cls(
@@ -577,6 +698,7 @@ class GameDetail(GameSummary):
             billed_requests=game.billed_requests,
             unrecorded_requests=unrecorded_requests,
             waiting_on=waiting_on,
+            digest=GameDigestOut.model_validate(digest) if digest else None,
             start_fen=game.start_fen,
             current_fen=current_fen,
             termination_detail=game.termination_detail,
@@ -1256,6 +1378,9 @@ class TournamentStats(Schema):
     illegal_attempts: int
     decisive: int
     draws: int
+    #: When the latest game in scope finished — the sitemap's `lastmod`. The tournament row's own
+    #: timestamps do not move while a pool is being played, and a pool is never finished.
+    last_game_at: dt.datetime | None = None
 
 
 class TournamentSummary(Schema):

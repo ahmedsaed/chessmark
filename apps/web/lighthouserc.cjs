@@ -72,6 +72,19 @@ function dynamicRoutes() {
   }
 }
 
+/**
+ * Pages that are `noindex` on purpose: the auth screens, and the two seeded games. Scholar's Mate
+ * is 7 plies and Fool's Mate is 4, both under the 10 a game needs before it asks to be indexed
+ * (ADR-0068, `lib/indexing.ts`). A long game's page is still held to `is-crawlable` by the
+ * sitemap and metadata tests; it has no seeded fixture here to measure.
+ */
+function heldBack() {
+  const games = dynamicRoutes()
+    .filter((route) => route.startsWith("/games/"))
+    .map((route) => route.slice("/games/".length));
+  return ["/sign-(in|up)", ...games.map((id) => `/games/${id}`)].join("|");
+}
+
 /** Everything asserted on every page. Named so the per-URL override can extend it. */
 const ASSERTIONS = {
   /* ---- categories ------------------------------------------------------------------------- */
@@ -204,8 +217,8 @@ module.exports = {
      */
     assert: {
       /**
-       * **`/sign-in` and `/sign-up` are `noindex` on purpose**, so `is-crawlable` failing on them
-       * is `robots.txt` doing its job. Overridden per URL rather than switched off everywhere: the
+       * **`/sign-in`, `/sign-up` and the seeded games are `noindex` on purpose** (`heldBack`), so
+       * `is-crawlable` failing on them is the page doing its job. Overridden per URL rather than switched off everywhere: the
        * day the *leaderboard* stops being indexable, this still has to go red.
        *
        * The two patterns are mutually exclusive, so exactly one set applies to each URL and there
@@ -213,11 +226,11 @@ module.exports = {
        */
       assertMatrix: [
         {
-          matchingUrlPattern: "^(?!.*/sign-(in|up)).*$",
+          matchingUrlPattern: `^(?!.*(${heldBack()})).*$`,
           assertions: ASSERTIONS,
         },
         {
-          matchingUrlPattern: ".*/sign-(in|up).*",
+          matchingUrlPattern: `.*(${heldBack()}).*`,
           /* The *category* counts `is-crawlable` too, so exempting the audit alone still left the
              SEO score at 0.63 — a page deliberately kept out of the index cannot score well on
              being indexable, and should not be asked to. Everything else still applies here:

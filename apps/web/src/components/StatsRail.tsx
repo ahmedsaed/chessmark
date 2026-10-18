@@ -196,9 +196,19 @@ function PlayerCard({
             player.colour === "white" ? "bg-piece-white" : "bg-piece-black"
           }`}
         />
-        <b className="truncate font-mono text-xs font-normal text-ink">
-          {player.display_name}
-        </b>
+        {/* A model's name opens its page; a person's is never a link. The name stands alone on
+            its line, so it may underline on hover only (FRONTEND.md). */}
+        {player.kind === "model" && player.model ? (
+          <Link
+            href={`/models/${player.model}`}
+            prefetch={false}
+            className="truncate font-mono text-xs text-ink underline-offset-4 transition-colors hover:text-accent hover:underline"
+          >
+            {player.display_name}
+          </Link>
+        ) : (
+          <b className="truncate font-mono text-xs font-normal text-ink">{player.display_name}</b>
+        )}
         {active && (
           <span className="ml-auto flex-none border border-accent-deep px-1.5 py-px font-mono text-label uppercase tracking-[0.12em] text-accent">
             to move

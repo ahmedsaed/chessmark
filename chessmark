@@ -184,6 +184,13 @@ cmd_repair-forfeits() { # make forfeit flags agree with their games:  ./chessmar
   api_script repair_forfeits.py "$@"
 }
 
+cmd_digests() { # compute the prose facts of every finished game that lacks them:  ./chessmark digests
+  # Each game's page computes its own on first read; this does the archive ahead of the crawler,
+  # and fills the openings the model pages count (ADR-0069). Derived from the record alone, so it
+  # is safe to re-run and changes nothing but the digests.
+  api_script backfill_digests.py "$@"
+}
+
 cmd_halt() { # stop every model call, or resume:  ./chessmark halt "reason" | --clear
   # A *state*, not a limit — the daily kill switch is config read at startup and cannot be flipped
   # while the stack runs. Games are left RUNNING and nothing is forfeited (OPS-19); a halt set by a

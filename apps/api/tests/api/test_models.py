@@ -458,6 +458,197 @@ async def test_the_record_and_the_ratings_differ_by_exactly_the_exclusions(
     assert not rated & excluded, "a game cannot both count and be excluded"
 
 
+async def test_each_model_says_when_it_last_finished_a_game(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The sitemap lists a model's page only once it has played, dated by its latest game.
+
+    A model that has never finished one is a page of registry facts and boilerplate; 272 of them
+    were most of the sitemap. A running game is not a finished one: the page has no result yet.
+    """
+    import datetime as dt
+
+    played = await _ranked_model(db, "dated/played")
+    opponent = await _ranked_model(db, "dated/opponent")
+    await _ranked_model(db, "dated/fresh")
+    busy = await _ranked_model(db, "dated/busy")
+
+    earlier = dt.datetime(2026, 3, 1, tzinfo=dt.UTC)
+    latest = dt.datetime(2026, 3, 9, tzinfo=dt.UTC)
+    for ended in (earlier, latest):
+        game = await _finished_game(db, played, opponent, result=GameResult.DRAW)
+        game.ended_at = ended
+    running = await _finished_game(db, busy, opponent, result=GameResult.ONGOING)
+    running.status = GameStatus.RUNNING
+    await db.commit()
+
+    listed = {
+        m["openrouter_id"]: m["last_played_at"]
+        for m in (await client.get("/models", params={"playable": False})).json()
+    }
+
+    assert dt.datetime.fromisoformat(listed["dated/played"]) == latest
+    assert listed["dated/fresh"] is None
+    assert listed["dated/busy"] is None, "a game still being played has not finished"
+
+    detail = (await client.get("/models/dated/played")).json()
+    assert detail["last_played_at"] == listed["dated/played"], "the detail inherits the field"
+
+
+async def test_the_profile_states_the_record_by_colour_ending_and_opponent(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """What the model page says in sentences (ADR-0069), from the seat's side of each game."""
+    me = await _ranked_model(db, "profile/me")
+    rival = await _ranked_model(db, "profile/rival")
+
+    # As White: beat the rival by mate, drew it. As Black: lost to it.
+    await _finished_game(db, me, rival, result=GameResult.WHITE_WINS)
+    draw = await _finished_game(db, me, rival, result=GameResult.DRAW)
+    draw.termination = Termination.THREEFOLD_REPETITION
+    await _finished_game(db, rival, me, result=GameResult.WHITE_WINS)
+    # Its digest names an opening; the profile counts it for the colour this model had.
+    draw.digest = {"version": 1, "opening": {"eco": "C50", "name": "Italian Game", "ply": 6}}
+    await db.commit()
+
+    profile = (await client.get("/models/profile/me")).json()["profile"]
+
+    assert profile["by_colour"]["white"] == {"wins": 1, "draws": 1, "losses": 0}
+    assert profile["by_colour"]["black"] == {"wins": 0, "draws": 0, "losses": 1}
+    endings = {e["termination"]: e["record"] for e in profile["endings"]}
+    assert endings["checkmate"] == {"wins": 1, "draws": 0, "losses": 1}
+    assert endings["threefold_repetition"] == {"wins": 0, "draws": 1, "losses": 0}
+    assert profile["opponents"] == [
+        {
+            "openrouter_id": "profile/rival",
+            "display_name": "profile/rival",
+            "kind": "model",
+            "record": {"wins": 1, "draws": 1, "losses": 1},
+        }
+    ]
+    assert profile["openings"]["white"] == [{"eco": "C50", "name": "Italian Game", "games": 1}]
+    assert profile["openings"]["black"] == []
+
+
+async def test_a_person_is_one_opponent_and_is_never_named(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    me = await _ranked_model(db, "profile/vs-people")
+    for name in ("alice@example.com", "Bob"):
+        game = Game(
+            status=GameStatus.FINISHED,
+            result=GameResult.BLACK_WINS,
+            termination=Termination.CHECKMATE,
+            ply_count=10,
+            start_fen=START,
+        )
+        db.add(game)
+        await db.flush()
+        db.add(Player(game_id=game.id, colour="white", kind=PlayerKind.HUMAN, display_name=name))
+        db.add(
+            Player(
+                game_id=game.id,
+                colour="black",
+                kind=PlayerKind.MODEL,
+                model_id=me.id,
+                display_name=me.display_name,
+                sampling={},
+            )
+        )
+    await db.commit()
+
+    body = (await client.get("/models/profile/vs-people")).json()
+
+    assert body["profile"]["opponents"] == [
+        {
+            "openrouter_id": None,
+            "display_name": "a person",
+            "kind": "human",
+            "record": {"wins": 2, "draws": 0, "losses": 0},
+        }
+    ]
+    assert "alice" not in str(body) and "Bob" not in str(body)
+
+
+async def test_a_model_that_has_not_finished_a_game_has_no_profile(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    await _ranked_model(db, "profile/fresh")
+    await db.commit()
+    assert (await client.get("/models/profile/fresh")).json()["profile"] is None
+
+
+async def test_the_catalogue_lists_a_retired_model_that_has_played_and_marks_it(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """Qwen3.8 27B (free) had thirteen games and a page, and no link to it from anywhere.
+
+    The catalogue listed only what can be started now, so retiring a model hid its page — from
+    `/models`, from the archive's filter, and from the sitemap. `played=true` brings back every
+    model with a finished game, marked; the game form's own list is unchanged.
+    """
+    current = await _ranked_model(db, "retire/current")
+    gone = await _ranked_model(db, "retire/gone")
+    never = await _ranked_model(db, "retire/never")
+    busy = await _ranked_model(db, "retire/busy")
+    await _finished_game(db, gone, current, result=GameResult.DRAW)
+    running = await _finished_game(db, busy, current, result=GameResult.ONGOING)
+    running.status = GameStatus.RUNNING
+    for model in (gone, never, busy):
+        model.enabled = False
+    await db.commit()
+
+    async def listed(**params: object) -> dict[str, bool]:
+        body = (await client.get("/models", params={"playable": False, **params})).json()
+        return {
+            m["openrouter_id"]: m["retired"]
+            for m in body
+            if m["openrouter_id"].startswith("retire/")
+        }
+
+    assert await listed() == {"retire/current": False}, "the game form never sees a retired model"
+    assert await listed(played=True) == {"retire/current": False, "retire/gone": True}
+    detail = (await client.get("/models/retire/gone")).json()
+    assert detail["retired"] is True
+
+
+async def test_the_catalogue_costs_a_fixed_number_of_queries(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The sitemap reads the whole catalogue, so the date it carries is one grouped statement.
+
+    Grown by **models**, not games: a date looked up per model is the N+1 this forbids, and it
+    costs the same however many games there are.
+    """
+    statements: list[str] = []
+
+    def record(conn: object, cursor: object, statement: str, *args: object) -> None:
+        statements.append(statement)
+
+    async def count() -> int:
+        statements.clear()
+        await client.get("/models", params={"playable": False})
+        return len(statements)
+
+    async def pair(index: int) -> None:
+        white = await _ranked_model(db, f"flat/w{index}")
+        black = await _ranked_model(db, f"flat/b{index}")
+        await _finished_game(db, white, black, result=GameResult.DRAW)
+        await db.commit()
+
+    sa.event.listen(db.bind.sync_engine, "before_cursor_execute", record)
+    try:
+        await pair(0)
+        few = await count()
+        for index in range(1, 6):
+            await pair(index)
+        many = await count()
+    finally:
+        sa.event.remove(db.bind.sync_engine, "before_cursor_execute", record)
+
+    assert many == few, f"the catalogue grew from {few} queries at 2 models to {many} at 12"
+
+
 async def test_a_model_page_costs_a_fixed_number_of_queries(
     client: AsyncClient, db: AsyncSession
 ) -> None:

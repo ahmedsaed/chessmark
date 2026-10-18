@@ -129,6 +129,8 @@ export interface GameDetail extends GameSummary {
   billed_requests?: number | null;
   /** Requests OpenRouter billed that our record lost to a failure of ours. */
   unrecorded_requests?: number | null;
+  /** What the page says about the game in prose, once it is over (ADR-0069). */
+  digest?: GameDigest | null;
 }
 
 /** Which event a game was played for — enough to say so and to link there. */
@@ -167,6 +169,10 @@ export interface ModelInfo {
   /** Price band, 1 to 4, from the model's own prices. Not a charge — a game is charged what its
    *  turns actually cost (ADR-0052). */
   price_tier: number;
+  /** OpenRouter no longer lists it, so it cannot be played. Its page and games stay. */
+  retired?: boolean;
+  /** When this model last finished a game, or null if it never has — see `lib/indexing`. */
+  last_played_at?: string | null;
 }
 
 /**
@@ -235,6 +241,57 @@ export interface ModelDetail extends ModelInfo {
    * page is only honest if a reader can see what separates them.
    */
   excluded?: ExcludedGame[];
+  /** What the page says about the model in sentences (ADR-0069). Null before it has finished a
+   *  game. */
+  profile?: ModelProfile | null;
+}
+
+export interface RecordCount {
+  wins: number;
+  draws: number;
+  losses: number;
+}
+
+export interface ModelProfile {
+  by_colour: Record<Colour, RecordCount>;
+  /** Most frequent first. */
+  endings: { termination: string; record: RecordCount }[];
+  /** Most frequent first. A person is `kind: "human"`, never named, and has no id. */
+  opponents: {
+    openrouter_id: string | null;
+    display_name: string;
+    kind: "model" | "human";
+    record: RecordCount;
+  }[];
+  /** Per colour, from the games whose digest named an opening. */
+  openings: Record<Colour, { eco: string; name: string; games: number }[]>;
+  /** Illegal attempts per move across every model seat — what "often" means. */
+  field_illegal_per_move: number | null;
+}
+
+/** One turn a finished game's page quotes (ADR-0069). */
+export interface Moment {
+  kind: "illegal" | "capture" | "final";
+  ply: number | null;
+  colour: Colour | null;
+  /** The move the turn played; null for a forfeit or resignation that played none. */
+  san: string | null;
+  /** A slice of what the model wrote, never a rewording. Null for a seat that writes nothing. */
+  excerpt: string | null;
+  source: "reasoning" | "output" | null;
+  truncated: boolean;
+  attempted?: string | null;
+  detail?: string | null;
+  captured?: string | null;
+  value?: number | null;
+}
+
+/** The facts a finished game's page states in prose (ADR-0069). */
+export interface GameDigest {
+  version: number;
+  opening: { eco: string; name: string; ply: number } | null;
+  material: Record<Colour, number>;
+  moments: Moment[];
 }
 
 export type EventType =
@@ -727,6 +784,8 @@ export interface TournamentStats {
   illegal_attempts: number;
   decisive: number;
   draws: number;
+  /** When the latest game in scope finished. The sitemap's `lastModified`. */
+  last_game_at?: string | null;
 }
 
 export interface TournamentSummary {

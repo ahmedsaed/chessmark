@@ -2,10 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { GameCard } from "@/components/GameCard";
+import { ModelProfile } from "@/components/ModelProfile";
 import { PriceBadge } from "@/components/ModelPicker";
+import { RetiredBadge } from "@/components/RetiredBadge";
 import { RuntimeBadge } from "@/components/RuntimeBadge";
 import { getModel, listGamesByModel } from "@/lib/api";
+import { HELD_BACK, modelIsIndexable } from "@/lib/indexing";
 import { parseArchive, withFilter } from "@/lib/archive";
+import { playHref } from "@/lib/play";
 import { contestantLabel, effortName, modelSlugFromSegments } from "@/lib/models";
 import { siteUrl } from "@/lib/site";
 import type {
@@ -57,6 +61,7 @@ export async function generateMetadata({ params }: PageProps<"/models/[...slug]"
     title,
     description,
     alternates: { canonical: `/models/${model.openrouter_id}` },
+    robots: modelIsIndexable(model) ? undefined : HELD_BACK,
     openGraph: {
       title: `${title} — Chessmark`,
       description,
@@ -109,6 +114,7 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
         <h1 className="font-serif text-4xl leading-tight text-ink">{model.display_name}</h1>
         <PriceBadge tier={model.price_tier} free={model.is_free} />
         <RuntimeBadge runtime={model.runtime} />
+        {model.retired && <RetiredBadge />}
       </div>
       <p className="mt-1 font-mono text-xs text-ink-faint">
         {model.openrouter_id}
@@ -125,6 +131,28 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
         )}
       </p>
 
+      {/* Only for a model the game form can start: a retired one, or one no endpoint serves, has
+          nothing to offer behind the button. `prefetch={false}` because `/play` is dynamic, and a
+          visible link to a dynamic route prefetches in a loop (FRONTEND.md). */}
+      {!model.retired && model.contestants.length > 0 && (
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Link
+            href={playHref(model.openrouter_id, "human")}
+            prefetch={false}
+            className="inline-flex border border-accent-deep bg-accent px-3 py-1.5 font-mono text-data uppercase tracking-[0.14em] text-on-accent transition-colors hover:bg-accent-dim"
+          >
+            Play against it
+          </Link>
+          <Link
+            href={playHref(model.openrouter_id, "models")}
+            prefetch={false}
+            className="inline-flex border border-line px-3 py-1.5 font-mono text-data uppercase tracking-[0.14em] text-ink-dim transition-colors hover:border-accent-dim hover:text-accent"
+          >
+            Match it against a model
+          </Link>
+        </div>
+      )}
+
       <Facts model={model} />
 
       {model.stats.games === 0 ? (
@@ -135,6 +163,8 @@ export default async function ModelPage({ params }: PageProps<"/models/[...slug]
       ) : (
         <Record model={model} />
       )}
+
+      <ModelProfile model={model} />
 
       {games.length === 0 && model.stats.games > 0 && (
         /* The record says it has played and we have no games to show, which is a failed read, not
@@ -275,8 +305,17 @@ function Contestants({
 
       {model.contestants.length === 0 ? (
         <p className="border border-line-soft bg-surface px-4 py-5 text-sm text-ink-dim">
-          No active endpoint serves this model with tool calling, so it cannot be played. Nothing is
-          wrong with it — the providers that carried it have stopped.
+          {model.retired ? (
+            <>
+              OpenRouter no longer lists this model, so it cannot be played. Its games stay, and
+              are below.
+            </>
+          ) : (
+            <>
+              No active endpoint serves this model with tool calling, so it cannot be played.
+              Nothing is wrong with it — the providers that carried it have stopped.
+            </>
+          )}
         </p>
       ) : (
         <>

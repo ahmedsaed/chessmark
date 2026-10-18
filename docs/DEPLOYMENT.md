@@ -39,6 +39,7 @@ everything inside a container: no uv, no node, and no remembering which compose 
 | `workers N` | how many turn workers to run (`WORKER_REPLICAS`) |
 | `catalogue` `endpoints` `models` `prune` | the model registry |
 | `latency <game-id>` `resume <game-id>` `repair` `repair-forfeits` | one game, and the records behind it |
+| `digests` | compute the stored prose facts of every finished game that lacks them ([ADR-0069](adr/0069-a-page-says-what-its-game-or-model-did-in-words.md)); safe to re-run |
 | `halt` | stop every model call, or resume; `--clear` lifts it |
 | `tournament …` `standings <slug>` | events |
 | `credits` | grant or revoke credit, in dollars (`credits you@x.com 5`); `--show` prints a balance with its ledger |
