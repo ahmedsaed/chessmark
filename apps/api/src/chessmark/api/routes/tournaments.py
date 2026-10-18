@@ -139,13 +139,14 @@ async def _stats(
                 sa.func.count(Game.id).filter(
                     Game.status == GameStatus.FINISHED, Game.result == GameResult.DRAW
                 ),
+                sa.func.max(Game.ended_at).filter(Game.status == GameStatus.FINISHED),
             )
             .select_from(TournamentGame)
             .join(Game, Game.id == TournamentGame.game_id)
             .where(TournamentGame.tournament_id == tournament_id, *scope)
         )
     ).one()
-    cost, tokens, plies, finished, decisive, draws = totals
+    cost, tokens, plies, finished, decisive, draws, last_game_at = totals
 
     illegal = await session.scalar(
         sa.select(sa.func.coalesce(sa.func.sum(Player.illegal_attempts), 0))
@@ -169,6 +170,7 @@ async def _stats(
         illegal_attempts=int(illegal or 0),
         decisive=int(decisive or 0),
         draws=int(draws or 0),
+        last_game_at=last_game_at,
     )
 
 

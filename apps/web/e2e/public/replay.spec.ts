@@ -253,10 +253,16 @@ test("output is shown without being asked for", async ({ page }) => {
 test("the conversation can be filtered down to moves alone", async ({ page }) => {
   await expect(page.getByRole("button", { name: /\d+ tools/ }).first()).toBeVisible();
 
+  /* Scoped to the turns: the game's story below the board quotes this same last turn, and the
+     filter is the conversation's, not the page's. Asserted visible first, so the hidden check
+     below cannot pass on a turn that never showed it. */
+  const talk = page.getByTestId("turn").getByText(/Mate on f7\. Good game\./);
+  await expect(talk.first()).toBeVisible();
+
   await page.getByRole("button", { name: "Moves", exact: true }).click();
 
   // Talk is White's register in the scripted game; filtering to moves must drop it.
-  await expect(page.getByText(/Mate on f7\. Good game\./)).toBeHidden();
+  await expect(talk).toHaveCount(0);
 });
 
 test("the newest turn is open and its reasoning is not", async ({ page }) => {

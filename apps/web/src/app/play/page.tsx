@@ -6,6 +6,7 @@ import type { Metadata } from "next";
 import { MyGames } from "@/components/MyGames";
 import { NewGameSection } from "@/components/NewGameSection";
 import { apiUrl, listModels } from "@/lib/api";
+import { parsePlay } from "@/lib/play";
 import { pageMetadata } from "@/lib/site";
 
 export const metadata: Metadata = pageMetadata({
@@ -28,11 +29,13 @@ export const metadata: Metadata = pageMetadata({
  * This is still a holding page for the picker as it stands — model *selection* deserves the search
  * and the model pages that Phase 20 covers.
  */
-export default async function PlayPage() {
+export default async function PlayPage({ searchParams }: PageProps<"/play">) {
   /* Read here rather than asked of Clerk, so a signed-out visitor to this page loads no Clerk at
      all — the same cookie the root layout uses to decide whether to mount it (`lib/auth-scope`). */
   const signedIn = hasSessionCookie((await cookies()).get("__client_uat")?.value);
   const models = await listModels();
+  // A model page's "Play" links here with the model chosen (`lib/play`).
+  const choice = parsePlay(await searchParams, models);
 
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
@@ -44,7 +47,7 @@ export default async function PlayPage() {
       </p>
 
       <div className="mt-8">
-        <NewGameSection apiUrl={apiUrl} models={models} signedIn={signedIn} />
+        <NewGameSection apiUrl={apiUrl} models={models} signedIn={signedIn} choice={choice} />
       </div>
 
       <MyGames signedIn={signedIn} />

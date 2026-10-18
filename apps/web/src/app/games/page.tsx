@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 import { ArchiveFilters } from "@/components/ArchiveFilters";
 import { ArchiveList } from "@/components/ArchiveList";
-import { apiUrl, listArchive, listModels, listTournaments } from "@/lib/api";
+import { apiUrl, listArchive, listCatalogue, listTournaments } from "@/lib/api";
 import {
   apiQuery,
   archiveHref,
@@ -36,7 +36,7 @@ const DEFAULT_DESCRIPTION =
  */
 export async function generateMetadata({ searchParams }: PageProps<"/games">): Promise<Metadata> {
   const filter = parseArchive(await searchParams);
-  const [models, tournaments] = await Promise.all([listModels(), listTournaments()]);
+  const [models, tournaments] = await Promise.all([listCatalogue(), listTournaments()]);
   const { headline, qualifiers, filtered } = describeArchive(
     filter,
     namesFrom(models, tournaments),
@@ -96,7 +96,7 @@ export default async function GamesPage({ searchParams }: PageProps<"/games">) {
 
   const [rows, models, tournaments] = await Promise.all([
     listArchive(apiQuery(filter)),
-    listModels(),
+    listCatalogue(),
     listTournaments(),
   ]);
   const page = rows ? paginate(rows) : null;

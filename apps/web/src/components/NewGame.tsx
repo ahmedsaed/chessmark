@@ -29,7 +29,16 @@ const DEFAULT_WHITE = "google/gemini-3.7-flash";
 const DEFAULT_BLACK = "moonshotai/kimi-k2.5";
 
 
-export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[] }) {
+export function NewGame({
+  apiUrl,
+  models,
+  preferred = null,
+}: {
+  apiUrl: string;
+  models: ModelInfo[];
+  /** Chosen by the link that opened the page — a model page's "Match it". It plays White. */
+  preferred?: string | null;
+}) {
   const { getToken } = useAuth();
   const router = useRouter();
 
@@ -41,11 +50,18 @@ export function NewGame({ apiUrl, models }: { apiUrl: string; models: ModelInfo[
     [models],
   );
 
+  const offered = (id: string | null) => playable.some((m) => m.openrouter_id === id);
   const [white, setWhite] = useState(
-    () => (playable.some((m) => m.openrouter_id === DEFAULT_WHITE) ? DEFAULT_WHITE : ""),
+    () => [preferred, DEFAULT_WHITE].find(offered) ?? "",
   );
-  const [black, setBlack] = useState(
-    () => (playable.some((m) => m.openrouter_id === DEFAULT_BLACK) ? DEFAULT_BLACK : ""),
+  /* Black is the usual default unless that is the model just chosen for White: a link from a
+     model page should open on a match, not on a model playing itself. */
+  const [black, setBlack] = useState(() =>
+    offered(DEFAULT_BLACK) && DEFAULT_BLACK !== preferred
+      ? DEFAULT_BLACK
+      : offered(DEFAULT_WHITE) && DEFAULT_WHITE !== preferred
+        ? DEFAULT_WHITE
+        : "",
   );
   const [whiteQuant, setWhiteQuant] = useState<string>("");
   const [blackQuant, setBlackQuant] = useState<string>("");

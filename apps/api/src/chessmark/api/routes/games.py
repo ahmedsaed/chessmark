@@ -55,6 +55,7 @@ from chessmark.api.schemas import (
 from chessmark.core.pause_requests import PauseRequests
 from chessmark.db.archive import ArchiveKind, ArchiveOutcome, ArchiveSort, archive_query
 from chessmark.db.credits import InsufficientCreditError, require_credit
+from chessmark.db.digests import digest_for
 from chessmark.db.enums import EventType, GameStatus, ModelRuntime, ModerationStatus, PlayerKind
 from chessmark.db.models import (
     Game,
@@ -429,6 +430,9 @@ async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
 
     tournament = await _tournament_of(session, game.id)
 
+    # Stored after the first read of a finished game; null, and no query at all, while it is live.
+    digest = await digest_for(session, game)
+
     return GameDetail.from_model(
         game,
         await _players(session, game.id),
@@ -436,6 +440,7 @@ async def get_game_detail(session: SessionDep, game: GameDep) -> GameDetail:
         current_fen=referee.board.fen,
         served_by=await _served_by(session, game.id),
         tournament=tournament,
+        digest=digest,
         started_by=None if tournament is not None else await _started_by(session, game),
         # One count, and only for a game that has been reconciled.
         unrecorded_requests=(

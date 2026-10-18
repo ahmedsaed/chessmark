@@ -18,13 +18,17 @@ A model can hold both seats of one game. Seats are therefore counted separately 
 
 from __future__ import annotations
 
+import datetime as dt
+import uuid
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
 import sqlalchemy as sa
+import sqlalchemy.orm
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from chessmark.db.enums import GameStatus
+from chessmark.db.enums import GameStatus, PlayerKind
 from chessmark.db.models import Game, LlmCall, ModelRegistry, Player
 from chessmark.game import GameResult
 
@@ -195,4 +199,224 @@ async def model_stats(session: AsyncSession, model: ModelRegistry) -> ModelStats
         cached_tokens=int(calls.cached),
         total_cost_usd=Decimal(calls.cost),
         mean_latency_ms=float(calls.latency) if calls.latency is not None else None,
+    )
+
+
+async def last_played(
+    session: AsyncSession, model_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, dt.datetime]:
+    """When each model last finished a game, in one grouped statement however many are asked for.
+
+    Finished games only: a running game has not produced the page a search engine would index, and
+    an aborted one never will. `ended_at` falls back to `created_at` because a row finished before
+    the column was always written still finished, and dropping it would drop the model's page.
+    """
+    if not model_ids:
+        return {}
+    rows = await session.execute(
+        sa.select(Player.model_id, sa.func.max(sa.func.coalesce(Game.ended_at, Game.created_at)))
+        .join(Game, Game.id == Player.game_id)
+        .where(Player.model_id.in_(model_ids), Game.status == GameStatus.FINISHED)
+        .group_by(Player.model_id)
+    )
+    return {model_id: at for model_id, at in rows.tuples() if model_id is not None}
+
+
+# ====================================================================== the model page's prose
+
+
+#: How many openings per colour the page lists. Opponents are all listed: there are at most as many
+#: as there are models, and the head-to-head table is the most useful thing on the page.
+TOP_OPENINGS = 3
+
+
+@dataclass(frozen=True, slots=True)
+class Record:
+    wins: int = 0
+    draws: int = 0
+    losses: int = 0
+
+    @property
+    def games(self) -> int:
+        return self.wins + self.draws + self.losses
+
+    def add(self, outcome: str, n: int) -> Record:
+        return Record(
+            wins=self.wins + (n if outcome == "won" else 0),
+            draws=self.draws + (n if outcome == "drew" else 0),
+            losses=self.losses + (n if outcome == "lost" else 0),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Opponent:
+    #: Null for a person: people are counted together as one opponent, never named.
+    openrouter_id: str | None
+    display_name: str
+    kind: str
+    record: Record
+
+
+@dataclass(frozen=True, slots=True)
+class Ending:
+    termination: str
+    record: Record
+
+
+@dataclass(frozen=True, slots=True)
+class OpeningCount:
+    eco: str
+    name: str
+    games: int
+
+
+@dataclass(frozen=True, slots=True)
+class ModelProfile:
+    """What a model page says in sentences, beside the numbers `ModelStats` gives it (ADR-0069).
+
+    **Computed per request, not stored**, unlike a game's digest. A game never changes once it is
+    over; a model's profile changes with every game it plays, so a stored copy would be a second
+    derived table to keep current. The page's read is already cached by the web tier and expired
+    when a game moves (ADR-0046), and this is five grouped statements however many games there
+    are — `test_a_model_page_costs_a_fixed_number_of_queries` holds that.
+    """
+
+    by_colour: dict[str, Record]
+    endings: list[Ending]
+    opponents: list[Opponent]
+    #: Per colour, from the games whose digest named an opening. A game is named once its digest
+    #: exists, so before `make backfill-digests` this counts only games someone has opened.
+    openings: dict[str, list[OpeningCount]]
+    #: Illegal attempts per move across every model seat — what "often" means for this one.
+    field_illegal_per_move: float | None
+
+
+def _outcome(seat: Any) -> Any:
+    """`won`, `drew` or `lost` for a seat, from the game's result. Null for a game with none."""
+    return sa.case(
+        (
+            sa.or_(
+                sa.and_(Game.result == GameResult.WHITE_WINS, seat.colour == "white"),
+                sa.and_(Game.result == GameResult.BLACK_WINS, seat.colour == "black"),
+            ),
+            "won",
+        ),
+        (Game.result == GameResult.DRAW, "drew"),
+        (Game.result.in_((GameResult.WHITE_WINS, GameResult.BLACK_WINS)), "lost"),
+        else_=None,
+    )
+
+
+def _seat_moves(seat: Any) -> Any:
+    """A seat's own moves: half the game's plies, the halves unequal when the count is odd."""
+    return sa.case(
+        (seat.colour == "white", (Game.ply_count + 1) / 2),
+        else_=Game.ply_count / 2,
+    )
+
+
+async def model_profile(session: AsyncSession, model: ModelRegistry) -> ModelProfile:
+    me = sa.orm.aliased(Player)
+    them = sa.orm.aliased(Player)
+    finished = [me.model_id == model.id, Game.status == GameStatus.FINISHED]
+
+    # 1. Results by colour and by how the game ended, in one pass.
+    outcome = _outcome(me).label("outcome")
+    by_colour: dict[str, Record] = {"white": Record(), "black": Record()}
+    endings: dict[str, Record] = {}
+    for colour, termination, result, n in (
+        await session.execute(
+            sa.select(me.colour, Game.termination, outcome, sa.func.count())
+            .select_from(me)
+            .join(Game, Game.id == me.game_id)
+            .where(*finished)
+            .group_by(me.colour, Game.termination, outcome)
+        )
+    ).tuples():
+        if result is None:
+            continue
+        by_colour[str(colour)] = by_colour[str(colour)].add(result, n)
+        key = str(termination) if termination is not None else "unknown"
+        endings[key] = endings.get(key, Record()).add(result, n)
+
+    # 2. Who it played. A model that played itself meets itself as an opponent once per seat.
+    opponents: dict[tuple[str, str | None], Opponent] = {}
+    for kind, slug, name, seat_name, result, n in (
+        await session.execute(
+            sa.select(
+                them.kind,
+                ModelRegistry.openrouter_id,
+                ModelRegistry.display_name,
+                sa.func.min(them.display_name),
+                outcome,
+                sa.func.count(),
+            )
+            .select_from(me)
+            .join(Game, Game.id == me.game_id)
+            .join(them, sa.and_(them.game_id == me.game_id, them.id != me.id))
+            .outerjoin(ModelRegistry, ModelRegistry.id == them.model_id)
+            .where(*finished)
+            .group_by(them.kind, ModelRegistry.openrouter_id, ModelRegistry.display_name, outcome)
+        )
+    ).tuples():
+        if result is None:
+            continue
+        person = str(kind) == str(PlayerKind.HUMAN)
+        who: tuple[str, str | None] = ("human", None) if person else ("model", slug)
+        current = opponents.get(who) or Opponent(
+            openrouter_id=None if person else slug,
+            display_name="a person" if person else (name or seat_name),
+            kind="human" if person else "model",
+            record=Record(),
+        )
+        opponents[who] = Opponent(
+            openrouter_id=current.openrouter_id,
+            display_name=current.display_name,
+            kind=current.kind,
+            record=current.record.add(result, n),
+        )
+
+    # 3. The openings it reached, from each game's stored digest.
+    eco = Game.digest["opening"]["eco"].as_string()
+    name = Game.digest["opening"]["name"].as_string()
+    openings: dict[str, list[OpeningCount]] = {"white": [], "black": []}
+    for colour, code, title, n in (
+        await session.execute(
+            sa.select(me.colour, eco, name, sa.func.count())
+            .select_from(me)
+            .join(Game, Game.id == me.game_id)
+            .where(*finished, eco.is_not(None))
+            .group_by(me.colour, eco, name)
+            .order_by(sa.func.count().desc(), eco)
+        )
+    ).tuples():
+        bucket = openings[str(colour)]
+        if len(bucket) < TOP_OPENINGS:
+            bucket.append(OpeningCount(eco=code, name=title, games=n))
+
+    # 4. The field: every model seat's illegal attempts per move, the same formula as this one's.
+    illegal, moves = (
+        await session.execute(
+            sa.select(
+                sa.func.coalesce(sa.func.sum(Player.illegal_attempts), 0),
+                sa.func.coalesce(sa.func.sum(_seat_moves(Player)), 0),
+            )
+            .select_from(Player)
+            .join(Game, Game.id == Player.game_id)
+            .where(Player.kind == PlayerKind.MODEL)
+        )
+    ).one()
+
+    return ModelProfile(
+        by_colour=by_colour,
+        endings=sorted(
+            (Ending(termination=key, record=record) for key, record in endings.items()),
+            key=lambda ending: (-ending.record.games, ending.termination),
+        ),
+        opponents=sorted(
+            opponents.values(),
+            key=lambda opponent: (-opponent.record.games, opponent.display_name),
+        ),
+        openings=openings,
+        field_illegal_per_move=(float(illegal) / float(moves)) if moves else None,
     )

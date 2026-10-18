@@ -243,6 +243,18 @@ class Game(Base):
     billing_anchor_at: Mapped[dt.datetime | None] = mapped_column()
     billing_seq: Mapped[int | None] = mapped_column(sa.Integer)
 
+    #: What a finished game's page states in prose — the opening, the final material, and up to
+    #: three moments in the models' own words (`db/digests.py`, ADR-0069). Derived entirely from
+    #: the record and recomputable from it, so where the two disagree the record wins (invariant
+    #: 1). Null until the first read after the game ends.
+    #:
+    #: **Deferred, and raises if touched unloaded.** It carries quoted reasoning, a few KB a game,
+    #: and every list endpoint and the sitemap select whole `Game` rows. Read it on purpose:
+    #: `select(Game.digest)`.
+    digest: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB, deferred=True, deferred_raiseload=True
+    )
+
     players: Mapped[list[Player]] = relationship(
         back_populates="game", cascade="all, delete-orphan"
     )

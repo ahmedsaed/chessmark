@@ -322,6 +322,26 @@ feature, because nothing compared the two lists. Both now read `staticRoutes`, a
 `site.test.ts` fails if a nav link is missing from it. A new static route goes in `staticRoutes`
 first.
 
+**Not every page asks to be indexed**
+([ADR-0068](adr/0068-a-page-asks-to-be-indexed-only-when-it-says-something.md)). A model that has
+never finished a game, and a game shorter than 10 plies, render as `noindex, follow` and are left
+out of the sitemap. `lib/indexing.ts` holds that rule, and both the page's `robots` metadata and
+`sitemap.ts` read it. Do not filter the sitemap anywhere else. A URL the sitemap submits that the
+page then marks `noindex` is an error in Search Console.
+
+**A game page describes itself in words; a model page in tables**
+([ADR-0069](adr/0069-a-page-says-what-its-game-or-model-did-in-words.md)). The API sends facts,
+`games.digest` for a game and `profile` for a model. `lib/prose.ts` writes the game's sentences
+and each model-page bar's accessible name; `ModelProfile` draws the tables. Change wording there,
+never in the API, so it needs no backfill. Each sentence is read off a field and judges nothing.
+`prose.test.ts` uses names as long as production's, because a short name hides how a sentence
+reads.
+
+**Two model lists, on purpose.** `listModels` is what a game can be started with, for the game
+form. `listCatalogue` adds every model that has finished a game, retired ones included, for
+`/models`, the sitemap and the archive's filter. Using the first where the second belongs is how a
+retired model's page lost every link to it.
+
 ## A decision is drawn, not folded
 
 A decision model's turn is one `decided` event — no reasoning, no tool calls

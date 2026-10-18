@@ -276,6 +276,20 @@ export function listModels(freeOnly = false, options?: ReadOptions): Promise<Mod
   return getOrEmpty<ModelInfo>(`/models?free_only=${freeOnly}`, cached([MODELS], options?.cache));
 }
 
+/**
+ * Every model with a page worth reaching: the ones that can be played now, and every one that has
+ * finished a game here, retired or not (`retired` says which).
+ *
+ * For the catalogue, the sitemap and the archive's filter. **Not** for the game form, which must
+ * only offer what it can start — that is `listModels`.
+ */
+export function listCatalogue(options?: ReadOptions): Promise<ModelInfo[]> {
+  return getOrEmpty<ModelInfo>(
+    `/models?free_only=false&played=true`,
+    cached([MODELS, GAMES], options?.cache),
+  );
+}
+
 /** One model with its aggregates, or null for a slug nothing answers to. */
 export function getModel(slug: string, options?: ReadOptions): Promise<ModelDetail | null> {
   /* A model's aggregates are recomputed from its games, so a finished game moves this page as

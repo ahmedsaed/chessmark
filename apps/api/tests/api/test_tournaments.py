@@ -331,6 +331,61 @@ async def test_a_live_game_is_not_counted_as_a_decisive_result(
     assert stats["mean_plies"] is None, "no finished game to average over"
 
 
+async def test_the_last_game_dates_the_event_for_the_sitemap(
+    client: AsyncClient, db: AsyncSession
+) -> None:
+    """The sitemap's `lastmod` for an event is when its latest game finished.
+
+    The tournament row's own timestamps stand still while a pool plays, so they would tell a
+    crawler the page has not changed for weeks. A running game has not changed the table yet.
+    """
+    import datetime as dt
+
+    from chessmark.tournament import round_robin
+
+    tournament_id, _ = await make_event(db, models=3, slug="dated-cup")
+    entrants = await repo.entrants_of(db, tournament_id)
+    for games in round_robin(entrants):
+        await repo.record_round(db, tournament_id, games)
+    await db.commit()
+
+    rows = list(
+        await db.scalars(
+            sa.select(TournamentGame).where(TournamentGame.tournament_id == tournament_id)
+        )
+    )
+    earlier = dt.datetime(2026, 3, 1, tzinfo=dt.UTC)
+    latest = dt.datetime(2026, 3, 9, tzinfo=dt.UTC)
+    # Three pairings carry games; any others stay waiting, which carries no date either way.
+    for row, (status, ended) in zip(
+        rows[:3],
+        [
+            (GameStatus.FINISHED, earlier),
+            (GameStatus.FINISHED, latest),
+            (GameStatus.RUNNING, None),
+        ],
+        strict=True,
+    ):
+        game = Game(
+            status=status,
+            result=GameResult.DRAW if ended else GameResult.ONGOING,
+            ended_at=ended,
+            start_fen="8/8/8/8/8/8/8/8 w - - 0 1",
+            ply_count=20,
+        )
+        db.add(game)
+        await db.flush()
+        row.game_id = game.id
+    await db.commit()
+
+    detail = (await client.get("/tournaments/dated-cup")).json()["stats"]
+    events = (await client.get("/tournaments")).json()
+    listed = next(t for t in events if t["slug"] == "dated-cup")["stats"]
+
+    assert dt.datetime.fromisoformat(detail["last_game_at"]) == latest
+    assert listed["last_game_at"] == detail["last_game_at"]
+
+
 # ====================================================================== eras (ADR-0043)
 
 

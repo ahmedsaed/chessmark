@@ -28,7 +28,14 @@ import type { Colour, ModelInfo } from "@/lib/types";
 
 const DEFAULT_OPPONENT = "google/gemini-3.7-flash";
 
-export function NewHumanGame({ models }: { models: ModelInfo[] }) {
+export function NewHumanGame({
+  models,
+  preferred = null,
+}: {
+  models: ModelInfo[];
+  /** Chosen by the link that opened the page — a model page's "Play against it". */
+  preferred?: string | null;
+}) {
   const { getToken } = useAuth();
   const router = useRouter();
 
@@ -41,7 +48,8 @@ export function NewHumanGame({ models }: { models: ModelInfo[] }) {
   );
 
   const [opponent, setOpponent] = useState(() =>
-    playable.some((m) => m.openrouter_id === DEFAULT_OPPONENT) ? DEFAULT_OPPONENT : "",
+    [preferred, DEFAULT_OPPONENT].find((id) => playable.some((m) => m.openrouter_id === id)) ??
+    "",
   );
   const [quantization, setQuantization] = useState("");
   const [provider, setProvider] = useState("");
