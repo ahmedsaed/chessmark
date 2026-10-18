@@ -15,6 +15,19 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-18
+
+**Game and model pages say what happened, and only pages with something to say ask to be indexed.**
+Search Console was holding back hundreds of pages as near-duplicates: game pages whose only text
+was a move list, and pages for models that never played. A finished game now opens with who played,
+the opening, how it ended and the moments that mattered, quoted from the models' own reasoning; a
+model page shows its record in tables; retired models are listed again; and a model page can start
+a game with it.
+
+One migration, additive: `0cc5ce1e26e5` adds a nullable `games.digest`. **After deploying, run
+`./chessmark digests`** to fill it for the archive; until then each game computes its digest on its
+first view.
+
 ### Changed
 
 - **Pages with nothing to say no longer ask to be indexed**
@@ -1670,6 +1683,7 @@ flags the old code wrote.
 [ADR-0043]: docs/adr/0043-a-pool-carries-its-eras.md
 [ADR-0044]: docs/adr/0044-the-ladder-resets-on-an-answered-call.md
 [ADR-0045]: docs/adr/0045-a-turn-keeps-the-rounds-it-completed.md
+[0.9.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.9.0
 [0.8.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.8.0
 [0.7.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.7.0
 [0.6.0]: https://github.com/ahmedsaed/chessmark/releases/tag/v0.6.0
