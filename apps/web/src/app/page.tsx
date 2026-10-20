@@ -12,6 +12,7 @@ import { TurnSpotlight } from "@/components/TurnSpotlight";
 import { TournamentsSection } from "@/components/TournamentsSection";
 import {
   apiUrl,
+  getFeatured,
   getGame,
   getHumanRecord,
   getLeaderboard,
@@ -19,6 +20,7 @@ import {
   listTournaments,
   openingEvents,
 } from "@/lib/api";
+import { chooseHero } from "@/lib/featured";
 import { pickReplays } from "@/lib/replays";
 import { pickTurn } from "@/lib/spotlight";
 import { foldEvents } from "@/lib/turns";
@@ -59,7 +61,7 @@ export default async function Home() {
    * and that is not known until the lists come back. Next.js memoises `fetch` per request, so the
    * two calls for the lobby list below are one request.
    */
-  const [live, recent, board, tournaments, humans] = await Promise.all([
+  const [live, recent, board, tournaments, humans, pick] = await Promise.all([
     listGames("running", 6),
     lobbyGames(),
     getLeaderboard(),
@@ -69,18 +71,22 @@ export default async function Home() {
     /* Four integers, one aggregate, tagged `games`. The "know your opponent" half of that section
        is summed from `board` above and costs nothing. */
     getHumanRecord(),
+    /* The operator's pick for the time between games (ADR-0070). One row, tagged `featured`;
+       its game is read in the second round with the others, so it costs no extra round trip. */
+    getFeatured(),
   ]);
 
-  /* Prefers a running game; falls back to the most recent finished one, which keeps the hero from
-     being empty between games — most of the time, on a small deployment. */
-  const featured = live[0] ?? settled(recent)[0] ?? null;
+  /* A running game first; then the operator's pick; then the most recent finished game, which is
+     what kept the hero from being empty before there were picks. Without the middle step that
+     fallback was often two free models shuffling kings to a draw — the first thing a visitor saw. */
+  const hero = chooseHero(live, pick, settled(recent));
 
-  /* The featured game is held out so the hero and the replay row cannot show the same game. */
+  /* The hero's game is held out so the hero and the replay row cannot show the same game. */
   /* Six, not three: the grid is three wide at `lg`, so three filled one row and left the section
      looking like the top of something cut off. Six is two full rows there, three at `sm`, and a
      column on a phone. */
   const picks = pickReplays(
-    recent.filter((entry) => entry.id !== featured?.id),
+    recent.filter((entry) => entry.id !== hero?.id),
     6,
   );
 
@@ -102,7 +108,7 @@ export default async function Home() {
        authoritative move list at the render's cursor — fetching the whole log to fold it back down
        to the same array cost 300KB of payload for a game of any length, on the one page every
        visitor loads first. A live game's *subsequent* moves still arrive on the stream. */
-    featured ? getGame(featured.id, { settled: featured.status === "finished" }) : Promise.resolve(null),
+    hero ? getGame(hero.id, { settled: hero.settled }) : Promise.resolve(null),
     /* `pickReplays` returns only `status === "finished"` games, so these can never move again. */
     ...picks.map((pick) => getGame(pick.id, { settled: true })),
     /* The opening of each candidate, bounded and cached — not the whole log. */
@@ -117,7 +123,11 @@ export default async function Home() {
 
   return (
     <main className="mx-auto w-full max-w-[1180px] flex-1 px-5 py-12">
-      {heroGame ? <HeroGame game={heroGame} apiUrl={apiUrl} /> : <EmptyHero />}
+      {heroGame ? (
+        <HeroGame game={heroGame} apiUrl={apiUrl} featured={hero?.featured ?? null} />
+      ) : (
+        <EmptyHero />
+      )}
 
       {alsoLive.length > 0 && (
         <Strip title="Also live" count={alsoLive.length}>

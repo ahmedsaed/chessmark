@@ -704,6 +704,31 @@ export interface HumanRecord {
   losses: number;
 }
 
+// ---------------------------------------------------------------- featured game
+
+/**
+ * One side's words on the featured card, as the game's own log has them (ADR-0070).
+ *
+ * Checked by the API when the game was featured: `text` is a slice of that side's reasoning or
+ * notes, not what the operator typed.
+ */
+export interface FeaturedQuote {
+  text: string;
+  ply: number | null;
+  san: string | null;
+  /** `reasoning` (thinking) or `output` (a note the model wrote). */
+  source: string;
+}
+
+/** The operator's pick for the lobby hero, shown when nothing is live (ADR-0070). */
+export interface Featured {
+  game_id: string;
+  headline: string;
+  white_quote: FeaturedQuote | null;
+  black_quote: FeaturedQuote | null;
+  featured_at: string;
+}
+
 // ---------------------------------------------------------------- tournaments
 
 /** One row of a tournament table. */

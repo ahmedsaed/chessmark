@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import uuid
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,7 @@ from chessmark.agents.llm import LlmGateway  # noqa: E402
 from chessmark.agents.registry import sync_model_registry  # noqa: E402
 from chessmark.agents.scripted_decisions import deciding  # noqa: E402
 from chessmark.core.config import get_settings  # noqa: E402
+from chessmark.db import featured  # noqa: E402
 from chessmark.db import tournaments as repo  # noqa: E402
 from chessmark.db.credits import balance_of, grant  # noqa: E402
 from chessmark.db.enums import GameStatus, ModelRuntime  # noqa: E402
@@ -362,6 +364,27 @@ async def play_decision_game() -> str:
         await redis.aclose()
 
 
+async def ensure_featured(session: Any, game_id: str) -> None:
+    """A pick for the lobby hero (ADR-0070), unless one is already standing.
+
+    Only when none is: on a developer's machine this database is theirs, and a pick they made is
+    not the suite's to replace. The browser test reads whichever pick stands from the API, so it
+    holds either way. The quote is the scripted Black's own reasoning, so it passes the same
+    verbatim check a real one does.
+    """
+    if await featured.current(session) is not None:
+        return
+    await featured.feature(
+        session,
+        uuid.UUID(game_id),
+        featured.Pick(
+            "Scholar's Mate, and Black saw nothing coming.",
+            black_quote="Nothing on the board changes my mind.",
+        ),
+    )
+    await session.commit()
+
+
 async def fund_the_house(session: Any) -> None:
     """Give the house a dollar, if it has nothing.
 
@@ -391,6 +414,9 @@ async def main() -> int:
 
         if game_id is None:
             game_id = await play_scripted_game()
+
+        async with sessionmaker() as session:
+            await ensure_featured(session, game_id)
 
         async with sessionmaker() as session:
             await ensure_deciders(session)

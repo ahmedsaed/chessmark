@@ -43,6 +43,7 @@ everything inside a container: no uv, no node, and no remembering which compose 
 | `halt` | stop every model call, or resume; `--clear` lifts it |
 | `tournament …` `standings <slug>` | events |
 | `credits` | grant or revoke credit, in dollars (`credits you@x.com 5`); `--show` prints a balance with its ledger |
+| `feature` | pick the game the lobby hero shows when nothing is live (`feature <game> "headline" --white-quote … --black-quote …`); `--list`, `--remove <game>`. Quotes must be word for word from that side's reasoning ([ADR-0070](adr/0070-the-hero-shows-a-picked-game-between-live-ones.md)) |
 | `purchases` | an account's Paddle purchases, and whether each may be refunded under the refund policy (`purchases you@x.com`) |
 | `psql` `sql` `backup` `migrate` | the database |
 

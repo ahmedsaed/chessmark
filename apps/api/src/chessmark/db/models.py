@@ -1174,3 +1174,44 @@ class TournamentGame(Base):
         ),
         sa.Index("ix_tournament_games_round", "tournament_id", "round_number"),
     )
+
+
+# ============================================================================ editorial
+
+
+class FeaturedGame(Base):
+    """A finished game the operator picked to show in the lobby's hero (ADR-0070).
+
+    **Editorial, and kept apart from the game on purpose.** A headline is somebody's words about a
+    game, not a fact of it, so it does not sit on `games` beside the result it is about. Deleting
+    this row unfeatures a game and touches nothing the benchmark counts.
+
+    The hero shows the newest row with no `removed_at`. Featuring a game again refreshes its row
+    rather than adding one, so a game can be the pick at most once and `--list` reads as a history.
+    """
+
+    __tablename__ = "featured_games"
+
+    id: Mapped[uuid.UUID] = uuid_pk()
+    game_id: Mapped[uuid.UUID] = mapped_column(
+        _fk("games.id", ondelete="CASCADE"), unique=True, index=True
+    )
+
+    #: The operator's line about the game. Theirs, not the models' — the quotes below are the
+    #: models' own words and are checked; this is not.
+    headline: Mapped[str] = mapped_column(sa.Text)
+
+    #: Each side's quote: `{text, ply, san, source}`, or null when none was given. **Verbatim and
+    #: verified when it was written** (`db/featured.py`): the text is a slice of that side's own
+    #: reasoning or notes in this game, so the front page cannot put words in a model's mouth.
+    white_quote: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    black_quote: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+
+    #: Who picked it, when an admin did through the API. Null from the operator's shell.
+    featured_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        _fk("users.id", ondelete="SET NULL"), index=True
+    )
+    #: Moved forward when a game is featured again, which is what makes it the pick again.
+    featured_at: Mapped[dt.datetime] = created_at()
+    #: Set to take a game out of the hero. Kept rather than deleted so `--list` still shows it.
+    removed_at: Mapped[dt.datetime | None] = mapped_column()
