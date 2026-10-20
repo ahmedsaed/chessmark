@@ -108,22 +108,30 @@ jobs:
             echo "::error::v$VERSION has no tag, so there is no commit to take images from."
             exit 1
           }
+          digest() { docker buildx imagetools inspect "$1" --format '{{.Manifest.Digest}}' 2>/dev/null; }
           for image in api web; do
             base="$REGISTRY/$GITHUB_REPOSITORY-$image"
-            if docker buildx imagetools inspect "$base:$VERSION" >/dev/null 2>&1; then
-              echo "$base:$VERSION already exists."
-              continue
-            fi
             # `Publish images` runs on the same push and may still be building. Thirty minutes is
             # several times its longest run; past that something is wrong and should be loud.
             for attempt in $(seq 1 60); do
-              docker buildx imagetools inspect "$base:$commit" >/dev/null 2>&1 && break
+              want=$(digest "$base:$commit") && break
               [ "$attempt" = 60 ] && {
                 echo "::error::$base:$commit never appeared. Re-run this workflow once Publish images has finished for $commit."
                 exit 1
               }
               sleep 30
             done
+            # **Compared, not merely checked for.** The version tag must name the images of the
+            # commit the release tag names, and "a tag by that name exists" is not that: when this
+            # workflow first landed, 0.9.1 had no release yet, so it released 0.9.1 on its own
+            # merge commit and tagged that commit's images. Correcting the release then left
+            # `:0.9.1` naming the wrong bytes, and an existence check would have kept it so.
+            have=$(digest "$base:$VERSION" || true)
+            if [ "$have" = "$want" ]; then
+              echo "$base:$VERSION already names $commit."
+              continue
+            fi
+            [ -n "$have" ] && echo "::warning::$base:$VERSION named $have; moving it to $commit ($want)."
             docker buildx imagetools create --tag "$base:$VERSION" "$base:$commit"
             echo "$base:$VERSION → $commit"
           done
