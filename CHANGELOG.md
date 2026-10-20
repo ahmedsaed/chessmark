@@ -25,6 +25,13 @@ file is only the record of *what shipped when*.
   is word for word from that side's own reasoning or notes in that game. Games a person played in,
   and games not yet finished, cannot be featured.
 - `GET /games/featured`, the current pick or null, and `POST`/`GET`/`DELETE /admin/featured`.
+- **Releases are cut by CI from this file** (ADR-0071). When a version on `main` has no release and
+  its CI has passed, the *Release* workflow tags the commit and publishes the version's section here
+  as the release notes. It also gives that commit's images a version tag, `chessmark-api:x.y.z`,
+  without rebuilding them. `make check` refuses a version bump without a dated section here, or
+  with `pyproject.toml` and `package.json` disagreeing.
+- `./chessmark deploy v0.9.1` runs exactly that release and stays on it (`CHESSMARK_VERSION` in
+  `.env`). `./chessmark deploy` alone goes back to `latest`.
 
 ## [0.9.1] — 2026-10-18
 

@@ -28,6 +28,31 @@ warn() { printf '%s%s%s\n' "$AMBER" "$*" "$OFF" >&2; }
 in_postgres() { "${COMPOSE[@]}" exec -T postgres sh -c "$1"; }
 api_script()  { "${COMPOSE[@]}" run --rm api "${API[@]}" "/app/scripts/$1" "${@:2}"; }
 
+# Which release the stack runs, recorded in `.env` rather than in this shell (see the comment on
+# `CHESSMARK_VERSION` in docker-compose.prod.yml). **In the file, not exported here**, because a pin
+# that lasted only for `deploy` would be undone by the next `restart`: Compose would read no version,
+# fall back to `latest`, and quietly replace the release that was asked for.
+#
+# Exported for this run first and written down only once the pull has worked, so a mistyped or
+# unpublished version fails the deploy and leaves the stack pinned to what it was running. Exported
+# even when unpinning, as `latest`: a variable in the environment beats `.env`, and an unset one
+# would let the old pin in the file answer for this deploy.
+choose_release() {
+  local version="${1#v}"
+  if [ -n "$version" ] && ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    die "not a release: $1 (e.g. v0.9.1)"
+  fi
+  export CHESSMARK_VERSION="${version:-latest}"
+}
+
+record_release() {
+  touch .env
+  sed -i '/^CHESSMARK_VERSION=/d' .env
+  if [ "$CHESSMARK_VERSION" != latest ]; then
+    printf 'CHESSMARK_VERSION=%s\n' "$CHESSMARK_VERSION" >> .env
+  fi
+}
+
 # ---------------------------------------------------------------------------- the stack
 
 cmd_up() { # start everything (datastores, api, web, worker, tournament)
@@ -39,8 +64,10 @@ cmd_down() { # stop everything, leaving the data volumes alone
   "${COMPOSE[@]}" down "$@"
 }
 
-cmd_deploy() { # pull, drain the workers, migrate, restart, check /ready — the whole deploy
-  say "pulling…";        "${COMPOSE[@]}" pull
+cmd_deploy() { # pull, drain the workers, migrate, restart, check /ready; `deploy v0.9.1` pins a release
+  choose_release "${1:-}"
+  say "pulling $CHESSMARK_VERSION…"; "${COMPOSE[@]}" pull
+  record_release
 
   # **Stop the writers before migrating.** A migration that takes ACCESS EXCLUSIVE — which every
   # `ALTER TABLE` does, including a catalogue-only `SET DEFAULT` taking microseconds — conflicts
@@ -252,6 +279,8 @@ cmd_migrate() { # apply migrations, without restarting anything else
 
 declare -A EXAMPLES=(
   [deploy]='./chessmark deploy                      # pull, drain workers, migrate, restart, check /ready
+./chessmark deploy v0.9.1               # run exactly that release, and stay on it
+./chessmark deploy                      # back to latest: takes the pin out of .env
 
 # The worker and tournament services are stopped for the migration and brought back after.
 # A migration waits at most ALEMBIC_LOCK_TIMEOUT_SECONDS (10) for a lock, then fails loudly.'

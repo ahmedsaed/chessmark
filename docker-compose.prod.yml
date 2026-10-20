@@ -19,6 +19,12 @@
 # for `docker compose pull` to fetch, and the deploy would have to build on the host — which is
 # slower, needs the toolchain there, and can produce an image nobody has tested.
 #
+# **`CHESSMARK_VERSION` pins a release.** Unset, the stack runs `latest`, which is whatever `main`
+# last published. `./chessmark deploy v0.9.1` writes it to `.env`, so every later command — a
+# restart, a script, a `compose up` — runs the same release rather than drifting back to `latest`;
+# `./chessmark deploy` with no version takes the pin out. The version tags are written by the release
+# workflow, onto the image `main` already built for that commit.
+#
 # Five services, one backend image. The worker, the tournament runner and the catalogue refresher
 # are the API's own code under different entrypoints: building them separately would give them
 # several chances to drift apart at exactly the point where they must not.
@@ -42,7 +48,7 @@ x-redis-url: &redis_url redis://redis:6379/0
 
 services:
   api:
-    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:${CHESSMARK_VERSION:-latest}}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -67,7 +73,7 @@ services:
   # not also a schema change, and so a failed migration stops the deploy rather than crash-looping
   # a web server.
   migrate:
-    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:${CHESSMARK_VERSION:-latest}}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -82,7 +88,7 @@ services:
   # The piece that has never had a home. Without it the board never moves, which is the most
   # confusing possible failure: the site is up, games exist, and nothing happens.
   worker:
-    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:${CHESSMARK_VERSION:-latest}}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -112,7 +118,7 @@ services:
   # Ticks whichever event is named. A pool is *meant* to run indefinitely, which is precisely why
   # it cannot live in somebody's terminal.
   tournament:
-    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:${CHESSMARK_VERSION:-latest}}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -149,7 +155,7 @@ services:
   # It spends nothing. OpenRouter's `/models` and `/endpoints` are metadata, not inference, so
   # nothing here touches the daily free allowance or the credit balance.
   catalogue:
-    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:latest}
+    image: ${API_IMAGE:-ghcr.io/ahmedsaed/chessmark-api:${CHESSMARK_VERSION:-latest}}
     build:
       context: .
       dockerfile: apps/api/Dockerfile
@@ -169,7 +175,7 @@ services:
       migrate: {condition: service_completed_successfully}
 
   web:
-    image: ${WEB_IMAGE:-ghcr.io/ahmedsaed/chessmark-web:latest}
+    image: ${WEB_IMAGE:-ghcr.io/ahmedsaed/chessmark-web:${CHESSMARK_VERSION:-latest}}
     build:
       context: .
       dockerfile: apps/web/Dockerfile
