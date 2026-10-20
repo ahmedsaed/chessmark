@@ -35,7 +35,7 @@ everything inside a container: no uv, no node, and no remembering which compose 
 | --- | --- |
 | `up` `down` `ready` `logs` `restart` | the stack |
 | `status` | containers, plus the halt, budgets, queue, turns that crashed, live and paused games, and every event |
-| `deploy` | pull the published images, migrate, restart, check `/ready` |
+| `deploy` | pull the published images, migrate, restart, check `/ready`; `deploy v0.9.1` runs [a release](#releases) and stays on it, `deploy` alone goes back to `latest` |
 | `workers N` | how many turn workers to run (`WORKER_REPLICAS`) |
 | `catalogue` `endpoints` `models` `prune` | the model registry |
 | `latency <game-id>` `resume <game-id>` `repair` `repair-forfeits` | one game, and the records behind it |
@@ -89,6 +89,34 @@ Four details that are deliberate rather than incidental:
   `POST /admin/credits`), and an email we do not hold is asked of Clerk — so an invitation can be
   pre-funded for somebody who has never signed in. `core.clerk.get_directory` lives in `core/` for
   that reason: `db/` importing `api/` would invert the layering for one cached client.
+
+## Releases
+
+**A release is cut by CI, from the changelog** ([ADR-0071](adr/0071-a-release-is-cut-by-ci-from-the-changelog.md)).
+To release, bump the version in `apps/api/pyproject.toml` and `apps/web/package.json`, and move what
+is under `[Unreleased]` in `CHANGELOG.md` into `## [x.y.z] — YYYY-MM-DD`. Do all of this in the same
+pull request. `make check` refuses a bump that leaves the two versions apart or has no dated
+section, so the release cannot fail after the merge for want of either.
+
+Once that merge passes CI on `main`, the *Release* workflow:
+
+1. tags the commit `vx.y.z` and publishes a GitHub release whose notes are that section, with its
+   relative links pointed at the tagged files;
+2. gives that commit's images a second tag, `chessmark-api:x.y.z` and `chessmark-web:x.y.z`. It does
+   not rebuild them: the version tag names the same bytes *Publish images* already pushed under the
+   commit's SHA.
+
+It does nothing for a version that already has a release, so every later commit re-runs it
+harmlessly. **A release is not a deploy.** Nothing reaches production until `./chessmark deploy`
+runs on the server.
+
+**`./chessmark deploy v0.9.1` runs exactly that release** and records `CHESSMARK_VERSION=0.9.1` in
+`.env`. It goes in the file rather than the shell because otherwise the next `restart` or `up` would
+read no version and quietly fall back to `latest`. `./chessmark deploy` with no version takes the
+pin out again. A version that was never published fails at the pull and leaves the pin as it was.
+
+To tag the images of a release made before the workflow existed, or of one whose image step failed,
+run the *Release* workflow by hand with that version.
 
 ## Managing tournaments
 

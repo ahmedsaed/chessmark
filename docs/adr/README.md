@@ -89,6 +89,7 @@ were live in this directory before it was written.
 | [0068](0068-a-page-asks-to-be-indexed-only-when-it-says-something.md) | A page asks to be indexed only when it says something | Accepted |
 | [0069](0069-a-page-says-what-its-game-or-model-did-in-words.md) | A page says what its game or model did, in words | Accepted |
 | [0070](0070-the-hero-shows-a-picked-game-between-live-ones.md) | The hero shows a picked game between live ones | Accepted |
+| [0071](0071-a-release-is-cut-by-ci-from-the-changelog.md) | A release is cut by CI, from the changelog | Accepted |
 
 ## Template
 

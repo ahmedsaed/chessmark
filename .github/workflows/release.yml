@@ -1,0 +1,129 @@
+name: Release
+
+# **A release is published, not deployed.** This tags the commit, writes the GitHub release from
+# CHANGELOG.md and gives that commit's images a version tag. Production changes only when the owner
+# runs `./chessmark deploy` (or `./chessmark deploy v<version>`) on the server.
+#
+# **Why a workflow.** Releases were cut by hand, and 0.9.0 and 0.9.1 both reached `main` with their
+# changelog sections written and no tag or release behind either: the newest release on GitHub said
+# 0.8.0 for a week. A version on `main` with no release is now the trigger, so a release cannot be
+# forgotten — only left undated, which `tests/docs/test_release.py` refuses before the merge.
+#
+# **After CI, not on push.** A release names a commit as good. Run on the push it would race the
+# tests and could tag a commit that fails them; run after CI it only ever tags one that passed.
+#
+# **Idempotent.** Every run on `main` asks "does this version have a release?" and does nothing when
+# it does, so the commits after a bump re-run it harmlessly, and a failed run is fixed by re-running.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Tag the images of an existing release, e.g. 0.9.1 — for a release made before this
+          workflow, or one whose image step failed. Leave empty to release main's version.
+        required: false
+
+concurrency:
+  # Two runs releasing the same version at once would both see no tag and both try to create it.
+  group: release
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  release:
+    name: Release the version on main
+    # A push to `main` whose CI passed, or a person asking. A pull request's CI run also reports
+    # through `workflow_run`, and must never publish anything.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # The commit CI tested, not whatever `main` has moved on to since.
+      SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Which version
+        id: version
+        env:
+          ASKED: ${{ inputs.version }}
+        run: |
+          if [ -n "$ASKED" ]; then
+            echo "version=${ASKED#v}" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            version=$(python3 scripts/release.py version)
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+            if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+              echo "v$version is already released at $(git rev-list -n 1 "v$version")."
+              echo "release=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "release=true" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Publish the release
+        if: steps.version.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          python3 scripts/release.py notes "$VERSION" --repo "$GITHUB_REPOSITORY" > notes.md
+          # Not a pre-release, deliberately: 0.x already says beta, and a repository whose every
+          # release is a pre-release advertises no current version at all (CHANGELOG.md).
+          gh release create "v$VERSION" --target "$SHA" --title "v$VERSION" --notes-file notes.md
+          git fetch --tags --force origin
+
+      # The images are not rebuilt. `Publish images` already built this commit and tagged it with its
+      # SHA; the version tag is a second name for those same bytes, so `deploy v<version>` runs
+      # exactly what was tested and published — never a rebuild that merely shares the source.
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Give the release's images its version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # The commit the *tag* names, which is not always this run's: a later commit with the
+          # same version must not lend its images to a release it is not part of.
+          commit=$(git rev-list -n 1 "v$VERSION" 2>/dev/null) || {
+            echo "::error::v$VERSION has no tag, so there is no commit to take images from."
+            exit 1
+          }
+          for image in api web; do
+            base="$REGISTRY/$GITHUB_REPOSITORY-$image"
+            if docker buildx imagetools inspect "$base:$VERSION" >/dev/null 2>&1; then
+              echo "$base:$VERSION already exists."
+              continue
+            fi
+            # `Publish images` runs on the same push and may still be building. Thirty minutes is
+            # several times its longest run; past that something is wrong and should be loud.
+            for attempt in $(seq 1 60); do
+              docker buildx imagetools inspect "$base:$commit" >/dev/null 2>&1 && break
+              [ "$attempt" = 60 ] && {
+                echo "::error::$base:$commit never appeared. Re-run this workflow once Publish images has finished for $commit."
+                exit 1
+              }
+              sleep 30
+            done
+            docker buildx imagetools create --tag "$base:$VERSION" "$base:$commit"
+            echo "$base:$VERSION → $commit"
+          done
