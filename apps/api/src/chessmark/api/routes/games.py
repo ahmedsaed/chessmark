@@ -34,6 +34,7 @@ from chessmark.api.schemas import (
     CreateHumanGameRequest,
     DrawResponseRequest,
     EventOut,
+    FeaturedOut,
     GameDetail,
     GameSummary,
     HumanActionResponse,
@@ -53,6 +54,7 @@ from chessmark.api.schemas import (
     WaitingOn,
 )
 from chessmark.core.pause_requests import PauseRequests
+from chessmark.db import featured
 from chessmark.db.archive import ArchiveKind, ArchiveOutcome, ArchiveSort, archive_query
 from chessmark.db.credits import InsufficientCreditError, require_credit
 from chessmark.db.digests import digest_for
@@ -283,6 +285,18 @@ async def get_human_record(session: SessionDep) -> HumanRecord:
     ).one()
 
     return HumanRecord(games=row.games, wins=row.wins, draws=row.draws, losses=row.losses)
+
+
+@router.get("/featured", response_model=FeaturedOut | None)
+async def get_featured(session: SessionDep) -> FeaturedOut | None:
+    """The operator's pick for the lobby hero, or null when there is none (ADR-0070).
+
+    Declared before `/games/{game_id}` for the same reason as `/human-record`. One statement: the
+    lobby calls this on every render that misses the cache, and the hero's game itself is read by
+    the existing `GET /games/{id}`, which the page was making anyway.
+    """
+    pick = await featured.current(session)
+    return FeaturedOut.model_validate(pick) if pick is not None else None
 
 
 @router.get("/started", response_model=list[StartedGameSummary])

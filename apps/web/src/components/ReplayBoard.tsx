@@ -40,6 +40,8 @@ export function ReplayBoard({
   index,
   count,
   label,
+  tail,
+  showNotation = false,
 }: {
   startFen: string;
   moves: string[];
@@ -47,8 +49,18 @@ export function ReplayBoard({
   index: number;
   count: number;
   label?: string;
+  /** Loop only the last `tail` plies. The featured hero plays the ending it was picked for, not
+   *  the forty moves of opening theory before it (ADR-0070). */
+  tail?: number;
+  /** Rank and file labels. Off for the replay row's 120px boards, where they are clutter. */
+  showNotation?: boolean;
 }) {
-  const frames = useMemo(() => buildFrames(startFen, moves), [startFen, moves]);
+  /* Every position is still built from the start: a position is only known by replaying to it.
+     The tail is a window onto that list, so its first frame is a real position, not a guess. */
+  const frames = useMemo(() => {
+    const all = buildFrames(startFen, moves);
+    return tail === undefined ? all : all.slice(-(tail + 1));
+  }, [startFen, moves, tail]);
   const plies = frames.length - 1;
 
   /* `animate` travels with `cycle` rather than being derived from the previous render. Deriving
@@ -130,12 +142,11 @@ export function ReplayBoard({
       role="img"
       aria-label={label}
     >
-      {/* Notation off at this size, where rank and file labels are unreadable clutter. The slide
-          is skipped for anything that is not a single ply — see `isContiguous`. */}
+      {/* The slide is skipped for anything that is not a single ply — see `isContiguous`. */}
       <Board
         fen={frame.fen}
         lastMove={frame.lastMove}
-        showNotation={false}
+        showNotation={showNotation}
         animationMs={step.animate ? PLY_ANIMATION_MS : 0}
       />
     </div>

@@ -30,6 +30,12 @@ export const MODELS = "models";
 export const TOURNAMENTS = "tournaments";
 
 /**
+ * The operator's pick for the lobby hero (ADR-0070). Its own tag because it changes when a person
+ * says so, not when a game moves — a move expiring it would be harmless and pointless.
+ */
+export const FEATURED = "featured";
+
+/**
  * One game's own record: its detail, its event log and its turns.
  *
  * Per-game rather than lumped into {@link GAMES} because a move in one game must not expire the
@@ -41,7 +47,7 @@ export function game(id: string): string {
 }
 
 /** Every tag the API is allowed to name. A request for anything else is refused, not obeyed. */
-export const KNOWN_TAGS = [GAMES, LEADERBOARD, MODELS, TOURNAMENTS] as const;
+export const KNOWN_TAGS = [GAMES, LEADERBOARD, MODELS, TOURNAMENTS, FEATURED] as const;
 
 /** A `game:<uuid>` tag, which is per-record and so cannot be enumerated above. */
 const GAME_TAG = /^game:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

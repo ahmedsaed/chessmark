@@ -23,7 +23,10 @@ from chessmark.api.schemas import (
     CreditEntryOut,
     CreditGrantOut,
     CreditGrantRequest,
+    FeaturedOut,
+    FeatureRequest,
 )
+from chessmark.db import featured
 from chessmark.db.credits import grant, history_of
 from chessmark.db.enums import GameStatus
 from chessmark.db.models import Game, User
@@ -31,6 +34,7 @@ from chessmark.db.quotas import reset_quota, usage_for
 from chessmark.db.repositories import get_game
 from chessmark.db.users import resolve_user
 from chessmark.game import GameResult, Termination
+from chessmark.orchestration.revalidation import FEATURED, notify_tags
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -186,3 +190,44 @@ async def cancel_game(session: SessionDep, game_id: uuid.UUID, admin: AdminUser)
     game.termination_detail = "Cancelled by an administrator."
     game.ended_at = sa.func.now()
     await session.commit()
+
+
+@router.post("/featured", response_model=FeaturedOut)
+async def feature_game(
+    session: SessionDep, request: FeatureRequest, admin: AdminUser
+) -> FeaturedOut:
+    """Make a finished game the lobby's pick when nothing is live (ADR-0070).
+
+    422 with the reason when it cannot be: the game is not over, a person played in it, or a quote
+    is not word for word from that side's own reasoning or notes.
+    """
+    try:
+        pick = await featured.feature(
+            session,
+            request.game,
+            featured.Pick(request.headline, request.white_quote, request.black_quote),
+            actor_user_id=admin.id,
+        )
+    except featured.FeatureRefusedError as refused:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(refused)) from None
+    out = FeaturedOut.model_validate(pick)
+    await session.commit()
+    await notify_tags([FEATURED])
+    return out
+
+
+@router.get("/featured", response_model=list[FeaturedOut])
+async def list_featured(session: SessionDep, admin: AdminUser) -> list[FeaturedOut]:
+    """Every pick, newest first, removed ones included."""
+    del admin
+    return [FeaturedOut.model_validate(pick) for pick in await featured.history(session)]
+
+
+@router.delete("/featured/{game_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def unfeature_game(session: SessionDep, game_id: uuid.UUID, admin: AdminUser) -> None:
+    """Take a game out of the hero. The one featured before it, if still standing, takes over."""
+    del admin
+    if not await featured.unfeature(session, game_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="That game is not featured.")
+    await session.commit()
+    await notify_tags([FEATURED])

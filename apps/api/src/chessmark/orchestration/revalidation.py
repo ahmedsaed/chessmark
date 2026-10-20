@@ -36,6 +36,9 @@ LEADERBOARD = "leaderboard"
 MODELS = "models"
 #: The tournament index and every event's table.
 TOURNAMENTS = "tournaments"
+#: The operator's pick for the lobby hero (ADR-0070). Its own tag because it changes when a person
+#: says so, not when a game moves.
+FEATURED = "featured"
 
 #: The events that change something beyond the game's own page.
 #:
@@ -71,16 +74,21 @@ def tags_for(game_id: uuid.UUID, event_types: Iterable[str]) -> list[str]:
 
 
 async def notify_web(game_id: uuid.UUID, event_types: Iterable[str]) -> None:
-    """Post the invalidated tags to the website. Never raises."""
+    """Post the tags a game's events invalidate to the website. Never raises."""
+    await notify_tags(tags_for(game_id, event_types), about=str(game_id))
+
+
+async def notify_tags(tags: list[str], *, about: str = "") -> None:
+    """Post these tags to the website. Never raises.
+
+    For a change that is not a game's — the featured pick is a person's decision, and nothing in
+    the event log records it.
+    """
     settings = get_settings()
     secret = settings.revalidate_secret
     origin = settings.web_origin
 
-    if not secret or not origin:
-        return
-
-    tags = tags_for(game_id, event_types)
-    if not tags:
+    if not secret or not origin or not tags:
         return
 
     try:
@@ -96,4 +104,4 @@ async def notify_web(game_id: uuid.UUID, event_types: Iterable[str]) -> None:
             # behind — looks like nothing at all until somebody notices the numbers lag.
             log.warning("revalidation refused: %s %s", response.status_code, response.text[:200])
     except Exception as exc:  # a cache hint must never break a turn that already committed
-        log.warning("revalidation failed for %s: %s", game_id, exc)
+        log.warning("revalidation failed for %s: %s", about or ",".join(tags), exc)

@@ -15,6 +15,17 @@ file is only the record of *what shipped when*.
 
 ## [Unreleased]
 
+### Added
+
+- **When nothing is live, the lobby's hero shows a game the operator picked** (ADR-0070, UI-14),
+  instead of whichever game finished last. The pick has a headline and up to one quote per side,
+  labelled with the move it was written around. Its board loops the last ten plies. A running game
+  still takes the hero first. Picked with `./chessmark feature <game> "headline" --white-quote …
+  --black-quote …`, listed with `--list`, taken down with `--remove`. A quote is refused unless it
+  is word for word from that side's own reasoning or notes in that game. Games a person played in,
+  and games not yet finished, cannot be featured.
+- `GET /games/featured`, the current pick or null, and `POST`/`GET`/`DELETE /admin/featured`.
+
 ## [0.9.1] — 2026-10-18
 
 **A spectator no longer holds a lock on `games`.** The 0.9.0 migration failed on its lock timeout

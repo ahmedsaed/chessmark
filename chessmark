@@ -205,6 +205,12 @@ cmd_credits() { # grant or revoke credits by email, Clerk id, or ours; --show to
   api_script grant_credits.py "$@"
 }
 
+cmd_feature() { # pick the game the lobby hero shows when nothing is live; --list, --remove
+  # Quotes are checked word for word against that side's own reasoning or notes (ADR-0070).
+  [ $# -gt 0 ] || die "which game? e.g. ./chessmark feature <game-url> \"headline\"  (or --list)"
+  api_script feature_game.py "$@"
+}
+
 cmd_sales() { # open or pause credit sales:  ./chessmark sales open | pause "reason"
   # Paddle's keys make selling possible; this makes it open. Sales start paused, and a pause stops
   # new checkouts only — anything already paid for is still credited (ADR-0057).
@@ -324,6 +330,10 @@ echo "select count(*) from games;" | ./chessmark sql'
 # Sales start paused: the keys in .env make selling possible, this makes it open.
 # A pause stops new checkouts; a purchase already paid for is still credited.'
   [purchases]='./chessmark purchases someone@example.com   # each purchase, and whether it may be refunded'
+  [feature]='./chessmark feature https://chessmark.merope.dev/games/<id> "One line of your own." \
+    --white-quote "word for word from White" --black-quote "word for word from Black"
+./chessmark feature --list                       # every pick, newest first
+./chessmark feature --remove e517ad97            # the pick before it takes over'
   [credits]='./chessmark credits someone@example.com 50
 ./chessmark credits someone@example.com 10 --note "beta invite"
 ./chessmark credits user_2abc123 -5              # take them back, clamped at zero
@@ -380,6 +390,7 @@ $(row standings)
 
 ${AMBER}people${OFF}
 $(row credits)
+$(row feature)
 $(row sales)
 $(row purchases)
 

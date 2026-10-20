@@ -253,6 +253,7 @@ erDiagram
 | `leaderboard_snapshots` | Every stored rating run (ADR-0032, ADR-0061) | one Bradley-Terry fit per `(prompt_version, scope)` — `""` for the leaderboard, `tournament:<id>` for a pool — fingerprinted by the games in scope and the rating method (ADR-0060) |
 | `analysis_jobs` | Stockfish work queue | status, engine version, depth |
 | `usage_ledger` | Quota + spend accounting | per user per day |
+| `featured_games` | The operator's pick for the lobby hero ([ADR-0070](adr/0070-the-hero-shows-a-picked-game-between-live-ones.md)) | one row per game; a headline and each side's quote, verified verbatim against the game's log when written; the newest row without `removed_at` is shown |
 
 ### `game_events` is the backbone
 

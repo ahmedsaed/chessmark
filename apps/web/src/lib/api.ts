@@ -28,6 +28,7 @@
 
 import {
   FALLBACK_REVALIDATE,
+  FEATURED,
   GAMES,
   LEADERBOARD,
   MODELS,
@@ -37,6 +38,7 @@ import {
 import { originFromEnv } from "@/lib/env";
 import type {
   BenchSummary,
+  Featured,
   GameDetail,
   GameEvent,
   GameResult,
@@ -431,6 +433,18 @@ export function getHumanRecord(options?: ReadOptions): Promise<HumanRecord> {
     draws: 0,
     losses: 0,
   });
+}
+
+/**
+ * The operator's pick for the lobby hero, or null when there is none (ADR-0070).
+ *
+ * Tagged `featured` alone: it changes when a person picks a game, and the API names the tag when
+ * they do. Null on failure as well as on absence — an unreachable pick costs the hero its
+ * headline, and the lobby falls back to the most recent game exactly as it did before picks
+ * existed.
+ */
+export function getFeatured(options?: ReadOptions): Promise<Featured | null> {
+  return getOrFallback<Featured | null>("/games/featured", cached([FEATURED], options?.cache), null);
 }
 
 export function listTournaments(

@@ -23,14 +23,28 @@ import { useMemo } from "react";
 import { Chess } from "chess.js";
 
 import { Board } from "@/components/Board";
+import { ReplayBoard } from "@/components/ReplayBoard";
 import { useGameStream } from "@/hooks/useGameStream";
+import { moveLabel } from "@/lib/featured";
 import { tailMoves } from "@/lib/moves";
 import { foldEvents } from "@/lib/turns";
-import type { GameDetail } from "@/lib/types";
+import type { Featured, FeaturedQuote, GameDetail } from "@/lib/types";
 
 const TERMINAL = new Set(["finished", "aborted"]);
 
-export function HeroGame({ game, apiUrl }: { game: GameDetail; apiUrl: string }) {
+/** The ending a featured board loops. Ten plies is the attack and the mate, not the opening. */
+const FEATURED_TAIL = 10;
+
+export function HeroGame({
+  game,
+  apiUrl,
+  featured = null,
+}: {
+  game: GameDetail;
+  apiUrl: string;
+  /** The operator's pick, when the hero is showing it (ADR-0070). Never set for a live game. */
+  featured?: Featured | null;
+}) {
   const isLive = !TERMINAL.has(game.status);
 
   const { events } = useGameStream({
@@ -117,14 +131,27 @@ export function HeroGame({ game, apiUrl }: { game: GameDetail; apiUrl: string })
       </div>
 
       <div className="order-2 mx-auto w-full max-w-[440px] lg:col-start-1 lg:row-span-2 lg:row-start-1">
-        <Board fen={fen} lastMove={lastMove} />
+        {featured ? (
+          /* The ending it was picked for, on a loop; the final position for reduced motion. */
+          <ReplayBoard
+            startFen={game.start_fen}
+            moves={game.moves}
+            index={0}
+            count={1}
+            tail={FEATURED_TAIL}
+            showNotation
+            label={`${white?.display_name ?? "White"} versus ${black?.display_name ?? "Black"}, the last ${FEATURED_TAIL} moves`}
+          />
+        ) : (
+          <Board fen={fen} lastMove={lastMove} />
+        )}
       </div>
 
       <div className="order-3 flex min-w-0 flex-col gap-5 lg:col-start-2 lg:row-start-2">
         <div className="border border-line bg-surface-2">
           <div className="flex items-center justify-between gap-3 border-b border-line-soft px-4 py-2.5">
             <span className="font-mono text-meta uppercase tracking-[0.18em] text-ink-faint">
-              {running ? "Live now" : stopped ? "Paused" : "Most recent"}
+              {running ? "Live now" : stopped ? "Paused" : featured ? "Featured" : "Most recent"}
             </span>
             {running ? (
               <span className="inline-flex items-center gap-1.5 font-mono text-label uppercase tracking-[0.14em] text-bad">
@@ -147,12 +174,42 @@ export function HeroGame({ game, apiUrl }: { game: GameDetail; apiUrl: string })
             )}
           </div>
 
-          <div className="flex flex-col gap-2 px-4 py-3">
-            <Seat name={black?.display_name ?? "?"} colour="black" toMove={waitingOn === "black"} />
-            <Seat name={white?.display_name ?? "?"} colour="white" toMove={waitingOn === "white"} />
-          </div>
+          {featured ? (
+            <div className="flex flex-col gap-3 px-4 py-3">
+              <p className="font-serif text-xl leading-snug text-ink">{featured.headline}</p>
+              {/* Both seats always, quote or not: the card names who played even when one side
+                  left nothing worth quoting, or nothing readable at all. */}
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                <Said
+                  name={black?.display_name ?? "?"}
+                  colour="black"
+                  quote={featured.black_quote}
+                  startFen={game.start_fen}
+                />
+                <Said
+                  name={white?.display_name ?? "?"}
+                  colour="white"
+                  quote={featured.white_quote}
+                  startFen={game.start_fen}
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 px-4 py-3">
+              <Seat
+                name={black?.display_name ?? "?"}
+                colour="black"
+                toMove={waitingOn === "black"}
+              />
+              <Seat
+                name={white?.display_name ?? "?"}
+                colour="white"
+                toMove={waitingOn === "white"}
+              />
+            </div>
+          )}
 
-          {moves.length > 0 && (
+          {!featured && moves.length > 0 && (
             <p className="tabular border-t border-line-soft px-4 py-2.5 font-mono text-data leading-relaxed text-ink-dim">
               {tailMoves(moves)}
             </p>
@@ -202,5 +259,46 @@ function Seat({
         </span>
       )}
     </div>
+  );
+}
+
+/**
+ * One side of a featured game: who, and what they said.
+ *
+ * The quote is the record's own text — the API refuses anything that is not a slice of that side's
+ * reasoning or notes — and it is labelled with the move it was written around, so a reader can find
+ * it in the replay.
+ */
+function Said({
+  name,
+  colour,
+  quote,
+  startFen,
+}: {
+  name: string;
+  colour: "white" | "black";
+  quote: FeaturedQuote | null;
+  startFen: string;
+}) {
+  return (
+    <figure className="flex min-w-0 flex-col gap-1.5 border-t-2 border-line bg-surface px-3 py-2.5">
+      <figcaption className="flex min-w-0 items-center gap-2 font-mono text-meta text-ink-faint">
+        <i
+          aria-hidden
+          className={`block h-2.5 w-2.5 flex-none border ${
+            colour === "white" ? "border-line bg-piece-white" : "border-ink-faint bg-piece-black"
+          }`}
+        />
+        <span className="truncate text-ink">{name}</span>
+        {quote?.ply != null && quote.san && (
+          <span className="flex-none">· {moveLabel(quote.ply, quote.san, startFen)}</span>
+        )}
+      </figcaption>
+      {quote && (
+        <blockquote className="font-serif text-sm leading-relaxed text-ink-dim">
+          “{quote.text}”
+        </blockquote>
+      )}
+    </figure>
   );
 }

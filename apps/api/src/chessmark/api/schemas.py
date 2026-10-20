@@ -1416,3 +1416,48 @@ class TournamentDetail(TournamentSummary):
     standings: list[StandingOut] = Field(default_factory=list)
     pairings: list[TournamentPairingOut] = Field(default_factory=list)
     games: list[GameSummary] = Field(default_factory=list)
+
+
+# ============================================================================ featured game
+
+
+class FeaturedQuote(Schema):
+    """One side's words, as the record has them (ADR-0070).
+
+    Checked against the game's own log when the game was featured: `text` is a slice of that side's
+    reasoning or notes, not what the operator typed.
+    """
+
+    text: str
+    #: The turn it is from, and the move that turn made — "after 31… Qd8".
+    ply: int | None = None
+    san: str | None = None
+    #: `reasoning` or `output`: whether it was thinking, or a note the model wrote.
+    source: str
+
+
+class FeaturedOut(Schema):
+    """The operator's pick for the lobby hero, shown when nothing is live (ADR-0070)."""
+
+    game_id: uuid.UUID
+    headline: str
+    white_quote: FeaturedQuote | None = None
+    black_quote: FeaturedQuote | None = None
+    featured_at: dt.datetime
+    #: Only on the admin listing. The public read only ever returns a pick that is standing.
+    removed_at: dt.datetime | None = None
+
+
+class FeatureRequest(BaseModel):
+    """What to feature, and what to say about it."""
+
+    game: uuid.UUID = Field(description="The game's id.")
+    headline: str = Field(description="One line of your own about the game.")
+    white_quote: str | None = Field(
+        default=None,
+        description="Word for word from White's reasoning or notes in this game. Checked.",
+    )
+    black_quote: str | None = Field(
+        default=None,
+        description="Word for word from Black's reasoning or notes in this game. Checked.",
+    )

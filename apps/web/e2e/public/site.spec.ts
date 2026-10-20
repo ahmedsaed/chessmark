@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 import { fixtures } from "../fixtures";
 import { rowsOf } from "../../src/lib/groups";
-import type { LeaderboardRow } from "../../src/lib/types";
+import type { Featured, GameSummary, LeaderboardRow } from "../../src/lib/types";
 
 /**
  * The shell and the public reading surface (Phases 7, 18, 20 — AUTH-02).
@@ -38,6 +38,37 @@ test("the landing page leads with a game", async ({ page }) => {
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   // A board is the point of the page. It is rendered as a grid of squares by react-chessboard.
   await expect(page.locator("[data-column]").first()).toBeVisible();
+});
+
+test("between live games the hero is the operator's pick, in its own words", async ({ page }) => {
+  /* **Against the API's pick, whichever it is.** The seed features its game only when nothing else
+     stands, because a developer's own pick is not the suite's to replace — so the headline is read
+     from the API rather than assumed. And a live game outranks the pick (ADR-0070); another test
+     can start one, so that branch is asserted too rather than skipped. */
+  const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+  const pick = (await (await page.request.get(`${api}/games/featured`)).json()) as Featured | null;
+  expect(pick, "the seed should have featured a game").not.toBeNull();
+
+  await page.goto("/");
+  const live = (await (
+    await page.request.get(`${api}/games?status=running&limit=1`)
+  ).json()) as GameSummary[];
+  const hero = page.locator("main section").first();
+
+  if (live.length > 0) {
+    await expect(hero).not.toContainText(pick!.headline);
+    return;
+  }
+
+  await expect(hero).toContainText("Featured");
+  await expect(hero).toContainText(pick!.headline);
+  for (const quote of [pick!.white_quote, pick!.black_quote]) {
+    if (quote) await expect(hero.locator("blockquote", { hasText: quote.text })).toBeVisible();
+  }
+  await expect(hero.getByRole("link", { name: /replay it/i })).toHaveAttribute(
+    "href",
+    `/games/${pick!.game_id}`,
+  );
 });
 
 test("the models page filters in the browser, without a request per keystroke", async ({
