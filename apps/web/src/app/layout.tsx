@@ -44,6 +44,10 @@ export const viewport: Viewport = {
   colorScheme: "dark",
 };
 
+/* Cookieless page-view counts from our own Umami (stats.merope.dev). Baked in at build time, and
+   only the production image sets it, so dev servers, CI and the browser suite count nothing. */
+const umamiWebsiteId = process.env.NEXT_PUBLIC_UMAMI_WEBSITE_ID;
+
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   /**
    * **Clerk is mounted only when this request needs it.**
@@ -85,6 +89,14 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full flex flex-col">
         {mountClerk ? <AuthProvider>{shell}</AuthProvider> : shell}
+        {umamiWebsiteId && (
+          <script
+            defer
+            src="https://stats.merope.dev/p.js"
+            data-website-id={umamiWebsiteId}
+            data-do-not-track="true"
+          />
+        )}
       </body>
     </html>
   );
