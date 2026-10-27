@@ -15,7 +15,9 @@ export const metadata: Metadata = pageMetadata({
  * Each claim here is a fact about the code, and must change with it:
  * - `users` holds the Clerk id, email, display name and balance; nothing else about a person.
  * - A model request carries the game's id as `session_id` and never the player's identity.
- * - The only cookies are Clerk's session cookies. There is no analytics or advertising script.
+ * - The only cookies are Clerk's session cookies. There is no advertising script.
+ * - The one analytics script is our own Umami (`app/layout.tsx`): cookieless, no browser storage,
+ *   counts page views. It respects Do Not Track.
  * - The only thing kept in browser storage is the game-sound setting (`chessmark:sound` in
  *   `localStorage`, `hooks/useMoveSounds.ts`). It is never sent to the server.
  * - Deleting an account (Clerk's `user.deleted`) removes the user and their ledgers by cascade,
@@ -25,11 +27,11 @@ export default function PrivacyPage() {
   return (
     <LegalPage
       title="Privacy policy"
-      updated="1 October 2026"
+      updated="28 October 2026"
       summary={
         <p>
           Chessmark collects what it needs to run your account and your games, and nothing for
-          advertising. It has no trackers and sells no data. The part to know is that games are
+          advertising. It has no trackers, counts page views without cookies, and sells no data. The part to know is that games are
           public, including the messages you type in them.
         </p>
       }
@@ -69,8 +71,12 @@ export default function PrivacyPage() {
         </Points>
         <p>
           Cookies are used only to keep you signed in. There are no analytics or advertising
-          cookies, and nothing tracks you across other sites. Your browser also remembers whether
-          you turned game sounds off. That setting stays on your device and is never sent to us.
+          cookies, and nothing tracks you across other sites. We count page views with Umami, which
+          we host ourselves. It records the page, the referring site, your browser, operating system
+          and device type, and a rough location (country, region and city) worked out from your IP
+          address, which it does not keep. It sets no cookie, stores nothing on your device, and is
+          skipped if your browser sends Do Not Track. Your browser also remembers whether you turned
+          game sounds off. That setting stays on your device and is never sent to us.
         </p>
       </Clause>
 
