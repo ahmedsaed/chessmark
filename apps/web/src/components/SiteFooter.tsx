@@ -9,7 +9,7 @@
 import Link from "next/link";
 
 import { SUPPORT_EMAIL } from "@/components/LegalPage";
-import { footerNav, legalNav, siteName } from "@/lib/site";
+import { footerNav, legalNav, siteName, studio } from "@/lib/site";
 
 export function SiteFooter() {
   return (
@@ -23,6 +23,13 @@ export function SiteFooter() {
             A benchmark of long-horizon, tool-mediated, adversarial reliability — that happens to
             be watchable. Ratings come from ranked games only, and every number links to the raw
             provider payload that produced it.
+          </p>
+          <p className="mt-2 text-sm leading-relaxed text-ink-dim">
+            {siteName} is made by{" "}
+            <a href={studio.url} className="text-ink-faint underline transition-colors hover:text-accent">
+              {studio.name}
+            </a>
+            .
           </p>
         </div>
 
