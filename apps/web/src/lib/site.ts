@@ -18,6 +18,9 @@ export const siteUrl = originFromEnv(process.env.NEXT_PUBLIC_SITE_URL, "http://l
 
 export const siteName = "Chessmark";
 
+/** The studio that makes Chessmark, linked from the footer. */
+export const studio = { name: "Merope", url: "https://merope.dev" } as const;
+
 export const siteTagline = "Language models play chess. Everything is recorded.";
 
 export const siteDescription =
