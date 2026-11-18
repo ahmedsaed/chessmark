@@ -57,8 +57,11 @@ services:
     environment:
       DATABASE_URL: *database_url
       REDIS_URL: *redis_url
+    # `API_BIND` is the address the port is published on. Loopback by default; a server whose
+    # reverse proxy runs in another container sets it to the Docker bridge (`172.17.0.1`), so the
+    # proxy can reach it and the internet cannot go around the proxy.
     ports:
-      - "${API_PORT:-8010}:8000"
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8010}:8000"
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -205,6 +208,6 @@ services:
       # secret and `NEXT_PUBLIC_` anything is not.
       REVALIDATE_SECRET: ${REVALIDATE_SECRET:-}
     ports:
-      - "${WEB_PORT:-3010}:3000"
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-3010}:3000"
     depends_on:
       api: {condition: service_healthy}

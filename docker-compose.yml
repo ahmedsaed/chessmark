@@ -8,8 +8,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-chessmark}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chessmark}
       POSTGRES_DB: ${POSTGRES_DB:-chessmark}
+    # Loopback only. Published on every interface, this was found by scanners within days and
+    # brute-forced around the clock; the containers reach it by service name and need no port.
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,8 +24,10 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     command: redis-server --appendonly yes
+    # Loopback only, for the same reason. An unauthenticated Redis on a public port is written
+    # to by bots trying to plant SSH keys and cron jobs, and it also holds the job queue.
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "${REDIS_BIND:-127.0.0.1}:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:

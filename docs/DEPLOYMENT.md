@@ -14,8 +14,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 | --- | --- | --- |
 | `postgres`, `redis` | datastores | from `docker-compose.yml` |
 | `migrate` | `alembic upgrade head`, once | runs to completion, then exits |
-| `api` | FastAPI | published on `API_PORT` (8010) |
-| `web` | the built Next.js app | published on `WEB_PORT` (3010) |
+| `api` | FastAPI | published on `API_BIND`:`API_PORT` (127.0.0.1:8010) |
+| `web` | the built Next.js app | published on `WEB_BIND`:`WEB_PORT` (127.0.0.1:3010) |
 | `worker` | plays turns | **exactly one** |
 | `tournament` | ticks an event | also the management CLI |
 | `catalogue` | refreshes the model registry | every `CATALOGUE_INTERVAL_HOURS` (12) |
