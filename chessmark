@@ -113,7 +113,10 @@ cmd_status() { # containers, games, tournaments, budgets — and what needs a lo
 }
 
 cmd_ready() { # ask the API whether it can reach Postgres and Redis
-  local url="${HEALTH_URL:-http://localhost:${API_PORT:-8010}/ready}"
+  # The API is published on `API_BIND`, which is not loopback on a server behind a proxy container.
+  local bind; bind=$(sed -n 's/^API_BIND=//p' .env 2>/dev/null | tail -1)
+  [ -n "$bind" ] && [ "$bind" != 0.0.0.0 ] || bind=localhost
+  local url="${HEALTH_URL:-http://${bind}:${API_PORT:-8010}/ready}"
   if out=$(curl -sf --max-time 10 "$url"); then
     printf '%sready%s %s\n' "$GREEN" "$OFF" "$out"
   else
